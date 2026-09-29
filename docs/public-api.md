@@ -1,5 +1,22 @@
 # ProofRun Case API
 
+## 访问地址与在线文档
+
+- 生产 HTTP API：`https://api-proofrun.ethankit.com`。
+- [在线 API 文档](https://api-proofrun.ethankit.com/docs/)：覆盖 v1/v2 的提交、查询、取消和证据下载，可查看请求结构和响应并手动调试。
+- [在线 OpenAPI JSON](https://api-proofrun.ethankit.com/openapi.json)：可导入 API 客户端；在线规范使用当前访问来源，导入工具时将服务地址设置为上述 API origin。
+- Console：`https://proofrun.ethankit.com`；同源文档也可通过 `/docs/` 访问。
+
+文档无需令牌即可阅读；调用业务接口仍需 `Authorization: Bearer <token>`。在线调试不会自动填入或持久化令牌，提交与取消会执行真实操作。外部系统应从自己的服务端调用 API；Console 与 Browser Node 继续使用 Console 的同源入口，不需要为它们开启跨域访问。
+
+以下命令使用环境变量保存接入地址，令牌由部署管理员通过私密渠道提供：
+
+```sh
+export PROOFRUN_CONTROL_URL='https://api-proofrun.ethankit.com'
+```
+
+## 协议选择
+
 结构化步骤和批量提交使用 [Case API v2](public-api-v2.md)。本页描述继续兼容的 `/v1/cases` 单 case 接口。
 
 对外只约定“验证哪个 case、怎样算通过、最后得到什么结果”。待测入口 URL 属于 case 本身，由调用方明确提供；环境、登录态、节点、预算、模型和执行策略由平台管理。
@@ -85,7 +102,7 @@ JSON 请求体上限为 2 MiB，超限返回 413。调用方等待超时不会�
 
 ## 文档与版本
 
-- [OpenAPI](../contracts/public-api.openapi.json)：仅包含提交、查询、取消、证据下载四个操作，可单文件导入。
+- [OpenAPI](../contracts/public-api.openapi.json)：包含 v1/v2 各自的提交、查询、取消、证据下载操作，可单文件导入；仓库版本默认指向生产 API，自部署时替换服务地址。
 - [VerificationCase Schema](../contracts/schemas/verification-case.schema.json) 与 [CaseResult Schema](../contracts/schemas/case-result.schema.json)：协议源文件。
 - [请求示例](../contracts/examples/public-api/case.json)、[入队响应](../contracts/examples/public-api/case-queued.json)、[阻塞结果](../contracts/examples/public-api/case-blocked.json)：均为演示数据，不是真实验收记录。
 

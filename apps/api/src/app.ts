@@ -28,6 +28,7 @@ import { LiveService } from './modules/hitl/live.js';
 import { ModelCalls } from './modules/reports/model-calls.js';
 import { CaseV2Service } from './modules/cases/v2.js';
 import { CaseService } from './modules/cases/service.js';
+import { registerPublicDocs } from './modules/docs/routes.js';
 
 /** 路由参数只参与参数化查询；证据路径另有独立的身份校验。 */
 type IdParams = { id: string };
@@ -125,6 +126,7 @@ export async function buildApp(
         'Control-plane database ownership lost',
       );
   });
+  registerPublicDocs(app);
   await app.register(websocket, { options: { maxPayload: MAX_MESSAGE_BYTES } });
   app.get('/health/live', async () => ({
     service: 'proofrun-api',

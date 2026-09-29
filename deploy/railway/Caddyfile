@@ -4,7 +4,7 @@
     auto_https off
 }
 :{$PORT:8080} {
-    @control path /v1/* /v2/* /health/*
+    @control path /v1/* /v2/* /health/* /docs /docs/* /openapi.json
     handle @control {
         # API 只走 Railway 私网，浏览器与节点始终使用 Web 的公开同源地址。
         reverse_proxy {$PROOFRUN_API_UPSTREAM}

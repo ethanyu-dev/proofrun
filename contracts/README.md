@@ -8,6 +8,8 @@ JSON Schema 是协议数据结构的源文件；TypeScript 类型由脚本生成
 
 `public-api.openapi.json` 是可独立导入的 OpenAPI 3.1 文档，由 `scripts/generate-public-api.mjs` 复用共享 Schema 生成。HTTP 方法、响应码和薄请求封装在该脚本维护，并与 `apps/api/src/app.ts` 和领域层同步。OpenAPI 包含 v1/v2 的 case 提交、查询、取消与证据下载；验收项 ID 唯一性和证据归属仍由领域层校验。现有生成和漂移检查命令同时覆盖 OpenAPI，不直接编辑生成文件。
 
+规范随 contracts 的生产包发布，API 从同一份生成文件提供 `/openapi.json` 和 `/docs/` 在线说明。仓库规范包含生产 HTTP API 地址，在线规范只将 `servers` 改为同源 `/`，其余内容保持一致；公开说明不会开放内部节点或 worker 接口，也不会注入管理员令牌。
+
 `examples/public-api/case.json`、`case-queued.json`、`case-blocked.json` 是业务输入与结果示例，不是真实环境验收结果。版本兼容规则见对外调用文档。平台部署配置见 `docs/case-platform-config.md`。
 
 `src/index.ts` 提供 Ajv 校验器；生成的 TS 类型不能替代运行时校验。此包只验证结构。API 领域层进一步验证验收覆盖、证据存在和归属、整体 verdict 与逐项结果一致，集成测试在 apps/api/test 中。校验无法证明模型的业务判断正确。

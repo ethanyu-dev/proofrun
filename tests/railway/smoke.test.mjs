@@ -139,6 +139,21 @@ test(
       const r = await fetch(`${base}/health/ready`);
       return r.ok && (await r.json()).status === 'ready';
     });
+    // 范围：生产镜像包含规范和 UI 资源，代理未把文档路径回退为 Console；不执行在线调试。
+    const specification = await fetch(`${base}/openapi.json`);
+    assert.equal(specification.status, 200);
+    assert.match(
+      specification.headers.get('content-type'),
+      /application\/json/,
+    );
+    assert.ok((await specification.json()).paths['/v2/cases']);
+    const docs = await fetch(`${base}/docs/`);
+    assert.equal(docs.status, 200);
+    assert.match(await docs.text(), /swagger-ui-bundle\.js/);
+    const script = await fetch(`${base}/docs/swagger-ui-bundle.js`);
+    assert.equal(script.status, 200);
+    assert.match(script.headers.get('content-type'), /text\/javascript/);
+    await script.arrayBuffer();
     for (const path of ['/v1/tasks', '/v2/cases/fixture']) {
       const rejected = await fetch(base + path);
       assert.equal(rejected.status, 401);

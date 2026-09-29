@@ -4,16 +4,20 @@ Railway 运行 API、Web Console、执行 Agent 和 PostgreSQL；访问业务页
 
 ## 服务与配置文件
 
-在同一 Railway 项目和环境中添加 PostgreSQL，然后从同一个 GitHub 仓库创建三个服务。**三个服务的 Root Directory 均保持仓库根目录**，在各自 Settings 中指定对应的 Config File 路径。不要把 Root Directory 改成 apps 子目录，否则 workspace 契约及锁文件不可见。
+在同一 Railway 项目和环境中添加 PostgreSQL，然后从同一个 GitHub 仓库创建三个服务。**三个服务的 Root Directory 均保持仓库根目录**，通过服务设置或 `RAILWAY_DOCKERFILE_PATH` 指定下表的 Dockerfile。清空自动识别产生的 Build Command 和 Start Command，使用镜像内的构建步骤和启动命令。不要把 Root Directory 改成 apps 子目录，否则 workspace 契约及锁文件不可见；`contracts` 是共享代码包，不创建独立服务。
 
-| 服务名     | Config File                  | 公开入口                              | 持久化                     |
-| ---------- | ---------------------------- | ------------------------------------- | -------------------------- |
-| `api`      | `/deploy/railway/api.json`   | 不创建公开域名                        | 必须挂载 Volume 到 `/data` |
-| `web`      | `/deploy/railway/web.json`   | 创建 Railway HTTPS 域名或绑定自有域名 | 不需要 Volume              |
-| `agent`    | `/deploy/railway/agent.json` | 不创建公开域名                        | 无状态，不需要 Volume      |
-| `Postgres` | Railway PostgreSQL 服务      | 应用使用私网连接                      | 数据库自己的 Volume        |
+通过 GraphQL 更新服务时，传 `null` 不一定清除已有命令。Build Command 可设为空字符串；Start Command 可显式设置为 API 的 `node railway-entry.mjs`、Web 的 `caddy run --config /etc/caddy/Caddyfile --adapter caddyfile`、Agent 的 `node dist/main.js serve`。部署后应检查实际 deployment manifest，不能只依据更新接口返回成功判断旧配置已经清除。
 
-JSON 配置定义 Dockerfile、重启策略、单副本和健康检查，但不会自动创建这些服务、数据库、域名、变量或 Volume。API 的 `requiredMountPath` 要求挂载 `/data`，防止把证据写到随重部署丢失的临时文件系统。API 只运行一个副本；持有数据库独占锁的旧实例必须退出后新实例才能启动，带 Volume 的服务升级存在短暂停机。
+| 服务名     | Dockerfile 路径                   | 公开入口                              | 持久化                     |
+| ---------- | --------------------------------- | ------------------------------------- | -------------------------- |
+| `api`      | `deploy/railway/Dockerfile.api`   | 不创建公开域名                        | 必须挂载 Volume 到 `/data` |
+| `web`      | `deploy/railway/Dockerfile.web`   | 创建 Railway HTTPS 域名或绑定自有域名 | 不需要 Volume              |
+| `agent`    | `deploy/railway/Dockerfile.agent` | 不创建公开域名                        | 无状态，不需要 Volume      |
+| `Postgres` | Railway PostgreSQL 服务           | 应用使用私网连接                      | 数据库自己的 Volume        |
+
+Railway 当前已弃用旧 Config as Code，设置 `railwayConfigFile` 可能直接被 API 拒绝；不要继续把 `api.json` 等文件路径当作已生效的部署设置。本目录 JSON 保留为参数参考，新的声明式管理入口见 [Railway IaC](https://docs.railway.com/infrastructure-as-code)。直接配置服务时，三个应用均设单副本、关闭休眠、失败重启最多 10 次、停止宽限 30 秒；API 和 Web 的健康检查均为 `/health/ready`，超时 120 秒，Agent 不配置 HTTP 健康检查。API 的部署重叠时间设为 0。
+
+必须实际创建 PostgreSQL 和 API Volume，并确认 API Volume 已挂载 `/data`；旧 JSON 中的 `requiredMountPath` 在未使用该配置时不提供挂载保护。API 只运行一个副本；持有数据库独占锁的旧实例必须退出后新实例才能启动，带 Volume 的服务升级存在短暂停机。三个应用的变更监听需覆盖共享契约、锁文件及部署目录；可以先使用 `/**`，避免只监听各自 apps 子目录导致遗漏更新。
 
 ## 首次变量配置
 
@@ -27,7 +31,8 @@ API：
 | `PROOFRUN_DATABASE_URL`      | `${{Postgres.DATABASE_URL}}`                                                              |
 | `PROOFRUN_ADMIN_TOKEN`       | 独立生成的随机密钥，至少 32 字符                                                          |
 | `PROOFRUN_WORKER_TOKEN`      | 另一份独立随机密钥，至少 32 字符                                                          |
-| `PROOFRUN_PUBLIC_URL`        | Web 的 HTTPS origin，例如 `https://proofrun.example.com`，无路径                          |
+| `PROOFRUN_PUBLIC_URL`        | Web 的 HTTPS origin，当前生产为 `https://proofrun.ethankit.com`，无路径                   |
+| `PROOFRUN_CONSOLE_URL`       | Console 的 HTTPS origin，当前生产为 `https://proofrun.ethankit.com`                       |
 | `PROOFRUN_CASE_PROFILE_JSON` | [case-profile.example.json](../case-profile.example.json) 的 JSON，替换环境、节点池与预算 |
 
 密钥可分别使用 `openssl rand -hex 32` 生成。不要把密钥写入仓库、Docker build arguments 或 `VITE_*` 变量。
@@ -41,6 +46,8 @@ Web：
 | `PROOFRUN_API_UPSTREAM` | `${{api.RAILWAY_PRIVATE_DOMAIN}}:4100` |
 
 Web 的 Caddy 监听 Railway 提供的 `PORT`，TLS 由 Railway 边缘处理。`/v1/*`、`/v2/*`、`/health/*` 及 WebSocket 握手转发到 API，其余路径提供 Console 静态页面。Web 不保存管理员凭据，也不注入前端密钥。
+
+`/docs`、`/docs/*` 和 `/openapi.json` 也转发到 API，提供同源在线文档。当前生产额外为 API 绑定 `api-proofrun.ethankit.com`，供外部服务端调用与文档接入；它不是 Console 的 Origin，不能据此把 `PROOFRUN_PUBLIC_URL` 改成 API 域名。更换 Console 域名后，需同步更新公开地址和 Console 地址并重新部署 API，否则实时画面会因 Origin 不匹配而被拒绝。
 
 Agent：
 

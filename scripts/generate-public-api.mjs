@@ -11,6 +11,9 @@ const SCHEMAS = {
   'case-result-v2': 'CaseResultV2',
 };
 const OUTPUT = new URL('../contracts/public-api.openapi.json', import.meta.url);
+/** 在线文档优先展示新协议，并明确旧协议仍用于兼容调用。 */
+const TAG_V2 = 'Case API v2';
+const TAG_V1 = 'Case API v1（兼容）';
 
 /** 当前源文件使用的关键字兼容 2020-12；移除旧方言和离线身份，改成文档内引用。 */
 function embed(value) {
@@ -56,6 +59,7 @@ function operation(operationId, summary, schema, options = {}) {
   const { status = '200', ...rest } = options;
   return {
     operationId,
+    tags: [operationId.endsWith('V2') ? TAG_V2 : TAG_V1],
     summary,
     responses: { [status]: response(schema), default: error },
     ...rest,
@@ -92,10 +96,27 @@ const document = {
     title: 'ProofRun Case API',
     version: '0.1.0',
     description:
-      '对外接收任务描述、待测入口和业务验收要求，并返回验证结果。环境、身份、预算及执行策略由平台管理。由共享 Schema 生成，请勿手改；详见 docs/public-api.md。',
+      '新接入使用 /v2/cases 批量提交结构化步骤，/v1/cases 保留兼容。环境、身份、预算及执行策略由平台管理。接口需要部署管理员 Bearer 凭据，请仅由可信服务端保管；提交和取消会产生实际操作。由共享 Schema 生成，请勿手改。',
   },
-  servers: [{ url: '/', description: '替换为部署方提供的控制面 origin。' }],
+  servers: [
+    { url: 'https://api-proofrun.ethankit.com', description: '生产 HTTP API' },
+    { url: '/', description: '自部署时替换为实际控制面 origin。' },
+  ],
+  externalDocs: {
+    description: 'HTTP 接入说明与 v2 协议',
+    url: 'https://github.com/ethanyu-dev/proofrun/blob/main/docs/public-api.md',
+  },
   security: [{ AdminBearer: [] }],
+  tags: [
+    {
+      name: TAG_V2,
+      description: '新接入使用：结构化步骤、批量提交与关联清理。',
+    },
+    {
+      name: TAG_V1,
+      description: '保留已有单 case 调用，新的集成优先选择 v2。',
+    },
+  ],
   paths: {
     '/v2/cases': {
       post: operation(
@@ -141,6 +162,7 @@ const document = {
       ],
       get: {
         operationId: 'downloadCaseEvidenceV2',
+        tags: [TAG_V2],
         summary: '读取主任务或关联清理结果的证据',
         responses: {
           200: {
@@ -188,6 +210,7 @@ const document = {
       ],
       get: {
         operationId: 'downloadCaseEvidence',
+        tags: [TAG_V1],
         summary: '读取本 case 报告引用的证据',
         responses: {
           200: {
