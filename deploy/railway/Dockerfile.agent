@@ -1,0 +1,14 @@
+FROM node:24.21.0-bookworm-slim AS build
+WORKDIR /source
+RUN corepack enable && corepack prepare pnpm@10.30.2 --activate
+COPY . .
+RUN pnpm install --frozen-lockfile
+RUN pnpm --filter @proofrun/contracts build
+RUN pnpm --filter @proofrun/agent build && pnpm --filter @proofrun/agent deploy --prod --legacy /runtime
+
+FROM node:24.21.0-bookworm-slim
+ENV NODE_ENV=production
+WORKDIR /app
+COPY --from=build /runtime ./
+USER node
+CMD ["node", "dist/main.js", "serve"]

@@ -1,0 +1,77 @@
+name: Build Browser Node Release
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '与 Cargo 版本一致的标签，例如 node-v0.1.0-alpha.1'
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: node-release-${{ inputs.version }}
+  cancel-in-progress: false
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+      - name: 检查安装器与升级保护
+        run: |
+          bash -n scripts/node-release/install.sh
+          python3 -m unittest discover -s tests/node-release -p 'test_*.py'
+      - name: 在 Debian 12 基线构建 Linux 二进制
+        run: |
+          mkdir -p .proofrun/release-target
+          docker run --rm -v "$PWD:/workspace:ro" -v "$PWD/.proofrun/release-target:/target" -w /workspace -e CARGO_TARGET_DIR=/target rust:1.98.0-bookworm cargo build --release --locked -p proofrun-node
+          .proofrun/release-target/release/proofrun-node --version
+      - name: 构建固定版本资产
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: python3 scripts/node-release/build.py --version "$RELEASE_VERSION" --binary .proofrun/release-target/release/proofrun-node
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: node-${{ matrix.arch }}
+          path: .proofrun/release/*
+          include-hidden-files: true
+          if-no-files-found: error
+  draft:
+    needs: package
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: node-*
+          path: assets
+      - name: 合并并核对跨架构安装器
+        run: |
+          mkdir release
+          cmp assets/node-x64/install.sh assets/node-arm64/install.sh
+          cmp assets/node-x64/install-node.py assets/node-arm64/install-node.py
+          cp assets/node-x64/install.sh assets/node-x64/install-node.py release/
+          cp assets/node-*/proofrun-node-linux-*.tar.gz release/
+          cat assets/node-*/SHA256SUMS-* | sort -u > release/SHA256SUMS
+          cd release
+          sha256sum --check SHA256SUMS
+      # 只建立草稿，维护者检查资产与说明后在 GitHub 发布；同版本不覆盖既有 release。
+      - name: 创建预发布草稿
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_COMMIT: ${{ github.sha }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+        run: gh release create "$RELEASE_VERSION" release/* --repo "$RELEASE_REPOSITORY" --target "$RELEASE_COMMIT" --title "$RELEASE_VERSION" --draft --prerelease --notes 'Browser Node Linux x64/arm64。首次配置与升级说明见 scripts/node-release/README.md。API、Web 和 Agent 由 Railway 独立部署。'

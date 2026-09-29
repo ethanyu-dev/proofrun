@@ -1,0 +1,17 @@
+FROM node:24.21.0-bookworm-slim AS build
+WORKDIR /source
+RUN corepack enable && corepack prepare pnpm@10.30.2 --activate
+COPY . .
+RUN pnpm install --frozen-lockfile
+RUN pnpm --filter @proofrun/contracts build
+RUN pnpm --filter @proofrun/api build && pnpm --filter @proofrun/api deploy --prod --legacy /runtime
+
+FROM node:24.21.0-bookworm-slim
+ENV NODE_ENV=production
+WORKDIR /app
+COPY --from=build /runtime ./
+# 配置在启动时读取；模型密钥和业务环境不进入镜像层。
+COPY deploy/railway/api-entry.mjs ./railway-entry.mjs
+ENV PROOFRUN_API_HOST=:: PROOFRUN_ARTIFACT_DIRECTORY=/data/artifacts
+EXPOSE 4100
+CMD ["node", "railway-entry.mjs"]

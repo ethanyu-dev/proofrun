@@ -6,3 +6,11 @@ target
 .proofrun
 .env
 *.log
+
+# 构建上下文不能携带本机凭据、证据或发布产物。
+.env.*
+**/.env
+**/.env.*
+!.env.example
+artifacts
+release

@@ -1,0 +1,18 @@
+{
+    # TLS 由 Railway 边缘处理；容器只监听分配的 HTTP 端口。
+    admin off
+    auto_https off
+}
+:{$PORT:8080} {
+    @control path /v1/* /v2/* /health/*
+    handle @control {
+        # API 只走 Railway 私网，浏览器与节点始终使用 Web 的公开同源地址。
+        reverse_proxy {$PROOFRUN_API_UPSTREAM}
+    }
+    handle {
+        root * /srv
+        try_files {path} /index.html
+        file_server
+    }
+    header X-Content-Type-Options nosniff
+}

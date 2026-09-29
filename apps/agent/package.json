@@ -11,5 +11,8 @@
   },
   "dependencies": {
     "@proofrun/contracts": "workspace:*"
-  }
+  },
+  "files": [
+    "dist"
+  ]
 }
