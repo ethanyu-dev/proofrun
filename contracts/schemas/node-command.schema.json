@@ -1,0 +1,317 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "protocolVersion": {
+      "description": "节点协议版本；当前只接受 0.1。",
+      "const": "0.1"
+    },
+    "commandId": {
+      "description": "命令去重键。同一 ID 必须始终对应相同的节点、会话、租约和命令内容。",
+      "type": "string"
+    },
+    "nodeId": {
+      "description": "节点安装身份，跨进程重启保持不变。",
+      "type": "string"
+    },
+    "nodeEpoch": {
+      "description": "节点本次进程启动的身份；重启后改变，重连时不变。",
+      "type": "string"
+    },
+    "sessionId": {
+      "description": "控制面分配的会话身份；关闭后不可复用。",
+      "type": "string"
+    },
+    "leaseId": {
+      "description": "控制面授予的执行租约身份。",
+      "type": "string"
+    },
+    "fence": {
+      "description": "租约栅栏值；旧值不得操作当前会话。节点进一步要求大于零。",
+      "type": "integer",
+      "minimum": 0
+    },
+    "timeoutMs": {
+      "description": "命令从节点收到时起的最长执行时间，单位毫秒；仍受租约期限约束。",
+      "type": "integer",
+      "minimum": 0
+    },
+    "command": {
+      "title": "BrowserCommand",
+      "description": "节点可执行的封闭命令集合，不包含任意 shell 或 CLI 透传。",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "session.open"
+            },
+            "leaseRequestId": {
+              "description": "对应节点最近一次心跳中的 leaseRequestId，租约从该心跳发出时计时。",
+              "type": "string"
+            },
+            "leaseTtlMs": {
+              "description": "本次授权的有效时长，单位毫秒。",
+              "type": "integer",
+              "minimum": 0
+            },
+            "maxDurationMs": {
+              "description": "会话从创建起允许存活的最长时间，续租不能超过此上限。",
+              "type": "integer",
+              "minimum": 0
+            },
+            "authState": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "stateId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9_-]+$",
+                  "description": "节点私有登录状态名称，不是路径。"
+                },
+                "restore": {
+                  "type": "boolean",
+                  "description": "是否要求载入已有状态；首次人工登录时设为 false。"
+                },
+                "restoreIfPresent": {
+                  "type": "boolean",
+                  "description": "自动复用允许首次无快照启动；损坏快照仍拒绝载入。"
+                },
+                "snapshotId": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,128}$",
+                  "description": "本轮不可变初始快照身份；并行两组必须相同。"
+                }
+              },
+              "required": ["stateId", "restore"]
+            },
+            "networkEvidence": {
+              "type": "boolean",
+              "description": "在首次业务导航前启用网络元数据采集。"
+            },
+            "liveView": {
+              "type": "boolean",
+              "description": "允许本会话在人工介入时提供实时浏览器画面。"
+            }
+          },
+          "required": ["type", "leaseRequestId", "leaseTtlMs", "maxDurationMs"],
+          "title": "OpenSession",
+          "description": "预留本机容量并创建独立的受监管浏览器会话。"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "session.renew"
+            },
+            "leaseRequestId": {
+              "description": "对应节点最近一次心跳中的 leaseRequestId。",
+              "type": "string"
+            },
+            "leaseTtlMs": {
+              "description": "新租约的有效时长，单位毫秒；不能复活已经过期的会话。",
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": ["type", "leaseRequestId", "leaseTtlMs"],
+          "title": "RenewSession",
+          "description": "延长仍然有效的会话租约，不排在浏览器操作队列后。"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "session.close"
+            }
+          },
+          "required": ["type"],
+          "title": "CloseSession",
+          "description": "撤销会话执行权限并关闭整组浏览器进程；过期租约可用于匹配原会话的清理。"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "browser.observe"
+            },
+            "screenshot": {
+              "description": "是否同时采集 PNG 截图；截图与 DOM 来自不同时间点。",
+              "type": "boolean"
+            }
+          },
+          "required": ["type"],
+          "title": "ObserveBrowser",
+          "description": "采集页面事实，返回新的 observationId 和该次观察范围内的元素目标。"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "browser.act"
+            },
+            "action": {
+              "description": "受限的浏览器动作；任一动作都可能产生业务副作用。",
+              "enum": [
+                "navigate",
+                "click",
+                "fill",
+                "press",
+                "scroll",
+                "hover",
+                "check",
+                "uncheck",
+                "select",
+                "type",
+                "back",
+                "forward",
+                "reload",
+                "frame",
+                "tab.new",
+                "tab.switch",
+                "tab.close",
+                "resize",
+                "visual.click"
+              ]
+            },
+            "target": {
+              "description": "导航为 HTTP(S) URL；元素动作为当前观察 target；frame 为 iframe target 或 main；tab.switch/close 为已观察 tabId。",
+              "type": "string"
+            },
+            "value": {
+              "description": "填写/输入/选择的值、按键、滚动方向或 resize 的 WIDTHxHEIGHT。",
+              "type": "string"
+            },
+            "observationId": {
+              "description": "目标所属的观察身份；使用过期元素目标会被拒绝。",
+              "type": "string"
+            },
+            "x": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 16384,
+              "description": "visual.click 使用当前截图的视口 CSS 坐标。"
+            },
+            "y": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 16384,
+              "description": "visual.click 使用当前截图的视口 CSS 坐标。"
+            }
+          },
+          "required": ["type", "action"],
+          "title": "ActBrowser",
+          "description": "执行一次浏览器动作。生产环境默认关闭，直到引擎丢响应后的写入行为得到验证。"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "browser.wait"
+            },
+            "selector": {
+              "description": "要匹配的 CSS 选择器；逐层搜索 open Shadow DOM 及同源 iframe。",
+              "type": "string"
+            },
+            "text": {
+              "description": "目标元素文本中必须包含的字符串。",
+              "type": "string"
+            }
+          },
+          "required": ["type", "selector", "text"],
+          "title": "WaitBrowser",
+          "description": "等待一个明确的选择器及文本条件成立。"
+        },
+        {
+          "title": "SaveAuthentication",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "browser.auth.save"
+            }
+          },
+          "required": ["type"],
+          "description": "仅人工控制时，将本次会话状态原子保存到任务绑定的节点私有登录槽。"
+        },
+        {
+          "title": "BrowserInput",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "browser.input"
+            },
+            "action": {
+              "enum": ["click", "text", "press", "scroll"]
+            },
+            "x": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 16384
+            },
+            "y": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 16384
+            },
+            "value": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "deltaX": {
+              "type": "integer",
+              "minimum": -2000,
+              "maximum": 2000
+            },
+            "deltaY": {
+              "type": "integer",
+              "minimum": -2000,
+              "maximum": 2000
+            }
+          },
+          "required": ["type", "action"],
+          "description": "仅人工处理页使用的受限视口输入；每次计入原动作预算。"
+        },
+        {
+          "title": "BrowserTrace",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "browser.trace"
+            },
+            "action": {
+              "enum": ["start", "stop"]
+            }
+          },
+          "required": ["type", "action"],
+          "description": "开始或停止 Chromium trace，路径由节点生成，停止后按原证据链上传。"
+        }
+      ]
+    }
+  },
+  "required": [
+    "protocolVersion",
+    "commandId",
+    "nodeId",
+    "nodeEpoch",
+    "sessionId",
+    "leaseId",
+    "fence",
+    "timeoutMs",
+    "command"
+  ],
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "NodeCommand",
+  "description": "控制面发送给 Browser Node 的命令信封。执行结果只描述操作事实，不代表验收通过。"
+}

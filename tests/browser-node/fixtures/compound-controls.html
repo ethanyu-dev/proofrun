@@ -1,0 +1,37 @@
+<!doctype html>
+<html>
+  <body>
+    <p id="status">Waiting</p>
+    <div id="cases"></div>
+    <script>
+      // 范围：选值展示层覆盖输入、外部遮罩及相邻独立控件；不模拟任何业务服务或提交。
+      for (const name of [
+        'Selected value',
+        'External overlay',
+        'Adjacent button',
+      ]) {
+        const row = document.createElement('div');
+        row.style = 'position:relative;width:220px;height:40px;margin:20px';
+        row.innerHTML = `<span class="owner" style="display:block;position:relative;width:200px;height:30px"><span><input role="combobox" aria-label="${name}" aria-expanded="false" style="box-sizing:border-box;width:200px;height:30px"></span><span class="value" style="position:absolute;inset:0;background:white">Selected</span></span>`;
+        const owner = row.querySelector('.owner');
+        owner.onmousedown = () => {
+          row.querySelector('input').setAttribute('aria-expanded', 'true');
+          document.querySelector('#status').textContent = name + ' opened';
+        };
+        if (name === 'External overlay') {
+          row.insertAdjacentHTML(
+            'beforeend',
+            '<div style="position:absolute;inset:0;background:gray">External</div>',
+          );
+        }
+        if (name === 'Adjacent button') {
+          owner.insertAdjacentHTML(
+            'beforeend',
+            '<button style="position:absolute;inset:0">Independent action</button>',
+          );
+        }
+        document.querySelector('#cases').append(row);
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,79 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://proofrun.invalid/contracts/0.1/model-call-write.schema.json",
+  "title": "ModelCallWrite",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "phase": {
+          "const": "start"
+        },
+        "record": {
+          "$ref": "model-call.schema.json"
+        }
+      },
+      "required": ["phase", "record"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "phase": {
+          "const": "finish"
+        },
+        "result": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "finishedAt": {
+              "type": ["string", "null"],
+              "format": "date-time",
+              "description": "worker 收到回复或错误的时间，未收到回执时为空。"
+            },
+            "status": {
+              "enum": ["PENDING", "RECEIVED", "ERROR"],
+              "description": "仅表示请求接收状态，收到回复不等于模型决定有效或业务验收通过。"
+            },
+            "response": {
+              "type": ["string", "null"],
+              "maxLength": 600000,
+              "description": "供应商返回的 choices、answers、usage 等已选择字段 JSON，未接收或清理后为空。"
+            },
+            "error": {
+              "type": ["string", "null"],
+              "maxLength": 200,
+              "description": "稳定错误码，不保存带地址或凭据的原始异常文本。"
+            },
+            "promptTokens": {
+              "type": ["integer", "null"],
+              "minimum": 0,
+              "description": "供应商返回的输入用量，未报告则为空。"
+            },
+            "completionTokens": {
+              "type": ["integer", "null"],
+              "minimum": 0,
+              "description": "供应商返回的输出用量，未报告则为空。"
+            },
+            "elapsedMs": {
+              "type": ["integer", "null"],
+              "minimum": 0,
+              "description": "一次供应商请求的耗时，不含记录交付。"
+            }
+          },
+          "required": [
+            "finishedAt",
+            "status",
+            "response",
+            "error",
+            "promptTokens",
+            "completionTokens",
+            "elapsedMs"
+          ]
+        }
+      },
+      "required": ["phase", "result"]
+    }
+  ]
+}

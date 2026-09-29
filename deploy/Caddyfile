@@ -1,0 +1,13 @@
+# 域名从服务环境提供；API 与 Console 同源，WebSocket 由反向代理自动升级。
+{$PROOFRUN_DOMAIN} {
+    @control path /v1/* /health/*
+    handle @control {
+        reverse_proxy 127.0.0.1:4100
+    }
+    handle {
+        root * /opt/proofrun/apps/console/dist
+        try_files {path} /index.html
+        file_server
+    }
+    header X-Content-Type-Options nosniff
+}

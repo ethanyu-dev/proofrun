@@ -1,0 +1,77 @@
+/* 数值依据与控制台适配范围见 docs/console-design.md，业务页面统一使用语义变量。 */
+:root {
+  color-scheme: light;
+  --color-background: #ffffff;
+  --color-foreground: #0a0a0a;
+  --color-surface: #f9f8f6;
+  --color-secondary: #f2f1ef;
+  --color-muted: #686662;
+  /* 业务状态扩展仅用于结论标签与错误说明，不作为品牌主色。 */
+  --color-success: #276342;
+  --color-success-surface: #ecf5ee;
+  --color-danger: #9a3434;
+  --color-danger-surface: #fbefed;
+  --color-warning: #825d20;
+  --color-warning-surface: #f9f2e6;
+  --color-border: rgb(10 10 10 / 8%);
+  --color-border-strong: rgb(10 10 10 / 18%);
+  --color-primary: #0a0a0a;
+  --color-on-primary: #ffffff;
+  --color-code-background: #171717;
+  --color-code-foreground: #f9f8f6;
+  --color-code-muted: #a9a8a5;
+  --color-code-border: rgb(255 255 255 / 18%);
+
+  /* 官网使用自定义字体，当前以本机字体替代，避免内网运行依赖外部字体服务。 */
+  --font-sans:
+    'Helvetica Neue', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  --text-small: 0.8125rem;
+  --text-body: 0.875rem;
+  --text-hero: 3.75rem;
+  --text-section: 3rem;
+  --radius-control: 0.5rem;
+  --radius-card: 1rem;
+  --radius-pill: 9999px;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 5rem;
+  --page-gutter: 1.5rem;
+  --content-max: 1440px;
+  --nav-height: 4rem;
+  --duration-fast: 150ms;
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --color-background: #0a0a0a;
+  --color-foreground: #ffffff;
+  --color-surface: #1a1a1a;
+  --color-secondary: #202020;
+  --color-muted: #aaa8a4;
+  --color-success: #9bcaae;
+  --color-success-surface: #17271d;
+  --color-danger: #f1a4a0;
+  --color-danger-surface: #331d1d;
+  --color-warning: #dec18a;
+  --color-warning-surface: #302718;
+  --color-border: rgb(255 255 255 / 10%);
+  --color-border-strong: rgb(255 255 255 / 22%);
+  --color-primary: #ffffff;
+  --color-on-primary: #0a0a0a;
+}
+
+/* 中文标题保持完整行高；窄屏使用实测的移动端字号，并改为单列内容。 */
+@media (max-width: 700px) {
+  :root {
+    --page-gutter: 1rem;
+    --text-hero: 2.25rem;
+    --text-section: 2.25rem;
+  }
+}

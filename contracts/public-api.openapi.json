@@ -1,0 +1,991 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "ProofRun Case API",
+    "version": "0.1.0",
+    "description": "对外接收任务描述、待测入口和业务验收要求，并返回验证结果。环境、身份、预算及执行策略由平台管理。由共享 Schema 生成，请勿手改；详见 docs/public-api.md。"
+  },
+  "servers": [
+    { "url": "/", "description": "替换为部署方提供的控制面 origin。" }
+  ],
+  "security": [{ "AdminBearer": [] }],
+  "paths": {
+    "/v2/cases": {
+      "post": {
+        "operationId": "submitCasesV2",
+        "summary": "原子接收结构化 case 数组；每个对象是独立任务，内部串行",
+        "responses": {
+          "202": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/CaseResultV2" }
+                }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 32,
+                "items": { "$ref": "#/components/schemas/VerificationCaseV2" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/cases/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string" }
+        }
+      ],
+      "get": {
+        "operationId": "getCaseV2",
+        "summary": "读取步骤、验收与关联清理结果",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CaseResultV2" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v2/cases/{id}/cancel": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string" }
+        }
+      ],
+      "post": {
+        "operationId": "cancelCaseV2",
+        "summary": "取消主任务；已声明的副作用清理仍独立执行",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CaseResultV2" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v2/cases/{id}/evidence/{artifactId}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string" }
+        },
+        {
+          "name": "artifactId",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string" }
+        }
+      ],
+      "get": {
+        "operationId": "downloadCaseEvidenceV2",
+        "summary": "读取主任务或关联清理结果的证据",
+        "responses": {
+          "200": {
+            "description": "截图为 PNG，其他证据为 JSON。",
+            "content": {
+              "image/png": {
+                "schema": { "type": "string", "format": "binary" }
+              },
+              "application/json": {
+                "schema": { "type": "object", "additionalProperties": true }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/cases": {
+      "post": {
+        "operationId": "submitCase",
+        "summary": "幂等提交一次 case 验证",
+        "responses": {
+          "202": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CaseResult" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/VerificationCase" },
+              "example": {
+                "caseId": "notification-default-001",
+                "description": "验证通知设置中邮件通知的默认状态。只检查，不修改或保存。",
+                "url": "https://app.example.com/settings",
+                "steps": ["进入通知设置区域", "观察邮件通知开关，不点击开关"],
+                "acceptanceCriteria": [
+                  {
+                    "id": "email-enabled",
+                    "description": "在通知设置区域读取邮件通知开关状态。",
+                    "expectedResult": "邮件通知默认开启。"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/cases/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string" }
+        }
+      ],
+      "get": {
+        "operationId": "getCase",
+        "summary": "读取 case 状态和结果",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CaseResult" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/cases/{id}/cancel": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string" }
+        }
+      ],
+      "post": {
+        "operationId": "cancelCase",
+        "summary": "取消本次验证；已完成的业务操作不回滚",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CaseResult" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/cases/{id}/evidence/{artifactId}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string" }
+        },
+        {
+          "name": "artifactId",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string" }
+        }
+      ],
+      "get": {
+        "operationId": "downloadCaseEvidence",
+        "summary": "读取本 case 报告引用的证据",
+        "responses": {
+          "200": {
+            "description": "截图为 PNG，其他证据为 JSON。",
+            "content": {
+              "image/png": {
+                "schema": { "type": "string", "format": "binary" }
+              },
+              "application/json": {
+                "schema": { "type": "object", "additionalProperties": true }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "AdminBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "PROOFRUN_ADMIN_TOKEN；当前为全局管理员权限。"
+      }
+    },
+    "responses": {
+      "Error": {
+        "description": "应用错误；按 HTTP 状态和 code 处理，网关错误可能不是此结构。",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Error" }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "VerificationCase": {
+        "title": "VerificationCase",
+        "description": "上层定义的单次验证 case；环境、登录态、取证方式和预算由平台配置。",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["caseId", "description", "url", "acceptanceCriteria"],
+        "properties": {
+          "caseId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,100}$",
+            "description": "本次验证的幂等身份；再次执行使用新的身份。"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S",
+            "description": "完整任务描述：验证目标、业务背景、涉及对象及必要约束。"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^https?://",
+            "description": "本次验证的 HTTP(S) 入口地址，由调用方明确提供，必须能从执行节点访问。"
+          },
+          "steps": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 32,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S",
+              "maxLength": 2000
+            },
+            "description": "可选的必要业务步骤；不要求提供选择器或固定页面点击路径。"
+          },
+          "acceptanceCriteria": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "description", "expectedResult"],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "\\S",
+                  "description": "任务内唯一的验收项身份，结果通过 criterionId 对应。"
+                },
+                "description": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "\\S",
+                  "description": "检查对象、范围及必要观察时机。"
+                },
+                "expectedResult": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "\\S",
+                  "description": "可以据证据判断的预期业务结果。"
+                }
+              }
+            },
+            "description": "上层定义的完整业务验收项；缺少标准时不由平台自行补写。"
+          }
+        }
+      },
+      "CaseResult": {
+        "title": "CaseResult",
+        "description": "case 的执行状态和业务结果，不返回内部任务配置或节点信息。",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["caseId", "status", "result"],
+        "properties": {
+          "caseId": {
+            "type": "string",
+            "description": "原请求的本次验证身份。"
+          },
+          "status": {
+            "enum": [
+              "QUEUED",
+              "RUNNING",
+              "COMPLETED",
+              "CANCELLED",
+              "TIMED_OUT",
+              "ERROR"
+            ],
+            "description": "执行生命周期；COMPLETED 不直接表示业务通过。"
+          },
+          "result": {
+            "anyOf": [
+              { "type": "null" },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["outcome", "summary", "criteria", "evidence"],
+                "properties": {
+                  "outcome": {
+                    "enum": [
+                      "PASSED",
+                      "FAILED",
+                      "INCONCLUSIVE",
+                      "BLOCKED",
+                      "ERROR"
+                    ],
+                    "description": "整体业务结论；BLOCKED 和 ERROR 不表示产品失败。"
+                  },
+                  "summary": {
+                    "type": "string",
+                    "description": "基于本次证据的结果说明。"
+                  },
+                  "criteria": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "criterionId",
+                        "verdict",
+                        "summary",
+                        "evidenceRefs"
+                      ],
+                      "properties": {
+                        "criterionId": {
+                          "type": "string",
+                          "description": "对应原 acceptanceCriteria 中的 id。"
+                        },
+                        "verdict": {
+                          "enum": [
+                            "PASSED",
+                            "FAILED",
+                            "INCONCLUSIVE",
+                            "SKIPPED"
+                          ],
+                          "description": "逐项判断；未进行验收时为 SKIPPED。"
+                        },
+                        "summary": {
+                          "type": "string",
+                          "description": "该项结论及证据支持范围。"
+                        },
+                        "evidenceRefs": {
+                          "type": "array",
+                          "items": { "type": "string" },
+                          "description": "引用 evidence 数组中的证据身份。"
+                        }
+                      }
+                    },
+                    "description": "按原验收项身份返回逐项结论。"
+                  },
+                  "evidence": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["id", "kind", "url", "sha256"],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "description": "平台登记的证据身份。"
+                        },
+                        "kind": {
+                          "enum": ["DOM", "SCREENSHOT", "NETWORK", "TRACE"],
+                          "description": "证据媒介，由平台取证配置决定。"
+                        },
+                        "url": {
+                          "type": "string",
+                          "format": "uri",
+                          "description": "本控制面的 case 证据地址，下载需要相同凭据。"
+                        },
+                        "sha256": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$",
+                          "description": "原始下载字节的 SHA-256 小写十六进制摘要。"
+                        }
+                      }
+                    },
+                    "description": "报告引用的证据，下载范围限定于当前 case。"
+                  }
+                }
+              }
+            ],
+            "description": "已交付的业务结果；尚无报告时为 null，包括部分异常终态。"
+          }
+        }
+      },
+      "CaseStep": {
+        "title": "CaseStep",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "stepId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,80}$",
+            "description": "步骤身份；省略时按原始数组位置生成，排序不改变身份。"
+          },
+          "type": {
+            "enum": ["setup", "verification"],
+            "description": "setup 建立前置条件，verification 执行并验收业务结果。"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^https?://",
+            "description": "本步操作的 HTTP(S) 入口；纯等待保持当前页面。"
+          },
+          "exec_order": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000,
+            "description": "升序执行；同值按原数组顺序串行。"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S",
+            "maxLength": 2000,
+            "description": "上游定义的本步操作说明，不作为自由重排任务的授权。"
+          },
+          "policy": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S",
+              "maxLength": 2000
+            },
+            "description": "操作约束，保持原文；自然语言不等同于程序强制校验。"
+          },
+          "expected": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S",
+              "maxLength": 2000
+            },
+            "description": "本步骤的逐项验收标准；setup 可为空。"
+          },
+          "wait": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "durationMs": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 86400000
+              }
+            },
+            "required": ["durationMs"],
+            "description": "显式等待，不调用模型；持续占用会话并计入任务预算。"
+          }
+        },
+        "required": [
+          "type",
+          "url",
+          "exec_order",
+          "description",
+          "policy",
+          "expected"
+        ],
+        "allOf": [
+          {
+            "if": { "properties": { "type": { "const": "verification" } } },
+            "then": {
+              "properties": { "expected": { "minItems": 1, "type": "array" } }
+            }
+          }
+        ]
+      },
+      "StepResult": {
+        "title": "StepResult",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "stepId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,80}$",
+            "description": "对应规范化步骤的稳定身份。"
+          },
+          "status": {
+            "enum": [
+              "PENDING",
+              "RUNNING",
+              "COMPLETED",
+              "BLOCKED",
+              "ERROR",
+              "SKIPPED"
+            ],
+            "description": "执行生命周期，与 criteria 中的业务验收结论分开。"
+          },
+          "summary": {
+            "type": "string",
+            "description": "该步骤已观察事实或未完成原因。"
+          },
+          "evidenceRefs": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "type": "string" },
+            "description": "本步骤执行事实引用的控制面证据身份。"
+          },
+          "criteria": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["criterionId", "verdict", "summary", "evidenceRefs"],
+              "properties": {
+                "criterionId": { "type": "string", "minLength": 1 },
+                "verdict": {
+                  "enum": ["PASSED", "FAILED", "INCONCLUSIVE", "SKIPPED"]
+                },
+                "summary": { "type": "string", "minLength": 1 },
+                "evidenceRefs": {
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": { "type": "string", "minLength": 1 }
+                }
+              },
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "verdict": { "enum": ["PASSED", "FAILED"] }
+                    },
+                    "required": ["verdict"]
+                  },
+                  "then": {
+                    "properties": {
+                      "evidenceRefs": { "type": "array", "minItems": 1 }
+                    }
+                  }
+                }
+              ]
+            },
+            "description": "仅包含本步骤已执行的验收项，未执行步骤为空。"
+          },
+          "startedAt": {
+            "type": ["string", "null"],
+            "format": "date-time",
+            "description": "步骤开始时间；未开始为 null。"
+          },
+          "finishedAt": {
+            "type": ["string", "null"],
+            "format": "date-time",
+            "description": "步骤结束时间；未结束或无法确认时为 null。"
+          }
+        },
+        "required": [
+          "stepId",
+          "status",
+          "summary",
+          "evidenceRefs",
+          "criteria",
+          "startedAt",
+          "finishedAt"
+        ]
+      },
+      "VerificationCaseV2": {
+        "title": "VerificationCaseV2",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "caseId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,80}$",
+            "description": "本次任务的幂等身份；重跑必须使用新的身份。"
+          },
+          "platform": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S",
+            "maxLength": 2000,
+            "description": "业务平台标签，不用于自动选择登录账号。"
+          },
+          "entry": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^https?://",
+            "description": "任务所属站点的 HTTP(S) 入口。"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S",
+            "maxLength": 2000,
+            "description": "任务背景，省略时由平台生成不含额外验收标准的概述。"
+          },
+          "steps": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 32,
+            "items": { "$ref": "#/components/schemas/CaseStep" },
+            "contains": {
+              "type": "object",
+              "properties": { "type": { "const": "verification" } },
+              "required": ["type"]
+            },
+            "description": "上游定义的操作与验收步骤；服务端补齐身份后稳定排序。"
+          },
+          "cleanup": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "stepId": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,80}$"
+                },
+                "url": {
+                  "type": "string",
+                  "format": "uri",
+                  "pattern": "^https?://"
+                },
+                "exec_order": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000000,
+                  "description": "升序执行；同值按原数组顺序串行。"
+                },
+                "description": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "\\S",
+                  "maxLength": 2000
+                },
+                "policy": {
+                  "type": "array",
+                  "maxItems": 32,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "\\S",
+                    "maxLength": 2000
+                  }
+                },
+                "expected": {
+                  "type": "array",
+                  "maxItems": 32,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "\\S",
+                    "maxLength": 2000
+                  }
+                }
+              },
+              "required": ["url", "exec_order", "description"]
+            },
+            "description": "结束后独立执行的业务清理操作，不是浏览器资源回收。"
+          }
+        },
+        "required": ["caseId", "platform", "entry", "steps", "cleanup"]
+      },
+      "CaseResultV2": {
+        "title": "CaseResultV2",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "caseId": { "type": "string", "description": "原始请求的幂等身份。" },
+          "status": {
+            "enum": [
+              "QUEUED",
+              "RUNNING",
+              "COMPLETED",
+              "CANCELLED",
+              "TIMED_OUT",
+              "ERROR"
+            ],
+            "description": "执行生命周期；COMPLETED 不直接表示业务通过。"
+          },
+          "result": {
+            "anyOf": [
+              { "type": "null" },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["outcome", "summary", "criteria", "evidence"],
+                "properties": {
+                  "outcome": {
+                    "enum": [
+                      "PASSED",
+                      "FAILED",
+                      "INCONCLUSIVE",
+                      "BLOCKED",
+                      "ERROR"
+                    ],
+                    "description": "整体业务结论；BLOCKED 和 ERROR 不表示产品失败。"
+                  },
+                  "summary": {
+                    "type": "string",
+                    "description": "基于本次证据的结果说明。"
+                  },
+                  "criteria": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "criterionId",
+                        "verdict",
+                        "summary",
+                        "evidenceRefs"
+                      ],
+                      "properties": {
+                        "criterionId": {
+                          "type": "string",
+                          "description": "对应原 acceptanceCriteria 中的 id。"
+                        },
+                        "verdict": {
+                          "enum": [
+                            "PASSED",
+                            "FAILED",
+                            "INCONCLUSIVE",
+                            "SKIPPED"
+                          ],
+                          "description": "逐项判断；未进行验收时为 SKIPPED。"
+                        },
+                        "summary": {
+                          "type": "string",
+                          "description": "该项结论及证据支持范围。"
+                        },
+                        "evidenceRefs": {
+                          "type": "array",
+                          "items": { "type": "string" },
+                          "description": "引用 evidence 数组中的证据身份。"
+                        }
+                      }
+                    },
+                    "description": "按原验收项身份返回逐项结论。"
+                  },
+                  "evidence": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["id", "kind", "url", "sha256"],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "description": "平台登记的证据身份。"
+                        },
+                        "kind": {
+                          "enum": ["DOM", "SCREENSHOT", "NETWORK", "TRACE"],
+                          "description": "证据媒介，由平台取证配置决定。"
+                        },
+                        "url": {
+                          "type": "string",
+                          "format": "uri",
+                          "description": "本控制面的 case 证据地址，下载需要相同凭据。"
+                        },
+                        "sha256": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$",
+                          "description": "原始下载字节的 SHA-256 小写十六进制摘要。"
+                        }
+                      }
+                    },
+                    "description": "报告引用的证据，下载范围限定于当前 case。"
+                  }
+                }
+              }
+            ],
+            "description": "已交付的业务结果；尚无报告时为 null，包括部分异常终态。"
+          },
+          "steps": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/StepResult" },
+            "description": "按实际串行顺序返回各步骤进度，故障不抹掉已完成结论。"
+          },
+          "cleanup": {
+            "anyOf": [
+              { "type": "null" },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "taskId": { "type": "string" },
+                  "status": {
+                    "enum": [
+                      "PENDING",
+                      "QUEUED",
+                      "RUNNING",
+                      "COMPLETED",
+                      "CANCELLED",
+                      "TIMED_OUT",
+                      "ERROR",
+                      "SKIPPED"
+                    ]
+                  },
+                  "result": {
+                    "anyOf": [
+                      { "type": "null" },
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "outcome",
+                          "summary",
+                          "criteria",
+                          "evidence"
+                        ],
+                        "properties": {
+                          "outcome": {
+                            "enum": [
+                              "PASSED",
+                              "FAILED",
+                              "INCONCLUSIVE",
+                              "BLOCKED",
+                              "ERROR"
+                            ],
+                            "description": "整体业务结论；BLOCKED 和 ERROR 不表示产品失败。"
+                          },
+                          "summary": {
+                            "type": "string",
+                            "description": "基于本次证据的结果说明。"
+                          },
+                          "criteria": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "required": [
+                                "criterionId",
+                                "verdict",
+                                "summary",
+                                "evidenceRefs"
+                              ],
+                              "properties": {
+                                "criterionId": {
+                                  "type": "string",
+                                  "description": "对应原 acceptanceCriteria 中的 id。"
+                                },
+                                "verdict": {
+                                  "enum": [
+                                    "PASSED",
+                                    "FAILED",
+                                    "INCONCLUSIVE",
+                                    "SKIPPED"
+                                  ],
+                                  "description": "逐项判断；未进行验收时为 SKIPPED。"
+                                },
+                                "summary": {
+                                  "type": "string",
+                                  "description": "该项结论及证据支持范围。"
+                                },
+                                "evidenceRefs": {
+                                  "type": "array",
+                                  "items": { "type": "string" },
+                                  "description": "引用 evidence 数组中的证据身份。"
+                                }
+                              }
+                            },
+                            "description": "按原验收项身份返回逐项结论。"
+                          },
+                          "evidence": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "required": ["id", "kind", "url", "sha256"],
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "description": "平台登记的证据身份。"
+                                },
+                                "kind": {
+                                  "enum": [
+                                    "DOM",
+                                    "SCREENSHOT",
+                                    "NETWORK",
+                                    "TRACE"
+                                  ],
+                                  "description": "证据媒介，由平台取证配置决定。"
+                                },
+                                "url": {
+                                  "type": "string",
+                                  "format": "uri",
+                                  "description": "本控制面的 case 证据地址，下载需要相同凭据。"
+                                },
+                                "sha256": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$",
+                                  "description": "原始下载字节的 SHA-256 小写十六进制摘要。"
+                                }
+                              }
+                            },
+                            "description": "报告引用的证据，下载范围限定于当前 case。"
+                          }
+                        }
+                      }
+                    ],
+                    "description": "已交付的业务结果；尚无报告时为 null，包括部分异常终态。"
+                  }
+                },
+                "required": ["taskId", "status", "result"]
+              }
+            ],
+            "description": "独立业务清理任务的身份、状态与结果；没有清理定义时为 null。"
+          }
+        },
+        "required": ["caseId", "status", "result", "steps", "cleanup"]
+      },
+      "Error": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "message"],
+        "properties": {
+          "code": { "type": "string" },
+          "message": { "type": "string" }
+        }
+      }
+    }
+  }
+}

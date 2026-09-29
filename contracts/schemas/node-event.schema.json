@@ -1,0 +1,331 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "NodeEvent",
+  "description": "Browser Node 发往控制面的心跳、执行结果及可靠交付事件。",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "command.result"
+        },
+        "protocolVersion": {
+          "const": "0.1"
+        },
+        "messageId": {
+          "type": "string"
+        },
+        "commandId": {
+          "type": "string"
+        },
+        "sessionId": {
+          "type": "string"
+        },
+        "nodeId": {
+          "type": "string"
+        },
+        "nodeEpoch": {
+          "type": "string"
+        },
+        "leaseId": {
+          "type": "string"
+        },
+        "fence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "operationStatus": {
+          "description": "浏览器命令的执行状态；不代表验收项结论。",
+          "enum": ["SUCCEEDED", "FAILED", "UNKNOWN", "CANCELLED", "TIMED_OUT"]
+        },
+        "effect": {
+          "description": "命令对页面或业务系统产生效果的确定程度；MAY_HAVE_HAPPENED 不可盲目重试。",
+          "enum": ["NOT_STARTED", "COMPLETED", "MAY_HAVE_HAPPENED"]
+        },
+        "data": {
+          "type": "object"
+        },
+        "error": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": ["code", "message"]
+        }
+      },
+      "required": [
+        "type",
+        "protocolVersion",
+        "messageId",
+        "commandId",
+        "sessionId",
+        "nodeId",
+        "nodeEpoch",
+        "leaseId",
+        "fence",
+        "operationStatus",
+        "effect"
+      ],
+      "description": "已持久化的命令终态；控制面持久接收后按 messageId ACK。"
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "command.pending"
+        },
+        "protocolVersion": {
+          "const": "0.1"
+        },
+        "messageId": {
+          "type": "string"
+        },
+        "commandId": {
+          "type": "string"
+        },
+        "sessionId": {
+          "type": "string"
+        },
+        "nodeId": {
+          "type": "string"
+        },
+        "nodeEpoch": {
+          "type": "string"
+        },
+        "leaseId": {
+          "type": "string"
+        },
+        "fence": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "type",
+        "protocolVersion",
+        "messageId",
+        "commandId",
+        "sessionId",
+        "nodeId",
+        "nodeEpoch",
+        "leaseId",
+        "fence"
+      ],
+      "description": "相同 commandId 正在执行，节点不会再次派发浏览器动作。"
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "node.heartbeat"
+        },
+        "protocolVersion": {
+          "const": "0.1"
+        },
+        "nodeId": {
+          "type": "string"
+        },
+        "nodeEpoch": {
+          "type": "string"
+        },
+        "leaseRequestId": {
+          "description": "租约授权必须回带此 ID；租约时长从本心跳发出时计起。",
+          "type": "string"
+        },
+        "pool": {
+          "type": "string"
+        },
+        "capacity": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "occupied": {
+          "description": "本机仍占用容量的会话，包括关闭中和隔离状态。",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "sessionId": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string"
+              },
+              "leaseId": {
+                "type": "string"
+              },
+              "fence": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": ["sessionId", "state", "leaseId", "fence"]
+          }
+        },
+        "capabilities": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "observe": {
+              "type": "boolean"
+            },
+            "screenshot": {
+              "type": "boolean"
+            },
+            "conditionWait": {
+              "type": "boolean"
+            },
+            "writeActions": {
+              "description": "节点是否允许写动作；开发开关打开也不表示引擎写入语义已验证。",
+              "type": "boolean"
+            },
+            "engineWritesVerified": {
+              "description": "引擎在业务成功但响应丢失时的重试行为是否完成验证。",
+              "type": "boolean"
+            },
+            "networkEvidence": {
+              "type": "boolean"
+            },
+            "authState": {
+              "type": "boolean",
+              "description": "支持任务绑定的节点本地登录状态复用。"
+            },
+            "liveView": {
+              "type": "boolean"
+            },
+            "trace": {
+              "type": "boolean",
+              "description": "支持 Chromium trace 的采集、可靠上传和下载。"
+            }
+          },
+          "required": [
+            "observe",
+            "screenshot",
+            "conditionWait",
+            "writeActions",
+            "engineWritesVerified",
+            "networkEvidence"
+          ]
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "节点接受的租约和会话硬期限上限，控制面不得超额授权。",
+          "required": ["maxLeaseMs", "maxSessionMs"],
+          "properties": {
+            "maxLeaseMs": {
+              "type": "integer",
+              "minimum": 1000,
+              "maximum": 120000
+            },
+            "maxSessionMs": {
+              "type": "integer",
+              "minimum": 1000,
+              "maximum": 86400000
+            }
+          }
+        }
+      },
+      "required": [
+        "type",
+        "protocolVersion",
+        "nodeId",
+        "nodeEpoch",
+        "leaseRequestId",
+        "pool",
+        "capacity",
+        "occupied",
+        "capabilities",
+        "limits"
+      ],
+      "description": "节点当前身份、租约请求、容量占用和能力声明。"
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "protocol.error"
+        },
+        "code": {
+          "type": "string"
+        }
+      },
+      "required": ["type", "code"],
+      "description": "协议消息无效或节点暂时无法接收；不表示产品验收失败。"
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "artifact.available"
+        },
+        "messageId": {
+          "type": "string"
+        },
+        "artifactId": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string"
+        }
+      },
+      "required": ["type", "messageId", "artifactId", "sha256"],
+      "description": "截图已获得持久化存储回执，可以供报告引用。"
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "session.closed"
+        },
+        "messageId": {
+          "type": "string"
+        },
+        "sessionId": {
+          "type": "string"
+        },
+        "nodeEpoch": {
+          "type": "string"
+        },
+        "leaseId": {
+          "type": "string"
+        },
+        "fence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "state": {
+          "enum": ["CLOSED", "QUARANTINED"]
+        },
+        "closureVerified": {
+          "description": "只有 true 才表示进程资源已确认回收，容量可以释放。",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "messageId",
+        "sessionId",
+        "nodeEpoch",
+        "leaseId",
+        "fence",
+        "state",
+        "closureVerified"
+      ],
+      "description": "会话关闭或进入隔离；QUARANTINED 仍占用节点容量。"
+    }
+  ]
+}

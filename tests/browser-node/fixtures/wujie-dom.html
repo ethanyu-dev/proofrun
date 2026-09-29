@@ -1,0 +1,66 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>隔离上下文回归</title>
+<iframe id="sandbox" style="display: none"></iframe>
+<div id="delegate" aria-label="Delegated root">
+  <button>Top control</button>
+  <div id="host"></div>
+</div>
+<script>
+  // 范围：模拟 Wujie 隐藏沙箱与可见 Shadow DOM 的属性重写，不加载真实业务站点或完整 Wujie 框架。
+  const sandbox = document.querySelector('#sandbox').contentWindow;
+  const shadow = document
+    .querySelector('#host')
+    .attachShadow({ mode: 'closed' });
+  const body = sandbox.document.createElement('section');
+  body.setAttribute('role', 'form');
+  body.setAttribute('aria-label', 'Sandbox form');
+  body.innerHTML = `
+<style>button::after { content: ''; display: block; overflow: hidden; }</style>
+<label>Wujie name<input></label><button id="save">Wujie action</button>
+<select aria-label="Wujie select"><option value="a">Alpha</option><option value="b">Beta</option></select>
+<p role="status">Sandbox patch active</p>
+<div role="listbox" aria-label="Wujie choices" style="height:90px;width:240px;overflow:hidden;border:1px solid">
+${Array.from({ length: 15 }, (_, i) => `<button style="display:block;height:40px">Wujie choice ${i}</button>`).join('')}
+</div>
+<button style="opacity:0">Wujie transparent</button>
+<div aria-label="Clipped only" style="height:20px;width:240px;overflow:hidden"><div style="height:200px">Clipped content</div></div>
+<div inert><button>Wujie inert</button></div>
+<div aria-hidden="true"><button>Wujie aria hidden</button></div>
+<div onclick="this.textContent='Leaf clicked'">Wujie custom leaf</div>`;
+  shadow.appendChild(body);
+  // 主世界中的节点归属、根访问和几何方法均被改写，隔离上下文应读取浏览器真实布局与结构。
+  const originalRoot = sandbox.Node.prototype.getRootNode;
+  sandbox.Node.prototype.getRootNode = function (options) {
+    const root = originalRoot.call(this, options);
+    return root === shadow ? sandbox.document : root;
+  };
+  for (const element of [body, ...body.querySelectorAll('*')]) {
+    Object.defineProperty(element, 'ownerDocument', {
+      configurable: true,
+      get: () => sandbox.document,
+    });
+  }
+  body.querySelector('#save').getBoundingClientRect = () => {
+    throw new Error('page-world geometry trap');
+  };
+  // 模拟虚拟列表的真实 wheel 监听：CSS hidden 本身不意味着可用原生滚动。
+  const holder = body.querySelector('[aria-label="Wujie choices"]');
+  holder.addEventListener(
+    'wheel',
+    (event) => {
+      event.preventDefault();
+      holder.scrollTop += event.deltaY;
+    },
+    { passive: false },
+  );
+  body.querySelector('#save').onclick = () => {
+    body.querySelector('[role=status]').textContent =
+      'Wujie clicked ' + body.querySelector('input').value;
+  };
+  body.querySelector('select').onchange = () => {
+    body.querySelector('[role=status]').textContent =
+      'Wujie selected ' + body.querySelector('select').value;
+  };
+  document.querySelector('#delegate').addEventListener('click', () => {});
+</script>

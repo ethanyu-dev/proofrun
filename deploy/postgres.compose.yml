@@ -1,0 +1,19 @@
+# 本机开发数据库；密码从环境变量读取，服务仅暴露到回环地址。
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: proofrun
+      POSTGRES_DB: proofrun
+      POSTGRES_PASSWORD: ${PROOFRUN_POSTGRES_PASSWORD:?Set a local database password}
+    ports:
+      - '127.0.0.1:5432:5432'
+    volumes:
+      - proofrun-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U proofrun -d proofrun']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+volumes:
+  proofrun-postgres:

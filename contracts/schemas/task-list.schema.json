@@ -1,0 +1,72 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://proofrun.invalid/contracts/0.1/task-list.schema.json",
+  "title": "TaskList",
+  "type": "object",
+  "description": "管理员任务列表；按创建时间和身份倒序游标分页。",
+  "additionalProperties": false,
+  "required": ["tasks", "nextCursor"],
+  "properties": {
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "description": "列表摘要只包含展示字段，不返回完整报告和执行凭据。",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "objective",
+          "node_pool",
+          "target_url",
+          "state",
+          "created_at",
+          "finished_at",
+          "execution_disposition",
+          "verdict"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "objective": {
+            "type": "string"
+          },
+          "node_pool": {
+            "type": "string"
+          },
+          "target_url": {
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "QUEUED",
+              "RUNNING",
+              "COMPLETED",
+              "CANCELLED",
+              "TIMED_OUT",
+              "ERROR"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "finished_at": {
+            "type": ["string", "null"],
+            "format": "date-time"
+          },
+          "execution_disposition": {
+            "enum": ["EXECUTED", "BLOCKED", "ERROR", null]
+          },
+          "verdict": {
+            "enum": ["PASSED", "FAILED", "INCONCLUSIVE", null]
+          }
+        },
+        "title": "TaskSummary"
+      }
+    },
+    "nextCursor": {
+      "type": ["string", "null"]
+    }
+  }
+}

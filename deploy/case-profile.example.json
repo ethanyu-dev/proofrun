@@ -1,0 +1,14 @@
+{
+  "environment": {
+    "id": "staging-reviewer",
+    "nodePool": "internal",
+    "allowIntervention": true,
+    "reuseAuth": true
+  },
+  "budget": {
+    "timeoutMs": 300000,
+    "maxActions": 30
+  },
+  "executionMode": "llm",
+  "evidenceKinds": ["DOM"]
+}

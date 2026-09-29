@@ -1,0 +1,14 @@
+# Linux 用户服务配置，按目标 VM 调整绝对路径。
+home = "/var/lib/proofrun"
+gateway_url = "wss://proofrun.example.com/v1/nodes/connect"
+credential_file = "credential.json"
+pool = "internal"
+capacity = 2
+agent_browser_bin = "/opt/proofrun/bin/agent-browser"
+chrome_bin = "/usr/bin/google-chrome"
+max_lease_ms = 60000
+max_session_ms = 3600000
+artifact_limit_bytes = 268435456
+artifact_upload_url = "https://proofrun.example.com/v1/artifacts"
+# 仅供开发联调启用：节点去重不能证明引擎内部不会重试写入。
+allow_unverified_writes = false

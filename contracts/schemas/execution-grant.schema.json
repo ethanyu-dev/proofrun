@@ -1,0 +1,55 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ExecutionGrant",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "执行身份。"
+    },
+    "task": {
+      "$ref": "verification-task.schema.json",
+      "description": "上层提交的不可变定义。"
+    },
+    "leaseToken": {
+      "type": "string",
+      "minLength": 1,
+      "description": "仅本次执行可用的权限，不进入模型上下文。"
+    },
+    "leaseExpiresAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "当前 worker 权限期限。"
+    },
+    "taskDeadlineAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "包含排队时间的任务硬期限。"
+    },
+    "sessionId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "平台预留的会话。"
+    },
+    "nodeId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "平台选中的节点。"
+    },
+    "state": {
+      "const": "STARTING"
+    }
+  },
+  "required": [
+    "id",
+    "task",
+    "leaseToken",
+    "leaseExpiresAt",
+    "taskDeadlineAt",
+    "sessionId",
+    "nodeId",
+    "state"
+  ]
+}

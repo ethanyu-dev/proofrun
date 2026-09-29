@@ -1,0 +1,43 @@
+[
+  {
+    "caseId": "member-name-present-001",
+    "platform": "Novita 官网",
+    "entry": "https://app.example.test",
+    "description": "验证成员名称在账单页面中的展示。此地址为协议示例，提交前替换为可达的测试站点。",
+    "steps": [
+      {
+        "type": "setup",
+        "url": "https://app.example.test/user/login",
+        "exec_order": 1,
+        "description": "登录平台预配置的 team admin 测试账号",
+        "policy": [],
+        "expected": []
+      },
+      {
+        "type": "setup",
+        "url": "https://app.example.test/settings/team",
+        "exec_order": 2,
+        "description": "将当前测试账号的 Team Member 名称修改为 E2E Test User",
+        "policy": ["只修改当前测试账号，不修改其他成员"],
+        "expected": ["当前成员名称为 E2E Test User"]
+      },
+      {
+        "type": "verification",
+        "url": "https://app.example.test/billing/details",
+        "exec_order": 3,
+        "description": "进入 Aggregated Billing 的 By API Key 子页签，观察已知测试账单的 Member Name 列",
+        "policy": [],
+        "expected": ["该测试成员的账单信息包含名称 E2E Test User"]
+      }
+    ],
+    "cleanup": [
+      {
+        "url": "https://app.example.test/settings/team",
+        "exec_order": 1,
+        "description": "将当前测试账号的 Team Member 名称恢复为上游确认的基线值 Fixture Member",
+        "policy": ["仅操作当前测试账号"],
+        "expected": ["当前成员名称为 Fixture Member"]
+      }
+    ]
+  }
+]

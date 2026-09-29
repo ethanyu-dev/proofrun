@@ -1,0 +1,213 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AgentDecision",
+  "description": "模型提出的单步浏览器意图或逐项验收结果；平台补充身份并检查证据。",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "browser.observe"
+        },
+        "screenshot": {
+          "description": "是否同时采集 PNG 截图；截图与 DOM 来自不同时间点。",
+          "type": "boolean"
+        }
+      },
+      "required": ["type"],
+      "description": "采集页面事实，返回新的 observationId 和该次观察范围内的元素目标。"
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "browser.act"
+        },
+        "action": {
+          "description": "受限的浏览器动作；任一动作都可能产生业务副作用。",
+          "enum": [
+            "navigate",
+            "click",
+            "fill",
+            "press",
+            "scroll",
+            "hover",
+            "check",
+            "uncheck",
+            "select",
+            "type",
+            "back",
+            "forward",
+            "reload",
+            "frame",
+            "tab.new",
+            "tab.switch",
+            "tab.close",
+            "resize",
+            "visual.click"
+          ]
+        },
+        "target": {
+          "description": "导航为 HTTP(S) URL；元素动作为当前观察 target；frame 为 iframe target 或 main；tab.switch/close 为已观察 tabId。",
+          "type": "string"
+        },
+        "value": {
+          "description": "填写/输入/选择的值、按键、滚动方向或 resize 的 WIDTHxHEIGHT。",
+          "type": "string"
+        },
+        "x": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 16384,
+          "description": "visual.click 使用当前截图的视口 CSS 坐标。"
+        },
+        "y": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 16384,
+          "description": "visual.click 使用当前截图的视口 CSS 坐标。"
+        }
+      },
+      "required": ["type", "action"],
+      "description": "执行一次浏览器动作。生产环境默认关闭，直到引擎丢响应后的写入行为得到验证。"
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "browser.wait"
+        },
+        "selector": {
+          "description": "要匹配的 CSS 选择器；逐层搜索 open Shadow DOM 及同源 iframe。",
+          "type": "string"
+        },
+        "text": {
+          "description": "目标元素文本中必须包含的字符串。",
+          "type": "string"
+        }
+      },
+      "required": ["type", "selector", "text"],
+      "description": "等待一个明确的选择器及文本条件成立。"
+    },
+    {
+      "title": "FinishVerification",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "verification.finish"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "description": "基于已取得证据解释本次验收结论。"
+        },
+        "criteria": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["criterionId", "verdict", "summary", "evidenceRefs"],
+            "properties": {
+              "criterionId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "verdict": {
+                "enum": ["PASSED", "FAILED", "INCONCLUSIVE", "SKIPPED"]
+              },
+              "summary": {
+                "type": "string",
+                "minLength": 1
+              },
+              "evidenceRefs": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "verdict": {
+                      "enum": ["PASSED", "FAILED"]
+                    }
+                  },
+                  "required": ["verdict"]
+                },
+                "then": {
+                  "properties": {
+                    "evidenceRefs": {
+                      "type": "array",
+                      "minItems": 1
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "evidenceRefs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "结构化步骤完成的执行证据，setup 无验收项时也必须提供。"
+        }
+      },
+      "required": ["type", "summary", "criteria"]
+    },
+    {
+      "title": "BlockVerification",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "verification.block"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "description": "具体缺失的前提或定义，交由上层修正；不改写标准。"
+        }
+      },
+      "required": ["type", "summary"]
+    },
+    {
+      "title": "RequestHumanAssistance",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "verification.intervene"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "description": "本次人工需要处理的事项，不替代原验收标准。"
+        }
+      },
+      "required": ["type", "reason"]
+    }
+  ]
+}

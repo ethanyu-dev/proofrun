@@ -1,0 +1,15 @@
+[Unit]
+Description=ProofRun browser node supervisor
+
+[Service]
+Type=exec
+ExecStart=/opt/proofrun/bin/proofrun-node --config /etc/proofrun/node.toml serve
+Environment=RUST_LOG=proofrun_node=info
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+KillMode=control-group
+UMask=0077
+
+[Install]
+WantedBy=default.target

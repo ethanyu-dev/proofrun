@@ -1,0 +1,46 @@
+{
+  "name": "proofrun",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.30.2",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "contracts:generate": "node scripts/generate-contracts.mjs",
+    "contracts:check": "node scripts/generate-contracts.mjs --check",
+    "build": "pnpm contracts:generate && pnpm --filter @proofrun/contracts build && pnpm --filter './apps/*' -r build && cargo build --locked --workspace",
+    "typecheck": "pnpm --filter @proofrun/contracts build && pnpm --filter './apps/*' -r typecheck",
+    "test:contracts": "pnpm --filter @proofrun/contracts build && node --test tests/contracts/*.test.mjs",
+    "check": "pnpm contracts:check && pnpm format:check && pnpm typecheck && pnpm test:contracts && pnpm test:agent && pnpm test:console && cargo fmt --all -- --check && cargo test --locked --workspace",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "dev:api": "pnpm --filter @proofrun/contracts build && pnpm --filter @proofrun/api dev",
+    "dev:console": "pnpm --filter @proofrun/console dev",
+    "validate:task": "pnpm --filter @proofrun/contracts build && tsx apps/agent/src/main.ts validate",
+    "node:doctor": "cargo run --locked -p proofrun-node -- doctor",
+    "dev:node:browser": "cargo build --locked -p proofrun-node && node tests/browser-node/debug-ui/server.mjs",
+    "test:node": "cargo test --locked -p proofrun-node",
+    "test:node:linux": "bash tests/browser-node/run-linux.sh",
+    "test:api": "pnpm --filter @proofrun/contracts build && pnpm --filter @proofrun/api test",
+    "test:control-plane:linux": "bash tests/control-plane/run-linux.sh",
+    "test:agent": "pnpm --filter @proofrun/contracts build && pnpm --filter @proofrun/agent build && node --test tests/agent/execution.test.mjs",
+    "test:jev": "node --env-file-if-exists=.proofrun/local.env scripts/test-jev.mjs",
+    "test:jev:compare": "node --env-file-if-exists=.proofrun/local.env scripts/compare-jev.mjs",
+    "test:jev:agent-baseline": "pnpm --filter @proofrun/agent build && node --env-file-if-exists=.proofrun/local.env scripts/replay-agent-baseline.mjs",
+    "test:agent:integration": "pnpm --filter @proofrun/contracts build && pnpm --filter @proofrun/api build && pnpm --filter @proofrun/agent build && tsx --test tests/agent/integration.test.mjs",
+    "dev:agent": "pnpm --filter @proofrun/contracts build && tsx apps/agent/src/main.ts serve",
+    "test:agent:linux": "PROOFRUN_TEST_REAL_AGENT=true bash tests/control-plane/run-linux.sh",
+    "test:console": "tsx --tsconfig apps/console/tsconfig.json --test tests/console/*.test.ts",
+    "maintenance:api": "tsx apps/api/src/maintenance.ts",
+    "accept:task": "pnpm --filter @proofrun/contracts build && node scripts/accept-task.mjs",
+    "test:hitl:linux": "PROOFRUN_TEST_REAL_AGENT=true PROOFRUN_TEST_HITL=true bash tests/control-plane/run-linux.sh"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.6",
+    "json-schema-to-typescript": "16.0.0",
+    "prettier": "3.9.9",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3"
+  }
+}

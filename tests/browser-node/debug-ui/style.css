@@ -1,0 +1,190 @@
+:root {
+  color-scheme: light;
+  font-family:
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
+  color: #1f2937;
+  background: #f5f7fa;
+}
+
+body {
+  margin: 0;
+}
+
+main {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+header,
+section {
+  margin-bottom: 16px;
+  padding: 16px;
+  border: 1px solid #d7dee7;
+  border-radius: 8px;
+  background: #fff;
+}
+
+h1,
+h2,
+h3 {
+  margin-top: 0;
+}
+
+h1 {
+  font-size: 24px;
+}
+
+h2 {
+  font-size: 18px;
+}
+
+h3 {
+  font-size: 14px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+label {
+  font-weight: 600;
+}
+
+input,
+select,
+button {
+  font: inherit;
+  padding: 7px 10px;
+}
+
+input,
+select {
+  border: 1px solid #aeb9c8;
+  border-radius: 4px;
+}
+
+#url {
+  flex: 1 1 420px;
+}
+
+#target {
+  min-width: 280px;
+  max-width: 100%;
+}
+
+#input-value {
+  flex: 1 1 260px;
+}
+
+button {
+  border: 1px solid #2563eb;
+  border-radius: 4px;
+  background: #2563eb;
+  color: #fff;
+  cursor: pointer;
+}
+
+button:disabled {
+  border-color: #b8c2d0;
+  background: #d9e0e9;
+  color: #5c6673;
+  cursor: not-allowed;
+}
+
+#close,
+#clear-log {
+  border-color: #aeb9c8;
+  background: #fff;
+  color: #1f2937;
+}
+
+#status {
+  font-weight: 600;
+}
+
+#status.error {
+  color: #b42318;
+}
+
+.hint {
+  color: #5c6673;
+  font-size: 13px;
+}
+
+.panels {
+  display: grid;
+  grid-template-columns: minmax(320px, 1fr) minmax(320px, 1fr);
+  gap: 16px;
+}
+
+.panels > div {
+  min-width: 0;
+}
+
+pre {
+  overflow: auto;
+  max-height: 500px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid #e1e6ed;
+  border-radius: 4px;
+  background: #f8fafc;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+#preview {
+  display: block;
+  max-width: 100%;
+  border: 1px solid #e1e6ed;
+}
+
+#preview[hidden] {
+  display: none;
+}
+
+.section-heading {
+  justify-content: space-between;
+}
+
+.section-heading h2 {
+  margin: 0;
+}
+
+#debug-log {
+  display: grid;
+  gap: 8px;
+  max-height: 560px;
+  overflow: auto;
+}
+
+#debug-log details {
+  border: 1px solid #e1e6ed;
+  border-radius: 4px;
+  padding: 8px;
+}
+
+#debug-log summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+#debug-log pre {
+  margin-top: 8px;
+  max-height: 260px;
+}
+
+@media (max-width: 800px) {
+  .panels {
+    grid-template-columns: 1fr;
+  }
+}

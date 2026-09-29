@@ -1,0 +1,89 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://proofrun.invalid/contracts/0.1/node-list.schema.json",
+  "title": "NodeList",
+  "type": "object",
+  "description": "管理员节点视图，不包含机器凭据和凭据摘要。",
+  "additionalProperties": false,
+  "required": ["nodes"],
+  "properties": {
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "description": "容量占用取节点上报与控制面未确认关闭会话的并集。",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "pool",
+          "node_epoch",
+          "capacity",
+          "capabilities",
+          "inventory",
+          "last_seen_at",
+          "revoked_at",
+          "online",
+          "occupied",
+          "routing_domains",
+          "routing_revision"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "pool": {
+            "type": "string"
+          },
+          "node_epoch": {
+            "type": ["string", "null"]
+          },
+          "capacity": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "capabilities": {
+            "type": "object"
+          },
+          "inventory": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "last_seen_at": {
+            "type": ["string", "null"],
+            "format": "date-time"
+          },
+          "revoked_at": {
+            "type": ["string", "null"],
+            "format": "date-time"
+          },
+          "online": {
+            "type": "boolean"
+          },
+          "occupied": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "routing_domains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "当前节点在其资源池内绑定的完整域名。"
+          },
+          "routing_revision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "域名配置编辑版本。"
+          }
+        },
+        "title": "NodeSummary"
+      }
+    }
+  }
+}

@@ -1,0 +1,13 @@
+node_modules/
+dist/
+target/
+coverage/
+.env
+.env.*
+!.env.example
+.proofrun/
+artifacts/
+*.log
+.DS_Store
+__pycache__/
+*.pyc

@@ -1,0 +1,13 @@
+{
+  "caseId": "notification-default-001",
+  "description": "验证通知设置中邮件通知的默认状态。只检查，不修改或保存。",
+  "url": "https://app.example.com/settings",
+  "steps": ["进入通知设置区域", "观察邮件通知开关，不点击开关"],
+  "acceptanceCriteria": [
+    {
+      "id": "email-enabled",
+      "description": "在通知设置区域读取邮件通知开关状态。",
+      "expectedResult": "邮件通知默认开启。"
+    }
+  ]
+}

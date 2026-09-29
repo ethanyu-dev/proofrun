@@ -1,0 +1,18 @@
+[Unit]
+Description=ProofRun control plane
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/proofrun
+EnvironmentFile=/etc/proofrun/api.env
+ExecStart=/usr/bin/node /opt/proofrun/apps/api/dist/main.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,195 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ControlRequest",
+  "description": "控制面 HTTP 写入请求；凭据通过 Authorization 传递，执行身份由服务端生成。",
+  "oneOf": [
+    {
+      "title": "EnrollNode",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "node.enroll",
+          "description": "固定请求种类，不允许混用其他操作字段。"
+        },
+        "pool": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "description": "注册绑定的内网资源池；节点心跳必须与此一致。"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "管理员识别节点的显示名称。"
+        }
+      },
+      "required": ["type", "pool", "name"]
+    },
+    {
+      "title": "PairNode",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "node.pair",
+          "description": "固定请求种类，不允许混用其他操作字段。"
+        },
+        "nodeId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "description": "节点本机持久化的安装身份，不能覆盖已注册身份。"
+        },
+        "pool": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "description": "注册绑定的内网资源池；节点心跳必须与此一致。"
+        },
+        "pairingToken": {
+          "type": "string",
+          "minLength": 32,
+          "maxLength": 256,
+          "description": "管理员签发的一次性配对码，成功使用后失效。"
+        }
+      },
+      "required": ["type", "nodeId", "pool", "pairingToken"]
+    },
+    {
+      "title": "ClaimExecution",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "worker.claim",
+          "description": "固定请求种类，不允许混用其他操作字段。"
+        },
+        "workerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "description": "领取任务的执行进程标识；不作为鉴权凭据。"
+        },
+        "structuredSteps": {
+          "type": "boolean",
+          "description": "worker 支持结构化步骤、等待和逐步结果；旧 worker 不得领取新版任务。"
+        }
+      },
+      "required": ["type", "workerId"]
+    },
+    {
+      "title": "SubmitBrowserCommand",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "execution.command",
+          "description": "固定请求种类，不允许混用其他操作字段。"
+        },
+        "commandId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "description": "业务命令幂等键；重试必须沿用相同 ID 和完整内容。"
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 120000,
+          "description": "包含控制面等待时间的最长命令预算，单位毫秒。"
+        },
+        "command": {
+          "$ref": "node-command.schema.json#/properties/command",
+          "description": "复用节点命令结构；领域层仅允许 worker 提交 browser.* 操作。"
+        },
+        "controlRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647,
+          "description": "人工控制代次；旧页面和旧模型决定不能操作恢复后的会话。"
+        }
+      },
+      "required": ["type", "commandId", "timeoutMs", "command"]
+    },
+    {
+      "title": "CompleteExecution",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "execution.complete",
+          "description": "固定请求种类，不允许混用其他操作字段。"
+        },
+        "report": {
+          "$ref": "verification-report.schema.json",
+          "description": "执行者按原验收标准提交的结果；控制面验证覆盖、聚合与证据归属。"
+        },
+        "controlRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647,
+          "description": "人工控制代次；旧页面和旧模型决定不能操作恢复后的会话。"
+        }
+      },
+      "required": ["type", "report"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "execution.intervene"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "controlRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647,
+          "description": "人工控制代次；旧页面和旧模型决定不能操作恢复后的会话。"
+        },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "description": "本次人工需要处理的事项，不替代原验收标准。"
+        }
+      },
+      "required": ["type", "reason"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "execution.control"
+        },
+        "action": {
+          "enum": ["acknowledge", "resume"]
+        },
+        "controlRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647,
+          "description": "人工控制代次；旧页面和旧模型决定不能操作恢复后的会话。"
+        }
+      },
+      "required": ["type", "action", "controlRevision"]
+    }
+  ]
+}

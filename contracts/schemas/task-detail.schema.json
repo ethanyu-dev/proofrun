@@ -1,0 +1,175 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://proofrun.invalid/contracts/0.1/task-detail.schema.json",
+  "title": "TaskDetail",
+  "type": "object",
+  "description": "管理员任务详情；不返回执行令牌、凭据摘要或节点授权。",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "definition",
+    "state",
+    "deadline_at",
+    "report",
+    "error",
+    "created_at",
+    "finished_at",
+    "executions",
+    "archived_at"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "definition": {
+      "$ref": "verification-task.schema.json"
+    },
+    "state": {
+      "enum": [
+        "QUEUED",
+        "RUNNING",
+        "COMPLETED",
+        "CANCELLED",
+        "TIMED_OUT",
+        "ERROR"
+      ]
+    },
+    "deadline_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "report": {
+      "anyOf": [
+        {
+          "$ref": "verification-report.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "error": {
+      "type": ["object", "null"]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "finished_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "executions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "description": "执行终态与浏览器关闭确认独立；不得据任务完成推断容量已释放。",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "worker_id",
+          "state",
+          "lease_expires_at",
+          "session_id",
+          "node_id",
+          "session_state",
+          "closure_verified",
+          "action_count",
+          "control_mode",
+          "control_revision",
+          "control_reason"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "worker_id": {
+            "type": "string"
+          },
+          "state": {
+            "enum": ["STARTING", "RUNNING", "STOPPING", "FINISHED"]
+          },
+          "lease_expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "session_state": {
+            "enum": ["OPENING", "ACTIVE", "CLOSING", "CLOSED", "QUARANTINED"]
+          },
+          "closure_verified": {
+            "type": "boolean"
+          },
+          "action_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "control_mode": {
+            "enum": ["AUTO", "REQUESTED", "HUMAN"]
+          },
+          "control_revision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2147483647,
+            "description": "人工控制代次；旧页面和旧模型决定不能操作恢复后的会话。"
+          },
+          "control_reason": {
+            "type": ["string", "null"]
+          }
+        }
+      }
+    },
+    "archived_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "证据内容已按保留策略清理；报告结论和身份仍保留。"
+    },
+    "stepResults": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "step-result.schema.json"
+          }
+        }
+      ]
+    },
+    "businessCleanup": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["taskId", "status"],
+          "properties": {
+            "taskId": {
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "PENDING",
+                "QUEUED",
+                "SKIPPED",
+                "RUNNING",
+                "COMPLETED",
+                "CANCELLED",
+                "TIMED_OUT",
+                "ERROR"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

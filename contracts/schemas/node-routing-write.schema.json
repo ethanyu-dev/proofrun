@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://proofrun.invalid/contracts/0.1/node-routing-write.schema.json",
+  "title": "NodeRoutingWrite",
+  "description": "节点域名绑定的完整替换；空列表解除绑定，版本防止覆盖他人修改。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["domains", "revision"],
+  "properties": {
+    "domains": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 253
+      },
+      "description": "完整域名精确匹配；同一资源池内唯一。"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2147483646,
+      "description": "读取节点时得到的配置版本。"
+    }
+  }
+}

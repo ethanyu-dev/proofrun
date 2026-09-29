@@ -1,0 +1,24 @@
+{
+  "protocolVersion": "0.1",
+  "taskId": "example-basic-form",
+  "objective": "验证订单表单能保存指定姓名与数量。",
+  "environment": {
+    "id": "local-fixture",
+    "nodePool": "local"
+  },
+  "target": {
+    "url": "http://127.0.0.1:8080/form"
+  },
+  "acceptanceCriteria": [
+    {
+      "id": "order-saved",
+      "description": "填写 Ada 和数量 2 后提交一次。",
+      "expectedResult": "页面显示保存成功；服务端仅收到一次内容相符的订单。",
+      "evidenceKinds": ["DOM", "NETWORK"]
+    }
+  ],
+  "budget": {
+    "timeoutMs": 60000,
+    "maxActions": 20
+  }
+}

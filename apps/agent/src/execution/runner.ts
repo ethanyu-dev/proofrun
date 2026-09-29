@@ -1,0 +1,1217 @@
+import { randomUUID } from 'node:crypto';
+import {
+  validateAgentDecision,
+  validateVerificationReport,
+  type AgentDecision,
+  type ExecutionGrant,
+  type VerificationReport,
+  type VerificationTask,
+  type StepResult,
+} from '@proofrun/contracts';
+import type { AgentConfig } from '../config.js';
+import type { BrowserOperation, ControlClient } from '../client.js';
+import type { DecisionInput, DecisionModel } from '../model/chat.js';
+import {
+  available,
+  observation,
+  type Observation,
+} from '../evidence/observation.js';
+import { AgentFault, pause, transient } from '../http.js';
+import { LeaseGuard } from './lease.js';
+import { Workflow } from './workflow.js';
+import { evidenceExcerpt } from '../model/jev-progress.js';
+import {
+  ObservationTracker,
+  STALLED_ROUNDS,
+  CYCLIC_VISITS,
+  type ObservationChanges,
+} from '../evidence/changes.js';
+
+/** 连续格式错误或暂时模型故障至多修复三次，且计入总模型轮数。 */
+const MAX_DECISION_ERRORS = 3;
+/** 任务进度不足有独立恢复额度，不归类为模型格式错误。 */
+const MAX_WORKFLOW_RECOVERIES = 3;
+/** 证据上传与浏览器状态轮询不会占用新的模型调用。 */
+const POLL_MS = 150;
+/** 导航后只有外壳菜单时最多补采两次，不把无关导航交给模型猜测；不是业务就绪保证。 */
+const SHELL_RETRIES = 2;
+const SHELL_WAIT_MS = 300;
+/** 只将近期操作和证据摘要放入上下文，完整事实保留在控制面。 */
+const HISTORY_LIMIT = 8;
+const EVIDENCE_LIMIT = 24;
+/** 跨栏目保留最近页面正文；旧元素身份只供阅读，永远不能成为当前动作目标。 */
+const OBSERVATION_HISTORY_LIMIT = 8;
+const OBSERVATION_HISTORY_CHARS = 20_000;
+/** 历史正文中的引擎元素编号会被复用，移除它们以免误指向当前页面中的另一元素。 */
+const HISTORICAL_TARGET = /\s*\[target=[^\]]+\]|\bref=[^,\]\s]+/g;
+
+/** 用显式端口测试编排规则，不将模型供应商或传输细节混入执行状态。 */
+export type ExecutionClient = Pick<
+  ControlClient,
+  | 'view'
+  | 'heartbeat'
+  | 'command'
+  | 'image'
+  | 'complete'
+  | 'intervene'
+  | 'acknowledge'
+  | 'recordModelCall'
+  | 'recordSteps'
+>;
+
+/** 一个领取结果对应一个执行器；实例不复用，也不恢复已经失去租约的动作。 */
+class Execution {
+  /** 本地只保留当前观察和有界历史，完整命令与证据由控制面持久化。 */
+  private readonly started = performance.now();
+  private readonly guard: LeaseGuard;
+  private readonly evidence = new Map<
+    string,
+    VerificationReport['artifacts'][number]
+  >();
+  private readonly history: Array<{
+    commandId: string;
+    operation: BrowserOperation['type'];
+    action?: string;
+    targetName?: string;
+    value?: string;
+    operationStatus: string;
+    effect: string;
+  }> = [];
+  private readonly details: NonNullable<VerificationReport['executionDetails']>;
+  /** 初始导航成功后不因人工切换重放，观察可单独作废。 */
+  private navigated = false;
+  /** 每次导航只执行一次有界外壳等待，不在普通决策轮反复等待。 */
+  private settlePending = true;
+  /** TRACE 由执行器按验收需求采集，模型不能指定路径或伪造文件身份。 */
+  private traceStarted = false;
+  private current: Observation | undefined;
+  /** 比较原始观察，不因模型重规划或暂时遮挡重置。 */
+  private readonly tracker = new ObservationTracker();
+  private changes: ObservationChanges | undefined;
+  /** 历史证据保留来源及裁剪标记，避免切换栏目后只剩无法解读的证据编号。 */
+  private readonly previousObservations: Array<{
+    observationId: string;
+    url: string;
+    title: string;
+    text: string;
+    artifactRefs: Observation['artifactRefs'];
+    truncated: boolean;
+  }> = [];
+  private image: string | undefined;
+  private feedback: string | null = null;
+  /** 人工介入后旧模型回复与旧观察均失效。 */
+  private controlRevision = 0;
+  /** 决策轮次与模型调用次数分开，混合策略可以在同一轮派发多个供应商请求。 */
+  private decisionIndex = 0;
+  /** 原任务阶段和恢复计划由所有决策模式共享。 */
+  private workflow: Workflow;
+  /** 结构化步骤共享总预算和租约，每步只向模型开放当前操作与标准。 */
+  private stepIndex = 0;
+  /** 逐步进度快照只由执行器推进，完成后不可再改写。 */
+  private stepResults: StepResult[] = [];
+  /** 当前步骤开始前的证据集合，防止旧观察被冒充为本步执行。 */
+  private stepEvidence = new Set<string>();
+  /** 当前完成决定明确引用的本步证据。 */
+  private completionEvidence: string[] = [];
+  /** 面向模型的局部定义，原始任务快照始终保持不变。 */
+  private currentTask: VerificationTask | undefined;
+  /** 最终交付与人工交接冲突时只重交报告，不重复执行已完成操作。 */
+  private sequenceOutcome: VerificationReport | undefined;
+
+  /** 当前步骤的模型视图不包含后续步骤和清理指令，避免模型抢跑。 */
+  private get task(): VerificationTask {
+    return this.currentTask ?? this.grant.task;
+  }
+
+  constructor(
+    private readonly config: AgentConfig,
+    private readonly client: ExecutionClient,
+    private readonly model: DecisionModel,
+    private readonly grant: ExecutionGrant,
+    stop: AbortSignal,
+  ) {
+    this.guard = new LeaseGuard(client, grant, stop);
+    this.workflow = new Workflow(grant.task.objective);
+    this.stepResults = (grant.task.steps ?? []).map((step) => ({
+      stepId: step.stepId!,
+      status: 'PENDING',
+      summary: '尚未执行',
+      evidenceRefs: [],
+      criteria: [],
+      startedAt: null,
+      finishedAt: null,
+    }));
+    this.details = {
+      reasonCode: null,
+      model: config.model,
+      modelCalls: 0,
+      actions: 0,
+      elapsedMs: 0,
+      commandIds: [],
+      promptTokens: 0,
+      completionTokens: 0,
+      modelUsage: [],
+    };
+  }
+  /** 异常报告不包含原始模型响应、认证信息或 fetch 的完整错误文本。 */
+  private failure(error: unknown): VerificationReport {
+    const fault =
+      error instanceof AgentFault
+        ? error
+        : new AgentFault('AGENT_ERROR', '执行器发生异常，未得出业务验收结论');
+    return this.report(
+      'ERROR',
+      fault.message,
+      this.task.acceptanceCriteria.map((c) => ({
+        criterionId: c.id,
+        verdict: 'SKIPPED',
+        summary: '执行未能完成验收',
+        evidenceRefs: [],
+      })),
+      fault.code,
+    );
+  }
+  /** 故障与阻塞没有产品判定，执行结果按逐项结论聚合。 */
+  private report(
+    disposition: VerificationReport['executionDisposition'],
+    summary: string,
+    criteria: VerificationReport['criteria'],
+    code: string | null,
+  ): VerificationReport {
+    const verdict =
+      disposition !== 'EXECUTED'
+        ? null
+        : criteria.some((c) => c.verdict === 'FAILED')
+          ? 'FAILED'
+          : criteria.every((c) => c.verdict === 'PASSED')
+            ? 'PASSED'
+            : 'INCONCLUSIVE';
+    return {
+      protocolVersion: '0.1',
+      taskId: this.grant.task.taskId,
+      lifecycle: 'COMPLETED',
+      executionDisposition: disposition,
+      verdict,
+      summary,
+      criteria,
+      artifacts: [...this.evidence.values()],
+      executionDetails: {
+        ...this.details,
+        commandIds: [...this.details.commandIds],
+        reasonCode: code,
+        elapsedMs: Math.round(performance.now() - this.started),
+      },
+    };
+  }
+  /** 定义或能力不足交还上层，未验收的标准仍逐项列出。 */
+  private blocked(summary: string, code: string): VerificationReport {
+    return this.report(
+      'BLOCKED',
+      summary,
+      this.task.acceptanceCriteria.map((c) => ({
+        criterionId: c.id,
+        verdict: 'SKIPPED',
+        summary,
+        evidenceRefs: [],
+      })),
+      code,
+    );
+  }
+  /** 所有动作都串行提交，命令身份只生成一次；未知效果直接结束。 */
+  private async command(operation: BrowserOperation) {
+    this.guard.signal.throwIfAborted();
+    if (operation.type === 'browser.act') {
+      if (this.details.actions >= this.grant.task.budget.maxActions)
+        throw new AgentFault('ACTION_BUDGET_EXCEEDED', '浏览器动作预算已耗尽');
+      this.details.actions++;
+    }
+    const id = randomUUID();
+    this.details.commandIds.push(id);
+    const result = await this.client
+      .command(
+        this.grant,
+        id,
+        operation,
+        Math.max(
+          1,
+          Math.floor(Math.min(this.config.commandMs, this.guard.remaining())),
+        ),
+        this.guard.signal,
+        this.controlRevision,
+      )
+      .catch((error: unknown) => {
+        if (
+          error instanceof AgentFault &&
+          error.code === 'CONTROL_CHANGED' &&
+          operation.type === 'browser.act'
+        )
+          this.details.actions--;
+        throw error;
+      });
+    this.history.push({
+      commandId: id,
+      operation: operation.type,
+      ...(operation.type === 'browser.act'
+        ? {
+            action: operation.action,
+            targetName:
+              this.current?.targets.find((t) => t.target === operation.target)
+                ?.name ?? '',
+            ...(operation.value === undefined
+              ? {}
+              : { value: operation.value }),
+          }
+        : {}),
+      operationStatus: result.operationStatus,
+      effect: result.effect,
+    });
+    if (this.history.length > HISTORY_LIMIT) this.history.shift();
+    if (
+      result.effect === 'MAY_HAVE_HAPPENED' ||
+      result.operationStatus === 'UNKNOWN'
+    )
+      throw new AgentFault(
+        'BROWSER_EFFECT_UNKNOWN',
+        '浏览器操作的效果不确定，未自动重放',
+      );
+    if (result.operationStatus !== 'SUCCEEDED')
+      throw new AgentFault(
+        result.effect === 'NOT_STARTED' &&
+          result.error?.code === 'TARGET_OBSCURED'
+          ? 'BROWSER_TARGET_OBSCURED'
+          : result.effect === 'NOT_STARTED' &&
+              result.error?.code === 'STALE_OBSERVATION'
+            ? 'BROWSER_STALE_OBSERVATION'
+            : 'BROWSER_COMMAND_FAILED',
+        result.effect === 'NOT_STARTED' &&
+          result.error?.code === 'TARGET_OBSCURED'
+          ? '点击目标被遮挡，未派发点击。请基于新观察处理遮挡或调整滚动位置，不要直接重复同一个点击。'
+          : `浏览器命令未成功（${result.operationStatus}），未判定业务失败`,
+      );
+    return result;
+  }
+  /** 动作与等待之后刷新事实；新观察不能与上一张截图混用。 */
+  private async observe(
+    screenshot = this.config.vision,
+    countProgress = true,
+  ): Promise<void> {
+    const result = await this.command({ type: 'browser.observe', screenshot });
+    const current = observation(result);
+    const until = performance.now() + this.config.commandMs;
+    for (;;) {
+      const view = await this.client.view(this.grant, this.guard.signal);
+      if (view.taskState !== 'RUNNING')
+        throw new AgentFault('EXECUTION_ENDED', '控制面已终止任务');
+      if (available(current, view)) break;
+      if (performance.now() >= until)
+        throw new AgentFault(
+          'EVIDENCE_UNAVAILABLE',
+          '证据交付未能在预算内完成',
+        );
+      await pause(POLL_MS, this.guard.signal);
+    }
+    if (this.current) {
+      const previous = this.current;
+      this.previousObservations.push({
+        observationId: previous.observationId,
+        url: previous.url,
+        title: previous.title,
+        text: previous.text
+          .replace(HISTORICAL_TARGET, '')
+          .slice(0, OBSERVATION_HISTORY_CHARS),
+        artifactRefs: previous.artifactRefs,
+        truncated: previous.text.length > OBSERVATION_HISTORY_CHARS,
+      });
+      if (this.previousObservations.length > OBSERVATION_HISTORY_LIMIT)
+        this.previousObservations.shift();
+    }
+    this.changes = this.tracker.observe(current, countProgress);
+    this.current = current;
+    this.image = undefined;
+    for (const ref of current.artifactRefs)
+      this.evidence.set(ref.artifactId, {
+        id: ref.artifactId,
+        kind: ref.kind,
+        sha256: ref.sha256,
+        uri: `${this.config.apiUrl}/v1/artifacts/${encodeURIComponent(ref.artifactId)}`,
+      });
+    const png = current.artifactRefs.find((r) => r.kind === 'SCREENSHOT');
+    if (screenshot && !png)
+      throw new AgentFault('EVIDENCE_UNAVAILABLE', '本次观察没有返回所需截图');
+    if (png)
+      this.image = await this.client.image(
+        this.grant,
+        { id: png.artifactId, sha256: png.sha256 },
+        this.guard.signal,
+      );
+  }
+  /** 暂停等待不调用模型，也不增加预算；恢复后必须重新观察页面。 */
+  private async checkpoint(): Promise<boolean> {
+    for (;;) {
+      const view = await this.client.view(this.grant, this.guard.signal);
+      if (view.taskState !== 'RUNNING')
+        throw new AgentFault('EXECUTION_ENDED', '控制面已终止任务');
+      this.details.actions = Math.max(
+        this.details.actions,
+        view.actionCount ?? 0,
+      );
+      if (!view.controlMode || view.controlMode === 'AUTO') {
+        const changed = this.controlRevision !== (view.controlRevision ?? 0);
+        this.controlRevision = view.controlRevision ?? 0;
+        return changed;
+      }
+      if (view.controlMode === 'REQUESTED')
+        await this.client.acknowledge(
+          this.grant,
+          view.controlRevision,
+          this.guard.signal,
+        );
+      await pause(POLL_MS, this.guard.signal);
+    }
+  }
+  /** 标准保持完整；仅裁剪页面和近期事实，并显式声明裁剪，避免将缺失文本误判为不存在。 */
+  private context(): DecisionInput {
+    const current = this.current!;
+    const context = {
+      task: this.task,
+      executionStep: this.grant.task.steps?.[this.stepIndex],
+      workflow: this.workflow.view(),
+      budgetRemaining: {
+        actions: this.grant.task.budget.maxActions - this.details.actions,
+        modelCalls: this.config.maxTurns - this.details.modelCalls,
+        timeMs: Math.floor(this.guard.remaining()),
+      },
+      changes: this.changes ? structuredClone(this.changes) : undefined,
+      coverage: {
+        capture: current.coverage ?? { status: 'unknown' },
+        text: { truncated: current.truncated === true },
+        controls: {
+          observed: current.targets.length,
+          returned: current.targets.length,
+          omitted: 0,
+        },
+      },
+      observation: {
+        ...structuredClone(current),
+        text: current.text,
+        targets: [...current.targets],
+      },
+      evidence: [...this.evidence.values()]
+        .slice(-EVIDENCE_LIMIT)
+        .map(({ id, kind }) => ({ id, kind })),
+      recentOperations: [...this.history],
+      previousObservations: [...this.previousObservations],
+      feedback:
+        [
+          this.feedback,
+          (this.changes?.repeatedStateVisits ?? 0) >= 3
+            ? '反复返回同一状态且没有阶段完成证据；请避免开关弹窗或来回导航，制定有界恢复计划。'
+            : null,
+          (this.changes?.unchangedRounds ?? 0) >= 2
+            ? '连续操作后没有新增事实；请更换目标或策略，检查覆盖缺口，不要重复滚动或观察。'
+            : null,
+        ]
+          .filter(Boolean)
+          .join(' ') || null,
+      truncated: false,
+    };
+    let text = JSON.stringify(context);
+    while (text.length > this.config.maxContextChars) {
+      context.truncated = true;
+      if (context.previousObservations.length > 0)
+        context.previousObservations.shift();
+      else if (
+        context.observation.network &&
+        typeof context.observation.network === 'object' &&
+        Array.isArray(
+          (context.observation.network as { requests?: unknown[] }).requests,
+        ) &&
+        (context.observation.network as { requests: unknown[] }).requests
+          .length > 0
+      ) {
+        const network = context.observation.network as {
+          requests: unknown[];
+          truncated?: boolean;
+        };
+        const retained = Math.floor(network.requests.length / 2);
+        network.requests = retained ? network.requests.slice(-retained) : [];
+        network.truncated = true;
+      } else if (context.observation.text.length > 256)
+        context.observation.text = evidenceExcerpt(
+          current.text,
+          this.task.objective,
+          Math.floor(context.observation.text.length / 2),
+        );
+      else if (context.changes && context.changes.text.length > 1024) {
+        context.changes.text = context.changes.text.slice(
+          0,
+          Math.floor(context.changes.text.length / 2),
+        );
+        context.changes.textTruncated = true;
+      } else if (context.observation.targets.length > 0)
+        context.observation.targets = context.observation.targets.slice(
+          0,
+          Math.floor(context.observation.targets.length / 2),
+        );
+      else if (context.changes && context.changes.text.length > 128) {
+        context.changes.text = context.changes.text.slice(
+          0,
+          Math.floor(context.changes.text.length / 2),
+        );
+        context.changes.textTruncated = true;
+      } else if (
+        context.changes &&
+        (context.changes.added.length || context.changes.updated.length)
+      ) {
+        context.changes.added = [];
+        context.changes.updated = [];
+        context.changes.refsTruncated = true;
+      } else if (context.recentOperations.length > 0)
+        context.recentOperations.shift();
+      else if (context.evidence.length > 0) context.evidence.shift();
+      else
+        throw new AgentFault(
+          'CONTEXT_BUDGET_EXCEEDED',
+          '固定任务定义超过模型上下文配置上限',
+        );
+      context.coverage.text.truncated =
+        current.truncated === true || context.observation.text !== current.text;
+      context.coverage.controls.returned = context.observation.targets.length;
+      context.coverage.controls.omitted =
+        current.targets.length - context.observation.targets.length;
+      text = JSON.stringify(context);
+    }
+    return { text, ...(this.image ? { image: this.image } : {}) };
+  }
+  /** 停止真实浏览器 trace 后等待可靠交付，只有可用且归属匹配的引用才进入报告。 */
+  private async captureTrace(): Promise<string[]> {
+    if (this.traceStarted) {
+      const result = await this.command({
+        type: 'browser.trace',
+        action: 'stop',
+      });
+      this.traceStarted = false;
+      const refs = result.data?.artifactRefs as
+        Array<{ artifactId: string; kind: string; sha256: string }> | undefined;
+      const trace = refs?.find((ref) => ref.kind === 'TRACE');
+      if (!trace)
+        throw new AgentFault('EVIDENCE_UNAVAILABLE', '节点没有交付 TRACE');
+      const until = performance.now() + this.config.commandMs;
+      for (;;) {
+        const view = await this.client.view(this.grant, this.guard.signal);
+        if (
+          view.artifacts.some(
+            (a) =>
+              a.id === trace.artifactId &&
+              a.kind === 'TRACE' &&
+              a.sha256 === trace.sha256 &&
+              a.state === 'AVAILABLE',
+          )
+        )
+          break;
+        if (performance.now() >= until)
+          throw new AgentFault('EVIDENCE_UNAVAILABLE', 'TRACE 上传未完成');
+        await pause(POLL_MS, this.guard.signal);
+      }
+      this.evidence.set(trace.artifactId, {
+        id: trace.artifactId,
+        kind: 'TRACE',
+        sha256: trace.sha256,
+        uri: `${this.config.apiUrl}/v1/artifacts/${encodeURIComponent(trace.artifactId)}`,
+      });
+    }
+    return [...this.evidence.values()]
+      .filter(
+        (a) =>
+          a.kind === 'TRACE' &&
+          (!this.grant.task.steps || !this.stepEvidence.has(a.id)),
+      )
+      .map((a) => a.id);
+  }
+  /** 检查动作必需参数和观察身份；不向模型开放任意脚本或本地命令。 */
+  private operation(
+    decision: Extract<AgentDecision, { type: 'browser.act' }>,
+  ): BrowserOperation {
+    const invalid = () =>
+      new AgentFault(
+        'INVALID_MODEL_DECISION',
+        '动作参数不完整或目标不属于当前观察',
+      );
+    if (['navigate', 'tab.new'].includes(decision.action)) {
+      try {
+        const url = new URL(decision.target ?? '');
+        if (
+          !['http:', 'https:'].includes(url.protocol) ||
+          url.username ||
+          url.password
+        )
+          throw invalid();
+      } catch {
+        throw invalid();
+      }
+    } else if (
+      ['click', 'fill', 'hover', 'check', 'uncheck', 'select'].includes(
+        decision.action,
+      ) ||
+      (decision.action === 'type' && decision.target !== undefined)
+    ) {
+      if (
+        !this.current?.targets.some((t) => t.target === decision.target) ||
+        (['fill', 'type', 'select'].includes(decision.action) &&
+          decision.value === undefined)
+      )
+        throw invalid();
+      return { ...decision, observationId: this.current.observationId };
+    } else if (decision.action === 'scroll' && decision.target !== undefined) {
+      const target = this.current?.targets.find(
+        (t) => t.target === decision.target,
+      );
+      if (
+        !target ||
+        !['up', 'down', 'left', 'right'].includes(decision.value ?? '') ||
+        (target.operations && !target.operations.includes('scroll'))
+      )
+        throw invalid();
+      return { ...decision, observationId: this.current!.observationId };
+    } else if (decision.action === 'visual.click') {
+      if (
+        !this.config.vision ||
+        !this.image ||
+        !Number.isFinite(decision.x) ||
+        !Number.isFinite(decision.y)
+      )
+        throw invalid();
+      return { ...decision, observationId: this.current!.observationId };
+    } else if (decision.action === 'frame') {
+      if (
+        decision.target !== 'main' &&
+        !this.current?.targets.some(
+          (t) => t.target === decision.target && t.role === 'iframe',
+        )
+      )
+        throw invalid();
+      return { ...decision, observationId: this.current!.observationId };
+    } else if (
+      ['back', 'forward', 'reload', 'tab.switch', 'tab.close'].includes(
+        decision.action,
+      )
+    ) {
+      return decision;
+    } else if (
+      !decision.value ||
+      (decision.action === 'scroll' &&
+        !['up', 'down', 'left', 'right'].includes(decision.value))
+    )
+      throw invalid();
+    return decision;
+  }
+  /** 完成决定只提供结论，证据元数据与总判定由执行器生成并由 API 再次核实。 */
+  private finish(
+    decision: Extract<AgentDecision, { type: 'verification.finish' }>,
+  ): VerificationReport {
+    const expected = this.task.acceptanceCriteria;
+    const ids = new Set(decision.criteria.map((c) => c.criterionId));
+    const invalid = () =>
+      new AgentFault(
+        'INVALID_MODEL_DECISION',
+        '验收项必须完整且唯一，并引用已取得的所需类型证据',
+      );
+    if (
+      decision.criteria.length !== expected.length ||
+      ids.size !== expected.length
+    )
+      throw invalid();
+    for (const criterion of expected) {
+      const actual = decision.criteria.find(
+        (c) => c.criterionId === criterion.id,
+      );
+      if (!actual || actual.evidenceRefs.some((id) => !this.evidence.has(id)))
+        throw invalid();
+      if (
+        ['PASSED', 'FAILED'].includes(actual.verdict) &&
+        criterion.evidenceKinds.some(
+          (kind) =>
+            !actual.evidenceRefs.some(
+              (id) => this.evidence.get(id)?.kind === kind,
+            ),
+        )
+      )
+        throw invalid();
+    }
+    if (this.grant.task.steps) {
+      const refs = [
+        ...new Set([
+          ...(decision.evidenceRefs ?? []),
+          ...decision.criteria.flatMap((c) => c.evidenceRefs),
+        ]),
+      ];
+      if (
+        !refs.length ||
+        refs.some((id) => !this.evidence.has(id) || this.stepEvidence.has(id))
+      )
+        throw invalid();
+      this.completionEvidence = refs;
+    }
+    return this.report('EXECUTED', decision.summary, decision.criteria, null);
+  }
+  /** 先确认远端会话可达，再进入有界的观察与决策循环。 */
+  private async loop(): Promise<VerificationReport> {
+    this.guard.signal.throwIfAborted();
+    if (
+      !this.config.vision &&
+      this.task.acceptanceCriteria.some((c) =>
+        c.evidenceKinds.includes('SCREENSHOT'),
+      )
+    )
+      return this.blocked(
+        '任务要求截图验收，但当前 worker 未开启视觉模型支持',
+        'VISION_REQUIRED',
+      );
+    for (;;) {
+      const view = await this.client.view(this.grant, this.guard.signal);
+      if (view.taskState !== 'RUNNING')
+        throw new AgentFault('EXECUTION_ENDED', '任务在会话就绪前已终止');
+      if (view.state === 'RUNNING') break;
+      await pause(POLL_MS, this.guard.signal);
+    }
+    let errors = 0;
+    let workflowRecoveries = 0;
+    // 连续遮挡只允许有限次重新规划；仍消耗原动作与模型预算。
+    let obscured = 0;
+    while (this.details.modelCalls < this.config.maxTurns) {
+      this.guard.signal.throwIfAborted();
+      try {
+        if (await this.checkpoint()) {
+          this.current = undefined;
+          this.workflow.invalidateRecovery();
+          this.tracker.reset();
+        }
+        if (
+          !this.traceStarted &&
+          this.task.acceptanceCriteria.some((c) =>
+            c.evidenceKinds.includes('TRACE'),
+          )
+        ) {
+          await this.command({ type: 'browser.trace', action: 'start' });
+          this.traceStarted = true;
+        }
+        if (!this.navigated) {
+          // 业务环境只从指定远端浏览器验证；worker 主机不需要访问业务内网。
+          await this.command({
+            type: 'browser.act',
+            action: 'navigate',
+            target: this.task.target.url,
+          });
+          this.navigated = true;
+        }
+        if (!this.current) await this.observe();
+        if (this.settlePending) {
+          this.settlePending = false;
+          let retries = 0;
+          while (
+            retries < SHELL_RETRIES &&
+            this.current!.targets.every(
+              (t) =>
+                ['menuitem', 'link', 'element'].includes(t.role) &&
+                !(t.operations ?? []).some((op) =>
+                  ['fill', 'select', 'scroll'].includes(op),
+                ),
+            )
+          ) {
+            await pause(SHELL_WAIT_MS, this.guard.signal);
+            await this.observe(this.config.vision, false);
+            retries++;
+          }
+          // 被动重采不累计动作循环，也不能清除导航前已经存在的循环记录。
+        }
+        if ((this.changes?.unchangedRounds ?? 0) >= STALLED_ROUNDS)
+          return this.blocked(
+            '连续多轮操作和观察未获得新事实，停止重复执行；请检查页面覆盖或人工处理。',
+            'NO_PROGRESS',
+          );
+        if (
+          (this.changes?.repeatedStateVisits ?? 0) >= CYCLIC_VISITS &&
+          this.changes?.unchangedRounds === 0
+        )
+          return this.blocked(
+            '反复返回相同页面状态，且未记录新的阶段完成证据，停止循环。',
+            'NO_PROGRESS',
+          );
+        const input = this.context();
+        const decisionIndex = ++this.decisionIndex;
+        input.traceRequest = async (request) => {
+          if (this.details.modelCalls >= this.config.maxTurns)
+            throw new AgentFault('MODEL_BUDGET_EXCEEDED', '模型请求预算已用完');
+          const id = randomUUID();
+          await this.client
+            .recordModelCall(this.grant, id, {
+              phase: 'start',
+              record: {
+                ...request,
+                id,
+                callIndex: this.details.modelCalls + 1,
+                decisionIndex,
+                startedAt: new Date().toISOString(),
+                finishedAt: null,
+                status: 'PENDING',
+                response: null,
+                error: null,
+                promptTokens: null,
+                completionTokens: null,
+                elapsedMs: null,
+                archived: false,
+              },
+            })
+            .catch(() => {
+              throw new AgentFault(
+                'MODEL_TRACE_UNAVAILABLE',
+                '模型请求上下文未能存档，停止派发新请求',
+              );
+            });
+          return async (result) => {
+            await this.client
+              .recordModelCall(this.grant, id, { phase: 'finish', result })
+              .catch(() => {
+                throw new AgentFault(
+                  'MODEL_TRACE_UNAVAILABLE',
+                  '模型回复未能存档，请检查该次调用记录',
+                );
+              });
+          };
+        };
+        let counted = false;
+        // 混合调用即使后续格式校验失败，供应商已返回的用量也必须进入总计。
+        let usageRecorded = false;
+        input.recordRequest = (model) => {
+          if (this.details.modelCalls >= this.config.maxTurns)
+            throw new AgentFault('MODEL_BUDGET_EXCEEDED', '模型请求预算已用完');
+          this.details.modelCalls++;
+          counted = true;
+          let usage = this.details.modelUsage!.find(
+            (entry) => entry.model === model,
+          );
+          if (!usage)
+            this.details.modelUsage!.push(
+              (usage = {
+                model,
+                calls: 0,
+                promptTokens: 0,
+                completionTokens: 0,
+              }),
+            );
+          usage.calls++;
+        };
+        input.recordUsage = (model, promptTokens, completionTokens) => {
+          usageRecorded = true;
+          this.details.promptTokens += promptTokens;
+          this.details.completionTokens += completionTokens;
+          const usage = this.details.modelUsage!.find(
+            (entry) => entry.model === model,
+          );
+          if (usage) {
+            usage.promptTokens += promptTokens;
+            usage.completionTokens += completionTokens;
+          }
+        };
+        const output = await this.model
+          .decide(input, this.guard.signal)
+          .catch((error: unknown) => {
+            if (transient(error))
+              throw new AgentFault(
+                'RETRYABLE_MODEL_ERROR',
+                '模型服务暂时不可用',
+              );
+            throw error;
+          })
+          .finally(() => {
+            if (!counted) this.details.modelCalls++;
+          });
+        this.guard.signal.throwIfAborted();
+        if (!usageRecorded) {
+          this.details.promptTokens += output.promptTokens;
+          this.details.completionTokens += output.completionTokens;
+        }
+        // 模型调用期间可能收到暂停请求；旧决定只能丢弃，不能在人工恢复后执行。
+        if (await this.checkpoint()) {
+          this.workflow.invalidateRecovery();
+          this.tracker.reset();
+          await this.observe();
+          continue;
+        }
+        const decision = output.decision;
+        if (!validateAgentDecision(decision))
+          throw new AgentFault('INVALID_MODEL_DECISION', '决定不满足工具协议');
+        if (decision.type === 'browser.act') this.operation(decision);
+        const revision = this.workflow.view().revision;
+        this.workflow.apply(output.workflow, new Set(this.evidence.keys()));
+        if (revision !== this.workflow.view().revision) {
+          this.tracker.reset();
+          workflowRecoveries = 0;
+        }
+        this.workflow.assertFinish(decision);
+        this.workflow.assertAction(decision);
+        if (decision.type === 'verification.intervene') {
+          if (!this.grant.task.environment.allowIntervention)
+            return this.blocked(decision.reason, 'INTERVENTION_DISABLED');
+          await this.client.intervene(
+            this.grant,
+            this.controlRevision,
+            decision.reason,
+            this.guard.signal,
+            decision.items,
+          );
+          await this.checkpoint();
+          this.workflow.invalidateRecovery();
+          this.tracker.reset();
+          await this.observe();
+          errors = 0;
+          continue;
+        }
+        if (decision.type === 'verification.finish') {
+          const traces = await this.captureTrace();
+          for (const criterion of decision.criteria) {
+            if (
+              this.task.acceptanceCriteria
+                .find((c) => c.id === criterion.criterionId)
+                ?.evidenceKinds.includes('TRACE')
+            )
+              criterion.evidenceRefs = [
+                ...new Set([...criterion.evidenceRefs, ...traces]),
+              ];
+          }
+          return this.finish(decision);
+        }
+        if (decision.type === 'verification.block')
+          return this.blocked(decision.summary, 'MODEL_BLOCKED');
+        let operation: BrowserOperation;
+        if (decision.type === 'browser.act')
+          operation = this.operation(decision);
+        else if (decision.type === 'browser.observe') {
+          if (decision.screenshot && !this.config.vision)
+            throw new AgentFault(
+              'INVALID_MODEL_DECISION',
+              '当前模型配置不支持截图输入',
+            );
+          operation = decision;
+        } else operation = decision;
+        // 从这里开始发生浏览器操作；其传输错误绝不能进入模型重试分支。
+        errors = 0;
+        this.feedback = null;
+        if (operation.type === 'browser.observe')
+          await this.observe(
+            this.config.vision || operation.screenshot === true,
+          );
+        else {
+          await this.command(operation);
+          if (operation.type === 'browser.act') {
+            this.workflow.acted();
+            workflowRecoveries = 0;
+          }
+          if (
+            operation.type === 'browser.act' &&
+            [
+              'frame',
+              'tab.switch',
+              'tab.new',
+              'navigate',
+              'reload',
+              'back',
+              'forward',
+            ].includes(operation.action)
+          ) {
+            this.tracker.reset(true);
+            this.settlePending = true;
+          }
+          obscured = 0;
+          await this.observe();
+        }
+      } catch (error) {
+        if (
+          error instanceof AgentFault &&
+          ['WORKFLOW_INCOMPLETE', 'WORKFLOW_RECOVERY_EXHAUSTED'].includes(
+            error.code,
+          )
+        ) {
+          if (++workflowRecoveries >= MAX_WORKFLOW_RECOVERIES)
+            return this.blocked(error.message, error.code);
+          this.feedback = `${error.code}: ${error.message}`;
+          continue;
+        }
+        if (
+          error instanceof AgentFault &&
+          ['BROWSER_TARGET_OBSCURED', 'BROWSER_STALE_OBSERVATION'].includes(
+            error.code,
+          )
+        ) {
+          if (++obscured >= MAX_DECISION_ERRORS)
+            return this.blocked(error.message, error.code);
+          this.current = undefined;
+          this.image = undefined;
+          this.feedback = `${error.code}: ${error.message}`;
+          continue;
+        }
+        if (error instanceof AgentFault && error.code === 'CONTROL_CHANGED') {
+          // 仅明确拒绝的旧代次可以重取观察；后续切换仍回到受保护的循环。
+          this.current = undefined;
+          this.image = undefined;
+          continue;
+        }
+        // 除上面的确定未点击分支，其他浏览器故障仍直接生成故障报告。
+        if (
+          !(error instanceof AgentFault) ||
+          !['INVALID_MODEL_DECISION', 'RETRYABLE_MODEL_ERROR'].includes(
+            error.code,
+          )
+        )
+          throw error;
+        if (++errors >= MAX_DECISION_ERRORS) throw error;
+        this.feedback = error.message;
+        if (error.code === 'RETRYABLE_MODEL_ERROR')
+          await pause(200 * errors, this.guard.signal);
+      }
+    }
+    throw new AgentFault('MODEL_TURN_BUDGET_EXCEEDED', '模型决策轮数已耗尽');
+  }
+  /** 显式等待由执行器计时，期间继续续租并检查取消，不反复调用模型或增加写动作。 */
+  private async waitStep(durationMs: number) {
+    if (durationMs >= this.guard.remaining())
+      throw new AgentFault('WAIT_EXCEEDS_BUDGET', '剩余任务时间不足以完成等待');
+    const until = performance.now() + durationMs;
+    while (performance.now() < until) {
+      await this.checkpoint();
+      await pause(
+        Math.min(1000, Math.max(0, until - performance.now())),
+        this.guard.signal,
+      );
+    }
+    await this.checkpoint();
+    this.current = undefined;
+    await this.observe();
+  }
+
+  /** 将终止原因和已完成结果合并；故障不能抹掉前面已持久化的验收事实。 */
+  private sequenceReport(
+    disposition: VerificationReport['executionDisposition'],
+    summary: string,
+    code: string | null,
+  ): VerificationReport {
+    for (const step of this.stepResults) {
+      if (step.status === 'RUNNING') {
+        step.status = disposition === 'BLOCKED' ? 'BLOCKED' : 'ERROR';
+        step.summary = summary;
+        step.finishedAt = new Date().toISOString();
+      } else if (step.status === 'PENDING') {
+        step.status = 'SKIPPED';
+        step.summary = '前置步骤或执行终止，未执行';
+      }
+    }
+    const recorded = this.stepResults.flatMap((step) => step.criteria);
+    const criteria = this.grant.task.acceptanceCriteria.map(
+      (c) =>
+        recorded.find((r) => r.criterionId === c.id) ?? {
+          criterionId: c.id,
+          verdict: 'SKIPPED' as const,
+          summary: '该项尚未验收',
+          evidenceRefs: [],
+        },
+    );
+    return {
+      ...this.report(disposition, summary, criteria, code),
+      steps: structuredClone(this.stepResults) as NonNullable<
+        VerificationReport['steps']
+      >,
+    };
+  }
+
+  /** 一个浏览器会话逐步执行，所有预算全程累计，前置失败或未知写入立即停止后续步骤。 */
+  private async sequence(): Promise<VerificationReport> {
+    const steps = this.grant.task.steps!;
+    await this.checkpoint();
+    if (this.sequenceOutcome) return this.sequenceOutcome;
+    while (
+      (await this.client.view(this.grant, this.guard.signal)).state !==
+      'RUNNING'
+    ) {
+      await pause(POLL_MS, this.guard.signal);
+      await this.checkpoint();
+    }
+    for (; this.stepIndex < steps.length; this.stepIndex++) {
+      const step = steps[this.stepIndex]!;
+      const state = this.stepResults[this.stepIndex]!;
+      this.currentTask = {
+        ...this.grant.task,
+        objective: `任务背景：${this.grant.task.objective}\n当前步骤：${step.description}\n操作约束：${JSON.stringify(step.policy)}\n只执行当前步骤；verification.finish 只提交本步验收和执行证据。`,
+        target: { url: step.url },
+        acceptanceCriteria: this.grant.task.acceptanceCriteria.filter(
+          (c) => c.stepId === step.stepId,
+        ),
+      };
+      delete this.currentTask.caseV2Definition;
+      delete this.currentTask.steps;
+      this.workflow = new Workflow(this.currentTask.objective);
+      this.stepEvidence = new Set(this.evidence.keys());
+      this.completionEvidence = [];
+      this.navigated = false;
+      this.current = undefined;
+      this.image = undefined;
+      this.feedback = null;
+      this.settlePending = true;
+      this.tracker.reset();
+      this.changes = undefined;
+      state.status = 'RUNNING';
+      state.startedAt = new Date().toISOString();
+      state.summary = '执行中';
+      await this.client.recordSteps(this.grant, this.stepResults);
+      let report: VerificationReport;
+      try {
+        if (step.wait) {
+          await this.waitStep(step.wait.durationMs);
+          this.completionEvidence = [...this.evidence.keys()].filter(
+            (id) => !this.stepEvidence.has(id),
+          );
+          report = step.expected.length
+            ? await this.loop()
+            : this.report(
+                'EXECUTED',
+                `已等待 ${step.wait.durationMs} 毫秒`,
+                [],
+                null,
+              );
+        } else report = await this.loop();
+      } catch (error) {
+        report = this.failure(error);
+      }
+      if (report.executionDisposition !== 'EXECUTED')
+        return this.sequenceReport(
+          report.executionDisposition,
+          report.summary,
+          report.executionDetails?.reasonCode ?? null,
+        );
+      state.status = 'COMPLETED';
+      state.summary = report.summary;
+      state.criteria = report.criteria;
+      state.evidenceRefs = [...this.completionEvidence];
+      state.finishedAt = new Date().toISOString();
+      await this.client.recordSteps(this.grant, this.stepResults);
+      if (
+        step.type === 'setup' &&
+        report.criteria.some((c) => c.verdict !== 'PASSED')
+      )
+        return this.sequenceReport(
+          'BLOCKED',
+          `前置步骤 ${step.stepId} 未通过验收，后续步骤未执行`,
+          'SETUP_NOT_PASSED',
+        );
+    }
+    return this.sequenceReport(
+      'EXECUTED',
+      '已按 exec_order 顺序完成所有步骤，逐项结论见步骤及验收结果',
+      null,
+    );
+  }
+
+  /** 无论正常还是异常都提交一次不可变报告；提交失败交给调用者记录，租约负责最终回收。 */
+  async run(): Promise<VerificationReport> {
+    try {
+      for (;;) {
+        let report: VerificationReport;
+        try {
+          report = this.grant.task.steps
+            ? await this.sequence()
+            : await this.loop();
+          if (this.grant.task.steps) this.sequenceOutcome = report;
+        } catch (error) {
+          const failure = this.failure(error);
+          report = this.grant.task.steps
+            ? this.sequenceReport(
+                'ERROR',
+                failure.summary,
+                failure.executionDetails?.reasonCode ?? null,
+              )
+            : failure;
+        }
+        if (this.traceStarted && !this.guard.signal.aborted) {
+          try {
+            await this.captureTrace();
+          } catch (error) {
+            if (report.executionDisposition !== 'ERROR') {
+              const failure = this.failure(error);
+              report = this.grant.task.steps
+                ? this.sequenceReport(
+                    'ERROR',
+                    failure.summary,
+                    failure.executionDetails?.reasonCode ?? null,
+                  )
+                : failure;
+            }
+          }
+          report.artifacts = [...this.evidence.values()];
+          if (report.executionDetails) {
+            report.executionDetails.commandIds = [...this.details.commandIds];
+            report.executionDetails.elapsedMs = Math.round(
+              performance.now() - this.started,
+            );
+          }
+        }
+        if (
+          this.grant.task.steps &&
+          report.steps &&
+          !this.guard.signal.aborted
+        ) {
+          try {
+            await this.client.recordSteps(this.grant, report.steps);
+          } catch {
+            /* 终态撤权时由最终报告提交保留已知事实。 */
+          }
+        }
+        if (!validateVerificationReport(report))
+          throw new AgentFault('INVALID_REPORT', '执行器生成的报告不满足协议');
+        try {
+          await this.client.complete(this.grant, report, this.controlRevision);
+        } catch (error) {
+          if (
+            error instanceof AgentFault &&
+            error.code === 'CONTROL_CHANGED' &&
+            report.executionDisposition !== 'ERROR'
+          ) {
+            // 提交前被暂停时回到循环，等待中取消也必须生成故障报告。
+            this.current = undefined;
+            this.image = undefined;
+            continue;
+          }
+          // 模型完成与取消可能同时发生；只有明确的终态拒绝才能改交故障报告。
+          // 对不确定 HTTP 结果不改写报告，由客户端原样重送并由 API 去重。
+          if (
+            report.executionDisposition === 'ERROR' ||
+            !(error instanceof AgentFault) ||
+            !['EXECUTION_ENDED', 'EXECUTION_EXPIRED'].includes(error.code)
+          )
+            throw error;
+          const failure = this.failure(error);
+          report = this.grant.task.steps
+            ? this.sequenceReport(
+                'ERROR',
+                failure.summary,
+                failure.executionDetails?.reasonCode ?? null,
+              )
+            : failure;
+          await this.client.complete(this.grant, report, this.controlRevision);
+        }
+        return report;
+      }
+    } finally {
+      await this.guard.close();
+    }
+  }
+}
+
+/** 只执行已领取任务，不承担任务定义、全局调度或浏览器会话所有权。 */
+export function execute(
+  config: AgentConfig,
+  client: ExecutionClient,
+  model: DecisionModel,
+  grant: ExecutionGrant,
+  stop: AbortSignal = new AbortController().signal,
+): Promise<VerificationReport> {
+  return new Execution(config, client, model, grant, stop).run();
+}

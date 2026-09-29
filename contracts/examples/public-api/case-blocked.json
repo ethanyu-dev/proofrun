@@ -1,0 +1,17 @@
+{
+  "caseId": "notification-default-001",
+  "status": "COMPLETED",
+  "result": {
+    "outcome": "BLOCKED",
+    "summary": "未找到可确认的通知设置区域，无法进行验收。",
+    "criteria": [
+      {
+        "criterionId": "email-enabled",
+        "verdict": "SKIPPED",
+        "summary": "未进行邮件通知开关验收。",
+        "evidenceRefs": []
+      }
+    ],
+    "evidence": []
+  }
+}

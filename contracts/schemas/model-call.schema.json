@@ -1,0 +1,113 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://proofrun.invalid/contracts/0.1/model-call.schema.json",
+  "title": "ModelCall",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,128}$",
+      "description": "一次真实模型 HTTP 请求的稳定身份，重试产生新的调用记录。"
+    },
+    "callIndex": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 200,
+      "description": "当前执行内的模型请求顺序，混合策略的子请求也单独计数。"
+    },
+    "decisionIndex": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 200,
+      "description": "执行循环的决策轮次，同一轮可能调用多个模型。"
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "description": "实际发送的模型名称。"
+    },
+    "purpose": {
+      "enum": ["DECISION", "JEV_SELECTION", "FIELD_VALUE"],
+      "description": "请求用于决策、候选选择或填写值生成。"
+    },
+    "startedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "worker 在派发请求前记录的时间。"
+    },
+    "finishedAt": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "worker 收到回复或错误的时间，未收到回执时为空。"
+    },
+    "status": {
+      "enum": ["PENDING", "RECEIVED", "ERROR"],
+      "description": "仅表示请求接收状态，收到回复不等于模型决定有效或业务验收通过。"
+    },
+    "request": {
+      "type": ["string", "null"],
+      "maxLength": 1200000,
+      "description": "实际请求正文 JSON，图片 base64 替换为证据引用；保留策略清理后为空。"
+    },
+    "requestSha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "原始请求正文（含图片）的摘要，用于比对派发内容。"
+    },
+    "response": {
+      "type": ["string", "null"],
+      "maxLength": 600000,
+      "description": "供应商返回的 choices、answers、usage 等已选择字段 JSON，未接收或清理后为空。"
+    },
+    "error": {
+      "type": ["string", "null"],
+      "maxLength": 200,
+      "description": "稳定错误码，不保存带地址或凭据的原始异常文本。"
+    },
+    "promptTokens": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "供应商返回的输入用量，未报告则为空。"
+    },
+    "completionTokens": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "供应商返回的输出用量，未报告则为空。"
+    },
+    "elapsedMs": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "一次供应商请求的耗时，不含记录交付。"
+    },
+    "imagesOmitted": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "正文中被替换为证据引用的图片数量。"
+    },
+    "archived": {
+      "type": "boolean",
+      "description": "正文是否已按任务保留策略清理。"
+    }
+  },
+  "required": [
+    "id",
+    "callIndex",
+    "decisionIndex",
+    "model",
+    "purpose",
+    "startedAt",
+    "finishedAt",
+    "status",
+    "request",
+    "requestSha256",
+    "response",
+    "error",
+    "promptTokens",
+    "completionTokens",
+    "elapsedMs",
+    "imagesOmitted",
+    "archived"
+  ]
+}

@@ -1,0 +1,68 @@
+name: CI
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: proofrun-ci-isolated
+          POSTGRES_DB: proofrun
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d proofrun"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    steps:
+      # Action 自身使用 Node 24；项目运行版本仍由 .node-version 决定。
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - name: Install Rust toolchain
+        run: rustup show active-toolchain
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm test:api
+        env:
+          PROOFRUN_TEST_DATABASE_URL: postgresql://postgres:proofrun-ci-isolated@127.0.0.1:5432/proofrun
+      - run: pnpm test:agent:integration
+        env:
+          PROOFRUN_TEST_DATABASE_URL: postgresql://postgres:proofrun-ci-isolated@127.0.0.1:5432/proofrun
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: pnpm build
+
+  linux-browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: 下载固定版本的 Linux 原生引擎并校验摘要
+        run: node scripts/download-test-engine.mjs x64 .proofrun/bin/agent-browser-linux-x64
+      # 写入只发生于临时回环页面；模型为脚本夹具，不证明供应商质量或生产部署通过。
+      - name: Linux 浏览器、人工介入与故障回归
+        run: pnpm test:agent:linux
+        env:
+          PROOFRUN_TEST_AGENT_BROWSER: ${{ github.workspace }}/.proofrun/bin/agent-browser-linux-x64
+          PROOFRUN_TEST_FULL_LINUX: 'true'

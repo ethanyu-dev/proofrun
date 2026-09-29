@@ -1,0 +1,99 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://proofrun.invalid/contracts/0.1/case-step.schema.json",
+  "title": "CaseStep",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "stepId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,80}$",
+      "description": "步骤身份；省略时按原始数组位置生成，排序不改变身份。"
+    },
+    "type": {
+      "enum": ["setup", "verification"],
+      "description": "setup 建立前置条件，verification 执行并验收业务结果。"
+    },
+    "url": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https?://",
+      "description": "本步操作的 HTTP(S) 入口；纯等待保持当前页面。"
+    },
+    "exec_order": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000000,
+      "description": "升序执行；同值按原数组顺序串行。"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S",
+      "maxLength": 2000,
+      "description": "上游定义的本步操作说明，不作为自由重排任务的授权。"
+    },
+    "policy": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "\\S",
+        "maxLength": 2000
+      },
+      "description": "操作约束，保持原文；自然语言不等同于程序强制校验。"
+    },
+    "expected": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "\\S",
+        "maxLength": 2000
+      },
+      "description": "本步骤的逐项验收标准；setup 可为空。"
+    },
+    "wait": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "durationMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400000
+        }
+      },
+      "required": ["durationMs"],
+      "description": "显式等待，不调用模型；持续占用会话并计入任务预算。"
+    }
+  },
+  "required": [
+    "type",
+    "url",
+    "exec_order",
+    "description",
+    "policy",
+    "expected"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "verification"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "expected": {
+            "minItems": 1,
+            "type": "array"
+          }
+        }
+      }
+    }
+  ]
+}

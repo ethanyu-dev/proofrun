@@ -1,0 +1,113 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://proofrun.invalid/contracts/0.1/case-result.schema.json",
+  "title": "CaseResult",
+  "description": "case 的执行状态和业务结果，不返回内部任务配置或节点信息。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["caseId", "status", "result"],
+  "properties": {
+    "caseId": {
+      "type": "string",
+      "description": "原请求的本次验证身份。"
+    },
+    "status": {
+      "enum": [
+        "QUEUED",
+        "RUNNING",
+        "COMPLETED",
+        "CANCELLED",
+        "TIMED_OUT",
+        "ERROR"
+      ],
+      "description": "执行生命周期；COMPLETED 不直接表示业务通过。"
+    },
+    "result": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["outcome", "summary", "criteria", "evidence"],
+          "properties": {
+            "outcome": {
+              "enum": ["PASSED", "FAILED", "INCONCLUSIVE", "BLOCKED", "ERROR"],
+              "description": "整体业务结论；BLOCKED 和 ERROR 不表示产品失败。"
+            },
+            "summary": {
+              "type": "string",
+              "description": "基于本次证据的结果说明。"
+            },
+            "criteria": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "criterionId",
+                  "verdict",
+                  "summary",
+                  "evidenceRefs"
+                ],
+                "properties": {
+                  "criterionId": {
+                    "type": "string",
+                    "description": "对应原 acceptanceCriteria 中的 id。"
+                  },
+                  "verdict": {
+                    "enum": ["PASSED", "FAILED", "INCONCLUSIVE", "SKIPPED"],
+                    "description": "逐项判断；未进行验收时为 SKIPPED。"
+                  },
+                  "summary": {
+                    "type": "string",
+                    "description": "该项结论及证据支持范围。"
+                  },
+                  "evidenceRefs": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "引用 evidence 数组中的证据身份。"
+                  }
+                }
+              },
+              "description": "按原验收项身份返回逐项结论。"
+            },
+            "evidence": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "kind", "url", "sha256"],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "description": "平台登记的证据身份。"
+                  },
+                  "kind": {
+                    "enum": ["DOM", "SCREENSHOT", "NETWORK", "TRACE"],
+                    "description": "证据媒介，由平台取证配置决定。"
+                  },
+                  "url": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "本控制面的 case 证据地址，下载需要相同凭据。"
+                  },
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$",
+                    "description": "原始下载字节的 SHA-256 小写十六进制摘要。"
+                  }
+                }
+              },
+              "description": "报告引用的证据，下载范围限定于当前 case。"
+            }
+          }
+        }
+      ],
+      "description": "已交付的业务结果；尚无报告时为 null，包括部分异常终态。"
+    }
+  }
+}

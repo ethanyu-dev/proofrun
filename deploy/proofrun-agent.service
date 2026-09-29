@@ -1,0 +1,18 @@
+[Unit]
+Description=ProofRun verification agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/proofrun
+EnvironmentFile=/etc/proofrun/agent.env
+ExecStart=/usr/bin/node /opt/proofrun/apps/agent/dist/main.js serve
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

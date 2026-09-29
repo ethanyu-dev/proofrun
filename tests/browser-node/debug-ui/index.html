@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Browser Node 调试台</title>
+    <link rel="stylesheet" href="/style.css" />
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Browser Node 调试台</h1>
+        <p>
+          本地会话通过 Browser Node 的 session-host 操作独立
+          Chrome。页面预览来自每次操作后的截图。
+        </p>
+        <p class="hint">调试会话已启用写动作，请使用受控测试页面。</p>
+        <div class="row">
+          <button id="start">启动会话</button>
+          <button id="close" disabled>关闭会话</button>
+          <span id="status" role="status">未启动</span>
+        </div>
+      </header>
+
+      <section aria-labelledby="operations-title">
+        <h2 id="operations-title">浏览器操作</h2>
+        <div class="row">
+          <label for="url">页面 URL</label>
+          <input
+            id="url"
+            type="url"
+            placeholder="http://127.0.0.1:8765/fixture"
+            spellcheck="false"
+          />
+          <button id="navigate" disabled>跳转并查看</button>
+        </div>
+        <div class="row">
+          <button id="observe" disabled>观察页面</button>
+          <button id="screenshot" disabled>观察并截图</button>
+          <span class="hint"
+            >点击、填写后会自动重新观察并截图；target 每次操作后更新。</span
+          >
+        </div>
+        <div class="row">
+          <label for="target">ref / target</label>
+          <select id="target" disabled>
+            <option value="">先观察页面</option>
+          </select>
+          <button id="click" disabled>点击</button>
+        </div>
+        <div class="row">
+          <label for="input-value">输入值</label>
+          <input id="input-value" type="text" placeholder="填写所选 input" />
+          <button id="fill" disabled>填写</button>
+        </div>
+      </section>
+
+      <section aria-labelledby="page-title">
+        <h2 id="page-title">页面状态</h2>
+        <div id="page-meta">暂无观察结果</div>
+        <div class="panels">
+          <div>
+            <h3>DOM 快照与 ref</h3>
+            <pre id="snapshot">启动会话后，输入 URL 并点击“跳转并查看”。</pre>
+          </div>
+          <div>
+            <h3>最近一次截图</h3>
+            <p id="screenshot-path" class="hint">暂无截图</p>
+            <img id="preview" alt="当前浏览器页面截图" hidden />
+          </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="debug-title">
+        <div class="row section-heading">
+          <h2 id="debug-title">Browser Node 输入与输出</h2>
+          <button id="clear-log">清空显示</button>
+        </div>
+        <p class="hint">
+          展示发送给 session-host 的原始 JSONL 消息及其响应。页面里的 element-N
+          是 Browser Node 对引擎 ref 的临时映射。
+        </p>
+        <div id="debug-log" aria-live="polite"></div>
+      </section>
+    </main>
+  </body>
+</html>
