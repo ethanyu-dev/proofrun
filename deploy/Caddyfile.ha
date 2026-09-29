@@ -1,7 +1,7 @@
 # 两个副本均设 PROOFRUN_API_HA=true；地址示例为同机双进程，跨主机请换成内网地址。
 # 主备共享数据库、密钥和证据目录；ready 只有持锁并健康的活动副本返回 200。
 {$PROOFRUN_DOMAIN} {
-    @control path /v1/* /health/*
+    @control path /v1/* /v2/* /health/*
     handle @control {
         reverse_proxy {$PROOFRUN_API_A:127.0.0.1:4101} {$PROOFRUN_API_B:127.0.0.1:4102} {
             health_uri /health/ready

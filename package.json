@@ -22,6 +22,7 @@
     "dev:node:browser": "cargo build --locked -p proofrun-node && node tests/browser-node/debug-ui/server.mjs",
     "test:node": "cargo test --locked -p proofrun-node",
     "test:node:linux": "bash tests/browser-node/run-linux.sh",
+    "test:deploy": "node --test tests/deploy/*.test.mjs",
     "test:api": "pnpm --filter @proofrun/contracts build && pnpm --filter @proofrun/api test",
     "test:control-plane:linux": "bash tests/control-plane/run-linux.sh",
     "test:agent": "pnpm --filter @proofrun/contracts build && pnpm --filter @proofrun/agent build && node --test tests/agent/execution.test.mjs",

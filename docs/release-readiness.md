@@ -12,9 +12,12 @@ pnpm test:api
 pnpm test:agent:integration
 cargo clippy --locked --workspace --all-targets -- -D warnings
 pnpm build
+pnpm test:deploy
 ```
 
 API 和 Agent/API 测试需要 `PROOFRUN_TEST_DATABASE_URL`。禁止使用业务数据库作为测试管理入口。CI 已配置独立 PostgreSQL 服务。
+
+`pnpm test:deploy` 在构建后运行，需要 Docker；它创建并回收独立的 PostgreSQL、Node.js 和 Caddy 容器，通过原始部署模板访问编译产物，不读取本机业务配置。覆盖单实例和 HA 模板的路由，不宣称验证了跨主机主备切换或 TLS。
 
 完整 Linux 检查使用 Docker 内的 systemd/cgroup 和 Chromium：
 
@@ -52,6 +55,13 @@ CI 两个任务均须通过。JavaScript Actions 运行在 Node 24；项目版�
 复验时将 `PROOFRUN_TEST_DATABASE_URL` 指向独立测试数据库。HA 使用 `pnpm exec tsx --test apps/api/test/ha.test.ts`，完整 API 使用 `pnpm exec tsx --test apps/api/test/*.test.ts`；按上述固定批次并发启动，每个进程单独保存日志并检查退出码。每个进程创建自己的随机数据库，不能复用业务库。
 
 这些结果验证夹具在有并发竞争时仍遵守租约和关闭协议；本轮没有重跑真实 Linux 浏览器，也没有测得生产吞吐、延迟上限或持续负载容量。下方的业务、目标 VM 与故障验收仍未完成。
+
+### 干净检出与部署入口
+
+- 提交 `a9b38a6` 已在独立 worktree 中使用空 pnpm store 执行 `pnpm install --frozen-lockfile`，215 个依赖均重新下载；`pnpm build` 完成 TypeScript、Console 和 Rust 编译。没有复用原工作目录的 node_modules、dist 或 target；Rust 工具链和下载缓存仍使用本机环境。
+- 实际 Caddy 冒烟发现两份模板遗漏 `/v2/*`：未授权的新版 API 请求返回了 Console HTML（200）。补齐转发后，`pnpm test:deploy` 通过：旧版及新版 API 均经过鉴权、Console 资源与前端路由可访问、空库执行全部迁移、API 收到正常停止信号后退出码为 0、重启保留已提交任务。
+- 检查使用 `.node-version` 对应的 Node.js Docker 镜像及固定摘要的 Caddy 镜像；模型和浏览器不参与此项测试。HA 模板的两个上游指向同一个临时 API，仅验证模板路由，不作为主备切换证据。
+- 已推送至指定 GitHub 仓库并触发 CI；远端执行结果以对应提交的 Actions 记录为准。尚未提供目标 Linux VM，本轮没有修改现有预览服务或进行生产部署。
 
 ## 版本与交付
 

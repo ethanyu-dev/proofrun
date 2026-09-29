@@ -2,6 +2,8 @@
 
 此目录提供 PostgreSQL Compose、节点 TOML、API/Agent/Node 的 systemd 用户服务和 Caddy 同源代理模板。没有自动安装器，模板尚未经过真实内网 VM 验收。
 
+在 `pnpm build` 后运行 `pnpm test:deploy` 可通过临时 Docker 容器检查编译产物、两份 Caddy 模板的 `/v1/*`、`/v2/*`、健康检查及 Console 路由，并验证空库迁移和 API 重启持久化。此检查使用 HTTP，不替代目标 VM 的 HTTPS、systemd 和跨主机 HA 验收。
+
 首次交付、版本追溯、业务验收和备份恢复演练统一按 [发布检查表](../docs/release-readiness.md)执行；CI 的容器回归不代替目标 VM 的部署验收。
 
 目标部署单元：

@@ -46,6 +46,8 @@ jobs:
           PROOFRUN_TEST_DATABASE_URL: postgresql://postgres:proofrun-ci-isolated@127.0.0.1:5432/proofrun
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - run: pnpm build
+      # 通过真实代理访问编译产物，验证路由、迁移及重启；不代替目标 VM 验收。
+      - run: pnpm test:deploy
 
   linux-browser:
     runs-on: ubuntu-24.04

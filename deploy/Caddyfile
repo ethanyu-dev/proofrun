@@ -1,6 +1,6 @@
 # 域名从服务环境提供；API 与 Console 同源，WebSocket 由反向代理自动升级。
 {$PROOFRUN_DOMAIN} {
-    @control path /v1/* /health/*
+    @control path /v1/* /v2/* /health/*
     handle @control {
         reverse_proxy 127.0.0.1:4100
     }
