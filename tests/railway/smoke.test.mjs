@@ -71,11 +71,14 @@ test(
       'POSTGRES_DB=proofrun',
       'postgres:17',
     );
+    // 初始化期间 PostgreSQL 会启动仅监听 Unix socket 的临时实例；必须等待正式 TCP 实例。
     await ready(async () => {
       await docker(
         'exec',
         pg,
         'pg_isready',
+        '-h',
+        '127.0.0.1',
         '-U',
         'postgres',
         '-d',
@@ -135,10 +138,23 @@ test(
       'proofrun-railway-web:test',
     );
     const base = `http://${await docker('port', web, '4302/tcp')}`;
-    await ready(async () => {
-      const r = await fetch(`${base}/health/ready`);
-      return r.ok && (await r.json()).status === 'ready';
-    });
+    try {
+      await ready(async () => {
+        const r = await fetch(`${base}/health/ready`);
+        if (!r.ok)
+          throw new Error(`就绪接口 HTTP ${r.status}: ${await r.text()}`);
+        return (await r.json()).status === 'ready';
+      });
+    } catch (error) {
+      // 临时容器退出后仍保留启动诊断，避免清理完只剩没有原因的等待超时。
+      for (const name of [pg, api, web]) {
+        const result = await execute('docker', ['logs', '--tail', '40', name], {
+          timeout: 10_000,
+        }).catch(() => ({ stdout: '', stderr: '无法读取容器日志' }));
+        t.diagnostic(`${name}:\n${result.stdout}\n${result.stderr}`);
+      }
+      throw error;
+    }
     // 范围：生产镜像包含规范和 UI 资源，代理未把文档路径回退为 Console；不执行在线调试。
     const specification = await fetch(`${base}/openapi.json`);
     assert.equal(specification.status, 200);

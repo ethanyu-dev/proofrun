@@ -96,11 +96,14 @@ test(
       'POSTGRES_DB=proofrun',
       'postgres:17',
     );
+    // 正式服务通过 TCP 连接数据库，不能把初始化阶段的临时 Unix socket 当成已就绪。
     await untilReady(async () => {
       await docker(
         'exec',
         postgres,
         'pg_isready',
+        '-h',
+        '127.0.0.1',
         '-U',
         'postgres',
         '-d',
