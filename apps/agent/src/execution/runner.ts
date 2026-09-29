@@ -19,7 +19,12 @@ import {
 import { AgentFault, pause, transient } from '../http.js';
 import { LeaseGuard } from './lease.js';
 import { Workflow } from './workflow.js';
-import { evidenceExcerpt } from '../model/jev-progress.js';
+import {
+  decisionContext,
+  rememberObservation,
+  type RecentOperation,
+  type PreviousObservation,
+} from './context.js';
 import {
   ObservationTracker,
   STALLED_ROUNDS,
@@ -38,12 +43,6 @@ const SHELL_RETRIES = 2;
 const SHELL_WAIT_MS = 300;
 /** 只将近期操作和证据摘要放入上下文，完整事实保留在控制面。 */
 const HISTORY_LIMIT = 8;
-const EVIDENCE_LIMIT = 24;
-/** 跨栏目保留最近页面正文；旧元素身份只供阅读，永远不能成为当前动作目标。 */
-const OBSERVATION_HISTORY_LIMIT = 8;
-const OBSERVATION_HISTORY_CHARS = 20_000;
-/** 历史正文中的引擎元素编号会被复用，移除它们以免误指向当前页面中的另一元素。 */
-const HISTORICAL_TARGET = /\s*\[target=[^\]]+\]|\bref=[^,\]\s]+/g;
 
 /** 用显式端口测试编排规则，不将模型供应商或传输细节混入执行状态。 */
 export type ExecutionClient = Pick<
@@ -68,15 +67,8 @@ class Execution {
     string,
     VerificationReport['artifacts'][number]
   >();
-  private readonly history: Array<{
-    commandId: string;
-    operation: BrowserOperation['type'];
-    action?: string;
-    targetName?: string;
-    value?: string;
-    operationStatus: string;
-    effect: string;
-  }> = [];
+  /** 已执行操作的有界摘要，供上下文读取。 */
+  private readonly history: RecentOperation[] = [];
   private readonly details: NonNullable<VerificationReport['executionDetails']>;
   /** 初始导航成功后不因人工切换重放，观察可单独作废。 */
   private navigated = false;
@@ -89,14 +81,7 @@ class Execution {
   private readonly tracker = new ObservationTracker();
   private changes: ObservationChanges | undefined;
   /** 历史证据保留来源及裁剪标记，避免切换栏目后只剩无法解读的证据编号。 */
-  private readonly previousObservations: Array<{
-    observationId: string;
-    url: string;
-    title: string;
-    text: string;
-    artifactRefs: Observation['artifactRefs'];
-    truncated: boolean;
-  }> = [];
+  private readonly previousObservations: PreviousObservation[] = [];
   private image: string | undefined;
   private feedback: string | null = null;
   /** 人工介入后旧模型回复与旧观察均失效。 */
@@ -310,21 +295,8 @@ class Execution {
         );
       await pause(POLL_MS, this.guard.signal);
     }
-    if (this.current) {
-      const previous = this.current;
-      this.previousObservations.push({
-        observationId: previous.observationId,
-        url: previous.url,
-        title: previous.title,
-        text: previous.text
-          .replace(HISTORICAL_TARGET, '')
-          .slice(0, OBSERVATION_HISTORY_CHARS),
-        artifactRefs: previous.artifactRefs,
-        truncated: previous.text.length > OBSERVATION_HISTORY_CHARS,
-      });
-      if (this.previousObservations.length > OBSERVATION_HISTORY_LIMIT)
-        this.previousObservations.shift();
-    }
+    if (this.current)
+      rememberObservation(this.previousObservations, this.current);
     this.changes = this.tracker.observe(current, countProgress);
     this.current = current;
     this.image = undefined;
@@ -369,10 +341,9 @@ class Execution {
       await pause(POLL_MS, this.guard.signal);
     }
   }
-  /** 标准保持完整；仅裁剪页面和近期事实，并显式声明裁剪，避免将缺失文本误判为不存在。 */
+  /** 在统一安全点取得预算快照；裁剪只影响发给模型的副本。 */
   private context(): DecisionInput {
-    const current = this.current!;
-    const context = {
+    return decisionContext({
       task: this.task,
       executionStep: this.grant.task.steps?.[this.stepIndex],
       workflow: this.workflow.view(),
@@ -381,107 +352,15 @@ class Execution {
         modelCalls: this.config.maxTurns - this.details.modelCalls,
         timeMs: Math.floor(this.guard.remaining()),
       },
-      changes: this.changes ? structuredClone(this.changes) : undefined,
-      coverage: {
-        capture: current.coverage ?? { status: 'unknown' },
-        text: { truncated: current.truncated === true },
-        controls: {
-          observed: current.targets.length,
-          returned: current.targets.length,
-          omitted: 0,
-        },
-      },
-      observation: {
-        ...structuredClone(current),
-        text: current.text,
-        targets: [...current.targets],
-      },
-      evidence: [...this.evidence.values()]
-        .slice(-EVIDENCE_LIMIT)
-        .map(({ id, kind }) => ({ id, kind })),
-      recentOperations: [...this.history],
-      previousObservations: [...this.previousObservations],
-      feedback:
-        [
-          this.feedback,
-          (this.changes?.repeatedStateVisits ?? 0) >= 3
-            ? '反复返回同一状态且没有阶段完成证据；请避免开关弹窗或来回导航，制定有界恢复计划。'
-            : null,
-          (this.changes?.unchangedRounds ?? 0) >= 2
-            ? '连续操作后没有新增事实；请更换目标或策略，检查覆盖缺口，不要重复滚动或观察。'
-            : null,
-        ]
-          .filter(Boolean)
-          .join(' ') || null,
-      truncated: false,
-    };
-    let text = JSON.stringify(context);
-    while (text.length > this.config.maxContextChars) {
-      context.truncated = true;
-      if (context.previousObservations.length > 0)
-        context.previousObservations.shift();
-      else if (
-        context.observation.network &&
-        typeof context.observation.network === 'object' &&
-        Array.isArray(
-          (context.observation.network as { requests?: unknown[] }).requests,
-        ) &&
-        (context.observation.network as { requests: unknown[] }).requests
-          .length > 0
-      ) {
-        const network = context.observation.network as {
-          requests: unknown[];
-          truncated?: boolean;
-        };
-        const retained = Math.floor(network.requests.length / 2);
-        network.requests = retained ? network.requests.slice(-retained) : [];
-        network.truncated = true;
-      } else if (context.observation.text.length > 256)
-        context.observation.text = evidenceExcerpt(
-          current.text,
-          this.task.objective,
-          Math.floor(context.observation.text.length / 2),
-        );
-      else if (context.changes && context.changes.text.length > 1024) {
-        context.changes.text = context.changes.text.slice(
-          0,
-          Math.floor(context.changes.text.length / 2),
-        );
-        context.changes.textTruncated = true;
-      } else if (context.observation.targets.length > 0)
-        context.observation.targets = context.observation.targets.slice(
-          0,
-          Math.floor(context.observation.targets.length / 2),
-        );
-      else if (context.changes && context.changes.text.length > 128) {
-        context.changes.text = context.changes.text.slice(
-          0,
-          Math.floor(context.changes.text.length / 2),
-        );
-        context.changes.textTruncated = true;
-      } else if (
-        context.changes &&
-        (context.changes.added.length || context.changes.updated.length)
-      ) {
-        context.changes.added = [];
-        context.changes.updated = [];
-        context.changes.refsTruncated = true;
-      } else if (context.recentOperations.length > 0)
-        context.recentOperations.shift();
-      else if (context.evidence.length > 0) context.evidence.shift();
-      else
-        throw new AgentFault(
-          'CONTEXT_BUDGET_EXCEEDED',
-          '固定任务定义超过模型上下文配置上限',
-        );
-      context.coverage.text.truncated =
-        current.truncated === true || context.observation.text !== current.text;
-      context.coverage.controls.returned = context.observation.targets.length;
-      context.coverage.controls.omitted =
-        current.targets.length - context.observation.targets.length;
-      text = JSON.stringify(context);
-    }
-    return { text, ...(this.image ? { image: this.image } : {}) };
+      current: this.current!,
+      changes: this.changes,
+      evidence: [...this.evidence.values()],
+      history: this.history,
+      previousObservations: this.previousObservations,
+      feedback: this.feedback,
+      image: this.image,
+      maxContextChars: this.config.maxContextChars,
+    });
   }
   /** 停止真实浏览器 trace 后等待可靠交付，只有可用且归属匹配的引用才进入报告。 */
   private async captureTrace(): Promise<string[]> {
