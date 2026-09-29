@@ -32,7 +32,7 @@ docker compose -f deploy/postgres.compose.yml up -d --wait
 pnpm dev:api
 ```
 
-启动时按版本事务执行 `migrations/001-control-plane.sql`、`002-task-browser.sql`、`003-execution-control.sql` 和 `004-hitl.sql`。这是新库协议，不迁移旧项目数据。配置说明在根目录 `.env.example`；应用不会自动加载 `.env`。
+启动时按版本事务执行 `migrations/` 中的 SQL 迁移。这是新库协议，不迁移旧项目数据。配置说明在根目录 `.env.example`；应用不会自动加载 `.env`。
 
 远端使用同一个 HTTPS/WSS origin，由反向代理转发 HTTP 和 WebSocket Upgrade。API 自身默认仅监听回环地址。节点向外连接，控制面不需要访问业务内网。数据库与证据目录都必须持久化。
 
@@ -43,7 +43,7 @@ pnpm dev:api
 3. 运行 `proofrun-node --config /etc/proofrun/node.toml pair --pairing-token-file /private/path/pairing-token`。节点写入安装身份和 0600 凭据文件，标准输出不包含机器密钥；成功后删除配对码文件。
 4. 运行 `serve`。`GET /v1/nodes` 可查看注册信息、在线状态、能力和节点占用清单。
 
-节点凭据只允许自己的连接和截图上传。撤销接口为 `POST /v1/nodes/:id/revoke`；撤销会结束相关执行，但不会凭空确认浏览器已经关闭。已支持空闲节点凭据轮换和原配对码在有效期内取回同一回执，具体见 [迁移交付记录](../../docs/migration-completion.md)。
+节点凭据只允许自己的连接和截图上传。撤销接口为 `POST /v1/nodes/:id/revoke`；撤销会结束相关执行，但不会凭空确认浏览器已经关闭。已支持空闲节点凭据轮换和原配对码在有效期内取回同一回执，具体见 [部署与运行维护](../../deploy/README.md)。
 
 ## 按域名分发到执行节点
 
@@ -130,7 +130,7 @@ PROOFRUN_TEST_DATABASE_URL=postgresql://user:password@127.0.0.1:5432/proofrun pn
 pnpm test:control-plane:linux
 ```
 
-详细覆盖范围见 [控制面验证记录](../../docs/control-plane-validation.md)。执行 Agent 已接入，运行方式见 [Agent 说明](../agent/README.md)；Console 已接入，见 [控制台说明](../console/README.md)。当前没有用户 SSO、多租户、API 多副本路由和生产 VM 验收；已有原配对回执恢复及显式停机记录清理工具；API 重启恢复依赖原数据库和证据磁盘完整。
+详细覆盖范围见 [测试入口与覆盖边界](../../tests/README.md)。执行 Agent 已接入，运行方式见 [Agent 说明](../agent/README.md)；Console 已接入，见 [控制台说明](../console/README.md)。当前没有用户 SSO、多租户或生产 VM 验收；API 支持单活动实例的主备切换；已有原配对回执恢复及显式停机记录清理工具；API 重启恢复依赖原数据库和证据磁盘完整。
 
 ## Console 读取接口
 
@@ -144,7 +144,7 @@ Console 与 API 通过同源部署或开发代理通信，本批不开放跨源�
 
 ## 人工控制与维护
 
-人工交接、操作代次、绑定登录状态、网络证据、节点轮换和维护 CLI 的统一协议说明见 [迁移交付记录](../../docs/migration-completion.md)。管理员入口位于 `/v1/admin/executions/:id/{activity,intervene,control,commands}`；worker 的安全点确认入口为 `/v1/executions/:id/control`。复用 ControlRequest Schema，不接受调用者指定 fence、session 或租约。
+人工交接、操作代次与登录状态见 [HITL 说明](../../docs/hitl.md)，网络证据见 [报告模块](src/modules/reports/README.md)，节点轮换与维护 CLI 见 [部署说明](../../deploy/README.md)。管理员入口位于 `/v1/admin/executions/:id/{activity,intervene,control,commands}`；worker 的安全点确认入口为 `/v1/executions/:id/control`。复用 ControlRequest Schema，不接受调用者指定 fence、session 或租约。
 
 独立免登录 HITL 处理页、实时浏览器画面、受限输入和完成交接现已接入，使用与验证边界见 [HITL 说明](../../docs/hitl.md)。
 

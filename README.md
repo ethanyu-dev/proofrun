@@ -28,13 +28,12 @@ tests/
 docs/
   decisions/           架构决策
   architecture.md      职责、状态归属与数据流
-  roadmap.md           后续实施顺序和验收条件
-deploy/                部署边界和待实现交付物
+deploy/                部署模板、运行维护和环境验收
 ```
 
 ## 当前状态
 
-发布范围、工程检查与尚需完成的环境验收见 [首版发布检查表](docs/release-readiness.md)，版本变更见 [CHANGELOG](CHANGELOG.md)。
+发布范围、工程检查与尚需完成的环境验收见 [部署与运行维护](deploy/README.md)，版本变更见 [CHANGELOG](CHANGELOG.md)。
 
 | 组件         | 已实现                                                                 | 待验收或后续扩展                     |
 | ------------ | ---------------------------------------------------------------------- | ------------------------------------ |
@@ -44,7 +43,7 @@ deploy/                部署边界和待实现交付物
 | Browser Node | Rust 会话监管、CLI、去重、登录存储复用、网络元数据、清理与重启恢复工具 | 实际 VM、引擎未知写入及运维演练      |
 | Console      | 任务、报告证据、节点注册/撤销/轮换、人工操作和活动记录                 | 真实业务操作体验验收                 |
 
-本轮变更、使用方法与未完成的环境验收见 [迁移交付记录](docs/migration-completion.md)。访问继续使用单一管理员 token，不引入用户、SSO 或多租户。新增原生 DOM、closed Shadow DOM、跨域 iframe、TRACE 和 API 主备，见 [浏览器能力与高可用](docs/browser-capabilities-ha.md)。
+运行维护与真实环境验收要求见 [部署与运行维护](deploy/README.md)。访问继续使用单一管理员 token，不引入用户、SSO 或多租户。原生 DOM、closed Shadow DOM、跨域 iframe、TRACE 和 API 主备见 [浏览器能力与高可用](docs/browser-capabilities-ha.md)。
 
 API `/health/ready` 检查数据库并返回当前能力，其中 `executionWorkerProtocol: true` 表示支持 worker 协议，不代表模型服务可用。Node doctor 返回 `productionReady: false`；任务校验命令仍返回 `executed: false`。Node 写操作默认关闭，原因与开发测试开关见 [节点说明](crates/browser-node/README.md)。
 
@@ -188,19 +187,16 @@ pnpm accept:task /absolute/path/to/verification-task.json
 
 ## 设计入口
 
+文档只维护运行说明、架构、设计与 ADR；单次验证、迁移过程和任务分析不作为常驻文档。测试入口与覆盖边界见 [tests/README.md](tests/README.md)，真实环境验收见 [部署说明](deploy/README.md)。
+
 - [Agent 运行与模型配置](apps/agent/README.md)
-- [Agent 验证记录](docs/agent-validation.md)
 - [整体架构](docs/architecture.md)
 - [Console 运行与业务页面](apps/console/README.md)
-- [Console 验证记录](docs/console-validation.md)
 - [Console 视觉规范与 x.ai 样式研究](docs/console-design.md)
 - [控制面运行与协议](apps/api/README.md)
-- [控制面验证记录](docs/control-plane-validation.md)
 - [Browser Node 结构图](docs/browser-node-architecture/README.md)
 - [Browser Node 架构与技术选型](docs/browser-node-design.md)
 - [Browser Node 运行与限制](crates/browser-node/README.md)
-- [Browser Node 验证记录](docs/browser-node-validation.md)
-- [实施里程碑](docs/roadmap.md)
 - [新仓库与职责边界](docs/decisions/0001-platform-boundaries.md)
 - [agent-browser 适配边界与 POC 结论](docs/decisions/0002-browser-engine.md)
 

@@ -24,4 +24,4 @@ pnpm dev:node:browser
 
 ## 验证边界
 
-调试页启用 `allow_unverified_writes`，仅用于受控测试页面。它绕过控制面、网关、SQLite、systemd 会话监管及证据上传，不能用于判断完整节点部署或引擎在响应丢失时的写入重试行为。完整 Linux 节点与控制面测试见 [Browser Node 验证记录](../../../docs/browser-node-validation.md)。
+调试页启用 `allow_unverified_writes`，仅用于受控测试页面。它绕过控制面、网关、SQLite、systemd 会话监管及证据上传，不能用于判断完整节点部署或引擎在响应丢失时的写入重试行为。完整 Linux 节点与控制面测试见 [测试入口与覆盖边界](../../README.md)。

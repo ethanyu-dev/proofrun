@@ -63,12 +63,48 @@ PROOFRUN_TEST_AGENT_BROWSER=/absolute/path/agent-browser-linux-arm64 pnpm test:h
 
 新增 API 集成场景覆盖：非法链接、越权读取拒绝、单处理者、等待交接、画面中转、拒绝会话管理命令、输入去重与共享预算、断线重进、完成撤权、新旧介入隔离和取消失效。模型请求人工与恢复后的报告仍由 Agent/API 集成覆盖；这些测试中的模型和节点是协议夹具。
 
-浏览器页面联调使用独立临时数据库，确认无需平台登录、仅显示当前待办和画面、提交输入、完成页及交接。内嵌浏览器限制自动关页，本轮观察到了正确的完成页回退，不能据此宣称所有浏览器均能自动关闭。
+浏览器页面联调使用独立临时数据库，确认无需平台登录、仅显示当前待办和画面、提交输入、完成页及交接。内嵌浏览器限制自动关页，页面提供完成页回退，不能保证所有浏览器均能自动关闭。
 
 Linux 测试使用真实 Rust Node、systemd、agent-browser 和 Chromium，检查真实 JPEG 帧、坐标点击、中文与前导短横线输入、按键、业务提交次数、完成后原 session 仍可观察和最终关闭。模型/执行者是夹具，回环连接用 WS，不代表生产 TLS、真实内网、业务 SSO/MFA 或真实模型验收。
-
-2026-09-26 实测通过：`pnpm check`、API 集成 15 个场景、Agent/API 集成 7 个场景和上述 Linux 链路。Linux 收到 6 帧真实 JPEG，4 个输入动作使业务端恰好收到一次 `--cdp HITL中文`，恢复后仍能在原会话观察到登录结果，最终确认 systemd 关闭；额外通过 Cookie/localStorage 跨会话保存恢复及网络证据脱敏。修复了 CLI 拒绝浮点坐标、Minus 物理键名不插入字符两个实际适配问题。
 
 测试镜像固定 Rust 1.98.0，避免浮动补丁版本隐式触发下载。网络受限时可显式使用缓存镜像、工具链和只读 Cargo registry，测试日志会输出实际 cargo 版本：`PROOFRUN_TEST_SKIP_IMAGE_BUILD=true`、`PROOFRUN_TEST_RUST_TOOLCHAIN=1.98.1`、`PROOFRUN_TEST_CARGO_REGISTRY=/absolute/path/to/registry`。默认不启用这些覆盖。
 
 当前提供网页视口的点击、文字、按键和滚动；不包含操作系统桌面、文件选择器、拖拽或远端浏览器标签管理。业务弹窗、多标签 SSO 等场景需要单独验证，不能从普通登录夹具推断全部支持。
+
+## 控制权与执行代次
+
+`AUTO → REQUESTED → HUMAN → AUTO` 是同一次执行的控制权状态，不是新的任务生命周期。管理员和模型均只能为 `environment.allowIntervention: true` 的任务请求人工辅助。REQUESTED 立即阻止新自动操作；worker 等在途命令完成，在安全点确认后进入 HUMAN。只有管理员能恢复 AUTO。
+
+暂停和恢复都更新 controlRevision。命令及报告绑定该代次；旧页面不能在新的人工会话里操作，旧模型回复不能在人工改动后继续执行。恢复后重新观察，重新进行模型判断。所有人工动作共享原 maxActions 和 deadline；原 worker 必须持续续租。worker 丢失、取消或总预算耗尽都会停止执行，不以人为活动延长权限。
+
+Console 提供观察/截图、导航、点击、填写、按键、滚动和保存绑定登录状态；不提供任意脚本、shell、CDP 地址或直接会话续租。页面操作不能更改验收项，人工也不能直接写入 PASSED 结论。命令输入和 DOM 可能含业务内容，管理员接口仍需部署在受控入口；登录快照本身不上传控制面。
+
+## 显式登录快照
+
+上层任务可选择：
+
+```json
+{
+  "environment": {
+    "id": "staging",
+    "nodePool": "internal",
+    "allowIntervention": true,
+    "auth": {
+      "nodeId": "registered-node-id",
+      "stateId": "qa-account",
+      "restore": true
+    }
+  }
+}
+```
+
+首次人工登录用 `restore: false`，任务进入人工控制后完成登录，再点击保存当前登录状态。后续任务用 `restore: true`。状态保存在对应节点 `home/auth/qa-account.json`，文件 0600、目录 0700，原子替换；每次执行仍创建独立 profile。任务队列只会选择指定节点，同一个 stateId 在原会话确认关闭前不分配第二个会话。
+
+也可在停止节点后导入已有存储状态：
+
+```sh
+proofrun-node --config /etc/proofrun/node.toml auth-import --state-id qa-account --file /private/auth.json
+proofrun-node --config /etc/proofrun/node.toml auth-forget --state-id qa-account
+```
+
+导入文件必须仅运行用户可读，且包含 cookies/origins。状态失效时由模型请求人工或明确阻塞，不自动提交登录口令，不保证 sessionStorage、跨域 SSO、设备绑定或 MFA 的跨会话有效性。

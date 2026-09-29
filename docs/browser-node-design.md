@@ -1,6 +1,6 @@
 # Browser Node 架构设计
 
-状态：首版节点实现已落地，目标架构中的部分能力仍待验收。2026-09-23。实际接口与限制以 [节点说明](../crates/browser-node/README.md)、[协议](node-protocol.md) 和 [验证记录](browser-node-validation.md) 为准。
+节点实现与目标架构须区分，部分能力仍待真实环境验收。实际接口与限制以 [节点说明](../crates/browser-node/README.md)、[协议](node-protocol.md) 和 [测试入口与覆盖边界](../tests/README.md) 为准。
 
 目标是提供容易部署、容易定位故障、可以可靠回收的远端浏览器执行节点。Spec 定义、模型决策和业务验收判定属于上层与执行 Agent；Browser Node 只执行有授权、有期限的浏览器操作并返回事实和证据。
 
@@ -62,7 +62,7 @@ Node 返回 `operationStatus: SUCCEEDED` 只表示浏览器操作完成，不能
 | 错误与诊断     | thiserror、tracing、tracing-subscriber         | 类型化错误，结构化日志；启动层可用 anyhow       |
 | 进程监管       | systemd transient service + cgroup v2          | Type=exec、KillMode=control-group，明确关闭超时 |
 
-依赖在对应模块实现时加入并由 Cargo.lock 固定。本次设计不修改 Cargo.toml，也不提前引入整套依赖。
+依赖按模块实际需要引入，并由 Cargo.lock 固定。
 
 Node 初期不需要 Web 服务框架、gRPC、Redis 客户端、S3 SDK、Actor 框架或自研 CDP。Tokio 有界 channel 和普通结构体足够表达这些职责。
 

@@ -49,7 +49,7 @@ PROOFRUN_TEST_DATABASE_URL=postgresql://user:password@127.0.0.1:5432/proofrun pn
 
 浏览器联调夹具：确保 4100 端口空闲，设置测试数据库变量后运行 `pnpm exec tsx tests/console/serve-fixture.mjs`。页面使用该文件 `ADMIN` 常量中的临时访问凭据。脚本会准备排队、验收通过、受阻、执行错误及 DOM/PNG 证据；按 Ctrl+C 回收独立数据库和临时证据目录。所有任务标题明确标记“联调夹具”，节点是协议模拟，截图为最小 PNG，不代表真实模型或浏览器业务验收。
 
-本批覆盖与未覆盖项见 [Console 验证记录](../../docs/console-validation.md)。本轮已补节点配对/撤销/轮换、人工介入、登录状态保存与操作追踪，详见 [迁移交付](../../docs/migration-completion.md)。当前仍为管理员操作台，没有用户体系。
+覆盖与未覆盖项见 [测试入口与覆盖边界](../../tests/README.md)。节点配对/撤销/轮换、人工介入、登录状态保存与操作追踪的运行边界详见 [部署与运行维护](../../deploy/README.md)。当前仍为管理员操作台，没有用户体系。
 
 独立免登录 HITL 处理页、实时浏览器画面、受限输入和完成交接现已接入，使用与验证边界见 [HITL 说明](../../docs/hitl.md)。
 

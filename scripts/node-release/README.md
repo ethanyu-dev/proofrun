@@ -13,7 +13,7 @@
 
 检查两种架构构建与资产后，在 GitHub Release 页面发布草稿。同版本已有 release 时工作流拒绝覆盖；升级应提高 Cargo 版本或预发布后缀。API / Web / Agent 的 Railway 发布不依赖节点 tag。
 
-预发布版本需显式指定下载 URL 和 `--version`；GitHub `latest` 不包含预发布。首次 release 发布前，下方下载命令还不可用。摘要校验保证资产完整性，不等于独立签名或 VM 验收。
+预发布版本需显式指定下载 URL 和 `--version`；GitHub `latest` 不包含预发布。[node-v0.1.0-alpha.1](https://github.com/ethanyu-dev/proofrun/releases/tag/node-v0.1.0-alpha.1) 已于 2026-09-29 发布，下方固定版本的下载命令可用。摘要校验保证资产完整性，不等于独立签名或 VM 验收。
 
 ## 节点机一次性准备
 

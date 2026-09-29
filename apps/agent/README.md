@@ -50,27 +50,33 @@ pnpm --filter @proofrun/agent start once
 - 页面文本是未受信任数据。系统提示明确页面不能改变标准；封闭工具、身份注入与证据校验提供结构约束，但不能证明模型的语义判断正确。
 - 上下文按字符数限制，原始标准不裁剪。最多保留最近 8 条操作、8 份历史页面正文（每份最多 20000 字符）、24 项证据摘要和一张当前图片；历史正文去掉元素编号，不能用来操作当前页面。上下文超限先丢弃最旧历史，再裁剪当前观察；页面裁剪会标记 truncated。超出上限的固定任务定义返回 ERROR，需要上层拆小任务或调整配置。字符限制不等于模型 token 的精确限制。
 - API 与 worker 应保持时钟同步。领取的绝对截止时间转换为本地单调时钟，后续系统时间变化不会增加任务总预算。
-- 0.1 已支持人工交接、绑定节点的登录存储复用和网络元数据；具体协议和限制见 [迁移交付记录](../../docs/migration-completion.md)。不包含真实模型质量评估、完整 TRACE 或任意远程桌面。
+- 0.1 已支持人工交接、绑定节点的登录存储复用和网络元数据；具体协议和限制见 [部署与运行维护](../../deploy/README.md)。支持 Chromium TRACE，语义与限制见 [浏览器能力](../../docs/browser-capabilities-ha.md)；不包含真实模型质量评估或任意远程桌面。
 
 ## 参数与代码位置
 
 `.env.example` 给出全部参数。默认模型时限 30 秒、命令时限 15 秒、HTTP 时限 5 秒、模型轮数 40、文本上下文 64000 字符、单次输出 4096 token；任务硬期限和动作预算优先。
 
-| 文件                          | 职责                                    |
-| ----------------------------- | --------------------------------------- |
-| `src/main.ts`                 | CLI、串行领取、关停与不含凭据的摘要日志 |
-| `src/config.ts`               | 地址、模型和预算配置                    |
-| `src/client.ts`               | 控制面请求、命令幂等重送、证据下载      |
-| `src/http.ts`                 | 限额读取、超时和错误脱敏                |
-| `src/model/chat.ts`           | Chat Completions 工具协议适配           |
-| `src/execution/runner.ts`     | 执行循环、上下文、预算、验收和报告      |
-| `src/execution/lease.ts`      | 独立续租、截止时间与撤权                |
-| `src/evidence/observation.ts` | 观察结构及证据可用性核实                |
+| 文件                          | 职责                                      |
+| ----------------------------- | ----------------------------------------- |
+| `src/main.ts`                 | CLI、并发槽领取、关停与不含凭据的摘要日志 |
+| `src/config.ts`               | 地址、模型和预算配置                      |
+| `src/client.ts`               | 控制面请求、命令幂等重送、证据下载        |
+| `src/http.ts`                 | 限额读取、超时和错误脱敏                  |
+| `src/model/chat.ts`           | Chat Completions 工具协议适配             |
+| `src/execution/runner.ts`     | 执行循环、预算、验收和报告                |
+| `src/execution/lease.ts`      | 独立续租、截止时间与撤权                  |
+| `src/evidence/observation.ts` | 观察结构及证据可用性核实                  |
 
-验证范围与运行命令见 [Agent 验证记录](../../docs/agent-validation.md)。
+验证范围与运行命令见 [测试入口与覆盖边界](../../tests/README.md)。
 
 ## 策略与容器字体
 
 worker 根据 `task.executionMode` 选择纯 LLM（`llm`）或 LLM + JEV（`jev`）；旧任务回退到 `comparison.arm`，没有组标识时使用纯 LLM。`parallel` 仅供控制面接收并拆组，不允许 worker 将其作为单次执行。JEV 仍要求配置 `TYPESAFE_API_KEY`，两种单模式均使用相同的执行预算与证据校验流程。
 
 Linux Chromium 在容器内渲染截图和实时画面，不能使用宿主机字体。`tests/agent/Dockerfile` 显式安装 `fonts-noto-cjk` 和 `fontconfig`；普通节点用户运行 `fc-match 'sans-serif:lang=zh-cn'` 应匹配中文字体。已有容器须补装字体或重建；已生成的截图不会改变，新的浏览器会话才可可靠使用更新后的字体缓存。
+
+## 提示词与上下文边界
+
+`src/prompts/decision.ts` 独立维护执行系统提示，`src/prompts/jev.ts` 维护候选选择、字段填写与文本审查提示；适配器只负责组装请求与解析协议。
+
+`src/execution/context.ts` 负责历史正文去除旧元素编号、上下文预算裁剪和覆盖标记。`runner.ts` 负责租约安全点、当前步骤与执行状态，传入事实快照；裁剪不能修改原始观察、任务或报告证据。

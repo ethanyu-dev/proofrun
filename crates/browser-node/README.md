@@ -52,10 +52,10 @@ target/release/proofrun-node --config deploy/node.example.toml serve
 
 写操作默认关闭，包括导航。检查过的 agent-browser 上游源码在连接异常路径可能重试，尚未证明当前发布二进制在“业务成功、响应丢失”时不会再次写入。开发测试必须显式设置 `allow_unverified_writes = true`；该开关不会将 engineWritesVerified 变成 true。节点的 commandId 去重不能约束引擎内部重试，不能宣称业务 exactly-once。
 
-已补充凭据轮换/原配对回执恢复、Cookie/localStorage 登录复用、网络元数据、停机清理和显式主机重启恢复工具，见 [迁移交付记录](../../docs/migration-completion.md)。尚未提供 iframe 条件等待、closed Shadow DOM、完整 TRACE、磁盘故障演练和真实内网 VM 部署验收。当前截图是多次 CLI 调用中的一次采样，`atomic: false`；观察成功不等于业务验收通过。
+已补充凭据轮换/原配对回执恢复、Cookie/localStorage 登录复用、网络元数据、停机清理和显式主机重启恢复工具，见 [部署与运行维护](../../deploy/README.md)。尚未提供 iframe 条件等待、closed Shadow DOM、磁盘故障演练和真实内网 VM 部署验收。当前截图是多次 CLI 调用中的一次采样，`atomic: false`；观察成功不等于业务验收通过。
 
 跨主机重启导致 boot ID 改变，或创建意图没有可验证的 cgroup 身份时，节点保守地停止接单并要求恢复处理。不要通过删除数据库、清空 home 或重用 sessionId 来解除未核实的占用。维护工具可以清理确认关闭的旧 profile 和命令内容，仍保留去重身份。实际 VM 重启后的运维演练尚未验收。
 
-协议详见 [node-protocol](../../docs/node-protocol.md)，测试命令和范围见 [验证记录](../../docs/browser-node-validation.md)。
+协议详见 [node-protocol](../../docs/node-protocol.md)，测试命令和范围见 [测试入口与覆盖边界](../../tests/README.md)。
 
 独立免登录 HITL 处理页、实时浏览器画面、受限输入和完成交接现已接入，使用与验证边界见 [HITL 说明](../../docs/hitl.md)。

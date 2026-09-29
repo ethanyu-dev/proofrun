@@ -87,4 +87,4 @@ cleanup 结果通过 taskId、status、result 关联，PENDING 表示正在等�
 - schema、API 与 Agent 已支持结构化步骤；worker 领取时声明 structuredSteps 能力，旧 worker 不会领取新版任务。
 - API 启动会应用 009-structured-cases.sql，新增逐步结果列及清理意图表；不删除旧任务与报告。
 - Console 的 JSON 模式可直接提交 case 数组，详情展示步骤、约束、执行结果以及清理任务链接。普通表单继续编辑原内部任务。
-- 更新 contracts、API、Agent、Console 后部署；本次代码验证不自动部署、不运行真实 Novita 账号操作。
+- 更新 contracts、API、Agent、Console 后部署；代码验证不替代真实业务环境验收。
