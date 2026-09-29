@@ -37,7 +37,7 @@ CI 两个任务均须通过。JavaScript Actions 运行在 Node 24；项目版�
 - `pnpm check` 通过：协议 9、Agent 70、Console 21、Rust 19 项；完整构建和 Clippy 通过。
 - 独立 PostgreSQL 的 API 测试 45 项通过；Agent/API 测试 11 项通过，包含节点长连接存在时正常退出的回归。
 - 完整 Linux 入口通过：真实浏览器普通/Shadow DOM 表单、14 份摘要匹配证据、登录与网络、systemd 故障、网关可靠交付、原生 DOM 能力和 HITL。能力场景独立记录四次页面服务写入，HITL 记录一次提交；这些均为回环测试数据。
-- 本机使用已有 arm64 Chromium/systemd 测试镜像，容器内按固定 Rust 1.98.0 从当前源码编译。未重建测试镜像，也未执行 GitHub 托管 x64 runner；远端 CI 状态仍需提交后确认。
+- 首次本地复验使用已有 arm64 Chromium/systemd 测试镜像，容器内按固定 Rust 1.98.0 从源码编译，未重建本地测试镜像。后续提交 `a9b38a6` 已在 GitHub 托管 Ubuntu x64 runner 完成两项 CI，见下方记录。
 - x64 引擎已完成新下载及 SHA-256 校验；arm64 已有资产的摘要校验通过，不匹配文件的拒绝路径已检查。下载器需要系统 curl。
 - 本机在 Linux 全量 Rust 编译同时运行 API 测试时，曾出现 HITL 等待超时、TRACE 租约过期及 HA 连接终止错误；后续完成下述根因修复和并发回归。CI 分开运行 API 与 Linux 工作不能替代生产负载验收。
 
@@ -61,7 +61,7 @@ CI 两个任务均须通过。JavaScript Actions 运行在 Node 24；项目版�
 - 提交 `a9b38a6` 已在独立 worktree 中使用空 pnpm store 执行 `pnpm install --frozen-lockfile`，215 个依赖均重新下载；`pnpm build` 完成 TypeScript、Console 和 Rust 编译。没有复用原工作目录的 node_modules、dist 或 target；Rust 工具链和下载缓存仍使用本机环境。
 - 实际 Caddy 冒烟发现两份模板遗漏 `/v2/*`：未授权的新版 API 请求返回了 Console HTML（200）。补齐转发后，`pnpm test:deploy` 通过：旧版及新版 API 均经过鉴权、Console 资源与前端路由可访问、空库执行全部迁移、API 收到正常停止信号后退出码为 0、重启保留已提交任务。
 - 检查使用 `.node-version` 对应的 Node.js Docker 镜像及固定摘要的 Caddy 镜像；模型和浏览器不参与此项测试。HA 模板的两个上游指向同一个临时 API，仅验证模板路由，不作为主备切换证据。
-- 已推送至指定 GitHub 仓库并触发 CI；远端执行结果以对应提交的 Actions 记录为准。尚未提供目标 Linux VM，本轮没有修改现有预览服务或进行生产部署。
+- 已使用 `ethanyu-dev` 身份首次推送至指定仓库；提交 `a9b38a6` 的 [GitHub Actions](https://github.com/ethanyu-dev/proofrun/actions/runs/36520095696) 中 `check` 与 `linux-browser` 全部通过，包含托管 x64 上重新构建镜像后的完整浏览器回归。加入部署入口检查的后续提交仍以各自的 Actions 结果为准。尚未提供目标 Linux VM，本轮没有修改现有预览服务或进行生产部署。
 
 ## 版本与交付
 
