@@ -25,7 +25,9 @@ test(
     await admin.query(`CREATE DATABASE ${name}`);
     const url = new URL(connectionString);
     url.pathname = `/${name}`;
-    const sql = new pg.Pool({ connectionString: url.toString() });
+    // 单连接的 end 等待 socket 关闭；Pool.end 只等待池清空，随后强制删库会与断连竞争。
+    const sql = new pg.Client({ connectionString: url.toString() });
+    await sql.connect();
     const config = {
       databaseUrl: url.toString(),
       adminToken: ADMIN,
@@ -109,7 +111,8 @@ test(
       for (const node of nodes) node.close();
       await Promise.all(replicas.map((api) => api.close()));
       await sql.end();
-      await admin.query(`DROP DATABASE ${name} WITH (FORCE)`);
+      // 不强制踢掉残留连接：关闭不完整应让测试失败，不能用删库掩盖资源泄漏。
+      await admin.query(`DROP DATABASE ${name}`);
       await admin.end();
       await rm(directory, { recursive: true, force: true });
     }

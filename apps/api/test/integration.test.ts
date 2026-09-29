@@ -1,5 +1,6 @@
 import WebSocket from 'ws';
 import assert from 'node:assert/strict';
+import { setTimeout as delay } from 'node:timers/promises';
 import { randomUUID, createHash } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -26,6 +27,7 @@ import {
   TRACE,
   TRACE_HASH,
   SimulatedNode,
+  SimulatedWorker,
   task,
   until,
 } from './fixture.js';
@@ -33,6 +35,8 @@ import {
 /** 测试凭据只用于新建的临时数据库和回环监听。 */
 const ADMIN = 'proofrun-admin-integration-only-credential';
 const WORKER = 'proofrun-worker-integration-only-credential';
+/** 明确跨越初始租约边界；不改变控制面配置或轮询超时。 */
+const LEASE_BOUNDARY_MARGIN_MS = 100;
 
 // 范围：真实 PostgreSQL、HTTP 与 WebSocket 的控制面约束；浏览器行为由协议夹具模拟。
 test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => {
@@ -1541,8 +1545,8 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       );
     });
 
-    // 范围：独立链接、单一操作者、实时通道、输入去重和完成撤权；节点画面为夹具，不证明 Chrome 交互。
-    await suite.test('独立 HITL 链接限定本次任务并在完成后撤权', async () => {
+    // 范围：跨初始租约的人工接管与重连、独立链接、单一操作者、输入去重和完成撤权；节点画面为夹具，不证明 Chrome 交互。
+    await suite.test('独立 HITL 链接限定本次任务并在完成后撤权', async (t) => {
       const node = await addNode('hitl-link');
       const definition = {
         ...task('hitl-link'),
@@ -1555,6 +1559,8 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       };
       await submit(definition);
       const execution = await claim();
+      const worker = new SimulatedWorker(base, execution);
+      t.after(() => worker.close());
       await ready(execution);
       const adminPath = `/v1/admin/executions/${execution.id}`;
       await api('POST', `${adminPath}/intervene`, {
@@ -1628,6 +1634,11 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         await until(
           async () => first.messages,
           (rows) => rows.some((m) => m.type === 'frame'),
+        );
+        // 人工已接管后跨过首次授权期限，再断开和重连，验证 worker 在等待用户时仍续租。
+        await delay(
+          Math.max(0, Date.parse(execution.leaseExpiresAt) - Date.now()) +
+            LEASE_BOUNDARY_MARGIN_MS,
         );
         first.ws.send(
           JSON.stringify({
@@ -1800,6 +1811,7 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
           async () => messages,
           (rows) => rows.some((m) => m.type === 'state'),
         );
+        await worker.close();
         await api('POST', `/v1/tasks/${definition.taskId}/cancel`);
         await until(
           async () => messages,
@@ -1965,8 +1977,8 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       await cleaned(second.taskId);
     });
 
-    // 范围：真实 HTTP/数据库的 TRACE 能力准入、哈希与文件格式、归属和下载；traceEvents 是夹具，不证明真实浏览器采集。
-    await suite.test('TRACE 文件可靠交付并限制所属节点和执行', async () => {
+    // 范围：跨初始租约的 TRACE 采集协议、能力准入、哈希与文件格式、归属和下载；traceEvents 是夹具，不证明真实浏览器采集。
+    await suite.test('TRACE 文件可靠交付并限制所属节点和执行', async (t) => {
       const node = new SimulatedNode(base, 'trace-fixture');
       nodes.push(node);
       await node.pair(ADMIN);
@@ -1977,8 +1989,15 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       node.trace = true;
       node.heartbeat();
       const execution = await until(claim, (value) => !!value);
+      const worker = new SimulatedWorker(base, execution);
+      t.after(() => worker.close());
       await ready(execution);
       await command(execution, { type: 'browser.trace', action: 'start' });
+      // 采集过程超过初始租约，后续 observe/stop 必须由独立续约维持有效性。
+      await delay(
+        Math.max(0, Date.parse(execution.leaseExpiresAt) - Date.now()) +
+          LEASE_BOUNDARY_MARGIN_MS,
+      );
       const observed = await command(execution, { type: 'browser.observe' });
       const stopped = await command(execution, {
         type: 'browser.trace',
@@ -2056,6 +2075,7 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
           }),
         ),
       };
+      await worker.close();
       assert.equal(
         (
           await api(

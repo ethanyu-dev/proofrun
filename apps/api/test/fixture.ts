@@ -1,9 +1,12 @@
 import { randomUUID, createHash } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import WebSocket from 'ws';
 import type { NodeCommand } from '@proofrun/contracts';
 
 /** 故障测试的轮询间隔；不代表生产调度周期。 */
 const POLL_MS = 25;
+/** 夹具续租最多间隔一秒，短租约按剩余时间的三分之一续期。 */
+const WORKER_HEARTBEAT_MS = 1000;
 /** 有效的最小 PNG；只验证存储链路，不用于证明真实截图内容。 */
 export const PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jD1sAAAAASUVORK5CYII=',
@@ -31,6 +34,62 @@ export async function until<T>(
     await new Promise((resolve) => setTimeout(resolve, POLL_MS));
   }
   throw new Error('等待控制面状态超时');
+}
+
+/** 模拟存活 worker 的独立续租；只验证控制面协议，不代替真实 Agent 的租约守卫测试。 */
+export class SimulatedWorker {
+  /** 结束用例时中止等待和在途 HTTP，防止续租跨越用例边界。 */
+  private readonly stop = new AbortController();
+  /** 后台错误保存到 close 时抛出，不能把续租失败静默当成测试通过。 */
+  private failure: unknown;
+  /** close 必须等待循环结束，不能留下后台请求。 */
+  private readonly running: Promise<void>;
+
+  constructor(
+    base: string,
+    execution: { id: string; leaseToken: string; leaseExpiresAt: string },
+  ) {
+    const signal = this.stop.signal;
+    this.running = (async () => {
+      let expires = Date.parse(execution.leaseExpiresAt);
+      while (!signal.aborted) {
+        const remaining = expires - Date.now();
+        if (remaining <= 0) throw new Error('模拟 worker 租约已过期');
+        const response = await fetch(
+          `${base}/v1/executions/${execution.id}/heartbeat`,
+          {
+            method: 'POST',
+            headers: { authorization: `Bearer ${execution.leaseToken}` },
+            signal: AbortSignal.any([signal, AbortSignal.timeout(remaining)]),
+          },
+        );
+        const data = await response.json();
+        if (!response.ok)
+          throw new Error(
+            `模拟 worker 续租失败：${response.status} ${JSON.stringify(data)}`,
+          );
+        expires = Date.parse(data.leaseExpiresAt);
+        if (!Number.isFinite(expires)) throw new Error('续租回复缺少有效期限');
+        await delay(
+          Math.max(
+            1,
+            Math.min(WORKER_HEARTBEAT_MS, (expires - Date.now()) / 3),
+          ),
+          undefined,
+          { signal },
+        );
+      }
+    })().catch((error: unknown) => {
+      if (!signal.aborted) this.failure = error;
+    });
+  }
+
+  /** 正常完成/取消前停止续租；重复清理安全，异常退出仍报告已观察到的续租故障。 */
+  async close(): Promise<void> {
+    this.stop.abort();
+    await this.running;
+    if (this.failure) throw this.failure;
+  }
 }
 
 /** 最小任务夹具，标准由调用方提交，测试不会生成或修改标准。 */
