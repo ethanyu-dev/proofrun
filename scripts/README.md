@@ -8,9 +8,26 @@
 | `generate-public-api.mjs`   | 生成公开 OpenAPI，与契约生成流程配套                 |
 | `download-test-engine.mjs`  | 下载固定原生引擎并核对摘要                           |
 | `accept-task.mjs`           | 提交既定任务、等待执行与关闭、导出报告和摘要匹配证据 |
+| `audit-acceptance.mjs`      | 离线审计已有导出的一致性、证据摘要、验收引用和用量   |
 | `test-jev.mjs`              | 历史观察的 JEV 建议测试，支持仅准备输入              |
 | `compare-jev.mjs`           | 相同历史输入下交替请求 JEV 与文本模型                |
 | `replay-agent-baseline.mjs` | 使用原 Agent 提示与工具协议重放历史观察              |
+
+## 验收材料审计
+
+```sh
+# 首次使用先构建共享协议；审计只读本地材料，不调用模型或提交任务。
+pnpm --filter @proofrun/contracts build
+pnpm audit:acceptance .proofrun/acceptance/<taskId>
+# 显式纳入全部历史目录，保留失败和缺失样本；纯 JSON 可供后续处理。
+pnpm --silent audit:acceptance .proofrun/acceptance/* > .proofrun/acceptance-audit.json
+```
+
+每份目录使用 `accept-task.mjs` 的 `task.json`、`report.json` 和证据文件格式。审计验证当前 Schema、任务身份、报告副本一致性、终态、关闭确认、验收项完整性、证据引用、必需媒介和 SHA-256；拒绝证据文件路径穿越及符号链接。每份结果保存源文件摘要，缺失和损坏的样本不会被静默忽略，重复任务标记为 `DUPLICATE_SAMPLE`。
+
+退出码 0 只代表全部材料通过完整性检查，执行失败的任务也可以拥有完整材料；1 表示至少一份材料缺失、不一致或尚未关闭；2 表示没有提供目录。`reportedVerdict` 保留模型结论，`businessReview` 始终为 `NOT_REVIEWED`。本工具不验证业务真值、页面内容真实性、部署版本或模型配置，不核对结构化步骤和关联清理任务的完整材料，不计算业务成功率。
+
+耗时与调用数来自报告。token 为已记录用量，缺失时返回 null，不补成零；用量完整性与费用保持未知。历史样本可能使用不同任务、预算和版本，不自动合并为 JEV/LLM 胜率或当前版本基线。真实任务验收仍需按[部署说明](../deploy/README.md#业务验收)绑定版本、配置及独立业务复核。
 
 ## JEV 回放与对比
 
