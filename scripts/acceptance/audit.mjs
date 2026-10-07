@@ -59,6 +59,19 @@ export async function auditDirectory(input) {
     if (ACTIVE_STATES.has(detail.state)) issue('TASK_NOT_TERMINAL');
     if (!isDeepStrictEqual(detail.report, report)) issue('REPORT_MISMATCH');
     if (report && report.taskId !== detail.id) issue('REPORT_TASK_MISMATCH');
+    if (report && !ACTIVE_STATES.has(detail.state)) {
+      // 与控制面归一规则一致：ERROR 对应 COMPLETED 生命周期；取消、超时保留原值。
+      const lifecycle = ['CANCELLED', 'TIMED_OUT'].includes(detail.state)
+        ? detail.state
+        : 'COMPLETED';
+      if (report.lifecycle !== lifecycle) issue('REPORT_LIFECYCLE_MISMATCH');
+      // BLOCKED 仍属任务 COMPLETED；异常终态只允许附加 ERROR 报告。
+      if (
+        (detail.state === 'COMPLETED') ===
+        (report.executionDisposition === 'ERROR')
+      )
+        issue('REPORT_DISPOSITION_MISMATCH');
+    }
   }
 
   const verifiedArtifacts = new Map();
@@ -90,12 +103,15 @@ export async function auditDirectory(input) {
   }
 
   const criteria = [];
-  const expected = new Map(
-    (detail?.definition.acceptanceCriteria ?? []).map((item) => [
-      item.id,
-      item,
-    ]),
-  );
+  const expected = new Map();
+  for (const definition of detail?.definition.acceptanceCriteria ?? []) {
+    // Schema 不保证 ID 唯一；拒绝重复并保留首项，不能用后一项覆盖证据要求。
+    if (expected.has(definition.id)) {
+      issue('DUPLICATE_CRITERION_DEFINITION', definition.id);
+      continue;
+    }
+    expected.set(definition.id, definition);
+  }
   const seen = new Set();
   for (const criterion of report?.criteria ?? []) {
     if (seen.has(criterion.criterionId))
@@ -132,12 +148,18 @@ export async function auditDirectory(input) {
   if (closureVerified === false) issue('SESSION_NOT_CLOSED');
   if (report?.executionDisposition === 'EXECUTED' && closureVerified === null)
     issue('EXECUTION_RECORD_MISSING');
-  if (
-    report?.verdict === 'PASSED' &&
-    (!report.criteria.length ||
-      report.criteria.some((item) => item.verdict !== 'PASSED'))
-  )
-    issue('INCONSISTENT_PASSED_VERDICT');
+  if (report) {
+    // 与控制面一致：失败优先，其次全部通过，其余不确定；未正常执行时没有业务结论。
+    const verdict =
+      report.executionDisposition !== 'EXECUTED'
+        ? null
+        : report.criteria.some((item) => item.verdict === 'FAILED')
+          ? 'FAILED'
+          : report.criteria.every((item) => item.verdict === 'PASSED')
+            ? 'PASSED'
+            : 'INCONCLUSIVE';
+    if (report.verdict !== verdict) issue('INCONSISTENT_VERDICT');
+  }
   const metrics = report?.executionDetails;
   return {
     directory,

@@ -145,11 +145,7 @@ test('缺失验收项与执行记录不能伪装完整通过', async (t) => {
   assert.equal(run.closureVerified, null);
   assert.deepEqual(
     run.issues.map((issue) => issue.code),
-    [
-      'MISSING_CRITERION',
-      'EXECUTION_RECORD_MISSING',
-      'INCONSISTENT_PASSED_VERDICT',
-    ],
+    ['MISSING_CRITERION', 'EXECUTION_RECORD_MISSING'],
   );
 });
 
@@ -217,5 +213,116 @@ test('批次不因缺失或重复样本静默缩小分母', async (t) => {
       result.runs[1].issues.some((issue) => issue.code === 'DUPLICATE_SAMPLE'),
     );
     assert.equal(result.runs[2].issues[0].code, 'MISSING_FILE');
+  }
+});
+
+// 验证整体结论的三种取值及失败优先级；只核对已声明结论，不判断业务事实。
+test('整体结论必须与全部验收项一致', async (t) => {
+  const cases = [
+    // 全部通过时只能声明 PASSED，不接受 FAILED 或 INCONCLUSIVE。
+    { criteria: ['PASSED', 'PASSED'], expected: 'PASSED' },
+    // 混合通过与失败时必须声明 FAILED。
+    { criteria: ['PASSED', 'FAILED'], expected: 'FAILED' },
+    // 尚有不确定项且没有失败项时只能声明 INCONCLUSIVE。
+    { criteria: ['PASSED', 'INCONCLUSIVE'], expected: 'INCONCLUSIVE' },
+    // 失败优先于不确定项，不能用 INCONCLUSIVE 掩盖失败。
+    { criteria: ['FAILED', 'INCONCLUSIVE'], expected: 'FAILED' },
+    // 已执行报告仍含未验收项时不得整体通过。
+    { criteria: ['PASSED', 'SKIPPED'], expected: 'INCONCLUSIVE' },
+  ];
+  for (const scenario of cases) {
+    const f = await fixture(t);
+    f.detail.definition.acceptanceCriteria.push({
+      ...f.detail.definition.acceptanceCriteria[0],
+      id: 'second',
+    });
+    f.report.criteria.push({ ...f.report.criteria[0], criterionId: 'second' });
+    f.report.criteria.forEach((criterion, index) => {
+      criterion.verdict = scenario.criteria[index];
+    });
+    for (const verdict of ['PASSED', 'FAILED', 'INCONCLUSIVE']) {
+      f.report.verdict = verdict;
+      await f.save();
+      const run = await auditDirectory(f.directory);
+      assert.deepEqual(
+        run.issues,
+        verdict === scenario.expected
+          ? []
+          : [{ code: 'INCONSISTENT_VERDICT', item: null }],
+        `${scenario.criteria.join('/')} → ${verdict}`,
+      );
+    }
+  }
+});
+
+// 验证控制面终态、报告生命周期和执行分类的对应关系；不演练真实取消竞态。
+test('报告必须符合控制面的终态映射', async (t) => {
+  const cases = [
+    // 完成任务可以是正常执行，也可以是没有产品结论的阻塞。
+    { state: 'COMPLETED', disposition: 'EXECUTED', lifecycle: 'COMPLETED' },
+    { state: 'COMPLETED', disposition: 'BLOCKED', lifecycle: 'COMPLETED' },
+    // ERROR 没有同名报告生命周期，控制面将其归一为 COMPLETED。
+    { state: 'ERROR', disposition: 'ERROR', lifecycle: 'COMPLETED' },
+    // 取消和超时必须保留各自的生命周期，执行分类为 ERROR。
+    { state: 'CANCELLED', disposition: 'ERROR', lifecycle: 'CANCELLED' },
+    { state: 'TIMED_OUT', disposition: 'ERROR', lifecycle: 'TIMED_OUT' },
+  ];
+  for (const scenario of cases) {
+    const f = await fixture(t);
+    f.detail.state = scenario.state;
+    Object.assign(f.report, {
+      lifecycle: scenario.lifecycle,
+      executionDisposition: scenario.disposition,
+      verdict: scenario.disposition === 'EXECUTED' ? 'PASSED' : null,
+    });
+    if (scenario.disposition !== 'EXECUTED') {
+      f.report.criteria[0].verdict = 'SKIPPED';
+      f.report.criteria[0].evidenceRefs = [];
+    }
+    await f.save();
+    assert.deepEqual(
+      (await auditDirectory(f.directory)).issues,
+      [],
+      scenario.state,
+    );
+    // 只改变任务状态，两个报告副本保持一致，避免其他校验掩盖本项缺口。
+    f.detail.state = scenario.state === 'COMPLETED' ? 'CANCELLED' : 'COMPLETED';
+    await f.save();
+    const run = await auditDirectory(f.directory);
+    assert.equal(run.integrity, 'INVALID_OR_INCOMPLETE');
+    assert.ok(
+      run.issues.some((issue) => issue.code === 'REPORT_DISPOSITION_MISMATCH'),
+    );
+    if (scenario.state !== 'ERROR')
+      assert.ok(
+        run.issues.some((issue) => issue.code === 'REPORT_LIFECYCLE_MISMATCH'),
+      );
+  }
+});
+
+// 验证同名定义不能覆盖必需截图，且 CLI 拒绝损坏材料；不证明截图或页面内容真实。
+test('重复定义无论顺序如何都不能通过审计', async (t) => {
+  for (const screenshotFirst of [true, false]) {
+    const f = await fixture(t);
+    const dom = f.detail.definition.acceptanceCriteria[0];
+    const screenshot = { ...dom, evidenceKinds: ['SCREENSHOT'] };
+    f.detail.definition.acceptanceCriteria = screenshotFirst
+      ? [screenshot, dom]
+      : [dom, screenshot];
+    await f.save();
+    const run = await auditDirectory(f.directory);
+    assert.equal(run.integrity, 'INVALID_OR_INCOMPLETE');
+    assert.ok(
+      run.issues.some(
+        (issue) => issue.code === 'DUPLICATE_CRITERION_DEFINITION',
+      ),
+    );
+    assert.throws(
+      () =>
+        execFileSync(process.execPath, [CLI.pathname, f.directory], {
+          stdio: 'pipe',
+        }),
+      (error) => error.status === 1,
+    );
   }
 });

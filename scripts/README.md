@@ -23,7 +23,7 @@ pnpm audit:acceptance .proofrun/acceptance/<taskId>
 pnpm --silent audit:acceptance .proofrun/acceptance/* > .proofrun/acceptance-audit.json
 ```
 
-每份目录使用 `accept-task.mjs` 的 `task.json`、`report.json` 和证据文件格式。审计验证当前 Schema、任务身份、报告副本一致性、终态、关闭确认、验收项完整性、证据引用、必需媒介和 SHA-256；拒绝证据文件路径穿越及符号链接。每份结果保存源文件摘要，缺失和损坏的样本不会被静默忽略，重复任务标记为 `DUPLICATE_SAMPLE`。
+每份目录使用 `accept-task.mjs` 的 `task.json`、`report.json` 和证据文件格式。审计验证当前 Schema、任务身份、报告副本一致性、终态与报告生命周期及执行分类的对应关系、关闭确认、验收项完整性、整体结论与逐项结论的一致性、证据引用、必需媒介和 SHA-256；拒绝重复验收项定义、证据文件路径穿越及符号链接。每份结果保存源文件摘要，缺失和损坏的样本不会被静默忽略，重复任务标记为 `DUPLICATE_SAMPLE`。
 
 退出码 0 只代表全部材料通过完整性检查，执行失败的任务也可以拥有完整材料；1 表示至少一份材料缺失、不一致或尚未关闭；2 表示没有提供目录。`reportedVerdict` 保留模型结论，`businessReview` 始终为 `NOT_REVIEWED`。本工具不验证业务真值、页面内容真实性、部署版本或模型配置，不核对结构化步骤和关联清理任务的完整材料，不计算业务成功率。
 
