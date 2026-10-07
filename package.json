@@ -12,7 +12,7 @@
     "build": "pnpm contracts:generate && pnpm --filter @proofrun/contracts build && pnpm --filter './apps/*' -r build && cargo build --locked --workspace",
     "typecheck": "pnpm --filter @proofrun/contracts build && pnpm --filter './apps/*' -r typecheck",
     "test:contracts": "pnpm --filter @proofrun/contracts build && node --test tests/contracts/*.test.mjs",
-    "check": "pnpm contracts:check && pnpm format:check && pnpm typecheck && pnpm test:contracts && pnpm test:agent && pnpm test:console && cargo fmt --all -- --check && cargo test --locked --workspace",
+    "check": "pnpm contracts:check && pnpm format:check && pnpm typecheck && pnpm test:contracts && pnpm test:acceptance && pnpm test:agent && pnpm test:console && cargo fmt --all -- --check && cargo test --locked --workspace",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "dev:api": "pnpm --filter @proofrun/contracts build && pnpm --filter @proofrun/api dev",
@@ -35,7 +35,9 @@
     "test:console": "tsx --tsconfig apps/console/tsconfig.json --test tests/console/*.test.ts",
     "maintenance:api": "tsx apps/api/src/maintenance.ts",
     "accept:task": "pnpm --filter @proofrun/contracts build && node scripts/accept-task.mjs",
-    "test:hitl:linux": "PROOFRUN_TEST_REAL_AGENT=true PROOFRUN_TEST_HITL=true bash tests/control-plane/run-linux.sh"
+    "test:hitl:linux": "PROOFRUN_TEST_REAL_AGENT=true PROOFRUN_TEST_HITL=true bash tests/control-plane/run-linux.sh",
+    "audit:acceptance": "node scripts/audit-acceptance.mjs",
+    "test:acceptance": "pnpm --filter @proofrun/contracts build && node --test tests/acceptance/*.test.mjs"
   },
   "devDependencies": {
     "@types/node": "24.13.6",
