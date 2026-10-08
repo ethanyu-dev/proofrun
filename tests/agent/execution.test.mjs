@@ -868,7 +868,7 @@ test('JEV 子请求的上下文与失败回执分别记录', async () => {
     };
   };
   const model = new JevModel(
-    config,
+    { ...config, thinking: 'disabled' },
     'fixture',
     'jev-test',
     async (_url, _key, _method, body) => {
@@ -890,6 +890,9 @@ test('JEV 子请求的上下文与失败回执分别记录', async () => {
       JSON.parse(JSON.stringify(bodies[index])),
     ),
   );
+  // 思考配置只传给文本模型，不能泄漏到 TypeSafe 候选协议。
+  assert.equal(Object.hasOwn(bodies[0], 'thinking'), false);
+  assert.deepEqual(bodies[1].thinking, { type: 'disabled' });
   assert.equal(records[0].receipt.status, 'RECEIVED');
   assert.equal(records[0].receipt.promptTokens, 3);
   assert.equal(records[1].receipt.status, 'ERROR');
@@ -1878,7 +1881,7 @@ test('混合执行端到端保留完成声明且不增加独立规划请求', as
   }));
   const execution = grant();
   execution.task.objective = '1. 提交表单\n2. 核对提交结果';
-  const settings = { ...config, modelUrl: server.url };
+  const settings = { ...config, modelUrl: server.url, thinking: 'disabled' };
   let selections = 0;
   const model = new JevModel(
     settings,
@@ -1898,6 +1901,7 @@ test('混合执行端到端保留完成声明且不增加独立规划请求', as
     assert.equal(report.executionDetails.modelCalls, 3);
     assert.equal(selections, 2);
     assert.equal(server.requests.length, 1);
+    assert.deepEqual(server.requests[0].thinking, { type: 'disabled' });
     assert.deepEqual(server.errors, []);
   } finally {
     await server.close();

@@ -27,6 +27,8 @@ export interface AgentConfig {
   vision: boolean;
   /** 不同 Chat Completions 服务使用的输出预算参数。 */
   tokenParameter: 'max_tokens' | 'max_completion_tokens';
+  /** 未设置时沿用供应商默认；显式模式仅传给配置的 Chat Completions 服务。 */
+  thinking?: 'enabled' | 'disabled';
   /** 空队列轮询、单 HTTP 请求、模型调用和浏览器命令的时限。 */
   pollMs: number;
   requestMs: number;
@@ -82,6 +84,15 @@ export function loadConfig(): AgentConfig {
     throw new Error(
       'Configure worker credential, model endpoint, model name and model API key',
     );
+  const thinking = process.env.PROOFRUN_MODEL_THINKING ?? 'default';
+  if (
+    thinking !== 'default' &&
+    thinking !== 'enabled' &&
+    thinking !== 'disabled'
+  )
+    throw new Error(
+      'PROOFRUN_MODEL_THINKING must be default, enabled or disabled',
+    );
   const vision = process.env.PROOFRUN_MODEL_VISION ?? 'false';
   if (!['true', 'false'].includes(vision))
     throw new Error('PROOFRUN_MODEL_VISION must be true or false');
@@ -93,6 +104,7 @@ export function loadConfig(): AgentConfig {
     modelKey,
     model,
     vision: vision === 'true',
+    ...(thinking === 'default' ? {} : { thinking }),
     tokenParameter: tokenParameter as AgentConfig['tokenParameter'],
     pollMs: number('PROOFRUN_AGENT_POLL_MS', DEFAULTS.pollMs, 100, 30_000),
     requestMs: number(

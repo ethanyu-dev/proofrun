@@ -328,6 +328,10 @@ export class JevModel implements DecisionModel {
         value: selectedAction!.value!,
       });
     const fieldBody = {
+      // 字段生成沿用文本审查的模式配置；TypeSafe 候选请求保持独立协议。
+      ...(this.config.thinking
+        ? { thinking: { type: this.config.thinking } }
+        : {}),
       model: this.config.model,
       [this.config.tokenParameter]: this.config.maxTokens,
       response_format: { type: 'json_object' },

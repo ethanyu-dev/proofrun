@@ -88,6 +88,10 @@ export class ChatModel implements DecisionModel {
         ]
       : input.text;
     const body = {
+      // 不向其他供应商默认添加扩展参数；DeepSeek 强制工具调用需显式关闭思考模式。
+      ...(this.config.thinking
+        ? { thinking: { type: this.config.thinking } }
+        : {}),
       model: this.config.model,
       stream: false,
       parallel_tool_calls: false,

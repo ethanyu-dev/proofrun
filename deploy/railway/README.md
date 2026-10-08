@@ -82,17 +82,20 @@ Web 的 Caddy 监听 Railway 提供的 `PORT`，TLS 由 Railway 边缘处理。`
 
 Agent：
 
-| 变量                         | 值                                                        |
-| ---------------------------- | --------------------------------------------------------- |
-| `PROOFRUN_CONTROL_URL`       | `http://${{api.RAILWAY_PRIVATE_DOMAIN}}:4100`             |
-| `PROOFRUN_WORKER_TOKEN`      | `${{api.PROOFRUN_WORKER_TOKEN}}`                          |
-| `PROOFRUN_MODEL_BASE_URL`    | 实际 Chat Completions 服务根地址，例如供应商的 `/v1` 地址 |
-| `PROOFRUN_MODEL_API_KEY`     | 模型服务密钥                                              |
-| `PROOFRUN_MODEL`             | 实际模型名称                                              |
-| `PROOFRUN_MODEL_VISION`      | 模型支持视觉时设为 `true`，否则 `false`                   |
-| `PROOFRUN_AGENT_CONCURRENCY` | 初始可设为 `2`，同时确认节点容量和供应商配额              |
+| 变量                         | 值                                                            |
+| ---------------------------- | ------------------------------------------------------------- |
+| `PROOFRUN_CONTROL_URL`       | `http://${{api.RAILWAY_PRIVATE_DOMAIN}}:4100`                 |
+| `PROOFRUN_WORKER_TOKEN`      | `${{api.PROOFRUN_WORKER_TOKEN}}`                              |
+| `PROOFRUN_MODEL_BASE_URL`    | 实际 Chat Completions 服务根地址，例如供应商的 `/v1` 地址     |
+| `PROOFRUN_MODEL_API_KEY`     | 模型服务密钥                                                  |
+| `PROOFRUN_MODEL`             | 实际模型名称                                                  |
+| `PROOFRUN_MODEL_VISION`      | 模型支持视觉时设为 `true`，否则 `false`                       |
+| `PROOFRUN_MODEL_THINKING`    | 默认 `default`；DeepSeek `deepseek-flash` 必须设为 `disabled` |
+| `PROOFRUN_AGENT_CONCURRENCY` | 初始可设为 `2`，同时确认节点容量和供应商配额                  |
 
 Agent 是后台 worker，启动命令包含 `serve`，不提供 HTTP 健康端点。若使用 JEV 执行模式，再配置 `TYPESAFE_API_KEY` / `TYPESAFE_MODEL`；普通模型模式不需要它们。其它可选参数见根目录 [.env.example](../../.env.example)。
+
+切换到 DeepSeek 时，按 [Agent 配置说明](../../apps/agent/README.md) 设置 `PROOFRUN_MODEL_THINKING=disabled`，并建议设置 `PROOFRUN_MODEL_TOKEN_PARAMETER=max_tokens`。先部署支持该变量的 Agent 版本，再确认变量变更已部署；原来已失败的任务需要另行重试，更新配置不会改变历史报告。
 
 ## 发布、检查与升级
 
