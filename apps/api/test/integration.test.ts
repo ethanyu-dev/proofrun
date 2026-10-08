@@ -1370,7 +1370,8 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       const persisted = (await api('GET', '/v1/nodes')).data.nodes.find(
         (n: { id: string }) => n.id === node.id,
       );
-      assert.deepEqual(persisted.routing_domains, [
+      // 这里只验证规则完整保留；数据库排序受 locale 影响，不属于持久化契约。
+      assert.deepEqual(persisted.routing_domains.toSorted(), [
         '*.restart.example',
         '127.0.0.1',
       ]);
