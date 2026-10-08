@@ -696,6 +696,117 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       );
     });
 
+    // 范围：真实 HTTP 与数据库验证通配规则归一化、原子冲突和跨池复用；不验证真实 DNS 或浏览器。
+    await suite.test('通配域名配置持久化与冲突保持原子性', async () => {
+      const owner = await addNode('wildcard-config');
+      const other = await addNode('wildcard-config');
+      const separate = await addNode('wildcard-config-other');
+      const saved = await api('POST', `/v1/nodes/${owner.id}/routing`, {
+        domains: ['*.EXAMPLE.COM.', '*.example.com', '*.例子.测试'],
+        revision: 0,
+      });
+      assert.equal(saved.status, 200);
+      assert.deepEqual(saved.data.domains, [
+        '*.example.com',
+        '*.xn--fsqu00a.xn--0zwm56d',
+      ]);
+      assert.equal(
+        (
+          await api('POST', `/v1/nodes/${other.id}/routing`, {
+            domains: ['existing.example'],
+            revision: 0,
+          })
+        ).status,
+        200,
+      );
+      assert.equal(
+        (
+          await api('POST', `/v1/nodes/${other.id}/routing`, {
+            domains: ['new.example', '*.EXAMPLE.COM.'],
+            revision: 1,
+          })
+        ).data.code,
+        'DOMAIN_ASSIGNED',
+      );
+      assert.equal(
+        (
+          await api('POST', `/v1/nodes/${other.id}/routing`, {
+            domains: ['new.example', 'a.*.example.com'],
+            revision: 1,
+          })
+        ).status,
+        400,
+      );
+      const rows = (await api('GET', '/v1/nodes')).data.nodes;
+      assert.deepEqual(
+        rows.find((n: { id: string }) => n.id === owner.id).routing_domains,
+        saved.data.domains,
+      );
+      const unchanged = rows.find((n: { id: string }) => n.id === other.id);
+      assert.deepEqual(unchanged.routing_domains, ['existing.example']);
+      assert.equal(unchanged.routing_revision, 1);
+      assert.equal(
+        (
+          await api('POST', `/v1/nodes/${separate.id}/routing`, {
+            domains: ['*.example.com'],
+            revision: 0,
+          })
+        ).status,
+        200,
+      );
+    });
+
+    // 范围：真实领取事务验证重叠规则优先级和满载时不回退；节点协议由夹具模拟，不运行 Chrome。
+    await suite.test(
+      '通配域名调度优先精确和更具体规则，满载不回退',
+      async () => {
+        const broad = await addNode('wildcard-schedule');
+        const narrow = await addNode('wildcard-schedule');
+        const exact = await addNode('wildcard-schedule');
+        for (const [node, domain] of [
+          [broad, '*.example.com'],
+          [narrow, '*.team.example.com'],
+          [exact, 'app.team.example.com'],
+        ] as const) {
+          assert.equal(
+            (
+              await api('POST', `/v1/nodes/${node.id}/routing`, {
+                domains: [domain],
+                revision: 0,
+              })
+            ).status,
+            200,
+          );
+        }
+        for (const [hostname, node] of [
+          ['app.team.example.com', exact],
+          ['deep.app.team.example.com', narrow],
+          ['team.example.com', broad],
+        ] as const) {
+          const first = task(broad.pool);
+          first.target.url = `https://${hostname}`;
+          await submit(first);
+          const execution = await claim();
+          assert.equal(execution.nodeId, node.id);
+          await ready(execution);
+          const queued = task(broad.pool);
+          queued.target.url = first.target.url;
+          await submit(queued);
+          assert.equal(await claim(), null);
+          await api('POST', `/v1/tasks/${queued.taskId}/cancel`);
+          await api('POST', `/v1/tasks/${first.taskId}/cancel`);
+          await cleaned(first.taskId);
+          await until(
+            async () =>
+              (await api('GET', '/v1/nodes')).data.nodes.find(
+                (n: { id: string }) => n.id === node.id,
+              ).occupied,
+            (occupied) => occupied === 0,
+          );
+        }
+      },
+    );
+
     // 范围：真实调度事务的精确绑定、满载等待、未命中回退及修改不迁移活动会话；不运行 Chrome。
     await suite.test('域名绑定固定节点并保留容量约束', async () => {
       const spare = await addNode('domain-schedule');
@@ -752,7 +863,7 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       }
     });
 
-    // 范围：离线、撤销、能力缺失和登录归属冲突均不绕过绑定；等待截止由真实 API 扫描，浏览器是夹具。
+    // 范围：通配绑定在离线、撤销、能力缺失和登录归属冲突时不回退到更宽泛规则；等待截止由真实 API 扫描，浏览器是夹具。
     await suite.test('域名目标不可用或与登录节点冲突时保留排队', async () => {
       const spare = await addNode('domain-unavailable');
       const target = await addNode('domain-unavailable');
@@ -771,8 +882,12 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
               n.capabilities.authState,
           ),
       );
+      await api('POST', `/v1/nodes/${spare.id}/routing`, {
+        domains: ['*.example'],
+        revision: 0,
+      });
       await api('POST', `/v1/nodes/${target.id}/routing`, {
-        domains: ['private.example'],
+        domains: ['*.private.example'],
         revision: 0,
       });
       const definition = {
@@ -782,7 +897,7 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
           nodePool: target.pool,
           auth: { nodeId: spare.id, stateId: 'login', restore: false },
         },
-        target: { url: 'https://private.example' },
+        target: { url: 'https://app.private.example' },
       };
       await submit(definition);
       assert.equal(await claim(), null);
@@ -1215,11 +1330,11 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       archivedScreenshot = screenshot.artifactId;
     });
 
-    // 范围：API 重启恢复持久结果和重复消息 ACK；不模拟 PostgreSQL 磁盘损坏。
+    // 范围：API 重启恢复域名及通配规则、持久结果和重复消息 ACK；不模拟 PostgreSQL 磁盘损坏。
     await suite.test('API 重启与重复结果不重执行', async () => {
       const node = await addNode('restart');
       await api('POST', `/v1/nodes/${node.id}/routing`, {
-        domains: ['127.0.0.1'],
+        domains: ['127.0.0.1', '*.restart.example'],
         revision: 0,
       });
       const definition = task('restart');
@@ -1255,7 +1370,10 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       const persisted = (await api('GET', '/v1/nodes')).data.nodes.find(
         (n: { id: string }) => n.id === node.id,
       );
-      assert.deepEqual(persisted.routing_domains, ['127.0.0.1']);
+      assert.deepEqual(persisted.routing_domains, [
+        '*.restart.example',
+        '127.0.0.1',
+      ]);
       assert.equal(persisted.routing_revision, 1);
       node.send(node.results.get(request.commandId));
       const repeated = await api(

@@ -47,10 +47,12 @@ pnpm dev:api
 
 ## 按域名分发到执行节点
 
-Console → 执行节点 → 对应节点卡片的「配置域名」，每行填写一个完整域名。配置保存在 API 的 PostgreSQL，由 API 调度器在 worker 领取时读取，VM 无需额外配置。
+Console → 执行节点 → 对应节点卡片的「配置域名」，每行填写一个完整域名或 `*.example.com` 通配符规则。配置保存在 API 的 PostgreSQL，由 API 调度器在 worker 领取时读取，VM 无需额外配置。
 
-- 匹配范围为任务的 `environment.nodePool`，按初始 `target.url` 的完整主机名精确匹配。同一池内一个域名只能绑定一个节点，不同池可重复配置。
-- 忽略大小写、URL 端口及域名末尾的根域点，中文域名统一为 ASCII。配置不接受协议、路径和通配符；`example.com` 不匹配 `sub.example.com`。
+- 匹配范围为任务的 `environment.nodePool`，按初始 `target.url` 的主机名匹配。同一池内相同规则只能绑定一个节点，不同池可重复配置；精确域名和不同范围的通配规则可以绑定不同节点。
+- 忽略大小写、URL 端口及域名末尾的根域点，中文域名统一为 ASCII。配置不接受协议、端口或路径；普通域名只精确匹配，`example.com` 不匹配 `sub.example.com`。
+- 只支持最左侧的 `*.`：`*.example.com` 匹配 `a.example.com` 和 `a.b.example.com`，不匹配 `example.com` 或 `badexample.com`；需要匹配根域时单独添加。通配符不能用于 IP 地址。
+- 精确规则优先于通配规则；多个通配规则命中时，后缀最长（范围最具体）的规则优先。选定节点不可用时不会回退到更宽泛的规则。
 - 命中后只分配到指定节点，仍检查容量、能力、凭据状态和 `environment.auth.nodeId`。节点离线、满载、撤销或登录节点冲突时继续排队，达到原任务截止时间后超时；不会改派其他节点。
 - 未命中规则时沿用原资源池调度。规则不是访问白名单，也不根据后续跳转或页面子资源重新调度。
 - 修改影响尚未分配的任务；运行中的会话保留原节点。清空列表并保存解除绑定。撤销节点保留原规则，可在已撤销节点卡片中清空后重新绑定。
@@ -58,7 +60,7 @@ Console → 执行节点 → 对应节点卡片的「配置域名」，每行填
 管理员接口 `POST /v1/nodes/:id/routing` 完整替换该节点的域名列表：
 
 ```json
-{ "domains": ["a.internal.example", "b.internal.example"], "revision": 0 }
+{ "domains": ["internal.example", "*.internal.example"], "revision": 0 }
 ```
 
 先从 `GET /v1/nodes` 读取 `routing_domains` 和 `routing_revision`，写入时携带该版本。响应返回归一化的 `domains` 和新 `revision`。重复绑定返回 `409 DOMAIN_ASSIGNED`，过期编辑返回 `409 ROUTING_CHANGED`，均不会部分写入。每节点最多 100 个域名。迁移 `007-node-routing.sql` 在 API 启动时自动执行，既有节点默认无绑定。
