@@ -17,7 +17,38 @@ Railway 运行 API、Web Console、执行 Agent 和 PostgreSQL；访问业务页
 
 Railway 当前已弃用旧 Config as Code，设置 `railwayConfigFile` 可能直接被 API 拒绝；不要继续把 `api.json` 等文件路径当作已生效的部署设置。本目录 JSON 保留为参数参考，新的声明式管理入口见 [Railway IaC](https://docs.railway.com/infrastructure-as-code)。直接配置服务时，三个应用均设单副本、关闭休眠、失败重启最多 10 次、停止宽限 30 秒；API 和 Web 的健康检查均为 `/health/ready`，超时 120 秒，Agent 不配置 HTTP 健康检查。API 的部署重叠时间设为 0。
 
-必须实际创建 PostgreSQL 和 API Volume，并确认 API Volume 已挂载 `/data`；旧 JSON 中的 `requiredMountPath` 在未使用该配置时不提供挂载保护。API 只运行一个副本；持有数据库独占锁的旧实例必须退出后新实例才能启动，带 Volume 的服务升级存在短暂停机。三个应用的变更监听需覆盖共享契约、锁文件及部署目录；可以先使用 `/**`，避免只监听各自 apps 子目录导致遗漏更新。
+必须实际创建 PostgreSQL 和 API Volume，并确认 API Volume 已挂载 `/data`；旧 JSON 中的 `requiredMountPath` 在未使用该配置时不提供挂载保护。API 只运行一个副本；持有数据库独占锁的旧实例必须退出后新实例才能启动，带 Volume 的服务升级存在短暂停机。三个应用的 **Watch Paths 保持为空**（API 表示为 `watchPatterns: []`），关闭文件路径过滤，让跟踪分支的每次更新都进入部署流程，覆盖共享契约、锁文件及部署目录。代价是仅文档修改也会触发三个应用部署。不要配置 `/**` 作为本项目的全量监听：现有部署曾在该配置下以 `No changes to watched files` 跳过实际代码变更。这个观察不代表所有 Railway 项目中的同一模式都无效。
+
+## 修复已有服务的部署跳过
+
+`api.json`、`web.json`、`agent.json` 中显式记录空的 `build.watchPatterns`，但这些参考文件不会自动覆盖 Railway 中独立保存的设置。**合并仓库修改或仅修改 JSON 不会解除现有过滤**，需要对目标环境执行一次配置修复。
+
+安装并登录 Railway CLI 后，从仓库根目录运行下列命令。`--project` 必须填写项目 ID，`--environment` 可填写环境名称或 ID，不依赖本地 link 状态。
+
+```sh
+# 只读预览三个应用当前的 Watch Paths 与拟议变更。
+node scripts/railway-watch-paths.mjs --project PROJECT_ID --environment production
+
+# 只把对应环境中 api、web、agent 的 Watch Paths 清空变更暂存到 Railway。
+node scripts/railway-watch-paths.mjs --project PROJECT_ID --environment production --stage
+```
+
+脚本通过 Railway CLI 查询实时服务设置，仅输出项目、环境和监听规则；三个应用必须全部存在才允许暂存。`--stage` 不发布部署，不提交环境中已有的待发布变更，也不修改数据库、变量、挂载卷、Dockerfile、跟踪分支或 Wait for CI 设置。目标服务使用其他名称时应先调整脚本中的应用列表。
+
+在 Railway 页面审阅暂存变更，确认三个应用的 Watch Paths 均为空，按下文升级流程等待活动任务结束并完成备份，再发布配置并部署最新 `main`。不要仅重启旧实例，或把旧成功部署的 Redeploy 当作拉取最新代码。已被标记为 `SKIPPED` 的历史提交不会因清空配置就自动变为已上线。
+
+部署后再次运行只读预览，确认 `before` 均为空，并检查实际运行版本：
+
+```sh
+railway deployment list --project PROJECT_ID --environment production --service api --limit 5 --json
+railway deployment list --project PROJECT_ID --environment production --service web --limit 5 --json
+railway deployment list --project PROJECT_ID --environment production --service agent --limit 5 --json
+railway status --project PROJECT_ID --environment production --json
+```
+
+核对各服务 `activeDeployments` 的 `meta.commitHash` 是否为目标提交；部署列表用于查看最近部署的 `status` 和 `meta.skippedReason`，不能仅凭 `latestDeployment` 推断最新 GitHub 提交已运行。最后检查公开 `/health/ready`、Console 新版文案和所需业务功能。
+
+回归命令 `node --test tests/railway/watch-paths.test.mjs` 使用 CLI 响应夹具验证环境选择、只读预览和暂存边界；不模拟 Railway 的路径匹配器，也不证明线上部署已完成。Watch Paths 的平台语义见 [Railway 构建配置](https://docs.railway.com/builds/build-configuration#configure-watch-paths)。
 
 ## 首次变量配置
 

@@ -81,6 +81,7 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .node-version
+      - run: node --test tests/railway/watch-paths.test.mjs
       - run: docker build -f deploy/railway/Dockerfile.api -t proofrun-railway-api:test .
       - run: docker build -f deploy/railway/Dockerfile.web -t proofrun-railway-web:test .
       - run: docker build -f deploy/railway/Dockerfile.agent -t proofrun-railway-agent:test .
