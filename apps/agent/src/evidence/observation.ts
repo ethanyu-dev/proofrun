@@ -1,4 +1,4 @@
-import type { CommandResult, ExecutionView } from '../client.js';
+import type { CommandResult } from '../client.js';
 import { AgentFault } from '../http.js';
 
 /** 可见不等于可点击；动作能力来自节点，旧节点缺失字段时仅作兼容处理。 */
@@ -133,19 +133,4 @@ export function observation(result: CommandResult): Observation {
       sha256,
     })),
   };
-}
-/** 证据可用性以控制面登记为准，命令回复中的 PENDING 不能被直接引用。 */
-export function available(observed: Observation, view: ExecutionView): boolean {
-  return (
-    observed.artifactRefs.some((r) => r.kind === 'DOM') &&
-    observed.artifactRefs.every((r) =>
-      view.artifacts.some(
-        (a) =>
-          a.id === r.artifactId &&
-          a.state === 'AVAILABLE' &&
-          a.kind === r.kind &&
-          a.sha256 === r.sha256,
-      ),
-    )
-  );
 }

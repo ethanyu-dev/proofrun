@@ -25,7 +25,7 @@
     "test:deploy": "node --test tests/deploy/*.test.mjs",
     "test:api": "pnpm --filter @proofrun/contracts build && pnpm --filter @proofrun/api test",
     "test:control-plane:linux": "bash tests/control-plane/run-linux.sh",
-    "test:agent": "pnpm --filter @proofrun/contracts build && pnpm --filter @proofrun/agent build && node --test tests/agent/execution.test.mjs tests/agent/model-config.test.mjs",
+    "test:agent": "pnpm --filter @proofrun/contracts build && pnpm --filter @proofrun/agent build && node --test tests/agent/execution.test.mjs tests/agent/model-config.test.mjs tests/agent/evidence-delivery.test.mjs",
     "test:jev": "node --env-file-if-exists=.proofrun/local.env scripts/test-jev.mjs",
     "test:jev:compare": "node --env-file-if-exists=.proofrun/local.env scripts/compare-jev.mjs",
     "test:jev:agent-baseline": "pnpm --filter @proofrun/agent build && node --env-file-if-exists=.proofrun/local.env scripts/replay-agent-baseline.mjs",

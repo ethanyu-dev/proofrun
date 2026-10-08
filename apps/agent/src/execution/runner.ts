@@ -11,11 +11,8 @@ import {
 import type { AgentConfig } from '../config.js';
 import type { BrowserOperation, ControlClient } from '../client.js';
 import type { DecisionInput, DecisionModel } from '../model/chat.js';
-import {
-  available,
-  observation,
-  type Observation,
-} from '../evidence/observation.js';
+import { observation, type Observation } from '../evidence/observation.js';
+import { waitForEvidence } from '../evidence/delivery.js';
 import { AgentFault, pause, transient } from '../http.js';
 import { LeaseGuard } from './lease.js';
 import { Workflow } from './workflow.js';
@@ -282,19 +279,14 @@ class Execution {
   ): Promise<void> {
     const result = await this.command({ type: 'browser.observe', screenshot });
     const current = observation(result);
-    const until = performance.now() + this.config.commandMs;
-    for (;;) {
-      const view = await this.client.view(this.grant, this.guard.signal);
-      if (view.taskState !== 'RUNNING')
-        throw new AgentFault('EXECUTION_ENDED', '控制面已终止任务');
-      if (available(current, view)) break;
-      if (performance.now() >= until)
-        throw new AgentFault(
-          'EVIDENCE_UNAVAILABLE',
-          '证据交付未能在预算内完成',
-        );
-      await pause(POLL_MS, this.guard.signal);
-    }
+    if (!current.artifactRefs.some((ref) => ref.kind === 'DOM'))
+      throw new AgentFault('EVIDENCE_UNAVAILABLE', '本次观察没有交付 DOM 引用');
+    await waitForEvidence(
+      current.artifactRefs,
+      (signal) => this.client.view(this.grant, signal),
+      this.config.evidenceMs,
+      this.guard.signal,
+    );
     if (this.current)
       rememberObservation(this.previousObservations, this.current);
     this.changes = this.tracker.observe(current, countProgress);
@@ -375,23 +367,12 @@ class Execution {
       const trace = refs?.find((ref) => ref.kind === 'TRACE');
       if (!trace)
         throw new AgentFault('EVIDENCE_UNAVAILABLE', '节点没有交付 TRACE');
-      const until = performance.now() + this.config.commandMs;
-      for (;;) {
-        const view = await this.client.view(this.grant, this.guard.signal);
-        if (
-          view.artifacts.some(
-            (a) =>
-              a.id === trace.artifactId &&
-              a.kind === 'TRACE' &&
-              a.sha256 === trace.sha256 &&
-              a.state === 'AVAILABLE',
-          )
-        )
-          break;
-        if (performance.now() >= until)
-          throw new AgentFault('EVIDENCE_UNAVAILABLE', 'TRACE 上传未完成');
-        await pause(POLL_MS, this.guard.signal);
-      }
+      await waitForEvidence(
+        [trace],
+        (signal) => this.client.view(this.grant, signal),
+        this.config.evidenceMs,
+        this.guard.signal,
+      );
       this.evidence.set(trace.artifactId, {
         id: trace.artifactId,
         kind: 'TRACE',

@@ -68,7 +68,11 @@ export PROOFRUN_MODEL_THINKING=disabled
 
 ## 参数与代码位置
 
-`.env.example` 给出全部参数。默认模型时限 30 秒、命令时限 15 秒、HTTP 时限 5 秒、模型轮数 40、文本上下文 64000 字符、单次输出 4096 token；任务硬期限和动作预算优先。
+`.env.example` 给出全部参数。默认模型时限 30 秒、命令时限 15 秒、证据交付时限 60 秒、HTTP 时限 5 秒、模型轮数 40、文本上下文 64000 字符、单次输出 4096 token；任务硬期限和动作预算优先。
+
+`PROOFRUN_AGENT_EVIDENCE_MS` 独立控制观察和 TRACE 命令成功后的证据等待，默认 60000，范围 100–300000 毫秒；`PROOFRUN_AGENT_COMMAND_MS` 只控制命令等待。证据预算覆盖节点上传及回执延迟，任务截止、取消和租约失效仍会中断等待。该等待只轮询状态，不重放浏览器动作。
+
+超时返回 `EVIDENCE_UNAVAILABLE`，摘要列出证据类型、ID 和最近状态：`MISSING` 表示未登记，`PENDING` 表示等待存储，`STORED` 表示已存储但尚未收到可用确认，`MISMATCH` 表示类型或摘要不匹配。迟到证据不会恢复已结束任务；增加预算只能缓解延迟，持续失败仍需核对节点上传日志。
 
 | 文件                          | 职责                                      |
 | ----------------------------- | ----------------------------------------- |
@@ -79,7 +83,8 @@ export PROOFRUN_MODEL_THINKING=disabled
 | `src/model/chat.ts`           | Chat Completions 工具协议适配             |
 | `src/execution/runner.ts`     | 执行循环、预算、验收和报告                |
 | `src/execution/lease.ts`      | 独立续租、截止时间与撤权                  |
-| `src/evidence/observation.ts` | 观察结构及证据可用性核实                  |
+| `src/evidence/observation.ts` | 观察结构校验                              |
+| `src/evidence/delivery.ts`    | 证据独立等待预算、撤权与超时诊断          |
 
 验证范围与运行命令见 [测试入口与覆盖边界](../../tests/README.md)。
 

@@ -232,6 +232,7 @@ test(
               modelUrl: model.url,
               maxContextChars: 30000,
               commandMs: 3000,
+              evidenceMs: 3000,
               maxTurns: 10,
             };
             const client = new ControlClient(settings);

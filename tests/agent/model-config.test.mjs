@@ -14,6 +14,8 @@ function configure(t) {
     PROOFRUN_MODEL: config.model,
     PROOFRUN_MODEL_BASE_URL: 'http://127.0.0.1:4101/v1',
     PROOFRUN_MODEL_THINKING: undefined,
+    PROOFRUN_AGENT_COMMAND_MS: undefined,
+    PROOFRUN_AGENT_EVIDENCE_MS: undefined,
   };
   const previous = Object.fromEntries(
     Object.keys(values).map((key) => [key, process.env[key]]),
@@ -143,5 +145,21 @@ test('关闭思考模式后通过默认思考服务的工具请求校验', async
   } finally {
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+// 范围：证据预算独立默认值、覆盖及边界；不覆盖真实上传或 Railway 配置注入。
+test('证据预算独立于命令预算并拒绝非法时限', (t) => {
+  configure(t);
+  assert.equal(loadConfig().evidenceMs, 60000);
+  process.env.PROOFRUN_AGENT_COMMAND_MS = '1000';
+  assert.equal(loadConfig().evidenceMs, 60000);
+  for (const value of ['100', '90000', '300000']) {
+    process.env.PROOFRUN_AGENT_EVIDENCE_MS = value;
+    assert.equal(loadConfig().evidenceMs, Number(value));
+  }
+  for (const value of ['', '0', '99', '300001', '1.5', 'invalid']) {
+    process.env.PROOFRUN_AGENT_EVIDENCE_MS = value;
+    assert.throws(() => loadConfig(), /PROOFRUN_AGENT_EVIDENCE_MS/);
   }
 });

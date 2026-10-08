@@ -16,6 +16,7 @@ export const config = {
   requestMs: 1000,
   modelMs: 2000,
   commandMs: 2000,
+  evidenceMs: 2000,
   maxTurns: 8,
   maxContextChars: 8000,
   maxTokens: 512,
