@@ -74,7 +74,7 @@
             "items": {
               "type": "string"
             },
-            "description": "当前节点在其资源池内绑定的完整域名。"
+            "description": "当前节点在其资源池内绑定的完整域名或 *.example.com 通配符规则。"
           },
           "routing_revision": {
             "type": "integer",

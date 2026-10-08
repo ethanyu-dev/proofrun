@@ -127,12 +127,13 @@ export function NodeRoutingEditor({
         </button>
       </div>
       <p>
-        节点池：{node.pool}。每行一个完整域名，例如
-        a.internal.example，不含协议、端口或路径，不支持通配符。
+        节点池：{node.pool}。每行一个完整域名或通配符规则，例如
+        a.internal.example 或 *.internal.example，不含协议、端口或路径。
       </p>
       <p className="muted note">
-        仅匹配任务初始 URL
-        的完整域名，不包含子域名。匹配后固定到此节点；离线、满载、能力不足或登录节点冲突时等待至任务截止。未匹配域名按原资源池策略分配。
+        仅匹配任务初始 URL 的域名。*.internal.example 匹配各级子域名，不匹配
+        internal.example
+        本身；普通域名只精确匹配。精确规则优先，其次选择后缀更长的通配符规则。匹配后固定到此节点；离线、满载、能力不足或登录节点冲突时等待至任务截止。未匹配域名按原资源池策略分配。
       </p>
       <ErrorNotice message={error} />
       <form
@@ -149,7 +150,7 @@ export function NodeRoutingEditor({
             value={text}
             disabled={busy || Boolean(node.revoked_at)}
             onChange={(event) => setText(event.target.value)}
-            placeholder={'a.internal.example\nb.internal.example'}
+            placeholder={'a.internal.example\n*.internal.example'}
           />
         </label>
         <p className="muted note">

@@ -1,4 +1,5 @@
 import { domainToASCII } from 'node:url';
+import { isIP } from 'node:net';
 import type { PoolClient } from 'pg';
 import type { NodeRoutingWrite } from '@proofrun/contracts';
 import type { Database } from '../../db.js';
@@ -6,7 +7,9 @@ import { ApiError } from '../../domain.js';
 
 /** 配置修改与会话分配互斥，保存完成后新的领取必须看到新规则。 */
 const ROUTING_LOCK = 'proofrun-node-routing-v1';
-/** 只接受完整主机名标签；不把通配符、URL、端口或路径误存为域名。 */
+/** 与写入契约一致，长度包含可选的通配前缀。 */
+const MAX_DOMAIN_LENGTH = 253;
+/** 通配前缀单独解析；剩余部分只接受完整主机名标签。 */
 const HOST_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 /** 任务与配置共用 URL 主机名语义，忽略大小写、端口和末尾根域点。 */
@@ -18,29 +21,57 @@ export function targetHostname(url: string): string {
   }
 }
 
-/** 国际化域名保存为 ASCII；限制输入为单个完整域名，拒绝隐式 URL 解析修正。 */
+/** 国际化域名保存为 ASCII；只允许最左侧的 *.，拒绝 URL 和任意位置的星号。 */
 export function normalizeDomain(input: string): string {
   const raw = input.trim();
-  const ascii = domainToASCII(raw).toLowerCase().replace(/\.$/, '');
+  const wildcard = raw.startsWith('*.');
+  const suffix = wildcard ? raw.slice(2) : raw;
+  const ascii = domainToASCII(suffix).toLowerCase().replace(/\.$/, '');
   if (
     /[\s/:@?#%\\]/u.test(raw) ||
     !ascii ||
-    ascii.length > 253 ||
+    ascii.length + (wildcard ? 2 : 0) > MAX_DOMAIN_LENGTH ||
     !ascii.split('.').every((label) => HOST_LABEL.test(label))
   )
     throw new ApiError(
       400,
       'INVALID_DOMAIN',
-      '请填写完整域名，不含协议、端口、路径或通配符',
+      '请填写完整域名或 *.example.com，不含协议、端口或路径',
     );
   const hostname = targetHostname(`http://${ascii}`);
   if (!hostname) throw new ApiError(400, 'INVALID_DOMAIN', '域名格式无效');
-  return hostname;
+  if (wildcard && isIP(hostname))
+    throw new ApiError(
+      400,
+      'INVALID_DOMAIN',
+      '通配符只能用于域名，不能用于 IP 地址',
+    );
+  return wildcard ? `*.${hostname}` : hostname;
 }
 
 /** 快照键包含资源池，避免不同业务网络的相同域名互相影响。 */
 export function routeKey(pool: string, hostname: string): string {
   return JSON.stringify([pool, hostname]);
+}
+
+/** 精确规则优先，再逐级缩短后缀；星号覆盖至少一级子域名，不匹配根域或 IP。 */
+export function resolveRoute(
+  routes: ReadonlyMap<string, string>,
+  pool: string,
+  hostname: string,
+): string | undefined {
+  const exact = routes.get(routeKey(pool, hostname));
+  if (exact !== undefined || isIP(hostname)) return exact;
+  // 从最近的父域开始查找，保证更具体的通配规则优先，且始终以标签边界匹配。
+  for (
+    let dot = hostname.indexOf('.');
+    dot !== -1;
+    dot = hostname.indexOf('.', dot + 1)
+  ) {
+    const node = routes.get(routeKey(pool, `*.${hostname.slice(dot + 1)}`));
+    if (node !== undefined) return node;
+  }
+  return undefined;
 }
 
 /** 领取事务一直持有共享锁，规则不能在节点选择与会话登记之间变化。 */

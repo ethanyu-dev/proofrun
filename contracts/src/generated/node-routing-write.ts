@@ -5,7 +5,7 @@
  */
 export interface NodeRoutingWrite {
   /**
-   * 完整域名精确匹配；同一资源池内唯一。
+   * 支持完整域名和 *.example.com；通配符匹配各级子域名但不含根域。精确规则优先，其次最长后缀；同一资源池内相同规则唯一。
    *
    * @maxItems 100
    */

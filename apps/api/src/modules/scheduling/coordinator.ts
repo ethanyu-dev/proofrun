@@ -25,7 +25,11 @@ import {
   type Heartbeat,
 } from '../../domain.js';
 import { sessionAuth } from './auth.js';
-import { routingSnapshot, routeKey, targetHostname } from '../nodes/routing.js';
+import {
+  routingSnapshot,
+  resolveRoute,
+  targetHostname,
+} from '../nodes/routing.js';
 import { NodeGateway, type Connection } from '../nodes/gateway.js';
 import { ArtifactStore } from '../reports/artifacts.js';
 import {
@@ -505,8 +509,10 @@ export class Coordinator {
           ).rows[0]?.node_id;
         }
         // 域名与登录状态都是硬约束；冲突或指定节点不可用时保留排队，不静默改派。
-        const routedNode = routes.get(
-          routeKey(task.environment.nodePool, targetHostname(task.target.url)),
+        const routedNode = resolveRoute(
+          routes,
+          task.environment.nodePool,
+          targetHostname(task.target.url),
         );
         const candidates = live
           .filter(

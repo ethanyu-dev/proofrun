@@ -26,7 +26,7 @@ export interface NodeSummary {
   online: boolean;
   occupied: number;
   /**
-   * 当前节点在其资源池内绑定的完整域名。
+   * 当前节点在其资源池内绑定的完整域名或 *.example.com 通配符规则。
    */
   routing_domains: string[];
   /**
