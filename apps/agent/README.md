@@ -27,6 +27,20 @@ pnpm --filter @proofrun/agent start once
 
 应用不自动加载 `.env`。模型名称、API 地址与密钥没有默认值；每次 `decide` 发起一次 `/chat/completions` 请求。服务必须支持函数工具、`tool_choice: required`、`parallel_tool_calls: false`。不支持 `max_completion_tokens` 的服务可配置 `PROOFRUN_MODEL_TOKEN_PARAMETER=max_tokens`，不自动猜测供应商或隐藏重试。工具使用非严格模式；各协议分支映射为独立工具，工具名确定动作类型，参数无需 decision 外层。执行器仍使用同源 Schema 和领域规则校验返回内容，格式错误只反馈对应分支的约束，不回显原始回复。
 
+`PROOFRUN_MODEL_THINKING` 接受 `default`（默认）、`enabled`、`disabled`。`default` 不发送 `thinking`，保留原有供应商行为；显式模式发送 `thinking: {"type":"enabled"}` 或 `thinking: {"type":"disabled"}`，同时作用于 LLM 决策、JEV 文本审查和字段填写，不传给 TypeSafe 候选接口。非法值会在启动时拒绝。供应商必须支持所选模式与强制工具调用的组合。
+
+DeepSeek 的 `deepseek-flash` 默认开启思考模式，与本项目的 `tool_choice: required` 冲突并返回 HTTP 400（见 [DeepSeek Chat Completions 文档](https://api-docs.deepseek.com/api/create-chat-completion/)）。使用以下非敏感配置，并另外注入模型密钥：
+
+```sh
+export PROOFRUN_MODEL_BASE_URL=https://api.deepseek.com
+export PROOFRUN_MODEL=deepseek-flash
+export PROOFRUN_MODEL_VISION=true
+export PROOFRUN_MODEL_TOKEN_PARAMETER=max_tokens
+export PROOFRUN_MODEL_THINKING=disabled
+```
+
+这需要部署包含上述配置入口的 Agent 版本后重启生效。仅修改模型名称、增加超时或重试旧请求不能消除参数冲突；最小模型调用成功也不代表业务任务验收通过。
+
 `PROOFRUN_MODEL_VISION=true` 时，每次观察都采集并下载一张 PNG，核实归属和摘要后作为模型输入。要求 SCREENSHOT 的任务在纯文本配置下返回 BLOCKED，不静默替换证据。
 
 ## 执行顺序
