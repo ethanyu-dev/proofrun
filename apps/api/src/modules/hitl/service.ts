@@ -48,6 +48,8 @@ interface Grant {
   fence: string;
   /** 会话实际使用的登录槽位，包含自动分配槽位。 */
   auth: unknown;
+  /** 仅用于人工确认 Cookie 所属站点。 */
+  target_url: string;
 }
 interface Viewer {
   socket: WebSocket;
@@ -76,7 +78,7 @@ export class HitlService {
     const row = (
       await this.db.query<Grant>(
         `SELECT h.*,e.control_mode,e.control_revision,e.control_reason,
-      e.state AS execution_state,e.lease_expires_at,t.id AS task_id,t.state AS task_state,t.deadline_at,
+      t.definition->'target'->>'url' AS target_url,e.state AS execution_state,e.lease_expires_at,t.id AS task_id,t.state AS task_state,t.deadline_at,
       s.auth_state AS auth,s.id AS session_id,s.node_id,s.node_epoch,s.lease_id,s.fence,s.state AS session_state
       FROM pr_interventions h JOIN pr_executions e ON e.id=h.execution_id JOIN pr_tasks t ON t.id=e.task_id
       JOIN pr_sessions s ON s.execution_id=e.id WHERE h.id=$1`,
@@ -233,9 +235,11 @@ export class HitlService {
           } else if (message.type === 'command') {
             const operation = message.command;
             if (
-              !['browser.input', 'browser.auth.save'].includes(
-                operation.type,
-              ) ||
+              ![
+                'browser.input',
+                'browser.auth.save',
+                'browser.cookies.set',
+              ].includes(operation.type) ||
               (operation.type === 'browser.auth.save' && !grant.auth)
             )
               throw new ApiError(403, 'HITL_COMMAND', '此处理页不允许该操作');
@@ -412,6 +416,7 @@ export class HitlService {
         mode: grant.control_mode as 'REQUESTED' | 'HUMAN',
         expiresAt: grant.expires_at.toISOString(),
         canSaveAuth: !!grant.auth,
+        targetUrl: grant.target_url,
       });
       if (grant.control_mode === 'HUMAN' && !viewer.streamId) {
         const streamId = randomUUID();

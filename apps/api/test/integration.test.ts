@@ -2312,6 +2312,82 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
           ).status,
           403,
         );
+        // 范围：Cookie 沿用 HITL 身份、同源范围、去重和预算；节点为协议夹具，不代表真实登录成功。
+        const cookie = {
+          type: 'browser.cookies.set',
+          url: definition.target.url,
+          name: 'token',
+          value: 'fixture-cookie-only',
+          httpOnly: true,
+        };
+        const cookieId = randomUUID();
+        for (let i = 1; i <= 2; i++) {
+          first.ws.send(
+            JSON.stringify({
+              type: 'command',
+              commandId: cookieId,
+              command: cookie,
+            }),
+          );
+          await until(
+            async () => first.messages,
+            (rows) =>
+              rows.filter(
+                (m) =>
+                  m.type === 'result' &&
+                  m.commandId === cookieId &&
+                  m.status === 'SUCCEEDED',
+              ).length === i,
+          );
+        }
+        assert.equal(node.calls.get(cookieId), 1);
+        assert.equal(
+          (await api('GET', `/v1/tasks/${definition.taskId}`)).data
+            .executions[0].action_count,
+          2,
+        );
+        assert.ok(!JSON.stringify(first.messages).includes(cookie.value));
+        assert.equal(
+          (
+            await api(
+              'POST',
+              `/v1/executions/${execution.id}/commands`,
+              {
+                type: 'execution.command',
+                commandId: randomUUID(),
+                command: cookie,
+                timeoutMs: 1000,
+                controlRevision: 1,
+              },
+              execution.leaseToken,
+            )
+          ).status,
+          403,
+        );
+        assert.equal(
+          (
+            await api('POST', `/v1/admin/executions/${execution.id}/commands`, {
+              type: 'execution.command',
+              commandId: randomUUID(),
+              command: { ...cookie, url: 'https://other.example/' },
+              timeoutMs: 1000,
+              controlRevision: 1,
+            })
+          ).status,
+          403,
+        );
+        assert.equal(
+          (
+            await api('POST', `/v1/admin/executions/${execution.id}/commands`, {
+              type: 'execution.command',
+              commandId: randomUUID(),
+              command: cookie,
+              timeoutMs: 1000,
+              controlRevision: 0,
+            })
+          ).status,
+          409,
+        );
         // 断开重进保留同一浏览器与人工状态，但不自动重放输入。
         first.ws.close();
         await new Promise<void>((resolve) =>

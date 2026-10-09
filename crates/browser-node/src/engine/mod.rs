@@ -1,5 +1,6 @@
 //! 固定版本的 agent-browser CLI 适配器。引擎 ref 仅在当前观察中有效；
 //! CLI 结果不确定时结束该会话，避免后续动作与潜在副作用并发。
+mod cookies;
 mod dom;
 
 use crate::{
@@ -622,6 +623,33 @@ impl Engine {
                     Ok(json!({"localTrace":path}))
                 }
             }
+            BrowserCommand::BrowserCookiesSet { .. } => {
+                let params = cookies::parameters(&raw)?;
+                let endpoint = self
+                    .cli(vec!["get".into(), "cdp-url".into()], remaining())
+                    .await?;
+                let listed = self
+                    .cli(vec!["tab".into(), "list".into()], remaining())
+                    .await?;
+                let target = listed["tabs"]
+                    .as_array()
+                    .and_then(|tabs| tabs.iter().find(|t| t["active"] == true))
+                    .and_then(|t| t["targetId"].as_str())
+                    .ok_or_else(|| {
+                        Fault::rejected("COOKIE_TARGET_MISSING", "active browser tab missing")
+                    })?;
+                let endpoint = endpoint["cdpUrl"].as_str().ok_or_else(|| {
+                    Fault::rejected("COOKIE_UNAVAILABLE", "private browser connection missing")
+                })?;
+                // 写入后旧观察失效；即使传输失败也不能继续使用旧元素身份。
+                self.observation = None;
+                self.targets.clear();
+                self.dom = None;
+                self.visual = None;
+                let mut dom = dom::Dom::connect(endpoint).await?;
+                dom.set_cookie(target, params).await?;
+                Ok(json!({"written":true}))
+            }
             BrowserCommand::BrowserAuthSave => {
                 let destination = self.config.auth_state.clone().ok_or_else(|| {
                     Fault::rejected("AUTH_STATE_MISSING", "task has no authentication slot")
@@ -758,6 +786,15 @@ fn navigation_ready(expected: &str, probe: &Value) -> bool {
 /// 在派发前拒绝未验证写动作和明显无效的操作参数。
 pub fn validate(command: &BrowserCommand, writes: bool) -> Result<()> {
     match command {
+        BrowserCommand::BrowserCookiesSet { .. } => {
+            if !writes {
+                return Err(Fault::rejected(
+                    "ENGINE_WRITES_UNVERIFIED",
+                    "cookie writes require write opt-in",
+                ));
+            }
+            cookies::parameters(&serde_json::to_value(command).unwrap())?;
+        }
         BrowserCommand::BrowserInput { .. } => {
             if !writes {
                 return Err(Fault::rejected(

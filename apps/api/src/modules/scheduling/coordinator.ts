@@ -811,13 +811,15 @@ export class Coordinator {
       );
     const actor = token === null ? 'HUMAN' : 'AGENT';
     if (
-      ['browser.auth.save', 'browser.input'].includes(operation.type) &&
+      ['browser.auth.save', 'browser.input', 'browser.cookies.set'].includes(
+        operation.type,
+      ) &&
       token !== null
     )
       throw new ApiError(
         403,
         'CONTROL_COMMAND_FORBIDDEN',
-        'Only an administrator can save authentication',
+        'Only a human controller can change authentication or send manual input',
       );
     const hash = digest(
       canonical({ timeoutMs, command: operation, actor, controlRevision }),
@@ -850,6 +852,22 @@ export class Coordinator {
           'CONTROL_CHANGED',
           'Execution control changed; refresh before acting',
         );
+      // Cookie 权限绑定任务 origin，不能借人工链接写入其他站点或任意 URL。
+      if (operation.type === 'browser.cookies.set') {
+        const url = new URL(operation.url);
+        const target = new URL(context.definition.target.url);
+        if (
+          !['http:', 'https:'].includes(url.protocol) ||
+          url.username ||
+          url.password ||
+          url.origin !== target.origin
+        )
+          throw new ApiError(
+            403,
+            'COOKIE_ORIGIN_FORBIDDEN',
+            'Cookie 只能写入本任务目标站点',
+          );
+      }
       if (context.session_state !== 'ACTIVE')
         throw new ApiError(
           409,
@@ -871,7 +889,8 @@ export class Coordinator {
         );
       if (
         operation.type === 'browser.act' ||
-        operation.type === 'browser.input'
+        operation.type === 'browser.input' ||
+        operation.type === 'browser.cookies.set'
       ) {
         if (context.action_count >= context.definition.budget.maxActions)
           throw new ApiError(

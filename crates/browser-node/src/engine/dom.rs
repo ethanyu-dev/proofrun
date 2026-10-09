@@ -125,6 +125,20 @@ impl Dom {
         }
         Err(fault())
     }
+    /// 只接受节点生成的 Cookie 参数；通过当前页所属浏览器上下文写入，绝不回传 Cookie 值。
+    pub async fn set_cookie(&mut self, target: &str, params: Value) -> Result<()> {
+        let session = self.attach(target).await?;
+        let result = self
+            .call(Some(&session), "Network.setCookie", params)
+            .await?;
+        if result["success"] != true {
+            return Err(Fault::rejected(
+                "COOKIE_REJECTED",
+                "browser rejected cookie",
+            ));
+        }
+        Ok(())
+    }
     /// 采集完整时间窗口的 timeline、用户标记、加载和截图；缓冲满时停止而非静默覆盖开头。
     pub async fn trace_start(&mut self) -> Result<()> {
         self.call(None, "Tracing.start", json!({
@@ -1035,5 +1049,104 @@ mod inspection_tests {
         );
         assert!(inspected_facts(&json!({"result":{"type":"undefined"}})).is_none());
         assert!(inspected_facts(&json!({"result":{"value":{"visible":"false"}}})).is_none());
+    }
+}
+
+#[cfg(test)]
+mod cookie_tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    // 范围：真实本地 Chromium 写入及 HTTP 请求携带 HttpOnly Cookie；不覆盖生产 SSO、MFA 或服务端凭据有效性。
+    #[tokio::test]
+    #[ignore = "需要显式提供独立测试用 Chromium 路径"]
+    async fn cookie_reaches_request_in_private_browser() {
+        let binary = std::env::var("PROOFRUN_TEST_CHROME").expect("test Chromium path");
+        let profile = tempfile::tempdir().unwrap();
+        let mut chrome = tokio::process::Command::new(binary)
+            .args([
+                "--headless=new",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--remote-debugging-port=0",
+            ])
+            .arg(format!("--user-data-dir={}", profile.path().display()))
+            .arg("about:blank")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let active = profile.path().join("DevToolsActivePort");
+        let metadata = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            loop {
+                if let Ok(s) = tokio::fs::read_to_string(&active).await {
+                    break s;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let lines: Vec<_> = metadata.lines().collect();
+        let mut dom = Dom::connect(&format!("ws://127.0.0.1:{}{}", lines[0], lines[1]))
+            .await
+            .unwrap();
+        let targets = dom
+            .call(None, "Target.getTargets", json!({}))
+            .await
+            .unwrap();
+        let target = targets["targetInfos"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["type"] == "page")
+            .unwrap()["targetId"]
+            .as_str()
+            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let params = crate::engine::cookies::parameters(
+            &json!({"url":url,"name":"proofrun_test","value":"fixture_only","httpOnly":true}),
+        )
+        .unwrap();
+        dom.set_cookie(target, params).await.unwrap();
+        let readable = crate::engine::cookies::parameters(
+            &json!({"url":url,"name":"readable_test","value":"visible_fixture","httpOnly":false}),
+        )
+        .unwrap();
+        dom.set_cookie(target, readable).await.unwrap();
+        let received = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buffer = vec![0; 16384];
+            let length = stream.read(&mut buffer).await.unwrap();
+            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 13\r\nConnection: close\r\n\r\n<html></html>").await.unwrap();
+            String::from_utf8_lossy(&buffer[..length]).to_string()
+        });
+        let session = dom.attach(target).await.unwrap();
+        dom.call(Some(&session), "Page.navigate", json!({"url":url}))
+            .await
+            .unwrap();
+        let request = tokio::time::timeout(std::time::Duration::from_secs(5), received)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            request
+                .to_lowercase()
+                .contains("cookie: proofrun_test=fixture_only")
+        );
+        let script = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let probe = dom.call(Some(&session), "Runtime.evaluate", json!({"expression":"({url:location.href,ready:document.readyState,cookie:document.cookie})","returnByValue":true})).await.unwrap();
+                if probe["result"]["value"]["url"] == url && probe["result"]["value"]["ready"] != "loading" { break probe; }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        }).await.unwrap();
+        let visible = script["result"]["value"]["cookie"].as_str().unwrap();
+        assert!(visible.contains("readable_test=visible_fixture"));
+        assert!(!visible.contains("proofrun_test"));
+        chrome.kill().await.unwrap();
+        chrome.wait().await.unwrap();
     }
 }

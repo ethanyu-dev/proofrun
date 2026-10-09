@@ -30,6 +30,11 @@
         },
         "canSaveAuth": {
           "type": "boolean"
+        },
+        "targetUrl": {
+          "type": "string",
+          "format": "uri",
+          "description": "任务目标地址，Cookie 写入仅允许该 origin。"
         }
       },
       "required": [

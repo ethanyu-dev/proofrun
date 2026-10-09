@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { NodeCommand, HitlServer } from '@proofrun/contracts';
 import { ThemeToggle } from '../components/ui';
 import { HitlInputQueue } from './hitl-input';
+import { HitlCookies } from './hitl-cookies';
 
 /** 完成前包含登录快照落盘，等待窗口应覆盖服务端保存命令和结果确认。 */
 const COMPLETION_ACK_MS = 30_000;
@@ -20,6 +21,8 @@ interface State {
   expiresAt: string;
   /** 仅绑定登录槽的任务可显式保存登录状态。 */
   canSaveAuth: boolean;
+  /** 旧服务端未返回目标地址时不显示 Cookie 表单。 */
+  targetUrl?: string;
 }
 /** 允许直接转发的非文本按键，其余文字短暂合并后提交。 */
 const KEYS = new Set([
@@ -416,6 +419,13 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
                 输入
               </button>
             </form>
+            {state?.targetUrl && (
+              <HitlCookies
+                targetUrl={state.targetUrl}
+                disabled={!interactive || busy || typingPending}
+                submit={enqueue}
+              />
+            )}
             <div className="page-actions">
               {['Tab', 'Enter', 'Backspace', 'Escape'].map((key) => (
                 <button

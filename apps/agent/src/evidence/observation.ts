@@ -11,6 +11,8 @@ export interface ObservedTarget {
   /** 比较键只用于跨观察差分，不能作为动作身份提交。 */
   comparisonKey?: string;
   visible?: boolean;
+  /** 节点声明的隐藏状态用于排除不可见登录控件。 */
+  ariaHidden?: boolean;
   visibilityScope?: string;
   disabled?: boolean;
   operations?: string[];

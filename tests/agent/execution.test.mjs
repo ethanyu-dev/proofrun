@@ -2363,3 +2363,202 @@ test('存档失败报告保留 HTTP 状态与错误码，不泄露底层正文',
     assert.equal(requests.length, phase === 'start' ? 0 : 1);
   }
 });
+
+// 范围：登录要求与可见页面证据的组合，不以导航登录按钮或访客步骤触发；不验证真实账号。
+test('登录兜底只匹配当前步骤的登录阻塞', async () => {
+  const { needsLoginIntervention } =
+    await import('../../apps/agent/dist/execution/login-intervention.js');
+  const task = grant().task;
+  task.objective = '使用授权测试账号登录后查看邀请页';
+  const page = {
+    url: 'https://example.com/login',
+    targets: [
+      { role: 'textbox', name: 'Password', visible: true },
+      { role: 'button', name: 'Log in', visible: true },
+    ],
+  };
+  assert.equal(needsLoginIntervention(task, page, 0), true);
+  assert.equal(
+    needsLoginIntervention(task, { ...page, targets: [page.targets[1]] }, 0),
+    false,
+  );
+  assert.equal(
+    needsLoginIntervention(
+      task,
+      { ...page, targets: page.targets.map((t) => ({ ...t, visible: false })) },
+      0,
+    ),
+    false,
+  );
+  assert.equal(
+    needsLoginIntervention(
+      task,
+      {
+        url: 'https://example.com/referral?redirect=/login',
+        targets: [{ role: 'iframe', name: 'Cloudflare security challenge' }],
+      },
+      0,
+    ),
+    false,
+  );
+  assert.equal(
+    needsLoginIntervention(
+      task,
+      {
+        ...page,
+        targets: [{ role: 'iframe', name: 'Cloudflare security challenge' }],
+      },
+      0,
+    ),
+    true,
+  );
+  task.steps = [{ description: '保持未登录访客状态检查登录按钮', policy: [] }];
+  assert.equal(needsLoginIntervention(task, page, 0), false);
+  task.steps = [{ description: '查看登录页文案', policy: [] }];
+  assert.equal(needsLoginIntervention(task, page, 0), false);
+  task.steps = [{ description: 'Verify the sign in form labels', policy: [] }];
+  assert.equal(needsLoginIntervention(task, page, 0), false);
+});
+
+// 范围：实际执行器在模型调用前进入交接，恢复后重新导航及取证；人工、Cookie 生效和浏览器由夹具模拟。
+test('登录前置受阻主动 HITL，恢复后继续原任务', async () => {
+  const execution = grant();
+  execution.task.objective = '使用已授权账号登录后验证业务';
+  execution.task.environment.allowIntervention = true;
+  const client = new FakeControl();
+  let mode = 'AUTO',
+    revision = 0,
+    resumed = false,
+    requests = 0,
+    turns = 0;
+  const originalView = client.view.bind(client),
+    originalCommand = client.command.bind(client);
+  client.view = async (g) => ({
+    ...(await originalView(g)),
+    controlMode: mode,
+    controlRevision: revision,
+    actionCount: 1,
+  });
+  client.command = async (...args) => {
+    const result = await originalCommand(...args);
+    if (args[2].type === 'browser.observe' && !resumed) {
+      result.data.url = 'https://example.com/login';
+      result.data.targets = [
+        { target: 'password', role: 'textbox', name: '密码' },
+        { target: 'login', role: 'button', name: '登录' },
+      ];
+    }
+    return result;
+  };
+  client.intervene = async (_grant, rev, reason, _signal, items) => {
+    assert.equal(turns, 0);
+    assert.equal(rev, 0);
+    assert.match(reason, /登录/);
+    assert.match(items.join(' '), /Cookie/);
+    requests++;
+    mode = 'REQUESTED';
+    revision++;
+  };
+  client.acknowledge = async () => {
+    mode = 'HUMAN';
+    setTimeout(() => {
+      resumed = true;
+      mode = 'AUTO';
+      revision++;
+    }, 10);
+  };
+  const model = {
+    decide: async (input) => {
+      turns++;
+      assert.equal(resumed, true);
+      return {
+        decision: finish(JSON.parse(input.text)),
+        promptTokens: 0,
+        completionTokens: 0,
+      };
+    },
+  };
+  const report = await execute(config, client, model, execution);
+  assert.equal(report.verdict, 'PASSED');
+  assert.equal(requests, 1);
+  assert.equal(turns, 1);
+  assert.equal(
+    client.calls.filter((c) => c.operation.action === 'navigate').length,
+    2,
+  );
+});
+
+// 范围：未授权 HITL 的登录前置明确停止，不能自动扩大权限；不连接真实浏览器。
+test('登录兜底遵守 allowIntervention 开关', async () => {
+  const { report, requests } = await run(finish, (client, execution) => {
+    execution.task.objective = '使用授权账号登录后查看业务';
+    const command = client.command.bind(client);
+    client.command = async (...args) => {
+      const result = await command(...args);
+      if (args[2].type === 'browser.observe') {
+        result.data.url = 'https://example.com/login';
+        result.data.targets = [
+          { target: 'pwd', role: 'textbox', name: '密码' },
+          { target: 'btn', role: 'button', name: '登录' },
+        ];
+      }
+      return result;
+    };
+  });
+  assert.equal(requests.length, 0);
+  assert.equal(report.executionDetails.reasonCode, 'INTERVENTION_DISABLED');
+});
+
+// 范围：人工未解决登录条件时每步最多自动介入一次，仍可明确受阻；不把人工完成动作当成登录成功。
+test('人工返回后仍是登录页，不循环自动请求 HITL', async () => {
+  const execution = grant();
+  execution.task.objective = '使用授权账号登录后验证业务';
+  execution.task.environment.allowIntervention = true;
+  const client = new FakeControl();
+  let mode = 'AUTO',
+    revision = 0,
+    requests = 0;
+  const view = client.view.bind(client),
+    command = client.command.bind(client);
+  client.view = async (g) => ({
+    ...(await view(g)),
+    controlMode: mode,
+    controlRevision: revision,
+    actionCount: 1,
+  });
+  client.command = async (...args) => {
+    const result = await command(...args);
+    if (args[2].type === 'browser.observe') {
+      result.data.url = 'https://example.com/login';
+      result.data.targets = [
+        { target: 'pwd', role: 'textbox', name: '密码' },
+        { target: 'btn', role: 'button', name: '登录' },
+      ];
+    }
+    return result;
+  };
+  client.intervene = async () => {
+    requests++;
+    mode = 'REQUESTED';
+    revision++;
+  };
+  client.acknowledge = async () => {
+    mode = 'HUMAN';
+    setTimeout(() => {
+      mode = 'AUTO';
+      revision++;
+    }, 10);
+  };
+  const model = {
+    decide: async () => ({
+      decision: { type: 'browser.observe' },
+      promptTokens: 0,
+      completionTokens: 0,
+    }),
+  };
+  const report = await execute(config, client, model, execution);
+  assert.equal(requests, 1);
+  assert.equal(report.executionDisposition, 'BLOCKED');
+  assert.equal(report.executionDetails.reasonCode, 'NO_PROGRESS');
+  assert.equal(report.verdict, null);
+});
