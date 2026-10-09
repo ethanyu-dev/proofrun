@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { ApiClient, errorMessage } from './api';
 import { Empty, ErrorNotice, ThemeToggle } from './components/ui';
 import { TaskListPage } from './pages/task-list';
+import { ReportDetailPage } from './pages/report-detail';
 import { TaskDetailPage } from './pages/task-detail';
 import { TaskSubmitPage } from './pages/task-submit';
 import { NodesPage } from './pages/nodes';
@@ -17,10 +18,12 @@ import './style.css';
 
 /** 路由只接受协议允许的任务身份，未知路径显示明确的缺失页面。 */
 const TASK_ROUTE = /^\/tasks\/([A-Za-z0-9_-]{1,128})$/;
+/** 报告路由绑定单次任务身份，与任务详情保持独立导航。 */
+const REPORT_ROUTE = /^\/reports\/([A-Za-z0-9_-]{1,128})$/;
 const NAVIGATION = [
   ['/tasks', '验证任务'],
   ['/nodes', '执行节点'],
-  ['/reports', '证据报告'],
+  ['/reports', '验证报告'],
 ];
 
 /** 重新进入时自动填入本地凭据；仍由用户点击连接，验证成功后才更新保存值。 */
@@ -60,7 +63,7 @@ function Connect({
         <br />
         都有据可查。
       </h1>
-      <p className="muted">连接控制面，查看任务、节点和证据报告。</p>
+      <p className="muted">连接控制面，查看任务、节点和验证报告。</p>
       <form className="panel connect-form" onSubmit={connect}>
         <label htmlFor="admin-token">访问凭据</label>
         <input
@@ -133,6 +136,7 @@ function App() {
       </main>
     );
   const taskId = TASK_ROUTE.exec(path)?.[1];
+  const reportId = REPORT_ROUTE.exec(path)?.[1];
   let page;
   if (!api)
     page = (
@@ -150,6 +154,8 @@ function App() {
   else if (path === '/tasks' || path === '/reports')
     page = <TaskListPage key={path} api={api} reports={path === '/reports'} />;
   else if (path === '/tasks/new') page = <TaskSubmitPage api={api} />;
+  else if (reportId)
+    page = <ReportDetailPage key={reportId} api={api} id={reportId} />;
   else if (taskId) page = <TaskDetailPage key={taskId} api={api} id={taskId} />;
   else if (path === '/nodes') page = <NodesPage api={api} />;
   else
@@ -182,7 +188,8 @@ function App() {
                 key={href}
                 aria-current={
                   path === href ||
-                  (href === '/tasks' && path.startsWith('/tasks/'))
+                  ((href === '/tasks' || href === '/reports') &&
+                    path.startsWith(`${href}/`))
                     ? 'page'
                     : undefined
                 }

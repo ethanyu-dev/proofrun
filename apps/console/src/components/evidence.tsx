@@ -11,15 +11,18 @@ export function Evidence({
   api,
   artifact,
   close,
+  focusOnMount = true,
 }: {
   api: ApiClient;
   artifact: Artifact;
   close: () => void;
+  /** 模态预览由外层 dialog 管理焦点，避免覆盖打开前的返回目标。 */
+  focusOnMount?: boolean;
 }) {
   const section = useRef<HTMLElement>(null);
   useEffect(() => {
-    section.current?.focus();
-  }, [artifact.id]);
+    if (focusOnMount) section.current?.focus();
+  }, [artifact.id, focusOnMount]);
   const [content, setContent] = useState<{ url: string; text?: string }>();
   const [error, setError] = useState<string>();
   useEffect(() => {

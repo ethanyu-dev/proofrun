@@ -458,6 +458,8 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         assert.deepEqual(response.data, {
           caseId: input.caseId,
           status: 'QUEUED',
+          reportStatus: null,
+          criteriaCounts: null,
           result: null,
         });
       }
@@ -1016,6 +1018,55 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
           .length,
         0,
       );
+    });
+
+    // 范围：历史存档读取时的状态聚合、列表/详情一致性及证据清理；报告为数据库夹具，不证明业务结论。
+    await suite.test('报告列表与详情返回相同状态且不改写历史报告', async () => {
+      const definition = {
+        ...task('report-unconnected'),
+        taskId: 'report-projection-fixture',
+      };
+      await submit(definition);
+      await api('POST', `/v1/tasks/${definition.taskId}/cancel`);
+      const before = (await api('GET', `/v1/tasks/${definition.taskId}`)).data;
+      assert.equal(before.reportStatus, null);
+      const report = {
+        protocolVersion: '0.1',
+        taskId: definition.taskId,
+        lifecycle: 'COMPLETED',
+        executionDisposition: 'BLOCKED',
+        verdict: null,
+        summary: '历史受阻报告夹具',
+        criteria: [],
+        artifacts: [],
+      };
+      await sql.query(
+        'UPDATE pr_tasks SET report=$2,archived_at=clock_timestamp() WHERE id=$1',
+        [definition.taskId, report],
+      );
+      const detail = (await api('GET', `/v1/tasks/${definition.taskId}`)).data;
+      const list = (
+        await api(
+          'GET',
+          '/v1/tasks?q=report-projection-fixture&reportOnly=true',
+        )
+      ).data;
+      assert.equal(
+        validateTaskList(list),
+        true,
+        JSON.stringify(validateTaskList.errors),
+      );
+      assert.equal(detail.reportStatus, 'INCONCLUSIVE');
+      assert.equal(
+        detail.criteriaCounts.skipped,
+        definition.acceptanceCriteria.length,
+      );
+      assert.equal(list.tasks[0].reportStatus, detail.reportStatus);
+      assert.deepEqual(list.tasks[0].criteriaCounts, detail.criteriaCounts);
+      assert.equal(list.tasks[0].archived_at, detail.archived_at);
+      assert.deepEqual(detail.report, report);
+      assert.equal(list.tasks[0].report_facts, undefined);
+      assert.equal(list.tasks[0].criterion_ids, undefined);
     });
 
     // 范围：角色凭据、一次性注册和任务定义幂等；不测试用户 SSO 或多租户权限。

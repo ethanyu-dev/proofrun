@@ -19,6 +19,14 @@ function fixture(arm: 'llm' | 'jev'): TaskDetail {
   return {
     id,
     state: 'COMPLETED',
+    reportStatus: arm === 'llm' ? 'PASSED' : 'INCONCLUSIVE',
+    criteriaCounts: {
+      total: 1,
+      passed: arm === 'llm' ? 1 : 0,
+      failed: 0,
+      inconclusive: arm === 'llm' ? 0 : 1,
+      skipped: 0,
+    },
     created_at: '2026-09-28T00:00:00Z',
     deadline_at: '2026-09-28T00:20:00Z',
     finished_at: '2026-09-28T00:01:00Z',

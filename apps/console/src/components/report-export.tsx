@@ -1,16 +1,27 @@
 import { useEffect, useRef, useState } from 'react';
-import type { VerificationReport } from '@proofrun/contracts';
+import type { TaskDetail, VerificationReport } from '@proofrun/contracts';
 import { ErrorNotice } from './ui';
 
-/** 导出先呈现原协议 JSON，浏览器不能下载时仍可读取和复制给上层 Agent。 */
+/** 导出呈现原报告与统一状态，浏览器不能下载时仍可读取和复制给上层 Agent。 */
 export function ReportExport({
   report,
+  assessment,
   close,
 }: {
   report: VerificationReport;
+  /** 导出保留存档原文，并附上与 API 一致的状态和覆盖统计。 */
+  assessment: Pick<TaskDetail, 'reportStatus' | 'criteriaCounts'>;
   close: () => void;
 }) {
-  const json = JSON.stringify(report, null, 2);
+  const json = JSON.stringify(
+    {
+      ...report,
+      reportStatus: assessment.reportStatus,
+      criteriaCounts: assessment.criteriaCounts,
+    },
+    null,
+    2,
+  );
   const [url, setUrl] = useState<string>();
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string>();

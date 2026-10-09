@@ -62,7 +62,20 @@ setup 的 expected 非空时必须全部 PASSED 才继续；空 expected 仍须�
 
 所有接口沿用部署管理员 Bearer 凭据。结果结构见 [CaseResultV2 Schema](../contracts/schemas/case-result-v2.schema.json) 与 [OpenAPI](../contracts/public-api.openapi.json)。
 
-响应包含 caseId、status、result、steps、cleanup。status 为原任务生命周期；result 为原有 outcome、summary、criteria、evidence 结构，无报告时为 null。steps 包含 stepId、status、summary、evidenceRefs、criteria、startedAt、finishedAt。步骤状态为 PENDING、RUNNING、COMPLETED、BLOCKED、ERROR、SKIPPED。
+响应包含 caseId、status、reportStatus、criteriaCounts、result、steps、cleanup。status 为原任务生命周期；result 为原有 outcome、summary、criteria、evidence 结构，无报告时为 null。steps 包含 stepId、status、summary、evidenceRefs、criteria、startedAt、finishedAt。步骤状态为 PENDING、RUNNING、COMPLETED、BLOCKED、ERROR、SKIPPED。
+
+`reportStatus` 是与 Console 验证报告一致的结论，新增字段不改变原有 `status`、`result.outcome` 或清理结果的语义。提交、查询、幂等重提与取消响应均返回：
+
+| reportStatus   | 含义                                                 |
+| -------------- | ---------------------------------------------------- |
+| `null`         | 尚无最终报告；即使执行已结束也不自行推断结论         |
+| `PASSED`       | 本次至少有一个验收项、全部通过，且验收执行完整       |
+| `FAILED`       | 已确认至少一项失败；后续阻塞不抹掉已确认失败         |
+| `INCONCLUSIVE` | 尚无确认失败，但存在无法判定、未验收、执行阻塞或错误 |
+
+`criteriaCounts` 包含 `total`、`passed`、`failed`、`inconclusive`、`skipped`；按本次任务定义统计，缺失结果计入 `skipped`，四个分类之和等于 `total`。无报告时为 `null`。报告读取时计算这些字段，历史存档无需重写；证据清理不改变已有报告结论。重新验证需新建 caseId，不覆盖历史结果。
+
+例如先确认一项失败，随后另一项因环境故障未执行，返回 `reportStatus: "FAILED"`、`criteriaCounts: { "total": 2, "passed": 0, "failed": 1, "inconclusive": 0, "skipped": 1 }`；原 `result.outcome` 仍可为 `BLOCKED`。这表示已知验收要求未满足，并不把环境故障认定为产品缺陷。
 
 后续步骤故障或阻塞时，前面已完成的验收结论仍保留；未执行的全局验收项为 SKIPPED，整体 outcome 为 BLOCKED/ERROR，不能按局部 PASSED 当作全任务通过。没有最终报告时也能读取已持久化步骤；终态中未完成的步骤会明确标为错误或跳过，不继续显示正在执行。
 
