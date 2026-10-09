@@ -145,6 +145,16 @@ test('v2 结构化编译保持步骤身份和标准归属', () => {
   );
 });
 
+// 范围：新 case 身份隔离、同身份编译稳定及父子清理关联；不验证数据库调度或真实登录态。
+test('v2 互斥范围包含任务身份，新任务不继承历史清理阻塞', () => {
+  const first = compileCase(INPUT, PROFILE);
+  const second = compileCase({ ...INPUT, caseId: 'case-2' }, PROFILE);
+  assert.equal(compileCase(INPUT, PROFILE).resourceKey, first.resourceKey);
+  assert.notEqual(second.resourceKey, first.resourceKey);
+  assert.equal(cleanupTask(first)!.resourceKey, first.resourceKey);
+  assert.equal(cleanupTask(second)!.resourceKey, second.resourceKey);
+});
+
 // 范围：协议拒绝非法类型、空验证标准、重复身份与预算不足；不判断自然语言约束能否被模型理解。
 test('v2 在接收前拒绝不完整的执行定义', async () => {
   const { service, records } = fixture();
