@@ -30,6 +30,25 @@ async function readLocal(directory, name) {
   return readFile(path);
 }
 
+/** 旧版离线快照没有展示用的状态与统计；仅在两字段均缺失时兼容，不放宽在线协议。 */
+function validateTaskSnapshot(value) {
+  if (
+    value &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    !Object.hasOwn(value, 'reportStatus') &&
+    !Object.hasOwn(value, 'criteriaCounts')
+  ) {
+    // 占位字段仅供结构校验；审计仍核对原始报告与证据，不改写文件或其摘要。
+    return validateTaskDetail({
+      ...value,
+      reportStatus: null,
+      criteriaCounts: null,
+    });
+  }
+  return validateTaskDetail(value);
+}
+
 /** 核对一份既有导出；失败和缺失也返回记录，不修改输入、不访问任何网络。 */
 export async function auditDirectory(input) {
   const directory = resolve(input);
@@ -51,7 +70,7 @@ export async function auditDirectory(input) {
       return null;
     }
   };
-  const detail = await readJson('task.json', validateTaskDetail);
+  const detail = await readJson('task.json', validateTaskSnapshot);
   const report = await readJson('report.json', validateVerificationReport);
   if (detail) {
     if (detail.id !== detail.definition.taskId)

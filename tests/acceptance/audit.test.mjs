@@ -1,18 +1,22 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, rm, symlink } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import test from 'node:test';
 import { auditDirectory } from '../../scripts/acceptance/audit.mjs';
+import {
+  summarizeReport,
+  validateTaskDetail,
+} from '../../contracts/dist/index.js';
 
 /** 固定时间与最小本地证据只服务于审计回归，不代表真实浏览器运行。 */
 const TIME = '2026-09-30T00:00:00.000Z';
 const CONTENT = Buffer.from('{"text":"已保存"}');
 const CLI = new URL('../../scripts/audit-acceptance.mjs', import.meta.url);
 
-/** 建立完整导出夹具；每例修改一类边界，不依赖本机历史任务或网络。 */
+/** 建立不含新增展示字段的旧版导出夹具；每例修改一类边界，不依赖历史任务或网络。 */
 async function fixture(t) {
   const directory = await mkdtemp(join(tmpdir(), 'proofrun-audit-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -90,6 +94,56 @@ async function fixture(t) {
   await writeFile(join(directory, 'dom-1.json'), CONTENT);
   return { directory, detail, report, save };
 }
+
+// 范围：新旧离线快照均可审计且不改写源字节，在线协议仍要求新字段；不证明业务验收真实有效。
+test('离线审计兼容旧快照且保留在线协议约束', async (t) => {
+  const f = await fixture(t);
+  assert.equal(validateTaskDetail(f.detail), false);
+  const legacy = await readFile(join(f.directory, 'task.json'));
+  assert.equal((await auditDirectory(f.directory)).integrity, 'VERIFIED');
+  assert.deepEqual(await readFile(join(f.directory, 'task.json')), legacy);
+  Object.assign(
+    f.detail,
+    summarizeReport(
+      f.report,
+      f.detail.definition.acceptanceCriteria.map((c) => c.id),
+    ),
+  );
+  await f.save();
+  assert.equal(validateTaskDetail(f.detail), true);
+  const current = await readFile(join(f.directory, 'task.json'));
+  const run = await auditDirectory(f.directory);
+  assert.equal(run.integrity, 'VERIFIED');
+  assert.deepEqual(await readFile(join(f.directory, 'task.json')), current);
+  assert.equal(
+    run.sourceSha256['task.json'],
+    createHash('sha256').update(current).digest('hex'),
+  );
+});
+
+// 范围：半份新格式、非法字段值和未知字段不会走旧版兼容；不覆盖文件系统并发替换。
+test('旧快照兼容不掩盖格式损坏', async (t) => {
+  const f = await fixture(t);
+  for (const fields of [
+    { reportStatus: 'PASSED' },
+    { criteriaCounts: null },
+    { reportStatus: 'COMPLETED', criteriaCounts: null },
+    { reportStatus: 'PASSED', criteriaCounts: { total: -1 } },
+    { unknownField: true },
+  ]) {
+    await writeFile(
+      join(f.directory, 'task.json'),
+      JSON.stringify({ ...f.detail, ...fields }),
+    );
+    const run = await auditDirectory(f.directory);
+    assert.ok(
+      run.issues.some(
+        (issue) =>
+          issue.code === 'INVALID_SCHEMA' && issue.item === 'task.json',
+      ),
+    );
+  }
+});
 
 // 验证摘要和引用闭环；即便模型 PASSED，也不推导业务通过、零成本或已验证部署。
 test('完整材料只通过完整性审计，缺失用量保持未知', async (t) => {
