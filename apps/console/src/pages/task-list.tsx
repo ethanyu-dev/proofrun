@@ -161,6 +161,16 @@ export function TaskListPage({
                       {task.objective}
                     </a>
                     <span className="mono muted id-text">{task.id}</span>
+                    {task.parentTaskId && (
+                      <span className="muted id-text">
+                        清理所属 case：{' '}
+                        <a
+                          href={`#/tasks/${encodeURIComponent(task.parentTaskId)}`}
+                        >
+                          {task.parentTaskId}
+                        </a>
+                      </span>
+                    )}
                   </td>
                   {reports ? (
                     <>

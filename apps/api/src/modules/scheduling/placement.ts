@@ -5,6 +5,12 @@ import { sessionAuth, type SessionAuth } from './auth.js';
 
 /** 对外诊断仅使用固定说明，不泄露节点身份、登录槽名称或业务数据。 */
 const QUEUE_MESSAGES: Record<QueueReason['code'], string> = {
+  CLEANUP_PARENT_PENDING:
+    '等待所属 case 结束并确认原浏览器会话关闭后执行清理。',
+  CLEANUP_PARENT_MISSING:
+    '无法核实清理与所属 case 的执行节点关联，停止分配清理。',
+  CLEANUP_NODE_CONFLICT:
+    '清理必须沿用所属 case 的执行节点，但当前路由或显式登录节点与其冲突。',
   AUTH_NODE_ROUTE_CONFLICT:
     '显式登录节点与域名路由不一致，请调整执行配置或路由。',
   COMPARISON_NODE_CONFLICT:
