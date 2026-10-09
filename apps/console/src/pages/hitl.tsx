@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { NodeCommand, HitlServer } from '@proofrun/contracts';
 import { ThemeToggle } from '../components/ui';
 import { HitlInputQueue } from './hitl-input';
+import { captureRemoteWheel } from './hitl-wheel';
 import { HitlNavigation, remainingTime } from './hitl-navigation';
 import { HitlCookies } from './hitl-cookies';
 
@@ -223,6 +224,28 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
   const interactive =
     connected && state?.mode === 'HUMAN' && !!frame && !done && !expired;
   const controlling = interactive && remoteFocused;
+  // 实时帧和输入状态使用最新回调，避免每帧重新绑定原生监听。
+  const forwardWheel = useRef<(event: WheelEvent) => void>(() => {});
+  forwardWheel.current = (event) => {
+    const element = screen.current;
+    if (!controlling || !element || !frame) return;
+    flush();
+    const r = element.getBoundingClientRect();
+    enqueue({
+      type: 'browser.input',
+      action: 'scroll',
+      x: ((event.clientX - r.left) * frame.width) / r.width,
+      y: ((event.clientY - r.top) * frame.height) / r.height,
+      deltaX: Math.max(-2000, Math.min(2000, Math.round(event.deltaX))),
+      deltaY: Math.max(-2000, Math.min(2000, Math.round(event.deltaY))),
+    });
+  };
+  useEffect(() => {
+    if (!controlling || !screen.current) return;
+    return captureRemoteWheel(screen.current, (event) =>
+      forwardWheel.current(event),
+    );
+  }, [controlling]);
   return (
     <main className="hitl-page">
       <header className="hitl-header">
@@ -401,25 +424,6 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
                     action: 'click',
                     x: ((event.clientX - r.left) * frame.width) / r.width,
                     y: ((event.clientY - r.top) * frame.height) / r.height,
-                  });
-                }}
-                onWheel={(event) => {
-                  if (!interactive) return;
-                  flush();
-                  const r = event.currentTarget.getBoundingClientRect();
-                  enqueue({
-                    type: 'browser.input',
-                    action: 'scroll',
-                    x: ((event.clientX - r.left) * frame.width) / r.width,
-                    y: ((event.clientY - r.top) * frame.height) / r.height,
-                    deltaX: Math.max(
-                      -2000,
-                      Math.min(2000, Math.round(event.deltaX)),
-                    ),
-                    deltaY: Math.max(
-                      -2000,
-                      Math.min(2000, Math.round(event.deltaY)),
-                    ),
                   });
                 }}
                 onKeyDown={(event) => {
