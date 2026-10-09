@@ -1755,3 +1755,76 @@ summary {
     flex-direction: column;
   }
 }
+
+/* 焦点提示使用轮廓和阴影，不改变远端点击坐标的内容区域。 */
+.hitl-browser.hitl-controlling {
+  outline: 3px solid #2563eb;
+  outline-offset: 3px;
+}
+.hitl-focus-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  margin: 16px 0;
+  border-radius: 8px;
+  background: var(--color-surface);
+}
+.hitl-controlling .hitl-focus-notice {
+  color: #fff;
+  background: #1d4ed8;
+  font-weight: 600;
+}
+/* 两段提示共占同一网格，切换焦点不推移画面，避免首击坐标偏移。 */
+.hitl-focus-label {
+  display: grid;
+  flex: 1;
+}
+.hitl-focus-label > span {
+  grid-area: 1 / 1;
+}
+.hitl-focus-notice {
+  font-weight: 600;
+}
+.hitl-focus-notice button {
+  flex-shrink: 0;
+}
+.hitl-controlling .hitl-screen:focus {
+  outline: 3px solid #2563eb;
+  outline-offset: 2px;
+}
+.hitl-navigation {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: end;
+}
+.hitl-navigation label {
+  flex: 1 1 240px;
+}
+.hitl-navigation input {
+  display: block;
+  width: 100%;
+}
+.hitl-time,
+.hitl-time-warning {
+  display: block;
+  margin-top: 8px;
+  font-variant-numeric: tabular-nums;
+}
+.hitl-time-warning {
+  color: #b45309;
+}
+.control-form .hitl-cookie-option {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+.control-form .hitl-cookie-option input {
+  width: 18px;
+  height: 18px;
+  min-height: 0;
+  flex-shrink: 0;
+}

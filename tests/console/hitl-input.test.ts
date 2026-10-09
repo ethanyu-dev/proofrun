@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { remainingTime } from '../../apps/console/src/pages/hitl-navigation.tsx';
 import type { NodeCommand } from '../../contracts/src/index.ts';
 import {
   HitlInputQueue,
@@ -48,6 +49,56 @@ const click = (x = 20): NodeCommand['command'] => ({
   action: 'click',
   x,
   y: 20,
+});
+
+// 范围：组合操作按成功回执执行，失败或断线不刷新；不验证真实 Cookie 登录。
+test('Cookie 与刷新整体入队并等待写入成功', () => {
+  for (const status of ['SUCCEEDED', 'FAILED', 'UNKNOWN', 'disconnect']) {
+    const f = fixture();
+    try {
+      assert.equal(
+        f.queue.enqueueBatch([
+          {
+            type: 'browser.cookies.set',
+            url: 'https://example.com',
+            name: 'token',
+            value: 'fixture',
+          },
+          { type: 'browser.act', action: 'reload' },
+        ]),
+        true,
+      );
+      assert.equal(f.sent.length, 1);
+      if (status === 'disconnect') f.queue.reset();
+      else f.ack(0, status);
+      assert.equal(f.sent.length, status === 'SUCCEEDED' ? 2 : 1);
+      if (status === 'SUCCEEDED')
+        assert.equal(f.sent[1]!.command.type, 'browser.act');
+    } finally {
+      f.queue.reset();
+    }
+  }
+});
+
+// 范围：容量不足时不部分接收组合操作；不覆盖服务端预算。
+test('组合操作容量不足时全部拒绝', () => {
+  const f = fixture();
+  try {
+    for (let i = 0; i < 8; i++) f.queue.enqueue(click(i));
+    assert.equal(f.queue.enqueueBatch([click(20), click(21)]), false);
+    for (let i = 0; i < 8; i++) f.ack(i);
+    assert.equal(f.sent.length, 8);
+  } finally {
+    f.queue.reset();
+  }
+});
+
+// 范围：到期显示不出现负值；不验证服务端时钟同步。
+test('授权剩余时间在截止后显示已到期', () => {
+  const end = '2026-10-09T12:00:00Z';
+  assert.equal(remainingTime(end, Date.parse(end) - 61000), '1:01');
+  assert.equal(remainingTime(end, Date.parse(end)), '已到期');
+  assert.equal(remainingTime(end, Date.parse(end) + 1000), '已到期');
 });
 
 // 范围：密集触控板滚动不会耗尽队列，点击保持顺序；不验证真实浏览器滚动距离。

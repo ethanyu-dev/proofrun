@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { NodeCommand, HitlServer } from '@proofrun/contracts';
 import { ThemeToggle } from '../components/ui';
 import { HitlInputQueue } from './hitl-input';
+import { HitlNavigation, remainingTime } from './hitl-navigation';
 import { HitlCookies } from './hitl-cookies';
 
 /** 完成前包含登录快照落盘，等待窗口应覆盖服务端保存命令和结果确认。 */
@@ -41,6 +42,23 @@ const KEYS = new Set([
 
 /** 免平台登录的独立入口；凭据仅通过 WebSocket 首帧发送。 */
 export function HitlPage({ id, token }: { id: string; token: string }) {
+  const [remoteFocused, setRemoteFocused] = useState(false);
+  const [now, setNow] = useState(Date.now);
+  const screen = useRef<HTMLImageElement | null>(null);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    const release = () => {
+      screen.current?.blur();
+      setRemoteFocused(false);
+    };
+    window.addEventListener('blur', release);
+    document.addEventListener('visibilitychange', release);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('blur', release);
+      document.removeEventListener('visibilitychange', release);
+    };
+  }, []);
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<State>();
   const [authResult, setAuthResult] = useState('');
@@ -84,13 +102,19 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
   );
   const [typingPending, setTypingPending] = useState(false);
   /** 区分交接、断线和队列繁忙，避免让短暂拥塞看起来像权限丢失。 */
-  const enqueue = (command: NodeCommand['command']) => {
+  const enqueue = (
+    command: NodeCommand['command'] | NodeCommand['command'][],
+  ) => {
     if (!connected || state?.mode !== 'HUMAN' || completing.current) {
       setError('当前未获得操作权，请等待交接完成或重新连接');
       return false;
     }
     setError('');
-    if (!input.current!.enqueue(command)) {
+    if (
+      !(Array.isArray(command)
+        ? input.current!.enqueueBatch(command)
+        : input.current!.enqueue(command))
+    ) {
       setError('操作队列已满，请等待已提交操作完成');
       return false;
     }
@@ -110,6 +134,7 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
     input.current!.reset();
     clearTimeout(completionTimer.current);
     setConnected(false);
+    setRemoteFocused(false);
     setBusy(false);
     setError('');
     setFrame(undefined);
@@ -163,6 +188,7 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
       const hadPendingInput = input.current!.busy;
       setConnected(false);
       setFrame(undefined);
+      setRemoteFocused(false);
       setText('');
       clearTimeout(typingTimer.current);
       typing.current = '';
@@ -193,7 +219,10 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
       typing.current = '';
     };
   }, [id, token, attempt]);
-  const interactive = connected && state?.mode === 'HUMAN' && !!frame && !done;
+  const expired = !!state && Date.parse(state.expiresAt) <= now;
+  const interactive =
+    connected && state?.mode === 'HUMAN' && !!frame && !done && !expired;
+  const controlling = interactive && remoteFocused;
   return (
     <main className="hitl-page">
       <header className="hitl-header">
@@ -223,6 +252,15 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
                 <p className="note">
                   有效至 {new Date(state.expiresAt).toLocaleString()}
                   ，等待时间计入任务预算。
+                  <strong
+                    className={
+                      Date.parse(state.expiresAt) - now <= 60000
+                        ? 'hitl-time-warning'
+                        : 'hitl-time'
+                    }
+                  >
+                    剩余处理时间：{remainingTime(state.expiresAt, now)}
+                  </strong>
                 </p>
                 <div className="hitl-checks">
                   {state.items.map((item, index) => (
@@ -291,19 +329,68 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
               完成后自动关闭此页。直接离开只会断开画面，任务继续等待人工处理。
             </p>
           </aside>
-          <section className="panel hitl-browser" aria-label="当前任务浏览器">
+          <section
+            className={`panel hitl-browser${controlling ? ' hitl-controlling' : ''}`}
+            aria-label="当前任务浏览器"
+          >
             <div className="section-heading">
               <h2>当前浏览器</h2>
               <span className="status">
-                {busy ? '操作处理中' : interactive ? '可操作' : '等待画面'}
+                {expired
+                  ? '处理已到期'
+                  : busy
+                    ? '操作处理中'
+                    : interactive
+                      ? '可操作'
+                      : '等待画面'}
               </span>
+            </div>
+            <HitlNavigation
+              key={state?.targetUrl}
+              targetUrl={state?.targetUrl}
+              disabled={!interactive || busy || typingPending}
+              submit={enqueue}
+            />
+            <div className="hitl-focus-notice" role="status">
+              <span className="hitl-focus-label">
+                <span
+                  style={{ visibility: controlling ? 'visible' : 'hidden' }}
+                  aria-hidden={!controlling}
+                >
+                  ● 正在控制远端浏览器 · 键盘输入将发送到远端
+                </span>
+                <span
+                  style={{ visibility: controlling ? 'hidden' : 'visible' }}
+                  aria-hidden={controlling}
+                >
+                  点击画面开始控制远端浏览器；点击画面外退出键盘控制
+                </span>
+              </span>
+              <button
+                type="button"
+                className="button button-small button-secondary"
+                disabled={!interactive}
+                onClick={() => {
+                  screen.current?.blur();
+                  setRemoteFocused(false);
+                }}
+              >
+                退出键盘控制
+              </button>
             </div>
             {frame ? (
               <img
+                ref={screen}
                 className="hitl-screen"
+                aria-disabled={!interactive}
+                onFocus={() => setRemoteFocused(true)}
+                onBlur={() => {
+                  flush();
+                  setRemoteFocused(false);
+                }}
                 alt="当前任务的实时浏览器画面，点击后可输入"
                 src={`data:image/jpeg;base64,${frame.data}`}
-                tabIndex={0}
+                tabIndex={interactive ? 0 : -1}
                 onClick={(event) => {
                   if (!interactive) return;
                   flush();

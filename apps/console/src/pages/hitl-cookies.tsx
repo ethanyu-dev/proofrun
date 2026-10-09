@@ -9,30 +9,36 @@ export function HitlCookies({
 }: {
   targetUrl: string;
   disabled: boolean;
-  submit: (command: NodeCommand['command']) => boolean;
+  submit: (commands: NodeCommand['command'][]) => boolean;
 }) {
   const [name, setName] = useState('');
   const [value, setValue] = useState('');
+  const [refresh, setRefresh] = useState(true);
   const [httpOnly, setHttpOnly] = useState(true);
   return (
     <details>
       <summary>通过 Cookie 登录</summary>
       <p className="note">
         目标站点：{new URL(targetUrl).origin}。填写已授权账号的有效
-        Cookie，可逐项添加。写入当前会话后，完成接管并继续任务以验证登录。
+        Cookie，可逐项添加。写入后可刷新远端页面，确认登录状态再继续任务。
       </p>
       <form
         className="control-form"
         onSubmit={(event) => {
           event.preventDefault();
           if (
-            submit({
-              type: 'browser.cookies.set',
-              url: targetUrl,
-              name,
-              value,
-              httpOnly,
-            })
+            submit([
+              {
+                type: 'browser.cookies.set',
+                url: targetUrl,
+                name,
+                value,
+                httpOnly,
+              },
+              ...(refresh
+                ? [{ type: 'browser.act' as const, action: 'reload' as const }]
+                : []),
+            ])
           )
             setValue('');
         }}
@@ -59,7 +65,7 @@ export function HitlCookies({
             disabled={disabled}
           />
         </label>
-        <label>
+        <label className="hitl-cookie-option">
           <input
             type="checkbox"
             checked={httpOnly}
@@ -67,6 +73,15 @@ export function HitlCookies({
             disabled={disabled}
           />
           HttpOnly（站点脚本需要读取时取消）
+        </label>
+        <label className="hitl-cookie-option">
+          <input
+            type="checkbox"
+            checked={refresh}
+            onChange={(e) => setRefresh(e.target.checked)}
+            disabled={disabled}
+          />
+          写入成功后刷新远端页面（多项 Cookie 可在最后一项勾选）
         </label>
         <p className="note">
           作用于当前站点主机及根路径 /，SameSite=Lax，HTTPS 下启用
@@ -76,7 +91,7 @@ export function HitlCookies({
           className="button button-secondary"
           disabled={disabled || !name}
         >
-          写入 Cookie
+          {refresh ? '写入 Cookie 并刷新' : '写入 Cookie'}
         </button>
       </form>
     </details>

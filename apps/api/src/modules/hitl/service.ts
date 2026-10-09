@@ -12,6 +12,7 @@ import { ExecutionControl } from '../scheduling/control.js';
 import { interventionToken } from '../scheduling/hitl-token.js';
 import { Coordinator } from '../scheduling/coordinator.js';
 import { NodeGateway } from '../nodes/gateway.js';
+import { validateHitlNavigation } from './navigation.js';
 import { sendHitlMessage } from './transport.js';
 
 /** 画面独立于持久命令，丢弃慢客户端旧帧；输入严格串行且不自动重试。 */
@@ -239,10 +240,13 @@ export class HitlService {
                 'browser.input',
                 'browser.auth.save',
                 'browser.cookies.set',
+                'browser.act',
               ].includes(operation.type) ||
               (operation.type === 'browser.auth.save' && !grant.auth)
             )
               throw new ApiError(403, 'HITL_COMMAND', '此处理页不允许该操作');
+            if (operation.type === 'browser.act')
+              validateHitlNavigation(operation);
             if (operation.type === 'browser.input')
               this.validateInput(operation);
             viewer.pending++;
@@ -295,6 +299,7 @@ export class HitlService {
               'ACTION_BUDGET_EXCEEDED',
               'HITL_WAIT',
               'INVALID_INPUT',
+              'HITL_NAVIGATION',
             ].includes(error.code)
           )
             socket.close(4003);

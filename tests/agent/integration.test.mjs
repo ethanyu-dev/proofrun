@@ -291,7 +291,11 @@ test(
               ? completed(context)
               : { type: 'verification.block', summary: '夹具缺少下一项数据' },
           );
-          assert.equal(partial.report.executionDisposition, 'BLOCKED');
+          assert.equal(
+            partial.report.executionDisposition,
+            'BLOCKED',
+            JSON.stringify(partial.report),
+          );
           assert.deepEqual(
             partial.report.criteria.map((c) => c.verdict),
             ['PASSED', 'SKIPPED'],
