@@ -3,7 +3,7 @@
   "info": {
     "title": "ProofRun Case API",
     "version": "0.1.0",
-    "description": "新接入使用 /v2/cases 批量提交结构化步骤，/v1/cases 保留兼容。环境、身份、预算及执行策略由平台管理。接口需要部署管理员 Bearer 凭据，请仅由可信服务端保管；提交和取消会产生实际操作。由共享 Schema 生成，请勿手改。"
+    "description": "新接入使用 /v2/cases 批量提交结构化步骤，/v1/cases 保留兼容。环境、身份、预算及执行策略由平台管理。v2 默认每步贡献 300 秒总预算，并双跑纯 LLM 与 JEV+LLM；comparison.arms 返回各组结果，顶层仅表示主组。接口需要部署管理员 Bearer 凭据，请仅由可信服务端保管；提交和取消会产生实际操作。由共享 Schema 生成，请勿手改。"
   },
   "servers": [
     {
@@ -1135,6 +1135,353 @@
               { "$ref": "#/components/schemas/QueueReason" }
             ],
             "description": "最近一次领取检查发现的排队原因；成功领取后清空，取消或排队超时后保留。null 或缺失表示尚无诊断，不表示一定可执行。"
+          },
+          "comparison": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "arms"],
+            "properties": {
+              "id": { "type": "string" },
+              "arms": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 2,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "caseId": {
+                      "type": "string",
+                      "description": "原始请求的幂等身份。"
+                    },
+                    "status": {
+                      "enum": [
+                        "QUEUED",
+                        "RUNNING",
+                        "COMPLETED",
+                        "CANCELLED",
+                        "TIMED_OUT",
+                        "ERROR"
+                      ],
+                      "description": "执行生命周期；COMPLETED 不直接表示业务通过。"
+                    },
+                    "result": {
+                      "anyOf": [
+                        { "type": "null" },
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "outcome",
+                            "summary",
+                            "criteria",
+                            "evidence"
+                          ],
+                          "properties": {
+                            "outcome": {
+                              "enum": [
+                                "PASSED",
+                                "FAILED",
+                                "INCONCLUSIVE",
+                                "BLOCKED",
+                                "ERROR"
+                              ],
+                              "description": "整体业务结论；BLOCKED 和 ERROR 不表示产品失败。"
+                            },
+                            "summary": {
+                              "type": "string",
+                              "description": "基于本次证据的结果说明。"
+                            },
+                            "criteria": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "criterionId",
+                                  "verdict",
+                                  "summary",
+                                  "evidenceRefs"
+                                ],
+                                "properties": {
+                                  "criterionId": {
+                                    "type": "string",
+                                    "description": "对应原 acceptanceCriteria 中的 id。"
+                                  },
+                                  "verdict": {
+                                    "enum": [
+                                      "PASSED",
+                                      "FAILED",
+                                      "INCONCLUSIVE",
+                                      "SKIPPED"
+                                    ],
+                                    "description": "逐项判断；未进行验收时为 SKIPPED。"
+                                  },
+                                  "summary": {
+                                    "type": "string",
+                                    "description": "该项结论及证据支持范围。"
+                                  },
+                                  "evidenceRefs": {
+                                    "type": "array",
+                                    "items": { "type": "string" },
+                                    "description": "引用 evidence 数组中的证据身份。"
+                                  }
+                                }
+                              },
+                              "description": "按原验收项身份返回逐项结论。"
+                            },
+                            "evidence": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": ["id", "kind", "url", "sha256"],
+                                "properties": {
+                                  "id": {
+                                    "type": "string",
+                                    "description": "平台登记的证据身份。"
+                                  },
+                                  "kind": {
+                                    "enum": [
+                                      "DOM",
+                                      "SCREENSHOT",
+                                      "NETWORK",
+                                      "TRACE"
+                                    ],
+                                    "description": "证据媒介，由平台取证配置决定。"
+                                  },
+                                  "url": {
+                                    "type": "string",
+                                    "format": "uri",
+                                    "description": "本控制面的 case 证据地址，下载需要相同凭据。"
+                                  },
+                                  "sha256": {
+                                    "type": "string",
+                                    "pattern": "^[a-f0-9]{64}$",
+                                    "description": "原始下载字节的 SHA-256 小写十六进制摘要。"
+                                  }
+                                }
+                              },
+                              "description": "报告引用的证据，下载范围限定于当前 case。"
+                            }
+                          }
+                        }
+                      ],
+                      "description": "已交付的业务结果；尚无报告时为 null，包括部分异常终态。"
+                    },
+                    "steps": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/StepResult" },
+                      "description": "按实际串行顺序返回各步骤进度，故障不抹掉已完成结论。"
+                    },
+                    "cleanup": {
+                      "anyOf": [
+                        { "type": "null" },
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "taskId": { "type": "string" },
+                            "status": {
+                              "enum": [
+                                "PENDING",
+                                "QUEUED",
+                                "RUNNING",
+                                "COMPLETED",
+                                "CANCELLED",
+                                "TIMED_OUT",
+                                "ERROR",
+                                "SKIPPED"
+                              ]
+                            },
+                            "result": {
+                              "anyOf": [
+                                { "type": "null" },
+                                {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "required": [
+                                    "outcome",
+                                    "summary",
+                                    "criteria",
+                                    "evidence"
+                                  ],
+                                  "properties": {
+                                    "outcome": {
+                                      "enum": [
+                                        "PASSED",
+                                        "FAILED",
+                                        "INCONCLUSIVE",
+                                        "BLOCKED",
+                                        "ERROR"
+                                      ],
+                                      "description": "整体业务结论；BLOCKED 和 ERROR 不表示产品失败。"
+                                    },
+                                    "summary": {
+                                      "type": "string",
+                                      "description": "基于本次证据的结果说明。"
+                                    },
+                                    "criteria": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "additionalProperties": false,
+                                        "required": [
+                                          "criterionId",
+                                          "verdict",
+                                          "summary",
+                                          "evidenceRefs"
+                                        ],
+                                        "properties": {
+                                          "criterionId": {
+                                            "type": "string",
+                                            "description": "对应原 acceptanceCriteria 中的 id。"
+                                          },
+                                          "verdict": {
+                                            "enum": [
+                                              "PASSED",
+                                              "FAILED",
+                                              "INCONCLUSIVE",
+                                              "SKIPPED"
+                                            ],
+                                            "description": "逐项判断；未进行验收时为 SKIPPED。"
+                                          },
+                                          "summary": {
+                                            "type": "string",
+                                            "description": "该项结论及证据支持范围。"
+                                          },
+                                          "evidenceRefs": {
+                                            "type": "array",
+                                            "items": { "type": "string" },
+                                            "description": "引用 evidence 数组中的证据身份。"
+                                          }
+                                        }
+                                      },
+                                      "description": "按原验收项身份返回逐项结论。"
+                                    },
+                                    "evidence": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "additionalProperties": false,
+                                        "required": [
+                                          "id",
+                                          "kind",
+                                          "url",
+                                          "sha256"
+                                        ],
+                                        "properties": {
+                                          "id": {
+                                            "type": "string",
+                                            "description": "平台登记的证据身份。"
+                                          },
+                                          "kind": {
+                                            "enum": [
+                                              "DOM",
+                                              "SCREENSHOT",
+                                              "NETWORK",
+                                              "TRACE"
+                                            ],
+                                            "description": "证据媒介，由平台取证配置决定。"
+                                          },
+                                          "url": {
+                                            "type": "string",
+                                            "format": "uri",
+                                            "description": "本控制面的 case 证据地址，下载需要相同凭据。"
+                                          },
+                                          "sha256": {
+                                            "type": "string",
+                                            "pattern": "^[a-f0-9]{64}$",
+                                            "description": "原始下载字节的 SHA-256 小写十六进制摘要。"
+                                          }
+                                        }
+                                      },
+                                      "description": "报告引用的证据，下载范围限定于当前 case。"
+                                    }
+                                  }
+                                }
+                              ],
+                              "description": "已交付的业务结果；尚无报告时为 null，包括部分异常终态。"
+                            }
+                          },
+                          "required": ["taskId", "status", "result"]
+                        }
+                      ],
+                      "description": "独立业务清理任务的身份、状态与结果；没有清理定义时为 null。"
+                    },
+                    "reportStatus": {
+                      "enum": ["PASSED", "FAILED", "INCONCLUSIVE", null],
+                      "description": "验证报告状态：通过、未通过、无法判定；无报告时为 null。执行状态不等于验收结论，已确认失败优先于未覆盖项。"
+                    },
+                    "criteriaCounts": {
+                      "anyOf": [
+                        { "type": "null" },
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "total",
+                            "passed",
+                            "failed",
+                            "inconclusive",
+                            "skipped"
+                          ],
+                          "properties": {
+                            "total": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "description": "本次定义的验收项总数。"
+                            },
+                            "passed": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "description": "通过项数。"
+                            },
+                            "failed": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "description": "未通过项数。"
+                            },
+                            "inconclusive": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "description": "已验收但无法判定的项数。"
+                            },
+                            "skipped": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "description": "未验收或报告缺失的项数。"
+                            }
+                          }
+                        }
+                      ],
+                      "description": "按本次验收定义统计，各分类之和等于 total；无报告时为 null。"
+                    },
+                    "queueReason": {
+                      "anyOf": [
+                        { "type": "null" },
+                        { "$ref": "#/components/schemas/QueueReason" }
+                      ],
+                      "description": "最近一次领取检查发现的排队原因；成功领取后清空，取消或排队超时后保留。null 或缺失表示尚无诊断，不表示一定可执行。"
+                    },
+                    "executionMode": { "enum": ["llm", "jev"] },
+                    "taskId": { "type": "string" }
+                  },
+                  "required": [
+                    "caseId",
+                    "status",
+                    "result",
+                    "steps",
+                    "cleanup",
+                    "reportStatus",
+                    "criteriaCounts",
+                    "executionMode",
+                    "taskId"
+                  ]
+                }
+              }
+            },
+            "description": "双跑时返回两组独立结果；顶层字段兼容纯 LLM 主组，不代表两组汇总结论。单组任务省略。"
           }
         },
         "required": [

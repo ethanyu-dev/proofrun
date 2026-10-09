@@ -191,6 +191,22 @@
     "resourceKey": {
       "type": "string",
       "description": "平台生成的任务及业务上下文互斥键；主任务与其清理共享，不同 caseId 独立。"
+    },
+    "cleanupBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timeoutMs", "maxActions"],
+      "properties": {
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxActions": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "description": "v2 首次提交冻结的独立清理预算；历史任务缺失时沿用主任务预算。"
     }
   },
   "$schema": "http://json-schema.org/draft-07/schema#",

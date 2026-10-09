@@ -5,7 +5,12 @@ import {
   validateStepResults,
   type StepResult,
 } from '@proofrun/contracts';
-import { cleanupTask } from '../cases/structured.js';
+import {
+  cleanupTask,
+  expandCaseTasks,
+  caseArmIds,
+  CASE_TASK_ID,
+} from '../cases/structured.js';
 import type { PoolClient } from 'pg';
 import type {
   NodeCommand,
@@ -70,7 +75,7 @@ export class Coordinator {
       task.steps ||
       task.caseV2Definition ||
       task.purpose === 'cleanup' ||
-      /^(case-v2-|cleanup-case-v2-)/.test(task.taskId)
+      CASE_TASK_ID.test(task.taskId)
     )
       throw new ApiError(
         400,
@@ -193,17 +198,22 @@ export class Coordinator {
             throw new ApiError(409, 'CASE_CONFLICT', 'caseId 已绑定另一份定义');
           continue;
         }
-        await client.query(
-          `INSERT INTO pr_tasks(id,definition,definition_hash,state,deadline_at)
-          VALUES($1,$2,$3,'QUEUED',clock_timestamp()+$4*interval '1 millisecond')`,
-          [task.taskId, task, digest(canonical(task)), task.budget.timeoutMs],
-        );
-        const cleanup = cleanupTask(task);
-        if (cleanup)
+        const source = task;
+        for (const task of expandCaseTasks(source)) {
+          if (!validateVerificationTask(task))
+            throw new ApiError(422, 'INVALID_CASE', '双跑任务定义无效');
           await client.query(
-            'INSERT INTO pr_case_cleanups(parent_task_id,task_id,definition) VALUES($1,$2,$3)',
-            [task.taskId, cleanup.taskId, cleanup],
+            `INSERT INTO pr_tasks(id,definition,definition_hash,state,deadline_at)
+          VALUES($1,$2,$3,'QUEUED',clock_timestamp()+$4*interval '1 millisecond')`,
+            [task.taskId, task, digest(canonical(task)), task.budget.timeoutMs],
           );
+          const cleanup = cleanupTask(task);
+          if (cleanup)
+            await client.query(
+              'INSERT INTO pr_case_cleanups(parent_task_id,task_id,definition) VALUES($1,$2,$3)',
+              [task.taskId, cleanup.taskId, cleanup],
+            );
+        }
       }
     });
   }
@@ -333,7 +343,7 @@ export class Coordinator {
       throw new ApiError(
         400,
         'CASE_ENDPOINT_REQUIRED',
-        '结构化任务请使用新 caseId 通过 /v2/cases 重提，不支持自动双组对比',
+        '结构化任务请使用新 caseId 通过 /v2/cases 重提，不支持在内部入口重跑',
       );
     if (definition.comparison) {
       if (runId === definition.comparison.id)
@@ -348,7 +358,7 @@ export class Coordinator {
   async compare(sourceId: string, comparisonId: string, maxActions?: number) {
     if (
       !/^[A-Za-z0-9_-]{1,100}$/.test(comparisonId) ||
-      /^(case-v2-|cleanup-case-v2-)/.test(comparisonId)
+      CASE_TASK_ID.test(comparisonId)
     )
       throw new ApiError(400, 'INVALID_COMPARISON', '无效的对比身份');
     // 预算变更仅用于本轮两份新任务，原任务定义和历史报告保持不可变。
@@ -367,7 +377,7 @@ export class Coordinator {
       throw new ApiError(
         400,
         'CASE_ENDPOINT_REQUIRED',
-        '结构化任务请使用新 caseId 通过 /v2/cases 重提，不支持自动双组对比',
+        '结构化任务请使用新 caseId 通过 /v2/cases 重提，不支持在内部入口重跑',
       );
     const tasks = this.comparisonTasks(
       {
@@ -394,7 +404,10 @@ export class Coordinator {
         id: group.id,
         sourceTaskId: group.sourceTaskId,
         arms: await Promise.all(
-          ['llm', 'jev'].map((arm) => this.task(`${group.id}-${arm}`)),
+          (task.definition.caseV2Definition
+            ? caseArmIds(task.definition)
+            : ['llm', 'jev'].map((arm) => `${group.id}-${arm}`)
+          ).map((id) => this.task(id)),
         ),
       },
     };

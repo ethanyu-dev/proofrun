@@ -6,7 +6,11 @@ import {
 } from '@proofrun/contracts';
 import { ApiError, canonical } from '../../domain.js';
 import type { Coordinator } from '../scheduling/coordinator.js';
-import { validateCaseProfile, type CaseProfile } from './profile.js';
+import {
+  caseBudget,
+  validateCaseProfile,
+  type CaseProfile,
+} from './profile.js';
 
 /** 独立命名空间使公开 case 不会误读普通内部任务。 */
 const CASE_PREFIX = 'case-';
@@ -126,8 +130,8 @@ export class CaseService {
         : input.description,
       environment: profile.environment,
       target: { url: input.url },
-      budget: profile.budget,
-      executionMode: profile.executionMode,
+      budget: caseBudget(profile, input.steps?.length ?? 1),
+      executionMode: profile.executionMode === 'jev' ? 'jev' : 'llm',
       // 输入校验已保证至少一项，映射只添加平台证据要求，不删改原验收项。
       acceptanceCriteria: input.acceptanceCriteria.map((c) => ({
         ...c,

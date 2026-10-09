@@ -6,9 +6,8 @@
     "reuseAuth": true
   },
   "budget": {
-    "timeoutMs": 300000,
     "maxActions": 30
   },
-  "executionMode": "llm",
+  "executionMode": "parallel",
   "evidenceKinds": ["DOM"]
 }

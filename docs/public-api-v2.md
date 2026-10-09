@@ -1,8 +1,8 @@
 # 结构化 Case API v2
 
-`POST /v2/cases` 接收数组，数组中每个对象是一个独立任务。不同 caseId 可按平台容量并行执行；任务内部按 `exec_order` 升序执行，同序按原数组顺序串行。不会为每个步骤创建独立任务。
+`POST /v2/cases` 接收数组，数组中每个对象是一个独立 case，默认创建纯 LLM 与 JEV+LLM 两组任务。不同 caseId 及同一 case 的两组可按平台容量并行执行；任务内部按 `exec_order` 升序执行，同序按原数组顺序串行。不会为每个步骤创建独立任务。
 
-旧 `/v1/cases` 单 case 接口继续保留。新旧请求格式不混用；内部 `/v1/tasks` 不接收新版 case、结构化步骤或清理任务，也不支持对它们自动重跑或创建双组对照。重新执行应通过新版接口提交新的 caseId。
+旧 `/v1/cases` 单 case 接口继续保留。新旧请求格式不混用；内部 `/v1/tasks` 不接收新版 case、结构化步骤或清理任务，也不支持从内部入口对它们自动重跑或追加双组对照。重新执行应通过新版接口提交新的 caseId。
 
 查询结果包含可选的 `queueReason: { code, message } | null`，供排查任务为何尚未开始。它记录最近一次领取检查遇到的配置冲突、资源占用或节点不可用等原因；成功领取后清空，取消或排队超时后保留。null 或字段缺失表示尚无诊断，不保证节点可用。排队超时不代表业务验收失败，业务结果仍以实际执行报告为准。
 
@@ -52,19 +52,21 @@ setup 的 expected 非空时必须全部 PASSED 才继续；空 expected 仍须�
 
 等待总时长必须小于平台任务预算，否则返回 422 WAIT_EXCEEDS_BUDGET。任务预算包含排队时间。领取时会再次受剩余时间限制；结构化任务只分配给会话上限能覆盖配置总预算的节点。
 
-当前平台示例预算为 5 分钟，节点默认会话硬期限为 1 小时。因此 70 分钟等待需要部署方同时调整 case profile 的 budget.timeoutMs 和节点 max_session_ms，并为排队、操作和验收预留时间；任务预算上限仍为 24 小时。不自动改动部署配置。
+默认总预算为 `300000 × steps.length` 毫秒，setup 和 verification 均计数，exec_order 的大小或重复不影响数量。每步贡献 300 秒，所有步骤共享总时长，不强制每一步在 300 秒内结束。每组独立获得完整预算；清理使用 `300000 × cleanup.length` 毫秒的独立预算。平台 profile 显式设置 budget.timeoutMs 时覆盖上述默认值，仍受 24 小时上限约束。
+
+节点默认会话硬期限为 1 小时；较多步骤或长时间等待可能需要提高节点 max_session_ms。70 分钟显式等待还需确保 profile 总预算大于等待时长，为排队、操作和验收预留时间。请求格式保持不变，不接受调用方传入预算或模式。
 
 本版不支持挂起释放会话，也不支持 worker 重启后从中间步骤继续。步骤结果已经持久化；失联仍按原租约规则结束任务，不能盲目重放可能产生副作用的动作。
 
 ## 查询与结果
 
 - `GET /v2/cases/{caseId}`：读取主任务状态、逐步结果和清理状态。
-- `POST /v2/cases/{caseId}/cancel`：取消主任务，已声明的业务清理仍独立进行。
+- `POST /v2/cases/{caseId}/cancel`：取消该 case 的所有执行组，已声明的业务清理仍独立进行。
 - `GET /v2/cases/{caseId}/evidence/{artifactId}`：读取主任务步骤记录、主任务报告或关联清理报告引用的证据。
 
 所有接口沿用部署管理员 Bearer 凭据。结果结构见 [CaseResultV2 Schema](../contracts/schemas/case-result-v2.schema.json) 与 [OpenAPI](../contracts/public-api.openapi.json)。
 
-响应包含 caseId、status、reportStatus、criteriaCounts、result、steps、cleanup。status 为原任务生命周期；result 为原有 outcome、summary、criteria、evidence 结构，无报告时为 null。steps 包含 stepId、status、summary、evidenceRefs、criteria、startedAt、finishedAt。步骤状态为 PENDING、RUNNING、COMPLETED、BLOCKED、ERROR、SKIPPED。
+响应包含 caseId、status、reportStatus、criteriaCounts、result、steps、cleanup。双跑时额外返回 `comparison: { id, arms }`；arms 按 llm、jev 顺序分别包含 taskId、executionMode 和各自的完整 case 结果（含步骤、清理及排队原因）。顶层字段保持纯 LLM 主组的原有投影，不能用顶层完成或通过推断另一组的状态。单组及历史单组任务省略 comparison。查询、幂等重提和取消均返回相同结构；证据入口允许读取两组及各自清理中已记录的证据。status 为原任务生命周期；result 为原有 outcome、summary、criteria、evidence 结构，无报告时为 null。steps 包含 stepId、status、summary、evidenceRefs、criteria、startedAt、finishedAt。步骤状态为 PENDING、RUNNING、COMPLETED、BLOCKED、ERROR、SKIPPED。
 
 `reportStatus` 是与 Console 验证报告一致的结论，新增字段不改变原有 `status`、`result.outcome` 或清理结果的语义。提交、查询、幂等重提与取消响应均返回：
 
@@ -89,7 +91,7 @@ cleanup 中每项必填 url、exec_order、description，可选 stepId、policy�
 
 cleanup 结果通过 taskId、status、result 关联，PENDING 表示正在等待安全调度条件。主任务结果不会被清理失败覆盖。主任务关闭状态未经核实，清理不会抢跑；清理失败也不会自动重放可能已经生效的写入。
 
-当前以 caseId 对应的主任务身份、平台 nodePool、登录槽（没有显式登录槽时使用 environment.id）、显式登录节点及 entry 的 origin 生成互斥键。主任务与自己的清理共享该键；不同 caseId 即使环境、账号与站点相同，也不互相等待。每次执行使用独立浏览器 profile；该键不隔离服务端业务数据，共用账号或业务对象的操作顺序仍需上游协调。
+双跑两组分别保存清理意图，按各自完成和会话关闭情况调度。当前以 caseId 对应的主任务身份、平台 nodePool、登录槽（没有显式登录槽时使用 environment.id）、显式登录节点及 entry 的 origin 生成互斥键。双跑时该键进一步按组隔离，主任务与自己的清理共享该键；不同 caseId 即使环境、账号与站点相同，也不互相等待。两组从同一轮不可变登录快照启动，各自使用独立浏览器 profile；该键不隔离服务端业务数据，共用账号或业务对象的操作顺序仍需上游协调。
 
 清理尚未完成或未通过时，不阻塞以新 caseId 发起的其他任务；失败清理仍保留在原 case 结果中，不自动重试。相同 caseId 的幂等重提复用首次任务与清理状态，不会创建新执行。主任务与其清理仍按终态及浏览器关闭确认顺序调度，排队仍计入各自预算。
 

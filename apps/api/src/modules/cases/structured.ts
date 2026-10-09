@@ -5,10 +5,13 @@ import type {
   VerificationTask,
 } from '@proofrun/contracts';
 import { ApiError } from '../../domain.js';
-import type { CaseProfile } from './profile.js';
+import { caseBudget, type CaseProfile } from './profile.js';
 
 /** 前缀将新版 case 与旧公开入口、普通内部任务隔离。 */
 export const V2_PREFIX = 'case-v2-';
+/** 主任务、双跑从组及清理的保留前缀，禁止普通任务占用这些服务端身份。 */
+export const CASE_TASK_ID =
+  /^(case-v2-|cleanup-case-v2-|comparison-case-v2-|cleanup-comparison-case-v2-)/;
 /** 批量提交必须有界，避免长事务和过量任务占用。 */
 export const MAX_CASE_BATCH = 32;
 
@@ -57,11 +60,12 @@ export function compileCase(
       expected: step.expected ?? [],
     })),
   );
+  const budget = caseBudget(profile, steps.length);
   const waitMs = steps.reduce(
     (total, step) => total + (step.wait?.durationMs ?? 0),
     0,
   );
-  if (waitMs >= profile.budget.timeoutMs)
+  if (waitMs >= budget.timeoutMs)
     throw new ApiError(
       422,
       'WAIT_EXCEEDS_BUDGET',
@@ -81,8 +85,11 @@ export function compileCase(
       input.description ?? `${input.platform}：按定义步骤执行并逐项验收`,
     target: { url: input.entry },
     environment: structuredClone(profile.environment),
-    budget: structuredClone(profile.budget),
-    executionMode: profile.executionMode,
+    budget,
+    ...(input.cleanup.length
+      ? { cleanupBudget: caseBudget(profile, input.cleanup.length) }
+      : {}),
+    executionMode: profile.executionMode ?? 'parallel',
     purpose: 'verification',
     steps: steps as NonNullable<VerificationTask['steps']>,
     acceptanceCriteria: stepCriteria(steps, profile.evidenceKinds),
@@ -111,7 +118,7 @@ export function cleanupTask(task: VerificationTask): VerificationTask | null {
       '执行上游声明的业务清理操作；只清理指定对象，不能推测未提供的原值。',
     environment: structuredClone(task.environment),
     target: { url: steps[0]!.url },
-    budget: structuredClone(task.budget),
+    budget: structuredClone(task.cleanupBudget ?? task.budget),
     executionMode: task.executionMode ?? 'llm',
     purpose: 'cleanup',
     parentTaskId: task.taskId,
@@ -119,4 +126,26 @@ export function cleanupTask(task: VerificationTask): VerificationTask | null {
     steps: steps as NonNullable<VerificationTask['steps']>,
     acceptanceCriteria: stepCriteria(steps, evidenceKinds),
   };
+}
+
+/** 双跑保留旧主任务路径，另一组使用独立命名空间，避免与带后缀的 caseId 冲突。 */
+export function caseArmIds(task: VerificationTask): string[] {
+  const primaryId = task.comparison?.sourceTaskId ?? task.taskId;
+  return task.comparison
+    ? [primaryId, `comparison-${primaryId}-jev`]
+    : [primaryId];
+}
+
+/** 仅首次提交拆组；各组共享初始登录快照，但各自的清理锁不能阻塞另一组。 */
+export function expandCaseTasks(task: VerificationTask): VerificationTask[] {
+  if (task.executionMode !== 'parallel') return [task];
+  return (['llm', 'jev'] as const).map((arm) => ({
+    ...structuredClone(task),
+    taskId: arm === 'llm' ? task.taskId : `comparison-${task.taskId}-jev`,
+    executionMode: arm,
+    comparison: { id: task.taskId, sourceTaskId: task.taskId, arm },
+    resourceKey: createHash('sha256')
+      .update(`${task.resourceKey}:${arm}`)
+      .digest('hex'),
+  }));
 }
