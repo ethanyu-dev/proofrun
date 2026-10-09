@@ -252,3 +252,31 @@ test('v2 报告状态保留局部失败而不被执行阻塞覆盖', async () =>
   assert.equal(result.result?.outcome, 'BLOCKED');
   assert.equal((await service.cancel(INPUT.caseId)).reportStatus, 'FAILED');
 });
+
+// 范围：v2 查询和幂等提交保留调度诊断，不伪造步骤结论；任务存档为夹具，不覆盖数据库或节点执行。
+test('v2 返回排队原因并在超时后保留', async () => {
+  const { service, records } = fixture();
+  await service.submit([INPUT]);
+  const record = records.get(`case-v2-${INPUT.caseId}`)!;
+  record.queueReason = {
+    code: 'NODE_CAPACITY',
+    message: '符合条件的节点容量已满。',
+  };
+  for (const state of ['QUEUED', 'TIMED_OUT'] as const) {
+    record.state = state;
+    const result = await service.get(INPUT.caseId);
+    assert(
+      validateCaseResultV2(result),
+      JSON.stringify(validateCaseResultV2.errors),
+    );
+    assert.deepEqual(result.queueReason, record.queueReason);
+    assert.equal(result.result, null);
+    assert.deepEqual(
+      (await service.submit([INPUT]))[0]!.queueReason,
+      record.queueReason,
+    );
+  }
+  record.state = 'RUNNING';
+  record.queueReason = null;
+  assert.equal((await service.get(INPUT.caseId)).queueReason, null);
+});

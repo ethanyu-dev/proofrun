@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://proofrun.invalid/contracts/0.1/queue-reason.schema.json",
+  "title": "QueueReason",
+  "description": "最近一次领取检查发现的排队原因；不包含节点身份或登录凭据，也不是业务验收结论。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["code", "message"],
+  "properties": {
+    "code": {
+      "enum": [
+        "AUTH_NODE_ROUTE_CONFLICT",
+        "COMPARISON_NODE_CONFLICT",
+        "RESOURCE_BUSY",
+        "NO_ELIGIBLE_NODE",
+        "NODE_CAPACITY",
+        "NODE_ROTATING"
+      ]
+    },
+    "message": { "type": "string", "minLength": 1 }
+  }
+}

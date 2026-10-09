@@ -79,6 +79,7 @@ test('case 只接受业务定义并转换成内部任务', async () => {
   assert.deepEqual(result, {
     caseId: INPUT.caseId,
     status: 'QUEUED',
+    queueReason: null,
     reportStatus: null,
     criteriaCounts: null,
     result: null,
@@ -344,4 +345,30 @@ test('v1 对外返回报告状态和验收统计', async () => {
     (await service.cancel(INPUT.caseId)).reportStatus,
     'INCONCLUSIVE',
   );
+});
+
+// 范围：公开 case 投影保留排队诊断和超时原因且符合契约；存档为夹具，不验证真实调度或浏览器。
+test('case 可查询排队诊断，成功领取后清空且不输出节点身份', async () => {
+  const { service, records } = fixture();
+  await service.submit(INPUT);
+  const record = records.get(`case-${INPUT.caseId}`)!;
+  record.queueReason = {
+    code: 'AUTH_NODE_ROUTE_CONFLICT',
+    message: '显式登录节点与域名路由不一致。',
+  };
+  for (const state of ['QUEUED', 'TIMED_OUT'] as const) {
+    record.state = state;
+    const result = await service.get(INPUT.caseId);
+    assert(
+      validateCaseResult(result),
+      JSON.stringify(validateCaseResult.errors),
+    );
+    assert.deepEqual(result.queueReason, record.queueReason);
+    assert.equal(result.result, null);
+    assert(!JSON.stringify(result).includes('private-node'));
+    assert(!JSON.stringify(result).includes('private-login'));
+  }
+  record.state = 'RUNNING';
+  record.queueReason = null;
+  assert.equal((await service.get(INPUT.caseId)).queueReason, null);
 });

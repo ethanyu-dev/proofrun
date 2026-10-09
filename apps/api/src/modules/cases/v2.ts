@@ -138,6 +138,7 @@ export class CaseV2Service {
     return {
       caseId: id,
       status: task.state,
+      queueReason: task.queueReason ?? null,
       ...summarizeReport(
         task.report,
         task.definition.acceptanceCriteria.map((c) => c.id),

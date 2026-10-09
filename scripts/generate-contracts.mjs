@@ -5,6 +5,7 @@ import { compile } from 'json-schema-to-typescript';
 const check = process.argv.includes('--check');
 const destination = new URL('../contracts/src/generated/', import.meta.url);
 const names = [
+  'queue-reason',
   'case-step',
   'step-result',
   'verification-case-v2',

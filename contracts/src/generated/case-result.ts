@@ -96,4 +96,21 @@ export interface CaseResult {
      */
     skipped: number;
   };
+  /**
+   * 最近一次领取检查发现的排队原因；成功领取后清空，取消或排队超时后保留。null 或缺失表示尚无诊断，不表示一定可执行。
+   */
+  queueReason?: null | QueueReason;
+}
+/**
+ * 最近一次领取检查发现的排队原因；不包含节点身份或登录凭据，也不是业务验收结论。
+ */
+export interface QueueReason {
+  code:
+    | 'AUTH_NODE_ROUTE_CONFLICT'
+    | 'COMPARISON_NODE_CONFLICT'
+    | 'RESOURCE_BUSY'
+    | 'NO_ELIGIBLE_NODE'
+    | 'NODE_CAPACITY'
+    | 'NODE_ROTATING';
+  message: string;
 }
