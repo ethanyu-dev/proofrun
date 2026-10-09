@@ -9,6 +9,10 @@ export type HitlServer =
       mode: 'REQUESTED' | 'HUMAN';
       expiresAt: string;
       canSaveAuth: boolean;
+      /**
+       * 任务目标地址，Cookie 写入仅允许该 origin。
+       */
+      targetUrl?: string;
     }
   | {
       type: 'frame';

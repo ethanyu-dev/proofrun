@@ -148,3 +148,24 @@ test('未知结果或不可用连接不能继续派发', () => {
   f.queue.reset();
   unavailable.reset();
 });
+
+// 范围：Cookie 写入按原队列串行等待回执，失败停止且不重放；不连接真实浏览器或验证 Cookie 登录。
+test('Cookie 写入等待确认且失败后不派发后续输入', () => {
+  const f = fixture();
+  try {
+    f.queue.enqueue({
+      type: 'browser.cookies.set',
+      url: 'https://example.com/',
+      name: 'token',
+      value: 'fixture-only',
+      httpOnly: true,
+    });
+    f.queue.enqueue(click());
+    assert.equal(f.sent.length, 1);
+    f.ack(0, 'UNKNOWN');
+    assert.equal(f.sent.length, 1);
+    assert.equal(f.stopped, 1);
+  } finally {
+    f.queue.reset();
+  }
+});

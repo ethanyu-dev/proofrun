@@ -54,7 +54,8 @@ export type BrowserCommand =
   | WaitBrowser
   | SaveAuthentication
   | BrowserInput
-  | BrowserTrace;
+  | BrowserTrace
+  | SetBrowserCookie;
 /**
  * 执行者按原验收标准提交的结果；控制面验证覆盖、聚合与证据归属。
  */
@@ -313,6 +314,16 @@ export interface BrowserInput {
 export interface BrowserTrace {
   type: 'browser.trace';
   action: 'start' | 'stop';
+}
+/**
+ * 仅人工接管时写入任务目标站点的 host-only、根路径、SameSite=Lax 会话 Cookie；不回传值，不自动刷新或保存共享登录槽。
+ */
+export interface SetBrowserCookie {
+  type: 'browser.cookies.set';
+  url: string;
+  name: string;
+  value: string;
+  httpOnly: boolean;
 }
 export interface CompleteExecution {
   /**

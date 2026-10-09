@@ -17,6 +17,7 @@ import { waitForEvidence } from '../evidence/delivery.js';
 import { AgentFault, pause, transient } from '../http.js';
 import { LeaseGuard } from './lease.js';
 import { Workflow } from './workflow.js';
+import { needsLoginIntervention } from './login-intervention.js';
 import {
   decisionContext,
   rememberObservation,
@@ -86,6 +87,8 @@ class Execution {
   private controlRevision = 0;
   /** 决策轮次与模型调用次数分开，混合策略可以在同一轮派发多个供应商请求。 */
   private decisionIndex = 0;
+  /** 每一步最多自动请求一次登录辅助，人工未解决问题时不能无限暂停。 */
+  private readonly loginInterventions = new Set<number>();
   /** 原任务阶段和恢复计划由所有决策模式共享。 */
   private workflow: Workflow;
   /** 结构化步骤共享总预算和租约，每步只向模型开放当前操作与标准。 */
@@ -585,6 +588,35 @@ class Execution {
           }
           // 被动重采不累计动作循环，也不能清除导航前已经存在的循环记录。
         }
+        // 登录前置条件需要人工时先交接，不能先进入模型重复观察或长时间等待挑战。
+        if (
+          !this.loginInterventions.has(this.stepIndex) &&
+          needsLoginIntervention(this.grant.task, this.current!, this.stepIndex)
+        ) {
+          if (!this.grant.task.environment.allowIntervention)
+            return this.blocked(
+              '当前步骤需要登录，但任务未授权人工辅助',
+              'INTERVENTION_DISABLED',
+            );
+          await this.requestIntervention(
+            '当前步骤需要已登录账号，页面仍显示登录表单或人机验证，请完成本次登录',
+            [
+              // 独立处理页看不到完整定义，必须携带账号角色等原始约束，不能让处理者猜测。
+              ...[
+                this.grant.task.steps?.[this.stepIndex]?.description ??
+                  this.grant.task.objective,
+                ...(this.grant.task.steps?.[this.stepIndex]?.policy ?? []),
+              ]
+                .slice(0, 8)
+                .map((item) => item.slice(0, 500)),
+              '使用当前步骤指定的已授权账号完成登录；也可在本页写入该账号有效的 Cookie。',
+              '按需完成人机验证，并确认账号身份符合当前步骤要求后继续任务。',
+            ],
+            true,
+          );
+          errors = 0;
+          continue;
+        }
         if ((this.changes?.unchangedRounds ?? 0) >= STALLED_ROUNDS)
           return this.blocked(
             '连续多轮操作和观察未获得新事实，停止重复执行；请检查页面覆盖或人工处理。',
@@ -708,17 +740,15 @@ class Execution {
         if (decision.type === 'verification.intervene') {
           if (!this.grant.task.environment.allowIntervention)
             return this.blocked(decision.reason, 'INTERVENTION_DISABLED');
-          await this.client.intervene(
-            this.grant,
-            this.controlRevision,
+          await this.requestIntervention(
             decision.reason,
-            this.guard.signal,
             decision.items,
+            needsLoginIntervention(
+              this.grant.task,
+              this.current!,
+              this.stepIndex,
+            ),
           );
-          await this.checkpoint();
-          this.workflow.invalidateRecovery();
-          this.tracker.reset();
-          await this.observe();
           errors = 0;
           continue;
         }
@@ -827,6 +857,35 @@ class Execution {
     }
     throw new AgentFault('MODEL_TURN_BUDGET_EXCEEDED', '模型决策轮数已耗尽');
   }
+  /** 所有接管沿用原租约与预算；登录恢复后重新访问目标，使人工 Cookie 在请求中生效。 */
+  private async requestIntervention(
+    reason: string,
+    items: string[] | undefined,
+    login: boolean,
+  ) {
+    if (login) this.loginInterventions.add(this.stepIndex);
+    await this.client.intervene(
+      this.grant,
+      this.controlRevision,
+      reason,
+      this.guard.signal,
+      items,
+    );
+    await this.checkpoint();
+    this.workflow.invalidateRecovery();
+    this.tracker.reset();
+    this.feedback = null;
+    if (login) {
+      await this.command({
+        type: 'browser.act',
+        action: 'navigate',
+        target: this.task.target.url,
+      });
+      this.settlePending = true;
+    }
+    await this.observe();
+  }
+
   /** 显式等待由执行器计时，期间继续续租并检查取消，不反复调用模型或增加写动作。 */
   private async waitStep(durationMs: number) {
     if (durationMs >= this.guard.remaining())

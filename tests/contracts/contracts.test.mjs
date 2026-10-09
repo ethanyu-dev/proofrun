@@ -223,3 +223,30 @@ test('执行授权与模型决定隔离服务端身份', async () => {
   );
   assert.equal(validateAgentDecision({ type: 'session.open' }), false);
 });
+
+// 范围：Cookie 命令的封闭参数与敏感值格式校验；授权及同源校验由 API 测试覆盖，不验证真实登录。
+test('Cookie 写入只接受明确键值且不开放 domain 或脚本', async () => {
+  const { validateHitlClient } = await import('../../contracts/dist/index.js');
+  const command = {
+    type: 'browser.cookies.set',
+    url: 'https://example.com/',
+    name: 'token',
+    value: 'fixture=abc',
+    httpOnly: true,
+  };
+  const valid = (cookie) =>
+    validateHitlClient({
+      type: 'command',
+      commandId: 'cookie-test',
+      command: cookie,
+    });
+  assert.equal(valid(command), true);
+  for (const change of [
+    { name: '' },
+    { name: 'a;b' },
+    { value: 'x\ny' },
+    { domain: '.example.com' },
+    { script: 'alert(1)' },
+  ])
+    assert.equal(valid({ ...command, ...change }), false);
+});

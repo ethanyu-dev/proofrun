@@ -195,6 +195,7 @@ impl Node {
                 | BrowserCommand::BrowserWait { .. }
                 | BrowserCommand::BrowserAuthSave
                 | BrowserCommand::BrowserInput { .. }
+                | BrowserCommand::BrowserCookiesSet { .. }
                 | BrowserCommand::BrowserTrace { .. }
         );
         // 操作许可持有到结果落盘，不能仅凭 CLI 调用结束就放行下一条动作。
