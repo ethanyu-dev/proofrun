@@ -2340,3 +2340,26 @@ test('证据等待遵守任务硬期限和租约失效', async () => {
     assert.equal(requests.length, 0);
   }
 });
+
+// 范围：请求和回执存档失败保留稳定诊断并停止执行；控制面为夹具，不覆盖真实数据库故障。
+test('存档失败报告保留 HTTP 状态与错误码，不泄露底层正文', async () => {
+  for (const phase of ['start', 'finish']) {
+    const { report, requests } = await run(finish, (client) => {
+      const record = client.recordModelCall.bind(client);
+      client.recordModelCall = async (...args) => {
+        if (args[2].phase === phase)
+          throw new AgentFault(
+            'INVALID_MODEL_CALL',
+            'private-token https://private.invalid',
+            400,
+          );
+        return record(...args);
+      };
+    });
+    assert.equal(report.executionDetails.reasonCode, 'MODEL_TRACE_UNAVAILABLE');
+    assert.match(report.summary, /HTTP 400；INVALID_MODEL_CALL/);
+    assert.ok(!report.summary.includes('private-token'));
+    assert.ok(!report.summary.includes('private.invalid'));
+    assert.equal(requests.length, phase === 'start' ? 0 : 1);
+  }
+});
