@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import type { TaskList } from '@proofrun/contracts';
+import { ReportStatus } from '../components/report-status';
 import { TaskRerun } from '../components/task-rerun';
 import { ApiClient } from '../api';
 import { useResource } from '../use-resource';
@@ -53,7 +54,7 @@ export function TaskListPage({
   return (
     <>
       <PageHeader
-        title={reports ? '证据报告' : '验证任务'}
+        title={reports ? '验证报告' : '验证任务'}
         description={
           reports
             ? '按验收项查看结论，沿证据追溯每一次验证。'
@@ -101,7 +102,17 @@ export function TaskListPage({
       <RefreshBar {...resource} />
       <ErrorNotice message={resource.error} />
       {!resource.data ? (
-        <Empty title={resource.loading ? '正在读取任务…' : '任务读取失败'}>
+        <Empty
+          title={
+            resource.loading
+              ? reports
+                ? '正在读取报告…'
+                : '正在读取任务…'
+              : reports
+                ? '报告读取失败'
+                : '任务读取失败'
+          }
+        >
           {resource.loading ? undefined : '连接恢复后可刷新重试。'}
         </Empty>
       ) : resource.data.tasks.length === 0 ? (
@@ -121,10 +132,21 @@ export function TaskListPage({
             <thead>
               <tr>
                 <th>验证目标</th>
-                <th>节点池</th>
-                <th>执行状态</th>
-                <th>验收结论</th>
-                <th>创建时间</th>
+                {reports ? (
+                  <>
+                    <th>报告结论</th>
+                    <th>验收项统计</th>
+                    <th>证据状态</th>
+                    <th>验证结束</th>
+                  </>
+                ) : (
+                  <>
+                    <th>节点池</th>
+                    <th>执行状态</th>
+                    <th>验收结论</th>
+                    <th>创建时间</th>
+                  </>
+                )}
                 <th>操作</th>
               </tr>
             </thead>
@@ -134,28 +156,72 @@ export function TaskListPage({
                   <td className="task-cell">
                     <a
                       className="task-link"
-                      href={`#/tasks/${encodeURIComponent(task.id)}`}
+                      href={`#/${reports ? 'reports' : 'tasks'}/${encodeURIComponent(task.id)}`}
                     >
                       {task.objective}
                     </a>
                     <span className="mono muted id-text">{task.id}</span>
                   </td>
-                  <td>{task.node_pool}</td>
+                  {reports ? (
+                    <>
+                      <td>
+                        <ReportStatus value={task.reportStatus} />
+                      </td>
+                      <td className="report-list-counts">
+                        {task.criteriaCounts ? (
+                          <>
+                            <span>
+                              {task.criteriaCounts.passed} 通过 ·{' '}
+                              {task.criteriaCounts.failed} 未通过
+                            </span>
+                            <small className="muted">
+                              {task.criteriaCounts.inconclusive +
+                                task.criteriaCounts.skipped}{' '}
+                              未得出结论 / 共 {task.criteriaCounts.total} 项
+                            </small>
+                          </>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
+                      <td>
+                        {task.archived_at
+                          ? '已清理'
+                          : task.evidenceCount
+                            ? `${task.evidenceCount} 份证据`
+                            : '未附证据'}
+                      </td>
+                      <td className="date-cell">{time(task.finished_at)}</td>
+                    </>
+                  ) : (
+                    <>
+                      <td>{task.node_pool}</td>
+                      <td>
+                        <Status
+                          value={
+                            task.execution_disposition === 'BLOCKED'
+                              ? 'BLOCKED'
+                              : task.state
+                          }
+                        />
+                      </td>
+                      <td>
+                        <ReportStatus value={task.reportStatus} />
+                      </td>
+                      <td className="date-cell">{time(task.created_at)}</td>
+                    </>
+                  )}
                   <td>
-                    <Status
-                      value={
-                        task.execution_disposition === 'BLOCKED'
-                          ? 'BLOCKED'
-                          : task.state
-                      }
-                    />
-                  </td>
-                  <td>
-                    <Status value={task.verdict} />
-                  </td>
-                  <td className="date-cell">{time(task.created_at)}</td>
-                  <td>
-                    <TaskRerun api={api} id={task.id} />
+                    {reports ? (
+                      <a
+                        className="button button-secondary button-small"
+                        href={`#/reports/${encodeURIComponent(task.id)}`}
+                      >
+                        查看报告
+                      </a>
+                    ) : (
+                      <TaskRerun api={api} id={task.id} />
+                    )}
                   </td>
                 </tr>
               ))}

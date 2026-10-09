@@ -5,7 +5,7 @@
   "description": "case 的执行状态和业务结果，不返回内部任务配置或节点信息。",
   "type": "object",
   "additionalProperties": false,
-  "required": ["caseId", "status", "result"],
+  "required": ["caseId", "status", "result", "reportStatus", "criteriaCounts"],
   "properties": {
     "caseId": {
       "type": "string",
@@ -108,6 +108,50 @@
         }
       ],
       "description": "已交付的业务结果；尚无报告时为 null，包括部分异常终态。"
+    },
+    "reportStatus": {
+      "enum": ["PASSED", "FAILED", "INCONCLUSIVE", null],
+      "description": "验证报告状态：通过、未通过、无法判定；无报告时为 null。执行状态不等于验收结论，已确认失败优先于未覆盖项。"
+    },
+    "criteriaCounts": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["total", "passed", "failed", "inconclusive", "skipped"],
+          "properties": {
+            "total": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "本次定义的验收项总数。"
+            },
+            "passed": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "通过项数。"
+            },
+            "failed": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "未通过项数。"
+            },
+            "inconclusive": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "已验收但无法判定的项数。"
+            },
+            "skipped": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "未验收或报告缺失的项数。"
+            }
+          }
+        }
+      ],
+      "description": "按本次验收定义统计，各分类之和等于 total；无报告时为 null。"
     }
   }
 }

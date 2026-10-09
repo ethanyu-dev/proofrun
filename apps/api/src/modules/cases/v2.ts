@@ -1,4 +1,5 @@
 import {
+  summarizeReport,
   validateVerificationCaseV2,
   type CaseResultV2,
   type StepResult,
@@ -137,6 +138,10 @@ export class CaseV2Service {
     return {
       caseId: id,
       status: task.state,
+      ...summarizeReport(
+        task.report,
+        task.definition.acceptanceCriteria.map((c) => c.id),
+      ),
       result: this.result(id, task.report),
       steps,
       cleanup: cleanup

@@ -1,3 +1,4 @@
+import { summarizeReport } from '@proofrun/contracts';
 import { randomUUID } from 'node:crypto';
 import {
   validateVerificationTask,
@@ -430,6 +431,10 @@ export class Coordinator {
       : null;
     return {
       ...task,
+      ...summarizeReport(
+        task.report,
+        task.definition.acceptanceCriteria.map((c) => c.id),
+      ),
       executions,
       ...(task.definition.caseV2Definition
         ? {

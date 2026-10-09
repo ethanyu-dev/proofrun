@@ -1,4 +1,9 @@
-import type { TaskList, TaskSummary } from '@proofrun/contracts';
+import {
+  summarizeReport,
+  type ReportFacts,
+  type TaskList,
+  type TaskSummary,
+} from '@proofrun/contracts';
 import { Database } from '../../db.js';
 import { ApiError, ID_PATTERN } from '../../domain.js';
 
@@ -87,14 +92,29 @@ export class TaskReader {
     }
     const rows = (
       await this.db.query<
-        Omit<TaskSummary, 'created_at' | 'finished_at'> & {
+        Omit<
+          TaskSummary,
+          | 'created_at'
+          | 'finished_at'
+          | 'archived_at'
+          | 'reportStatus'
+          | 'criteriaCounts'
+        > & {
           created_at: Date;
           finished_at: Date | null;
           cursor_at: string;
+          archived_at: Date | null;
+          report_facts: ReportFacts | null;
+          criterion_ids: string[];
         }
       >(
         `SELECT id,left(definition->>'objective',240) AS objective,definition#>>'{environment,nodePool}' AS node_pool,
-        definition#>>'{target,url}' AS target_url,state,created_at,finished_at,
+        definition#>>'{target,url}' AS target_url,state,created_at,finished_at,archived_at,
+        CASE WHEN report IS NULL THEN NULL ELSE jsonb_build_object(
+          'executionDisposition', report->'executionDisposition', 'verdict', report->'verdict',
+          'criteria', (SELECT coalesce(jsonb_agg(jsonb_build_object('criterionId',c->'criterionId','verdict',c->'verdict')),'[]'::jsonb) FROM jsonb_array_elements(report->'criteria') c)) END AS report_facts,
+        ARRAY(SELECT c->>'id' FROM jsonb_array_elements(definition->'acceptanceCriteria') c) AS criterion_ids,
+        jsonb_array_length(report->'artifacts') AS "evidenceCount",
         report->>'executionDisposition' AS execution_disposition,report->>'verdict' AS verdict,
         to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_at
        FROM pr_tasks WHERE ($1::text IS NULL OR state=$1)
@@ -115,11 +135,15 @@ export class TaskReader {
     const page = rows.slice(0, limit);
     const last = page.at(-1);
     return {
-      tasks: page.map(({ cursor_at: _, ...task }) => ({
-        ...task,
-        created_at: task.created_at.toISOString(),
-        finished_at: task.finished_at?.toISOString() ?? null,
-      })),
+      tasks: page.map(
+        ({ cursor_at: _, report_facts, criterion_ids, ...task }) => ({
+          ...task,
+          ...summarizeReport(report_facts, criterion_ids),
+          archived_at: task.archived_at?.toISOString() ?? null,
+          created_at: task.created_at.toISOString(),
+          finished_at: task.finished_at?.toISOString() ?? null,
+        }),
+      ),
       nextCursor:
         rows.length > limit && last
           ? Buffer.from(

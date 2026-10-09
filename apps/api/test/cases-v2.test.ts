@@ -82,6 +82,8 @@ function fixture() {
             definition: d,
             state: 'QUEUED',
             report: null,
+            reportStatus: null,
+            criteriaCounts: null,
             executions: [],
           });
     },
@@ -198,4 +200,45 @@ test('v2 批量校验和重提复用首次快照', async () => {
     code: 'INVALID_CASE',
   });
   assert.equal((await service.cancel(INPUT.caseId)).status, 'CANCELLED');
+});
+
+// 范围：v2 部分失败后阻塞仍返回未通过和未覆盖数量；夹具不证明浏览器或真实产品的验收结果。
+test('v2 报告状态保留局部失败而不被执行阻塞覆盖', async () => {
+  const { service, records } = fixture();
+  const queued = (await service.submit([INPUT]))[0]!;
+  assert.equal(queued.reportStatus, null);
+  const record = [...records.values()][0]!;
+  record.state = 'COMPLETED';
+  record.report = {
+    protocolVersion: '0.1',
+    taskId: record.definition.taskId,
+    lifecycle: 'COMPLETED',
+    executionDisposition: 'BLOCKED',
+    verdict: null,
+    summary: '部分验收后环境阻塞',
+    criteria: [
+      {
+        criterionId: record.definition.acceptanceCriteria[0]!.id,
+        verdict: 'FAILED',
+        summary: '夹具明确失败',
+        evidenceRefs: ['fixture-evidence'],
+      },
+    ],
+    artifacts: [],
+  };
+  const result = await service.get(INPUT.caseId);
+  assert(
+    validateCaseResultV2(result),
+    JSON.stringify(validateCaseResultV2.errors),
+  );
+  assert.equal(result.reportStatus, 'FAILED');
+  assert.deepEqual(result.criteriaCounts, {
+    total: 2,
+    passed: 0,
+    failed: 1,
+    inconclusive: 0,
+    skipped: 1,
+  });
+  assert.equal(result.result?.outcome, 'BLOCKED');
+  assert.equal((await service.cancel(INPUT.caseId)).reportStatus, 'FAILED');
 });

@@ -1,5 +1,7 @@
 {
   "caseId": "notification-default-001",
   "status": "QUEUED",
-  "result": null
+  "result": null,
+  "reportStatus": null,
+  "criteriaCounts": null
 }

@@ -65,6 +65,14 @@ export function TaskDetailPage({ api, id }: { api: ApiClient; id: string }) {
         <a className="button button-secondary" href="#/tasks">
           返回任务
         </a>
+        {task?.report && (
+          <a
+            className="button button-primary"
+            href={`#/reports/${encodeURIComponent(id)}`}
+          >
+            查看验证报告
+          </a>
+        )}
         {task && !task.definition.steps && (
           <TaskRerun api={api} id={id} paired={!!task.definition.comparison} />
         )}

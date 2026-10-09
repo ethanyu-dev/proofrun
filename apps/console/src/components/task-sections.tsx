@@ -3,6 +3,7 @@ import type { TaskDetail } from '@proofrun/contracts';
 import { ApiClient } from '../api';
 import { Evidence } from './evidence';
 import { ReportExport } from './report-export';
+import { ReportStatus } from './report-status';
 import { ReportSummary } from './report-summary';
 import { Status, time } from './ui';
 
@@ -129,11 +130,23 @@ export function TaskReport({ api, task }: TaskSectionProps) {
   return (
     <>
       {exportOpen && report && (
-        <ReportExport report={report} close={() => setExportOpen(false)} />
+        <ReportExport
+          assessment={task}
+          report={report}
+          close={() => setExportOpen(false)}
+        />
       )}
       <section className="panel" aria-label="验收报告">
         <div className="section-heading">
           <h2>验收报告</h2>
+          {report && (
+            <a
+              className="button button-secondary button-small"
+              href={`#/reports/${encodeURIComponent(task.id)}`}
+            >
+              打开验证报告
+            </a>
+          )}
           {report && (
             <div className="status-group">
               <button
@@ -143,7 +156,7 @@ export function TaskReport({ api, task }: TaskSectionProps) {
                 导出此组报告
               </button>
               <Status value={report.executionDisposition} />
-              <Status value={report.verdict} />
+              <ReportStatus value={task.reportStatus} />
             </div>
           )}
         </div>
@@ -319,6 +332,7 @@ export function TaskEvidence({ api, task }: TaskSectionProps) {
               <button
                 className="artifact-button"
                 key={artifact.id}
+                disabled={!!task.archived_at}
                 aria-pressed={artifactId === artifact.id}
                 onClick={() => setArtifactId(artifact.id)}
               >

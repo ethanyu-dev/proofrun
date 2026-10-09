@@ -47,6 +47,8 @@ function fixture() {
         definition: structuredClone(definition),
         state: 'QUEUED' as const,
         report: null,
+        reportStatus: null,
+        criteriaCounts: null,
         executions: [],
       };
       records.set(definition.taskId, record);
@@ -77,6 +79,8 @@ test('case 只接受业务定义并转换成内部任务', async () => {
   assert.deepEqual(result, {
     caseId: INPUT.caseId,
     status: 'QUEUED',
+    reportStatus: null,
+    criteriaCounts: null,
     result: null,
   });
   assert(validateCaseResult(result));
@@ -303,4 +307,41 @@ test('case 并发冲突回读故障不伪装成定义冲突', async () => {
     code: 'DATABASE_UNAVAILABLE',
     statusCode: 503,
   });
+});
+
+// 范围：公开 v1 查询与取消均携带统一报告状态，旧 outcome 保持兼容；不连接真实执行环境。
+test('v1 对外返回报告状态和验收统计', async () => {
+  const { service, records } = fixture();
+  const queued = await service.submit(INPUT);
+  assert.equal(queued.reportStatus, null);
+  assert.equal(queued.criteriaCounts, null);
+  const record = records.get(`case-${INPUT.caseId}`)!;
+  record.state = 'ERROR';
+  record.report = {
+    protocolVersion: '0.1',
+    taskId: record.definition.taskId,
+    lifecycle: 'COMPLETED',
+    executionDisposition: 'ERROR',
+    verdict: null,
+    summary: '执行异常夹具',
+    criteria: [
+      {
+        criterionId: 'enabled',
+        verdict: 'SKIPPED',
+        summary: '未执行',
+        evidenceRefs: [],
+      },
+    ],
+    artifacts: [],
+  };
+  const result = await service.get(INPUT.caseId);
+  assert(validateCaseResult(result));
+  assert.equal(result.status, 'ERROR');
+  assert.equal(result.reportStatus, 'INCONCLUSIVE');
+  assert.equal(result.criteriaCounts?.skipped, 1);
+  assert.equal(result.result?.outcome, 'ERROR');
+  assert.equal(
+    (await service.cancel(INPUT.caseId)).reportStatus,
+    'INCONCLUSIVE',
+  );
 });

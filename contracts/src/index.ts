@@ -150,3 +150,5 @@ export type { NodeRoutingWrite };
 export const validateNodeRoutingWrite = ajv.compile<NodeRoutingWrite>(
   readSchema('node-routing-write'),
 );
+
+export { summarizeReport, type ReportFacts } from './report-status.js';

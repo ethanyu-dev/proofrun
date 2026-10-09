@@ -62,7 +62,13 @@ curl --fail-with-body --silent --show-error \
 返回 `202`，表示已经接收：
 
 ```json
-{ "caseId": "notification-default-001", "status": "QUEUED", "result": null }
+{
+  "caseId": "notification-default-001",
+  "status": "QUEUED",
+  "reportStatus": null,
+  "criteriaCounts": null,
+  "result": null
+}
 ```
 
 同 caseId、同定义重提不会重复执行，返回当前状态；定义不同返回 `409 CASE_CONFLICT`。响应丢失时查询或重提原 caseId；不要自动换身份再次运行。明确要重新执行时使用新的 caseId。
@@ -72,10 +78,12 @@ curl --fail-with-body --silent --show-error \
 `GET /v1/cases/{caseId}`，使用相同 Bearer 凭据。建议每 1–5 秒查询一次，目前没有结果 webhook。
 
 - status：QUEUED、RUNNING、COMPLETED、CANCELLED、TIMED_OUT、ERROR。
+- reportStatus：验证报告统一状态，PASSED（通过）、FAILED（未通过）、INCONCLUSIVE（无法判定）；无报告时为 null。与 Console 报告页使用同一计算规则。
+- criteriaCounts：验收项统计，包含 total、passed、failed、inconclusive、skipped；无报告时为 null，缺失项计入 skipped，各分类之和等于 total。
 - result：尚无报告时为 null，包括部分异常终态。已有报告时包含 outcome、summary、criteria 和 evidence。
-- outcome：PASSED（全部通过）、FAILED（至少一项失败）、INCONCLUSIVE（无法充分判断）、BLOCKED（无法开展验收）、ERROR（执行故障）。
+- outcome：保留兼容的旧字段，PASSED（全部通过）、FAILED（至少一项失败）、INCONCLUSIVE（无法充分判断）、BLOCKED（无法开展验收）、ERROR（执行故障）。
 
-**COMPLETED 只表示执行结束；业务通过需要 result.outcome=PASSED。** criteria 通过 criterionId 对应提交时的验收项，每项给出 verdict、summary 和 evidenceRefs。逐项 verdict 为 PASSED、FAILED、INCONCLUSIVE 或 SKIPPED。BLOCKED/ERROR 的验收项为 SKIPPED；平台执行故障不代表业务功能失败。
+**COMPLETED 只表示执行结束；新调用方以 reportStatus=PASSED 判断本次验收通过。** criteria 通过 criterionId 对应提交时的验收项，每项给出 verdict、summary 和 evidenceRefs。逐项 verdict 为 PASSED、FAILED、INCONCLUSIVE 或 SKIPPED。BLOCKED/ERROR 的验收项为 SKIPPED；平台执行故障不代表业务功能失败。
 
 每份 evidence 包含 id、kind、url、sha256；kind 是证据媒介，调用方无须预先选择。使用同一控制面的 `GET /v1/cases/{caseId}/evidence/{artifactId}` 下载报告引用的证据并核对原始字节摘要。只能读取该 case 报告中的证据；保留期清理后可能不可下载。截图为 PNG，其他证据为 JSON；不要向任意外部地址转发凭据。
 

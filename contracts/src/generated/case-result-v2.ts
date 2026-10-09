@@ -130,6 +130,35 @@ export interface CaseResultV2 {
       }[];
     };
   };
+  /**
+   * 验证报告状态：通过、未通过、无法判定；无报告时为 null。执行状态不等于验收结论，已确认失败优先于未覆盖项。
+   */
+  reportStatus: 'PASSED' | 'FAILED' | 'INCONCLUSIVE' | null;
+  /**
+   * 按本次验收定义统计，各分类之和等于 total；无报告时为 null。
+   */
+  criteriaCounts: null | {
+    /**
+     * 本次定义的验收项总数。
+     */
+    total: number;
+    /**
+     * 通过项数。
+     */
+    passed: number;
+    /**
+     * 未通过项数。
+     */
+    failed: number;
+    /**
+     * 已验收但无法判定的项数。
+     */
+    inconclusive: number;
+    /**
+     * 未验收或报告缺失的项数。
+     */
+    skipped: number;
+  };
 }
 export interface StepResult {
   /**

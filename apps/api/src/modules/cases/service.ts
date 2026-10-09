@@ -1,4 +1,5 @@
 import {
+  summarizeReport,
   validateVerificationCase,
   type CaseResult,
   type VerificationTask,
@@ -57,6 +58,10 @@ export class CaseService {
     return {
       caseId: id,
       status: stored.state,
+      ...summarizeReport(
+        report,
+        stored.definition.acceptanceCriteria.map((c) => c.id),
+      ),
       result: report
         ? {
             outcome:
