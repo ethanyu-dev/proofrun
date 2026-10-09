@@ -1,3 +1,4 @@
+import { caseArmIds } from '../cases/structured.js';
 import type { QueueReason, VerificationTask } from '@proofrun/contracts';
 import type { PoolClient } from 'pg';
 import { sessionAuth, type SessionAuth } from './auth.js';
@@ -83,7 +84,11 @@ export async function authPlacement(
     if (!lock.rows[0].locked) return null;
     const pinned = await client.query<{ node_id: string }>(
       'SELECT DISTINCT s.node_id FROM pr_executions e JOIN pr_sessions s ON s.execution_id=e.id WHERE e.task_id=ANY($1::text[])',
-      [['llm', 'jev'].map((arm) => `${task.comparison!.id}-${arm}`)],
+      [
+        task.caseV2Definition
+          ? caseArmIds(task)
+          : ['llm', 'jev'].map((arm) => `${task.comparison!.id}-${arm}`),
+      ],
     );
     const nodeId = pinned.rows[0]?.node_id;
     if (

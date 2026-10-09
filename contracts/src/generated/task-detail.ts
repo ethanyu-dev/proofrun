@@ -95,6 +95,13 @@ export type VerificationTask = {
    * 平台生成的任务及业务上下文互斥键；主任务与其清理共享，不同 caseId 独立。
    */
   resourceKey?: string;
+  /**
+   * v2 首次提交冻结的独立清理预算；历史任务缺失时沿用主任务预算。
+   */
+  cleanupBudget?: {
+    timeoutMs: number;
+    maxActions: number;
+  };
 };
 export type CaseStep = {
   /**

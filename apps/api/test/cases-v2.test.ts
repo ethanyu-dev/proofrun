@@ -7,7 +7,11 @@ import {
   type VerificationCaseV2,
   type VerificationTask,
 } from '@proofrun/contracts';
-import { compileCase, cleanupTask } from '../src/modules/cases/structured.js';
+import {
+  compileCase,
+  cleanupTask,
+  expandCaseTasks,
+} from '../src/modules/cases/structured.js';
 import { CaseV2Service } from '../src/modules/cases/v2.js';
 import type { CaseProfile } from '../src/modules/cases/profile.js';
 import type { Coordinator } from '../src/modules/scheduling/coordinator.js';
@@ -60,7 +64,7 @@ const INPUT: VerificationCaseV2 = {
 };
 
 /** 只模拟原子任务端口，事务隔离和并发由 PostgreSQL 集成测试检查。 */
-function fixture() {
+function fixture(profile: CaseProfile = PROFILE) {
   const records = new Map<string, Awaited<ReturnType<Coordinator['task']>>>();
   let batches = 0;
   const tasks: Pick<
@@ -76,8 +80,9 @@ function fixture() {
         )
           throw new ApiError(409, 'CASE_CONFLICT', '冲突');
       batches++;
-      for (const d of definitions)
-        if (!records.has(d.taskId))
+      for (const definition of definitions) {
+        if (records.has(definition.taskId)) continue;
+        for (const d of expandCaseTasks(definition))
           records.set(d.taskId, {
             definition: d,
             state: 'QUEUED',
@@ -86,6 +91,7 @@ function fixture() {
             criteriaCounts: null,
             executions: [],
           });
+      }
     },
     async task(id) {
       const record = records.get(id);
@@ -107,7 +113,7 @@ function fixture() {
   return {
     records,
     tasks,
-    service: new CaseV2Service(tasks, PROFILE, 'https://proofrun.test'),
+    service: new CaseV2Service(tasks, profile, 'https://proofrun.test'),
     batches: () => batches,
   };
 }
@@ -279,4 +285,105 @@ test('v2 返回排队原因并在超时后保留', async () => {
   record.state = 'RUNNING';
   record.queueReason = null;
   assert.equal((await service.get(INPUT.caseId)).queueReason, null);
+});
+
+// 范围：按真实 steps 数计算默认总预算、清理独立计数和显式覆盖；不验证单步墙钟时间或真实浏览器。
+test('v2 默认每步贡献 300 秒，主任务和清理独立计算预算', () => {
+  const profile: CaseProfile = { ...PROFILE, budget: { maxActions: 30 } };
+  const task = compileCase(INPUT, profile);
+  assert.equal(task.budget.timeoutMs, 900_000);
+  assert.equal(task.budget.maxActions, 30);
+  assert.equal(cleanupTask(task)!.budget.timeoutMs, 300_000);
+  assert.equal(
+    compileCase({ ...INPUT, steps: [INPUT.steps[0]!] }, profile).budget
+      .timeoutMs,
+    300_000,
+  );
+  assert.equal(compileCase(INPUT, PROFILE).budget.timeoutMs, 10_000);
+  assert.equal(
+    cleanupTask(compileCase(INPUT, PROFILE))!.budget.timeoutMs,
+    10_000,
+  );
+  assert.throws(
+    () =>
+      compileCase(
+        {
+          ...INPUT,
+          steps: [{ ...INPUT.steps[0]!, wait: { durationMs: 300_000 } }],
+        },
+        profile,
+      ),
+    { code: 'WAIT_EXCEEDS_BUDGET' },
+  );
+});
+
+// 范围：默认双跑、两组完整预算、独立清理、查询和取消、配置改变后幂等；不模拟数据库隔离与模型质量。
+test('v2 默认双跑返回两组独立结果，并取消两组', async () => {
+  const profile: CaseProfile = {
+    environment: PROFILE.environment,
+    budget: { maxActions: 30 },
+    evidenceKinds: ['DOM'],
+  };
+  const { service, records, tasks } = fixture(profile);
+  const [result] = await service.submit([INPUT]);
+  assert(
+    validateCaseResultV2(result),
+    JSON.stringify(validateCaseResultV2.errors),
+  );
+  assert.equal(result!.comparison!.arms.length, 2);
+  assert.deepEqual(
+    result!.comparison!.arms.map((arm) => arm.executionMode),
+    ['llm', 'jev'],
+  );
+  const [llm, jev] = [...records.values()];
+  assert.equal(llm!.definition.budget.timeoutMs, 900_000);
+  assert.deepEqual(llm!.definition.budget, jev!.definition.budget);
+  assert.notEqual(llm!.definition.resourceKey, jev!.definition.resourceKey);
+  for (const arm of [llm!, jev!]) {
+    assert(validateVerificationTask(arm.definition));
+    const cleanup = cleanupTask(arm.definition)!;
+    assert(validateVerificationTask(cleanup));
+    assert.equal(cleanup.budget.timeoutMs, 300_000);
+    assert.equal(cleanup.executionMode, arm.definition.executionMode);
+    assert.equal(cleanup.resourceKey, arm.definition.resourceKey);
+  }
+  const disabled = new CaseV2Service(tasks, undefined, 'https://proofrun.test');
+  assert.deepEqual(await disabled.submit([INPUT]), [result]);
+  const single = new CaseV2Service(tasks, PROFILE, 'https://proofrun.test');
+  await single.submit([INPUT]);
+  assert.equal(records.size, 2);
+  // 只在另一组已持久化的步骤记录中出现的证据也可读取，未知证据仍拒绝。
+  jev!.stepResults = [
+    {
+      stepId: 'step-1',
+      status: 'COMPLETED',
+      summary: '夹具',
+      evidenceRefs: ['jev-evidence'],
+      criteria: [],
+      startedAt: null,
+      finishedAt: null,
+    },
+  ];
+  await service.requireEvidence(INPUT.caseId, 'jev-evidence');
+  await assert.rejects(
+    service.requireEvidence(INPUT.caseId, 'unknown-evidence'),
+    { code: 'EVIDENCE_MISSING' },
+  );
+  const cancelled = await service.cancel(INPUT.caseId);
+  assert(validateCaseResultV2(cancelled));
+  assert(cancelled.comparison!.arms.every((arm) => arm.status === 'CANCELLED'));
+});
+
+// 范围：历史单组不会因新默认值追加执行，带模式后缀的业务身份不会碰撞；不覆盖真实并发事务。
+test('v2 双跑命名空间与历史单组保持隔离', async () => {
+  const { service, records, tasks } = fixture();
+  await service.submit([INPUT]);
+  const parallel = new CaseV2Service(
+    tasks,
+    { ...PROFILE, executionMode: 'parallel' },
+    'https://proofrun.test',
+  );
+  assert.equal((await parallel.submit([INPUT]))[0]!.comparison, undefined);
+  await parallel.submit([{ ...INPUT, caseId: `${INPUT.caseId}-jev` }]);
+  assert.equal(records.size, 3);
 });

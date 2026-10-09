@@ -97,7 +97,7 @@ const document = {
     title: 'ProofRun Case API',
     version: '0.1.0',
     description:
-      '新接入使用 /v2/cases 批量提交结构化步骤，/v1/cases 保留兼容。环境、身份、预算及执行策略由平台管理。接口需要部署管理员 Bearer 凭据，请仅由可信服务端保管；提交和取消会产生实际操作。由共享 Schema 生成，请勿手改。',
+      '新接入使用 /v2/cases 批量提交结构化步骤，/v1/cases 保留兼容。环境、身份、预算及执行策略由平台管理。v2 默认每步贡献 300 秒总预算，并双跑纯 LLM 与 JEV+LLM；comparison.arms 返回各组结果，顶层仅表示主组。接口需要部署管理员 Bearer 凭据，请仅由可信服务端保管；提交和取消会产生实际操作。由共享 Schema 生成，请勿手改。',
   },
   servers: [
     { url: 'https://api-proofrun.ethankit.com', description: '生产 HTTP API' },

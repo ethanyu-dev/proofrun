@@ -9,7 +9,12 @@ import {
 import { ApiError, canonical } from '../../domain.js';
 import type { Coordinator } from '../scheduling/coordinator.js';
 import { validateCaseProfile, type CaseProfile } from './profile.js';
-import { compileCase, MAX_CASE_BATCH, V2_PREFIX } from './structured.js';
+import {
+  caseArmIds,
+  compileCase,
+  MAX_CASE_BATCH,
+  V2_PREFIX,
+} from './structured.js';
 
 /** 新旧公开入口各自投影结果；不将平台配置或浏览器会话凭据返回上游。 */
 export class CaseV2Service {
@@ -109,6 +114,37 @@ export class CaseV2Service {
   /** 即使 worker 异常退出，已持久化的步骤结果仍可查询。 */
   async get(id: string): Promise<CaseResultV2> {
     const task = await this.stored(id);
+    const primary = await this.project(id, task);
+    if (!task.definition.comparison) return primary;
+    const arms = await Promise.all(
+      caseArmIds(task.definition).map(async (taskId) => {
+        const arm =
+          taskId === task.definition.taskId
+            ? task
+            : await this.tasks.task(taskId);
+        return {
+          ...(taskId === task.definition.taskId
+            ? primary
+            : await this.project(id, arm)),
+          taskId,
+          executionMode: arm.definition.comparison!.arm,
+        };
+      }),
+    );
+    return {
+      ...primary,
+      comparison: {
+        id: task.definition.comparison.id,
+        arms: [arms[0]!, arms[1]!],
+      },
+    };
+  }
+
+  /** 每组保留独立生命周期、步骤和清理；顶层沿用主组，不合并相互矛盾的结论。 */
+  private async project(
+    id: string,
+    task: Awaited<ReturnType<Coordinator['task']>>,
+  ): Promise<Omit<CaseResultV2, 'comparison'>> {
     const cleanup = await this.tasks.caseCleanup(task.definition.taskId);
     const pending: StepResult[] = task.definition.steps!.map((step) => ({
       stepId: step.stepId!,
@@ -158,24 +194,31 @@ export class CaseV2Service {
   /** 取消主任务不取消已声明的副作用清理，清理等待原会话确认关闭。 */
   async cancel(id: string): Promise<CaseResultV2> {
     const task = await this.stored(id);
-    await this.tasks.cancel(task.definition.taskId);
+    for (const taskId of caseArmIds(task.definition))
+      await this.tasks.cancel(taskId);
     return this.get(id);
   }
 
   /** 只接受已持久化报告或步骤记录实际引用的证据身份。 */
   async requireEvidence(id: string, artifactId: string): Promise<void> {
     const task = await this.stored(id);
-    const cleanup = await this.tasks.caseCleanup(task.definition.taskId);
-    if (
-      task.report?.artifacts.some((a) => a.id === artifactId) ||
-      cleanup?.report?.artifacts.some((a) => a.id === artifactId) ||
-      task.stepResults?.some(
-        (step) =>
-          step.evidenceRefs.includes(artifactId) ||
-          step.criteria.some((c) => c.evidenceRefs.includes(artifactId)),
+    for (const taskId of caseArmIds(task.definition)) {
+      const arm =
+        taskId === task.definition.taskId
+          ? task
+          : await this.tasks.task(taskId);
+      const cleanup = await this.tasks.caseCleanup(taskId);
+      if (
+        arm.report?.artifacts.some((a) => a.id === artifactId) ||
+        cleanup?.report?.artifacts.some((a) => a.id === artifactId) ||
+        arm.stepResults?.some(
+          (step) =>
+            step.evidenceRefs.includes(artifactId) ||
+            step.criteria.some((c) => c.evidenceRefs.includes(artifactId)),
+        )
       )
-    )
-      return;
+        return;
+    }
     throw new ApiError(
       404,
       'EVIDENCE_MISSING',

@@ -270,13 +270,13 @@ test('case 结果隐藏执行配置并限制证据归属', async () => {
   });
 });
 
-// 范围：服务端配置拒绝旧默认地址、并行和超限预算；不证明节点、账号或站点真实可用。
-test('case 平台配置必须完整且只允许单组执行', () => {
+// 范围：服务端配置拒绝旧默认地址、无效模式和超限预算；不证明节点、账号或站点真实可用。
+test('case 平台配置校验环境、模式和预算', () => {
   assert.deepEqual(validateCaseProfile(PROFILE), PROFILE);
   for (const invalid of [
     null,
     {},
-    { ...PROFILE, executionMode: 'parallel' },
+    { ...PROFILE, executionMode: 'unknown' },
     { ...PROFILE, budget: { timeoutMs: 86400001, maxActions: 20 } },
     { ...PROFILE, evidenceKinds: [] },
     { ...PROFILE, target: { url: 'https://old-default.example.test' } },

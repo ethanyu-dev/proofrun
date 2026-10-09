@@ -209,6 +209,121 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         ),
     );
   try {
+    // 范围：真实 HTTP 与数据库的默认预算、并发幂等、双组领取和清理；节点为协议夹具，不验证真实模型或业务副作用。
+    await suite.test('v2 默认预算与双跑完整生命周期', async (t) => {
+      const profile: CaseProfile = config.caseProfile;
+      const saved = structuredClone(profile);
+      t.after(() => Object.assign(profile, saved));
+      profile.environment = {
+        id: 'budget-fixture',
+        nodePool: 'budget-fixture',
+        reuseAuth: true,
+      };
+      profile.budget = { maxActions: 30 };
+      delete profile.executionMode;
+      await addNode('budget-fixture', 2);
+      const step = {
+        type: 'verification',
+        url: 'https://budget.example.test',
+        exec_order: 1,
+        description: '检查夹具',
+        policy: [],
+        expected: ['显示夹具'],
+      };
+      const input = {
+        caseId: 'default-budget-pair',
+        platform: '夹具',
+        entry: step.url,
+        steps: [step, step],
+        cleanup: [{ url: step.url, exec_order: 1, description: '清理夹具' }],
+      };
+      const responses = await Promise.all([
+        api('POST', '/v2/cases', [input]),
+        api('POST', '/v2/cases', [input]),
+      ]);
+      for (const response of responses) {
+        assert.equal(response.status, 202, JSON.stringify(response));
+        assert(
+          validateCaseResultV2(response.data[0]),
+          JSON.stringify(validateCaseResultV2.errors),
+        );
+      }
+      const arms = responses[0]!.data[0].comparison.arms;
+      assert.equal(arms.length, 2);
+      const pair = (await api('GET', `/v1/tasks/${arms[0].taskId}/comparison`))
+        .data.comparison;
+      assert.deepEqual(
+        pair.arms.map((arm: any) => arm.id),
+        arms.map((arm: any) => arm.taskId),
+      );
+      for (const arm of pair.arms)
+        assert.equal(arm.definition.budget.timeoutMs, 600_000);
+      assert.equal(
+        (
+          await sql.query(
+            "SELECT count(*)::int AS count FROM pr_tasks WHERE definition->'caseV2Definition'->>'caseId'=$1",
+            [input.caseId],
+          )
+        ).rows[0].count,
+        2,
+      );
+      assert.equal(
+        (
+          await api('POST', '/v2/cases', [
+            { ...input, caseId: 'budget-rollback' },
+            { ...input, platform: '冲突' },
+          ])
+        ).status,
+        409,
+      );
+      assert.equal((await api('GET', '/v2/cases/budget-rollback')).status, 404);
+      const first = await claim(true);
+      const second = await claim(true);
+      assert(first && second);
+      assert.notEqual(first.task.resourceKey, second.task.resourceKey);
+      assert.equal(first.nodeId, second.nodeId);
+      assert.equal(
+        sessionAuth(first.task)!.snapshotId,
+        sessionAuth(second.task)!.snapshotId,
+      );
+      await ready(first);
+      await ready(second);
+      const cancelled = await api('POST', `/v2/cases/${input.caseId}/cancel`);
+      assert(
+        cancelled.data.comparison.arms.every(
+          (arm: any) => arm.status === 'CANCELLED',
+        ),
+      );
+      await cleaned(first.task.taskId);
+      await cleaned(second.task.taskId);
+      await until(
+        () => api('GET', `/v2/cases/${input.caseId}`),
+        (response) =>
+          response.data.comparison.arms.every(
+            (arm: any) => arm.cleanup.status === 'QUEUED',
+          ),
+      );
+      for (let index = 0; index < 2; index++) {
+        const cleanup = await until(
+          () => claim(true),
+          (value) => value !== null,
+        );
+        assert(cleanup);
+        assert.equal(cleanup.task.purpose, 'cleanup');
+        assert.equal(cleanup.task.budget.timeoutMs, 300_000);
+        assert(
+          arms.some(
+            (arm: any) =>
+              arm.taskId === cleanup.task.parentTaskId &&
+              arm.executionMode === cleanup.task.executionMode,
+          ),
+        );
+        await ready(cleanup);
+        await api('POST', `/v1/tasks/${cleanup.task.taskId}/cancel`);
+        await cleaned(cleanup.task.taskId);
+      }
+    });
+
     // 范围：真实 PostgreSQL 批量事务、同站点任务独立、逐步证据和清理顺序；节点为协议夹具，不执行业务浏览器。
     await suite.test('v2 批量原子接收、独立任务与关联清理', async () => {
       const node = await addNode('case-fixture', 3);
