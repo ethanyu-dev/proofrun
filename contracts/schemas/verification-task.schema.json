@@ -190,7 +190,7 @@
     },
     "resourceKey": {
       "type": "string",
-      "description": "平台生成的业务上下文互斥键，包含清理生命周期。"
+      "description": "平台生成的任务及业务上下文互斥键；主任务与其清理共享，不同 caseId 独立。"
     }
   },
   "$schema": "http://json-schema.org/draft-07/schema#",

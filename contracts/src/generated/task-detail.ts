@@ -92,7 +92,7 @@ export type VerificationTask = {
    */
   parentTaskId?: string;
   /**
-   * 平台生成的业务上下文互斥键，包含清理生命周期。
+   * 平台生成的任务及业务上下文互斥键；主任务与其清理共享，不同 caseId 独立。
    */
   resourceKey?: string;
 };

@@ -43,7 +43,7 @@ export function stepCriteria(
   );
 }
 
-/** 保存原始请求与平台快照；同一登录上下文和站点保守串行，包括业务清理。 */
+/** 保存原始请求与平台快照；互斥只覆盖本次 case 及其清理，不让历史清理阻塞新任务。 */
 export function compileCase(
   input: VerificationCaseV2,
   profile: CaseProfile,
@@ -68,6 +68,7 @@ export function compileCase(
       '显式等待总时长必须小于平台任务预算，并为排队和操作预留时间',
     );
   const scope = JSON.stringify([
+    `${V2_PREFIX}${input.caseId}`,
     profile.environment.nodePool,
     profile.environment.auth?.nodeId ?? '',
     profile.environment.auth?.stateId ?? profile.environment.id,

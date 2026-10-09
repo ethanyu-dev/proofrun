@@ -207,9 +207,8 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         ),
     );
   try {
-    // 范围：真实 HTTP 与数据库验证 case 权限、入口必填、描述映射、并发幂等和取消；不运行模型或浏览器。
-    // 范围：真实 PostgreSQL 批量事务、互斥、逐步证据和清理调度；节点为协议夹具，不执行业务浏览器。
-    await suite.test('v2 批量原子接收、同上下文串行并独立清理', async () => {
+    // 范围：真实 PostgreSQL 批量事务、同站点任务独立、逐步证据和清理顺序；节点为协议夹具，不执行业务浏览器。
+    await suite.test('v2 批量原子接收、独立任务与关联清理', async () => {
       const node = await addNode('case-fixture', 3);
       const step = {
         type: 'verification',
@@ -256,13 +255,20 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       assert.equal((await api('GET', '/v2/cases/v2-atomic-new')).status, 404);
       assert.equal(await claim(), null);
       const first = await claim(true);
+      const second = await claim(true);
       const independent = await claim(true);
       assert.equal(first.task.taskId, 'case-v2-v2-first');
+      assert.equal(second.task.taskId, 'case-v2-v2-second');
       assert.equal(independent.task.taskId, 'case-v2-v2-independent');
+      assert.notEqual(first.task.resourceKey, second.task.resourceKey);
       assert.equal(await claim(true), null);
       await ready(first);
+      await ready(second);
       await ready(independent);
+      await api('POST', '/v2/cases/v2-second/cancel');
       await api('POST', '/v2/cases/v2-independent/cancel');
+      await cleaned(second.task.taskId);
+      await cleaned(independent.task.taskId);
       node.ignoreClose = true;
       const complete = async (execution: typeof first) => {
         await ready(execution);
@@ -398,12 +404,6 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
           (await api('GET', '/v2/cases/v2-first')).data.cleanup.status,
         (state) => state === 'COMPLETED',
       );
-      const second = await until(
-        () => claim(true),
-        (value) => value !== null,
-      );
-      assert.equal(second.task.taskId, 'case-v2-v2-second');
-      await api('POST', '/v2/cases/v2-second/cancel');
       const final = (await api('GET', '/v2/cases/v2-first')).data;
       assert(
         validateCaseResultV2(final),
@@ -432,6 +432,85 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       await api('POST', `/v1/nodes/${node.id}/revoke`);
       node.close();
     });
+
+    // 范围：真实 HTTP、数据库和调度器验证清理故障不阻塞新 case、幂等重提不重跑；导航故障由节点夹具注入，不证明网络或浏览器行为。
+    await suite.test('v2 历史清理失败后同站点的新任务仍可领取', async () => {
+      const node = await addNode('case-fixture', 2);
+      const input = {
+        caseId: 'v2-failed-cleanup',
+        platform: '清理故障夹具',
+        entry: 'https://cleanup.example.test',
+        steps: [
+          {
+            type: 'verification',
+            url: 'https://cleanup.example.test',
+            exec_order: 1,
+            description: '检查页面',
+            policy: [],
+            expected: ['页面可访问'],
+          },
+        ],
+        cleanup: [
+          {
+            url: 'https://cleanup.example.test',
+            exec_order: 1,
+            description: '恢复明确指定的测试值',
+          },
+        ],
+      };
+      assert.equal((await api('POST', '/v2/cases', [input])).status, 202);
+      const first = await claim(true);
+      await ready(first);
+      node.unknownWrite = true;
+      await command(first, {
+        type: 'browser.act',
+        action: 'navigate',
+        target: input.entry,
+      });
+      await cleaned(first.task.taskId);
+      await until(
+        async () =>
+          (await api('GET', `/v2/cases/${input.caseId}`)).data.cleanup.status,
+        (state) => state === 'QUEUED',
+      );
+      const cleanup = await claim(true);
+      assert.equal(cleanup.task.parentTaskId, first.task.taskId);
+      assert.equal(cleanup.task.resourceKey, first.task.resourceKey);
+      await ready(cleanup);
+      await command(cleanup, {
+        type: 'browser.act',
+        action: 'navigate',
+        target: input.entry,
+      });
+      await cleaned(cleanup.task.taskId);
+      const failed = (await api('GET', `/v2/cases/${input.caseId}`)).data;
+      assert.equal(failed.status, 'ERROR');
+      assert.equal(failed.cleanup.status, 'ERROR');
+
+      const repeated = await api('POST', '/v2/cases', [input]);
+      assert.equal(repeated.status, 202);
+      assert.equal(repeated.data[0].status, 'ERROR');
+      assert.equal(repeated.data[0].cleanup.status, 'ERROR');
+      assert.equal(await claim(true), null);
+
+      node.unknownWrite = false;
+      const next = { ...input, caseId: 'v2-after-failed-cleanup', cleanup: [] };
+      assert.equal((await api('POST', '/v2/cases', [next])).status, 202);
+      const execution = await claim(true);
+      assert.ok(execution, '旧清理失败不能阻塞新的 caseId');
+      assert.equal(execution.task.taskId, `case-v2-${next.caseId}`);
+      assert.notEqual(execution.task.resourceKey, first.task.resourceKey);
+      assert.equal(
+        (await api('GET', `/v2/cases/${input.caseId}`)).data.cleanup.status,
+        'ERROR',
+      );
+      await api('POST', `/v2/cases/${next.caseId}/cancel`);
+      await cleaned(execution.task.taskId);
+      await api('POST', `/v1/nodes/${node.id}/revoke`);
+      node.close();
+    });
+
+    // 范围：真实 HTTP 与数据库验证 case 权限、入口必填、描述映射、并发幂等和取消；不运行模型或浏览器。
     await suite.test('公开 case 入口只接收业务概念并隐藏平台配置', async () => {
       const input = {
         caseId: 'case-http-fixture',
