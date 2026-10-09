@@ -125,6 +125,8 @@ export class SimulatedNode {
   calls = new Map<string, number>();
   ignoreClose = false;
   unknownWrite = false;
+  /** 模拟节点临时调整可用容量，只影响协议心跳，不代表真实浏览器占用。 */
+  capacityOverride?: number;
   /** 仅供网络协议测试启用；记录仍由夹具生成。 */
   networkEvidence = false;
   /** 默认支持登录快照协议；不证明真实 Cookie 的业务有效性。 */
@@ -227,7 +229,7 @@ export class SimulatedNode {
       nodeEpoch: this.epoch,
       pool: this.pool,
       leaseRequestId: randomUUID(),
-      capacity: this.capacity,
+      capacity: this.capacityOverride ?? this.capacity,
       limits: { maxLeaseMs: 60_000, maxSessionMs: 3_600_000 },
       occupied: [...this.sessions.values()].map((c) => ({
         sessionId: c.sessionId,

@@ -11,6 +11,10 @@ export interface TaskList {
  * 列表摘要只包含展示字段，不返回完整报告和执行凭据。
  */
 export interface TaskSummary {
+  /**
+   * 清理所属的主任务身份；列表相邻行不代表归属。旧响应可缺失。
+   */
+  parentTaskId?: string | null;
   id: string;
   objective: string;
   node_pool: string;

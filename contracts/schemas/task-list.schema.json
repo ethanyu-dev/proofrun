@@ -29,6 +29,10 @@
           "evidenceCount"
         ],
         "properties": {
+          "parentTaskId": {
+            "type": ["string", "null"],
+            "description": "清理所属的主任务身份；列表相邻行不代表归属。旧响应可缺失。"
+          },
           "id": {
             "type": "string"
           },

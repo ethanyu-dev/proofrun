@@ -27,6 +27,7 @@ import {
   type Heartbeat,
 } from '../../domain.js';
 import { authPlacement, recordQueueReason } from './placement.js';
+import { cleanupPlacement } from './cleanup-placement.js';
 import { sessionAuth } from './auth.js';
 import {
   routingSnapshot,
@@ -480,6 +481,16 @@ export class Coordinator {
         if (!row) continue;
         const task = row.definition;
         if (task.steps && !structuredSteps) continue;
+        const routedNode = resolveRoute(
+          routes,
+          task.environment.nodePool,
+          targetHostname(task.target.url),
+        );
+        const cleanup = await cleanupPlacement(client, task, routedNode);
+        if (cleanup.blocked) {
+          await recordQueueReason(client, task.taskId, cleanup.blocked);
+          continue;
+        }
         if (task.resourceKey) {
           const lock = await client.query(
             'SELECT pg_try_advisory_xact_lock(hashtextextended($1, 2)) AS locked',
@@ -503,18 +514,15 @@ export class Coordinator {
             continue;
           }
         }
-        const routedNode = resolveRoute(
-          routes,
-          task.environment.nodePool,
-          targetHostname(task.target.url),
-        );
         const placement = await authPlacement(client, task, routedNode);
         if (!placement) continue;
         if (placement.conflict) {
           await recordQueueReason(client, task.taskId, placement.conflict);
           continue;
         }
-        const { auth, requiredNode, preferredNode } = placement;
+        const { auth, preferredNode } = placement;
+        // 清理归属来自主任务执行记录，不随自动登录偏好、容量或重新配置迁移。
+        const requiredNode = cleanup.requiredNode ?? placement.requiredNode;
         // 路由和本轮快照是硬约束；自动槽位只在合格候选中优先，容量不足时可继续选择。
         const candidates = live
           .filter(

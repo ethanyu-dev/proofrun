@@ -109,7 +109,7 @@ export class TaskReader {
         }
       >(
         `SELECT id,left(definition->>'objective',240) AS objective,definition#>>'{environment,nodePool}' AS node_pool,
-        definition#>>'{target,url}' AS target_url,state,created_at,finished_at,archived_at,
+        definition#>>'{target,url}' AS target_url,definition->>'parentTaskId' AS "parentTaskId",state,created_at,finished_at,archived_at,
         CASE WHEN report IS NULL THEN NULL ELSE jsonb_build_object(
           'executionDisposition', report->'executionDisposition', 'verdict', report->'verdict',
           'criteria', (SELECT coalesce(jsonb_agg(jsonb_build_object('criterionId',c->'criterionId','verdict',c->'verdict')),'[]'::jsonb) FROM jsonb_array_elements(report->'criteria') c)) END AS report_facts,

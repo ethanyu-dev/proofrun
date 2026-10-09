@@ -556,6 +556,9 @@ export interface StepResult {
  */
 export interface QueueReason {
   code:
+    | 'CLEANUP_PARENT_PENDING'
+    | 'CLEANUP_PARENT_MISSING'
+    | 'CLEANUP_NODE_CONFLICT'
     | 'AUTH_NODE_ROUTE_CONFLICT'
     | 'COMPARISON_NODE_CONFLICT'
     | 'RESOURCE_BUSY'
