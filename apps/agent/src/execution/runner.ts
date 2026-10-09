@@ -11,6 +11,7 @@ import {
 import type { AgentConfig } from '../config.js';
 import type { BrowserOperation, ControlClient } from '../client.js';
 import type { DecisionInput, DecisionModel } from '../model/chat.js';
+import { modelTraceFault } from '../model/request.js';
 import { observation, type Observation } from '../evidence/observation.js';
 import { waitForEvidence } from '../evidence/delivery.js';
 import { AgentFault, pause, transient } from '../http.js';
@@ -622,20 +623,14 @@ class Execution {
                 archived: false,
               },
             })
-            .catch(() => {
-              throw new AgentFault(
-                'MODEL_TRACE_UNAVAILABLE',
-                '模型请求上下文未能存档，停止派发新请求',
-              );
+            .catch((error) => {
+              throw modelTraceFault(error, 'start');
             });
           return async (result) => {
             await this.client
               .recordModelCall(this.grant, id, { phase: 'finish', result })
-              .catch(() => {
-                throw new AgentFault(
-                  'MODEL_TRACE_UNAVAILABLE',
-                  '模型回复未能存档，请检查该次调用记录',
-                );
+              .catch((error) => {
+                throw modelTraceFault(error, 'finish');
               });
           };
         };

@@ -5,6 +5,21 @@ import { executionContext } from '../scheduling/state.js';
 
 /** 列表只读元数据，展开单次调用时才加载可能很长的正文。 */
 const CALL_LIMIT = 200;
+/** 仅允许实际模型正文参数；禁止存入请求地址、认证头或任意供应商扩展。 */
+const REQUEST_FIELDS = new Set([
+  'model',
+  'stream',
+  'parallel_tool_calls',
+  'max_tokens',
+  'max_completion_tokens',
+  'messages',
+  'tools',
+  'tool_choice',
+  'response_format',
+  'state',
+  'questions',
+  'thinking',
+]);
 
 /** 请求在派发前存档，回复只允许补写一次；相同身份重送不能改写原始上下文。 */
 export class ModelCalls {
@@ -97,28 +112,30 @@ export class ModelCalls {
           !request ||
           typeof request !== 'object' ||
           Array.isArray(request) ||
-          Object.keys(request).some(
-            (key) =>
-              ![
-                'model',
-                'stream',
-                'parallel_tool_calls',
-                'max_tokens',
-                'max_completion_tokens',
-                'messages',
-                'tools',
-                'tool_choice',
-                'response_format',
-                'state',
-                'questions',
-              ].includes(key),
-          )
+          Object.keys(request).some((key) => !REQUEST_FIELDS.has(key))
         )
           throw new ApiError(
             400,
             'INVALID_MODEL_CALL',
             'Unexpected request fields',
           );
+        // 思考参数必须是封闭对象，不能借新字段夹带认证配置或其他扩展。
+        if ('thinking' in request) {
+          const thinking = request.thinking;
+          if (
+            !thinking ||
+            typeof thinking !== 'object' ||
+            Array.isArray(thinking) ||
+            Object.keys(thinking).length !== 1 ||
+            !('type' in thinking) ||
+            (thinking.type !== 'enabled' && thinking.type !== 'disabled')
+          )
+            throw new ApiError(
+              400,
+              'INVALID_MODEL_CALL',
+              'Invalid thinking parameter',
+            );
+        }
         const inserted = await client.query(
           'INSERT INTO pr_model_calls(id,execution_id,call_index,record,start_hash) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING RETURNING id',
           [id, executionId, record.callIndex, JSON.stringify(record), hash],

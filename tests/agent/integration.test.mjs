@@ -111,7 +111,7 @@ test(
     const run = async (
       definition,
       decide,
-      { unknown = false, vision = false } = {},
+      { unknown = false, vision = false, thinking } = {},
     ) => {
       const node = new SimulatedNode(base, definition.environment.nodePool);
       nodes.push(node);
@@ -154,13 +154,16 @@ test(
         (rows) => rows.some((n) => n.id === node.id && n.online),
       );
       await api('POST', '/v1/tasks', definition);
-      const server = await modelServer(decide);
+      const server = await modelServer((...args) =>
+        decide(...args, { execution, client }),
+      );
       const settings = {
         ...agentConfig,
         apiUrl: base,
         workerToken: WORKER,
         modelUrl: server.url,
         vision,
+        thinking,
         modelMs: 5000,
       };
       const client = new ControlClient(settings);
@@ -300,6 +303,80 @@ test(
           );
           await api('POST', `/v1/nodes/${node.id}/revoke`);
           node.close();
+        },
+      );
+
+      // 范围：真实 Agent 请求经 HTTP 存档到 PostgreSQL；模型和浏览器是夹具，不证明供应商推理质量。
+      await suite.test(
+        '思考参数贯通 Agent、存档校验和模型派发，非法扩展仍被拒绝',
+        async () => {
+          for (const thinking of [undefined, 'disabled', 'enabled']) {
+            const { report, execution, requests } = await run(
+              task(`agent-thinking-${thinking ?? 'default'}`),
+              async (context, _turn, body, _request, { execution, client }) => {
+                const path = `/v1/admin/executions/${execution.id}/model-calls`;
+                const list = await api('GET', path);
+                assert.equal(list.calls.length, 1);
+                const call = await api('GET', `${path}/${list.calls[0].id}`);
+                // 模型服务收到请求时必须已存在同一份待回执存档。
+                assert.equal(call.status, 'PENDING');
+                assert.deepEqual(JSON.parse(call.request), body);
+                assert.deepEqual(
+                  body.thinking,
+                  thinking ? { type: thinking } : undefined,
+                );
+                assert.equal(
+                  call.requestSha256,
+                  createHash('sha256')
+                    .update(JSON.stringify(body))
+                    .digest('hex'),
+                );
+                if (thinking === 'disabled') {
+                  const invalidRequests = [
+                    ...[
+                      null,
+                      false,
+                      'disabled',
+                      [],
+                      {},
+                      { type: 'default' },
+                      { type: ['disabled'] },
+                      { type: 'disabled', api_key: 'fixture-secret' },
+                    ].map((value) => ({ ...body, thinking: value })),
+                    { ...body, authorization: 'fixture-secret' },
+                    { ...body, url: 'https://unexpected.invalid' },
+                  ];
+                  for (const request of invalidRequests) {
+                    const id = randomUUID();
+                    await assert.rejects(
+                      client.recordModelCall(execution, id, {
+                        phase: 'start',
+                        record: {
+                          ...call,
+                          id,
+                          callIndex: 200,
+                          request: JSON.stringify(request),
+                        },
+                      }),
+                      (error) =>
+                        error.code === 'INVALID_MODEL_CALL' &&
+                        error.status === 400,
+                    );
+                  }
+                  assert.equal((await api('GET', path)).calls.length, 1);
+                }
+                return finish(context);
+              },
+              { thinking },
+            );
+            assert.equal(report.verdict, 'PASSED');
+            assert.equal(requests.length, 1);
+            const path = `/v1/admin/executions/${execution.id}/model-calls`;
+            const list = await api('GET', path);
+            const call = await api('GET', `${path}/${list.calls[0].id}`);
+            assert.equal(call.status, 'RECEIVED');
+            assert.deepEqual(JSON.parse(call.request), requests[0]);
+          }
         },
       );
 
