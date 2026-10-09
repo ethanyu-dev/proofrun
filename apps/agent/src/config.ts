@@ -7,6 +7,8 @@ const DEFAULTS = {
   requestMs: 5000,
   modelMs: 30_000,
   commandMs: 15_000,
+  // 覆盖节点 20 秒上传及重试等待，不与浏览器命令共用时限。
+  evidenceMs: 60_000,
   maxTurns: 40,
   maxContextChars: 64_000,
   maxTokens: 4096,
@@ -34,6 +36,8 @@ export interface AgentConfig {
   requestMs: number;
   modelMs: number;
   commandMs: number;
+  /** 命令成功后等待证据持久化及可用回执的独立时限，仍受任务和租约约束。 */
+  evidenceMs: number;
   /** 决策次数、文本上下文和单次模型输出的上限。 */
   maxTurns: number;
   maxContextChars: number;
@@ -119,6 +123,12 @@ export function loadConfig(): AgentConfig {
       DEFAULTS.commandMs,
       100,
       120_000,
+    ),
+    evidenceMs: number(
+      'PROOFRUN_AGENT_EVIDENCE_MS',
+      DEFAULTS.evidenceMs,
+      100,
+      300_000,
     ),
     maxTurns: number('PROOFRUN_AGENT_MAX_TURNS', DEFAULTS.maxTurns, 1, 200),
     maxContextChars: number(

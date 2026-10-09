@@ -2229,3 +2229,114 @@ test('JEV 按结构化步骤独立检查相同页面，不跨步骤累加停滞'
     await server.close();
   }
 });
+
+// 范围：截图与 TRACE 延迟超过浏览器命令预算后仍可交付；浏览器、模型和上传均为夹具。
+test('截图和 TRACE 使用独立证据预算，不重发浏览器命令', async (t) => {
+  for (const kind of ['SCREENSHOT', 'TRACE']) {
+    const { report, client, requests } = await run(
+      finish,
+      (client, execution) => {
+        execution.task.acceptanceCriteria[0].evidenceKinds = ['DOM', kind];
+        const command = client.command.bind(client);
+        client.image = async () => 'data:image/png;base64,Zml4dHVyZQ==';
+        client.command = async (...args) => {
+          const result = await command(...args);
+          const op = args[2];
+          if (
+            (kind === 'SCREENSHOT' && op.type === 'browser.observe') ||
+            (kind === 'TRACE' &&
+              op.type === 'browser.trace' &&
+              op.action === 'stop')
+          ) {
+            const artifact = {
+              id: `delayed-${kind}`,
+              kind,
+              sha256: 'b'.repeat(64),
+              state: 'PENDING',
+            };
+            client.artifacts.push(artifact);
+            result.data.artifactRefs ??= [];
+            result.data.artifactRefs.push({
+              artifactId: artifact.id,
+              kind,
+              sha256: artifact.sha256,
+            });
+            const timer = setTimeout(() => {
+              artifact.state = 'AVAILABLE';
+            }, 300);
+            t.after(() => clearTimeout(timer));
+          }
+          return result;
+        };
+      },
+      { vision: kind === 'SCREENSHOT', commandMs: 100, evidenceMs: 2000 },
+    );
+    assert.equal(report.executionDisposition, 'EXECUTED');
+    assert.ok(report.artifacts.some((a) => a.id === `delayed-${kind}`));
+    assert.equal(
+      client.calls.filter((c) => c.operation.type === 'browser.observe').length,
+      1,
+    );
+    assert.equal(requests.length, 1);
+  }
+});
+
+// 范围：截图始终未交付时输出具体诊断并阻止模型；不模拟实际节点断网。
+test('证据超时报告保留未就绪状态且不调用模型', async () => {
+  const { report, requests } = await run(
+    finish,
+    (client) => {
+      const command = client.command.bind(client);
+      client.command = async (...args) => {
+        const result = await command(...args);
+        if (args[2].type === 'browser.observe') {
+          const ref = {
+            artifactId: 'pending-screenshot',
+            kind: 'SCREENSHOT',
+            sha256: 'b'.repeat(64),
+          };
+          result.data.artifactRefs.push(ref);
+          client.artifacts.push({
+            id: ref.artifactId,
+            ...ref,
+            state: 'PENDING',
+          });
+        }
+        return result;
+      };
+    },
+    { vision: true, evidenceMs: 100 },
+  );
+  assert.equal(report.executionDetails.reasonCode, 'EVIDENCE_UNAVAILABLE');
+  assert.match(report.summary, /SCREENSHOT pending-screenshot=PENDING/);
+  assert.equal(requests.length, 0);
+});
+
+// 范围：独立证据预算不能延长任务或租约；使用短期限和挂起续租夹具，不代表真实集群故障演练。
+test('证据等待遵守任务硬期限和租约失效', async () => {
+  for (const reason of ['TASK_DEADLINE', 'LEASE_LOST']) {
+    const { report, requests } = await run(
+      finish,
+      (client, execution) => {
+        if (reason === 'TASK_DEADLINE')
+          execution.taskDeadlineAt = new Date(Date.now() + 100).toISOString();
+        else {
+          execution.leaseExpiresAt = new Date(Date.now() + 100).toISOString();
+          client.hangingHeartbeat = true;
+        }
+        const command = client.command.bind(client);
+        client.command = async (...args) => {
+          const result = await command(...args);
+          if (args[2].type === 'browser.observe')
+            client.artifacts.forEach((artifact) => {
+              artifact.state = 'PENDING';
+            });
+          return result;
+        };
+      },
+      { evidenceMs: 2000 },
+    );
+    assert.equal(report.executionDetails.reasonCode, reason);
+    assert.equal(requests.length, 0);
+  }
+});
