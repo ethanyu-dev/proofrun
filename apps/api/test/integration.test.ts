@@ -2388,6 +2388,61 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
           ).status,
           409,
         );
+        // 范围：导航与刷新沿用原会话、去重和预算；节点是协议夹具。
+        for (const command of [
+          {
+            type: 'browser.act',
+            action: 'navigate',
+            target: 'https://example.com/referral',
+          },
+          { type: 'browser.act', action: 'reload' },
+        ]) {
+          const navigationId = randomUUID();
+          for (let attempt = 1; attempt <= 2; attempt++) {
+            first.ws.send(
+              JSON.stringify({
+                type: 'command',
+                commandId: navigationId,
+                command,
+              }),
+            );
+            await until(
+              async () => first.messages,
+              (rows) =>
+                rows.filter(
+                  (m) =>
+                    m.type === 'result' &&
+                    m.commandId === navigationId &&
+                    m.status === 'SUCCEEDED',
+                ).length === attempt,
+            );
+          }
+          assert.equal(node.calls.get(navigationId), 1);
+        }
+        assert.equal(
+          (await api('GET', `/v1/tasks/${definition.taskId}`)).data
+            .executions[0].action_count,
+          4,
+        );
+        // 无效目的地不派发节点命令，处理者可继续修正地址。
+        const invalidNavigation = randomUUID();
+        first.ws.send(
+          JSON.stringify({
+            type: 'command',
+            commandId: invalidNavigation,
+            command: {
+              type: 'browser.act',
+              action: 'navigate',
+              target: 'javascript:alert(1)',
+            },
+          }),
+        );
+        await until(
+          async () => first.messages,
+          (rows) => rows.some((m) => m.code === 'HITL_NAVIGATION'),
+        );
+        assert.equal(node.calls.has(invalidNavigation), false);
+        assert.equal(first.ws.readyState, WebSocket.OPEN);
         // 断开重进保留同一浏览器与人工状态，但不自动重放输入。
         first.ws.close();
         await new Promise<void>((resolve) =>

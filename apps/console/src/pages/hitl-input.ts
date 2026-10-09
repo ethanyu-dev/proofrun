@@ -67,6 +67,20 @@ export class HitlInputQueue {
     return true;
   }
 
+  /** 组合操作整体入队，避免容量不足时只接收 Cookie 而遗漏刷新。 */
+  enqueueBatch(commands: NodeCommand['command'][]): boolean {
+    if (this.stopped || this.queue.length + commands.length > QUEUE_LIMIT)
+      return false;
+    this.queue.push(
+      ...commands.map((command) => ({
+        commandId: crypto.randomUUID(),
+        command,
+      })),
+    );
+    this.next();
+    return true;
+  }
+
   /** 只接受当前动作的回执，失败或未知结果立即停止整个队列。 */
   acknowledge(message: Extract<HitlServer, { type: 'result' }>) {
     if (message.commandId !== this.pending?.commandId) return false;

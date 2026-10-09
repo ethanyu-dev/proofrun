@@ -2420,73 +2420,83 @@ test('登录兜底只匹配当前步骤的登录阻塞', async () => {
   assert.equal(needsLoginIntervention(task, page, 0), false);
 });
 
-// 范围：实际执行器在模型调用前进入交接，恢复后重新导航及取证；人工、Cookie 生效和浏览器由夹具模拟。
-test('登录前置受阻主动 HITL，恢复后继续原任务', async () => {
-  const execution = grant();
-  execution.task.objective = '使用已授权账号登录后验证业务';
-  execution.task.environment.allowIntervention = true;
-  const client = new FakeControl();
-  let mode = 'AUTO',
-    revision = 0,
-    resumed = false,
-    requests = 0,
-    turns = 0;
-  const originalView = client.view.bind(client),
-    originalCommand = client.command.bind(client);
-  client.view = async (g) => ({
-    ...(await originalView(g)),
-    controlMode: mode,
-    controlRevision: revision,
-    actionCount: 1,
-  });
-  client.command = async (...args) => {
-    const result = await originalCommand(...args);
-    if (args[2].type === 'browser.observe' && !resumed) {
-      result.data.url = 'https://example.com/login';
-      result.data.targets = [
-        { target: 'password', role: 'textbox', name: '密码' },
-        { target: 'login', role: 'button', name: '登录' },
-      ];
-    }
-    return result;
-  };
-  client.intervene = async (_grant, rev, reason, _signal, items) => {
-    assert.equal(turns, 0);
-    assert.equal(rev, 0);
-    assert.match(reason, /登录/);
-    assert.match(items.join(' '), /Cookie/);
-    requests++;
-    mode = 'REQUESTED';
-    revision++;
-  };
-  client.acknowledge = async () => {
-    mode = 'HUMAN';
-    setTimeout(() => {
-      resumed = true;
-      mode = 'AUTO';
+// 范围：登录表单自动介入和邀请页模型介入均在恢复后重新导航；人工、Cookie 生效和浏览器由夹具模拟。
+for (const modelRequested of [false, true])
+  test(`登录前置受阻主动 HITL，恢复后继续原任务 ${modelRequested ? 'model' : 'automatic'}`, async () => {
+    const execution = grant();
+    execution.task.objective = '使用已授权账号登录后验证业务';
+    execution.task.environment.allowIntervention = true;
+    const client = new FakeControl();
+    let mode = 'AUTO',
+      revision = 0,
+      resumed = false,
+      requests = 0,
+      turns = 0;
+    const originalView = client.view.bind(client),
+      originalCommand = client.command.bind(client);
+    client.view = async (g) => ({
+      ...(await originalView(g)),
+      controlMode: mode,
+      controlRevision: revision,
+      actionCount: 1,
+    });
+    client.command = async (...args) => {
+      const result = await originalCommand(...args);
+      if (args[2].type === 'browser.observe' && !resumed) {
+        result.data.url = modelRequested
+          ? 'https://example.com/referral'
+          : 'https://example.com/login';
+        result.data.targets = [
+          { target: 'password', role: 'textbox', name: '密码' },
+          { target: 'login', role: 'button', name: '登录' },
+        ];
+        if (modelRequested) result.data.targets = result.data.targets.slice(1);
+      }
+      return result;
+    };
+    client.intervene = async (_grant, rev, reason, _signal, items) => {
+      assert.equal(turns, modelRequested ? 1 : 0);
+      assert.equal(rev, 0);
+      assert.match(reason, /登录/);
+      if (!modelRequested) assert.match(items.join(' '), /Cookie/);
+      requests++;
+      mode = 'REQUESTED';
       revision++;
-    }, 10);
-  };
-  const model = {
-    decide: async (input) => {
-      turns++;
-      assert.equal(resumed, true);
-      return {
-        decision: finish(JSON.parse(input.text)),
-        promptTokens: 0,
-        completionTokens: 0,
-      };
-    },
-  };
-  const report = await execute(config, client, model, execution);
-  assert.equal(report.verdict, 'PASSED');
-  assert.equal(requests, 1);
-  assert.equal(turns, 1);
-  assert.equal(
-    client.calls.filter((c) => c.operation.action === 'navigate').length,
-    2,
-  );
-});
+    };
+    client.acknowledge = async () => {
+      mode = 'HUMAN';
+      setTimeout(() => {
+        resumed = true;
+        mode = 'AUTO';
+        revision++;
+      }, 10);
+    };
+    const model = {
+      decide: async (input) => {
+        turns++;
+        if (modelRequested && !resumed)
+          return {
+            decision: { type: 'verification.intervene', reason: '请人工登录' },
+            promptTokens: 0,
+            completionTokens: 0,
+          };
+        assert.equal(resumed, true);
+        return {
+          decision: finish(JSON.parse(input.text)),
+          promptTokens: 0,
+          completionTokens: 0,
+        };
+      },
+    };
+    const report = await execute(config, client, model, execution);
+    assert.equal(report.verdict, 'PASSED');
+    assert.equal(requests, 1);
+    assert.equal(turns, modelRequested ? 2 : 1);
+    assert.equal(
+      client.calls.filter((c) => c.operation.action === 'navigate').length,
+      2,
+    );
+  });
 
 // 范围：未授权 HITL 的登录前置明确停止，不能自动扩大权限；不连接真实浏览器。
 test('登录兜底遵守 allowIntervention 开关', async () => {

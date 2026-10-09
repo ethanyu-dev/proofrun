@@ -24,17 +24,7 @@ export function needsLoginIntervention(
   observation: Observation,
   stepIndex: number,
 ): boolean {
-  const step = task.steps?.[stepIndex];
-  const requirement = step
-    ? [step.description, ...step.policy].join('\n')
-    : task.objective;
-  if (
-    task.purpose === 'cleanup' ||
-    GUEST.test(requirement) ||
-    LOGIN_UI_ONLY.test(requirement) ||
-    !LOGIN_REQUIRED.test(requirement)
-  )
-    return false;
+  if (!requiresLogin(task, stepIndex)) return false;
   const visible = observation.targets.filter(
     (target) => target.visible !== false && target.ariaHidden !== true,
   );
@@ -54,4 +44,23 @@ export function needsLoginIntervention(
     /* 非网页观察不触发登录恢复。 */
   }
   return (password && loginButton) || (loginPage && challenge);
+}
+
+/** 登录恢复只依赖步骤前置条件，不要求介入时恰好位于登录表单。 */
+export function requiresLogin(
+  task: VerificationTask,
+  stepIndex: number,
+): boolean {
+  const step = task.steps?.[stepIndex];
+  const requirement = step
+    ? [step.description, ...step.policy].join('\n')
+    : task.objective;
+  if (
+    task.purpose === 'cleanup' ||
+    GUEST.test(requirement) ||
+    LOGIN_UI_ONLY.test(requirement) ||
+    !LOGIN_REQUIRED.test(requirement)
+  )
+    return false;
+  return true;
 }

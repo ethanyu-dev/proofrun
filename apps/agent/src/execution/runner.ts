@@ -17,7 +17,7 @@ import { waitForEvidence } from '../evidence/delivery.js';
 import { AgentFault, pause, transient } from '../http.js';
 import { LeaseGuard } from './lease.js';
 import { Workflow } from './workflow.js';
-import { needsLoginIntervention } from './login-intervention.js';
+import { needsLoginIntervention, requiresLogin } from './login-intervention.js';
 import {
   decisionContext,
   rememberObservation,
@@ -743,11 +743,7 @@ class Execution {
           await this.requestIntervention(
             decision.reason,
             decision.items,
-            needsLoginIntervention(
-              this.grant.task,
-              this.current!,
-              this.stepIndex,
-            ),
+            requiresLogin(this.grant.task, this.stepIndex),
           );
           errors = 0;
           continue;
