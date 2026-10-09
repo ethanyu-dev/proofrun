@@ -19,6 +19,7 @@ const MIGRATIONS = [
   '007-node-routing.sql',
   '008-auth-snapshots.sql',
   '009-structured-cases.sql',
+  '010-queue-reason.sql',
 ];
 
 /** 所有业务事务使用同一连接；独占连接单独维护控制面实例锁。 */

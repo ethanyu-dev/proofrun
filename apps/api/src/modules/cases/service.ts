@@ -58,6 +58,7 @@ export class CaseService {
     return {
       caseId: id,
       status: stored.state,
+      queueReason: stored.queueReason ?? null,
       ...summarizeReport(
         report,
         stored.definition.acceptanceCriteria.map((c) => c.id),

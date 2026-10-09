@@ -26,6 +26,8 @@ const readSchema = (name: string) =>
   );
 
 // 这里只做结构校验；租约归属、验收项覆盖和证据真实性由控制面领域层校验。
+export type { QueueReason } from './generated/queue-reason.js';
+ajv.addSchema(readSchema('queue-reason'), 'queue-reason.schema.json');
 export type { VerificationCase } from './generated/verification-case.js';
 export type { CaseResult } from './generated/case-result.js';
 import type { VerificationCase } from './generated/verification-case.js';

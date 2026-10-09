@@ -285,6 +285,17 @@
         }
       ],
       "description": "按本次验收定义统计，各分类之和等于 total；无报告时为 null。"
+    },
+    "queueReason": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "queue-reason.schema.json"
+        }
+      ],
+      "description": "最近一次领取检查发现的排队原因；成功领取后清空，取消或排队超时后保留。null 或缺失表示尚无诊断，不表示一定可执行。"
     }
   },
   "required": [

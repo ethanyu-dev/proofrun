@@ -12,6 +12,7 @@ import type {
   NodeEvent,
   VerificationTask,
   VerificationReport,
+  QueueReason,
 } from '@proofrun/contracts';
 import type { ApiConfig } from '../../config.js';
 import { Database } from '../../db.js';
@@ -25,6 +26,7 @@ import {
   type CommandResult,
   type Heartbeat,
 } from '../../domain.js';
+import { authPlacement, recordQueueReason } from './placement.js';
 import { sessionAuth } from './auth.js';
 import {
   routingSnapshot,
@@ -412,9 +414,10 @@ export class Coordinator {
           | 'ERROR';
         report: VerificationReport | null;
         stepResults?: StepResult[] | null;
+        queueReason?: QueueReason | null;
         [key: string]: unknown;
       }>(
-        'SELECT id,definition,state,deadline_at,report,error,created_at,finished_at,archived_at,step_results AS "stepResults" FROM pr_tasks WHERE id=$1',
+        'SELECT id,definition,state,deadline_at,report,error,created_at,finished_at,archived_at,step_results AS "stepResults",queue_reason AS "queueReason" FROM pr_tasks WHERE id=$1',
         [id],
       )
     ).rows[0];
@@ -495,41 +498,38 @@ export class Coordinator {
           ) LIMIT 1`,
             [task.resourceKey, task.taskId, task.parentTaskId ?? null],
           );
-          if (busy.rowCount) continue;
+          if (busy.rowCount) {
+            await recordQueueReason(client, task.taskId, 'RESOURCE_BUSY');
+            continue;
+          }
         }
-        const auth = sessionAuth(task);
-        let authNode = task.environment.auth?.nodeId;
-        if (auth && !authNode) {
-          // 首次归属用事务锁串行决定，避免并发领取把同一自动槽分散到不同节点。
-          const locked = await client.query(
-            'SELECT pg_try_advisory_xact_lock(hashtextextended($1, 1)) AS locked',
-            [auth.stateId],
-          );
-          if (!locked.rows[0].locked) continue;
-          authNode = (
-            await client.query(
-              'SELECT node_id FROM pr_auth_bindings WHERE scope=$1',
-              [auth.stateId],
-            )
-          ).rows[0]?.node_id;
-        }
-        // 域名与登录状态都是硬约束；冲突或指定节点不可用时保留排队，不静默改派。
         const routedNode = resolveRoute(
           routes,
           task.environment.nodePool,
           targetHostname(task.target.url),
         );
+        const placement = await authPlacement(client, task, routedNode);
+        if (!placement) continue;
+        if (placement.conflict) {
+          await recordQueueReason(client, task.taskId, placement.conflict);
+          continue;
+        }
+        const { auth, requiredNode, preferredNode } = placement;
+        // 路由和本轮快照是硬约束；自动槽位只在合格候选中优先，容量不足时可继续选择。
         const candidates = live
           .filter(
             (c) =>
               this.eligible(c.heartbeat!, task) &&
               (!routedNode || c.nodeId === routedNode) &&
-              (!authNode || c.nodeId === authNode),
+              (!requiredNode || c.nodeId === requiredNode),
           )
           .sort(
             (a, b) =>
+              Number(b.nodeId === preferredNode) -
+                Number(a.nodeId === preferredNode) ||
               a.heartbeat!.occupied.length - b.heartbeat!.occupied.length,
           );
+        let queueCode: QueueReason['code'] = 'NO_ELIGIBLE_NODE';
         for (const connection of candidates) {
           const heartbeat = connection.heartbeat!;
           const node = (
@@ -552,8 +552,10 @@ export class Coordinator {
                 [node.id],
               )
             ).rowCount
-          )
+          ) {
+            if (queueCode !== 'NODE_CAPACITY') queueCode = 'NODE_ROTATING';
             continue;
+          }
           const reserved = await client.query(
             'SELECT id FROM pr_sessions WHERE node_id=$1 AND NOT closure_verified',
             [node.id],
@@ -565,11 +567,13 @@ export class Coordinator {
           if (
             occupied.size >=
             Math.min(node.capacity as number, heartbeat.capacity)
-          )
+          ) {
+            queueCode = 'NODE_CAPACITY';
             continue;
+          }
           if (auth && !task.environment.auth)
             await client.query(
-              'INSERT INTO pr_auth_bindings(scope,node_id) VALUES($1,$2) ON CONFLICT(scope) DO NOTHING',
+              'INSERT INTO pr_auth_bindings(scope,node_id) VALUES($1,$2) ON CONFLICT(scope) DO UPDATE SET node_id=EXCLUDED.node_id',
               [auth.stateId, node.id],
             );
           const fence = Number(node.fence) + 1;
@@ -592,7 +596,7 @@ export class Coordinator {
             fence,
           ]);
           await client.query(
-            "UPDATE pr_tasks SET state='RUNNING' WHERE id=$1",
+            "UPDATE pr_tasks SET state='RUNNING',queue_reason=NULL WHERE id=$1",
             [task.taskId],
           );
           await client.query(
@@ -653,6 +657,7 @@ export class Coordinator {
             },
           };
         }
+        await recordQueueReason(client, task.taskId, queueCode);
       }
       return { execution: null };
     });
@@ -1338,7 +1343,7 @@ export class Coordinator {
   /** 到期撤权与浏览器关闭分别记录；不自动重试整个验证任务。 */
   private async expire(): Promise<void> {
     await this.db.query(
-      "UPDATE pr_tasks SET state='TIMED_OUT',finished_at=clock_timestamp(),error='{}' WHERE state='QUEUED' AND deadline_at<=clock_timestamp()",
+      "UPDATE pr_tasks SET state='TIMED_OUT',finished_at=clock_timestamp(),error=jsonb_build_object('code','TASK_QUEUE_TIMEOUT','message','任务在排队阶段超过总预算。','queueReason',queue_reason) WHERE state='QUEUED' AND deadline_at<=clock_timestamp()",
     );
     const expired = await this.db.query(
       `SELECT e.id FROM pr_executions e JOIN pr_tasks t ON t.id=e.task_id

@@ -1,5 +1,7 @@
 # ProofRun Case API
 
+查询结果包含可选的 `queueReason: { code, message } | null`，供排查任务为何尚未开始。它记录最近一次领取检查遇到的配置冲突、资源占用或节点不可用等原因；成功领取后清空，取消或排队超时后保留。null 或字段缺失表示尚无诊断，不保证节点可用。排队超时不代表业务验收失败，业务结果仍以实际执行报告为准。
+
 ## 访问地址与在线文档
 
 - 生产 HTTP API：`https://api-proofrun.ethankit.com`。

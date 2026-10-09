@@ -69,6 +69,14 @@ export function TaskResources({ task }: { task: TaskDetail }) {
             </a>
           </p>
         )}
+        {task.queueReason && (
+          <p role="status">
+            {task.state === 'QUEUED'
+              ? '最近一次排队原因'
+              : '结束前最后一次排队原因'}
+            ：{task.queueReason.message}
+          </p>
+        )}
         {task.error && (
           <pre className="error-notice">
             {JSON.stringify(task.error, null, 2)}

@@ -10,6 +10,7 @@ import test from 'node:test';
 import pg from 'pg';
 import { retain } from '../src/maintenance.js';
 import { Database } from '../src/db.js';
+import { sessionAuth } from '../src/modules/scheduling/auth.js';
 import { buildApp } from '../src/app.js';
 import type { CaseProfile } from '../src/modules/cases/profile.js';
 import {
@@ -20,6 +21,7 @@ import {
   validateCaseResult,
   validateCaseResultV2,
   validateExecutionGrant,
+  type VerificationTask,
 } from '@proofrun/contracts';
 import {
   PNG,
@@ -393,7 +395,11 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
           (await api('GET', '/v2/cases/v2-first')).data.cleanup.status,
         (state) => state === 'QUEUED',
       );
-      const cleanup = await claim(true);
+      // 关闭确认和空闲心跳独立到达，清理入队不代表容量心跳已刷新。
+      const cleanup = await until(
+        () => claim(true),
+        (value) => value !== null,
+      );
       assert.equal(cleanup.task.parentTaskId, first.task.taskId);
       assert.equal(cleanup.task.purpose, 'cleanup');
       assert.deepEqual(cleanup.task.acceptanceCriteria, []);
@@ -473,7 +479,11 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
           (await api('GET', `/v2/cases/${input.caseId}`)).data.cleanup.status,
         (state) => state === 'QUEUED',
       );
-      const cleanup = await claim(true);
+      // 关闭确认和空闲心跳独立到达，清理入队不代表容量心跳已刷新。
+      const cleanup = await until(
+        () => claim(true),
+        (value) => value !== null,
+      );
       assert.equal(cleanup.task.parentTaskId, first.task.taskId);
       assert.equal(cleanup.task.resourceKey, first.task.resourceKey);
       await ready(cleanup);
@@ -537,6 +547,7 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         assert.deepEqual(response.data, {
           caseId: input.caseId,
           status: 'QUEUED',
+          queueReason: null,
           reportStatus: null,
           criteriaCounts: null,
           result: null,
@@ -982,12 +993,31 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       };
       await submit(definition);
       assert.equal(await claim(), null);
-      await api('POST', `/v1/tasks/${definition.taskId}/cancel`);
+      const blocked = (await api('GET', `/v1/tasks/${definition.taskId}`)).data;
+      assert.equal(blocked.queueReason.code, 'AUTH_NODE_ROUTE_CONFLICT');
+      assert.deepEqual(blocked.executions, []);
+      // 仅缩短测试库中的截止时间，验证真实过期循环保留原因；不等待生产预算。
+      await sql.query(
+        'UPDATE pr_tasks SET deadline_at=clock_timestamp() WHERE id=$1',
+        [definition.taskId],
+      );
+      const timedOut = await until(
+        async () => (await api('GET', `/v1/tasks/${definition.taskId}`)).data,
+        (value) => value.state === 'TIMED_OUT',
+      );
+      assert.deepEqual(timedOut.queueReason, blocked.queueReason);
+      assert.equal(timedOut.error.code, 'TASK_QUEUE_TIMEOUT');
+      assert.deepEqual(timedOut.error.queueReason, blocked.queueReason);
       const capabilities = task(target.pool);
       capabilities.target.url = definition.target.url;
       capabilities.acceptanceCriteria[0]!.evidenceKinds = ['TRACE'];
       await submit(capabilities);
       assert.equal(await claim(), null);
+      assert.equal(
+        (await api('GET', `/v1/tasks/${capabilities.taskId}`)).data.queueReason
+          .code,
+        'NO_ELIGIBLE_NODE',
+      );
       await api('POST', `/v1/tasks/${capabilities.taskId}/cancel`);
       target.close();
       await until(
@@ -1009,6 +1039,10 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       });
       const execution = await claim();
       assert.equal(execution.nodeId, spare.id);
+      assert.equal(
+        (await api('GET', `/v1/tasks/${waiting.taskId}`)).data.queueReason,
+        null,
+      );
       await api('POST', `/v1/tasks/${waiting.taskId}/cancel`);
       await cleaned(waiting.taskId);
     });
@@ -2112,8 +2146,182 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       await cleaned(definition.taskId);
     });
 
-    // 范围：真实调度和数据库绑定、同轮两组初始快照身份、重跑节点固定；节点文件和登录由独立引擎测试覆盖。
-    await suite.test('自动登录快照允许并行且重跑保持节点归属', async () => {
+    // 范围：真实 HTTP/数据库的路由覆盖、偏好复用及离线回退；节点仅检查恢复协议，不证明真实登录文件或业务登录成功。
+    await suite.test(
+      '自动登录偏好随路由更新且旧节点不可用不阻塞新任务',
+      async () => {
+        const oldNode = await addNode('auth-route', 2);
+        const newNode = await addNode('auth-route', 2);
+        const definition = {
+          ...task(oldNode.pool),
+          environment: {
+            id: 'fixture',
+            nodePool: oldNode.pool,
+            reuseAuth: true,
+          },
+          target: { url: 'https://auth-route.example.test' },
+        };
+        const auth = sessionAuth(definition as VerificationTask)!;
+        await sql.query(
+          'INSERT INTO pr_auth_bindings(scope,node_id) VALUES($1,$2)',
+          [auth.stateId, oldNode.id],
+        );
+        await api('POST', `/v1/nodes/${newNode.id}/routing`, {
+          domains: ['auth-route.example.test'],
+          revision: 0,
+        });
+        await submit(definition);
+        const first = await claim();
+        assert.equal(first.nodeId, newNode.id);
+        await ready(first);
+        const opened = newNode.sessions.get(first.sessionId)!.command;
+        assert.equal(opened.type, 'session.open');
+        if (opened.type === 'session.open') {
+          // 自动槽在新节点无文件时允许空状态，存在文件时仍恢复；不改变节点端的损坏文件处理。
+          assert.deepEqual(opened.authState, auth);
+          assert.equal(opened.authState?.restore, true);
+          assert.equal(opened.authState?.restoreIfPresent, true);
+        }
+        assert.equal(
+          (
+            await sql.query(
+              'SELECT node_id FROM pr_auth_bindings WHERE scope=$1',
+              [auth.stateId],
+            )
+          ).rows[0].node_id,
+          newNode.id,
+        );
+        await api('POST', `/v1/nodes/${newNode.id}/routing`, {
+          domains: [],
+          revision: 1,
+        });
+        // 新节点已有一个会话，旧节点空闲；无路由时仍优先复用可用登录节点。
+        const secondDefinition = { ...definition, taskId: randomUUID() };
+        await submit(secondDefinition);
+        const second = await claim();
+        assert.equal(second.nodeId, newNode.id);
+        // 偏好节点容量耗尽时，独立任务可以使用另一个节点。
+        const thirdDefinition = { ...definition, taskId: randomUUID() };
+        await submit(thirdDefinition);
+        const third = await claim();
+        assert.equal(third.nodeId, oldNode.id);
+        for (const d of [definition, secondDefinition, thirdDefinition]) {
+          await api('POST', `/v1/tasks/${d.taskId}/cancel`);
+          await cleaned(d.taskId);
+        }
+        oldNode.close();
+        await until(
+          async () =>
+            (await api('GET', '/v1/nodes')).data.nodes.find(
+              (n: { id: string }) => n.id === oldNode.id,
+            ).online,
+          (online) => !online,
+        );
+        const nextDefinition = { ...definition, taskId: randomUUID() };
+        await submit(nextDefinition);
+        const next = await until(
+          () => claim(),
+          (value) => value !== null,
+        );
+        assert.equal(next.nodeId, newNode.id);
+        await api('POST', `/v1/tasks/${nextDefinition.taskId}/cancel`);
+        await cleaned(nextDefinition.taskId);
+      },
+    );
+
+    // 范围：真实领取事务保证同轮快照节点不可迁移，独立任务可换节点，释放后仍沿用本轮节点；不验证浏览器快照内容。
+    await suite.test('自动偏好更新不能拆散已开始的对照组', async () => {
+      const firstNode = await addNode('auth-pinned');
+      const otherNode = await addNode('auth-pinned', 2);
+      const definition = {
+        ...task(firstNode.pool),
+        executionMode: 'parallel',
+        environment: {
+          id: 'fixture',
+          nodePool: firstNode.pool,
+          reuseAuth: true,
+        },
+        target: { url: 'https://auth-pinned.example.test' },
+      };
+      const scope = sessionAuth(definition as VerificationTask)!.stateId;
+      await sql.query(
+        'INSERT INTO pr_auth_bindings(scope,node_id) VALUES($1,$2)',
+        [scope, firstNode.id],
+      );
+      await submit(definition);
+      // 同时领取允许一次事务因短锁而让步，但不能把两组分散到两个节点。
+      const claims = (await Promise.all([claim(), claim()])).filter(Boolean);
+      assert.equal(claims.length, 1);
+      const first = claims[0];
+      assert.equal(first.nodeId, firstNode.id);
+      await ready(first);
+      const secondId = `${definition.taskId}-${first.task.comparison.arm === 'llm' ? 'jev' : 'llm'}`;
+      assert.equal(await claim(), null);
+      assert.equal(
+        (await api('GET', `/v1/tasks/${secondId}`)).data.queueReason.code,
+        'NODE_CAPACITY',
+      );
+      await api('POST', `/v1/nodes/${otherNode.id}/routing`, {
+        domains: ['auth-pinned.example.test'],
+        revision: 0,
+      });
+      assert.equal(await claim(), null);
+      assert.equal(
+        (await api('GET', `/v1/tasks/${secondId}`)).data.queueReason.code,
+        'COMPARISON_NODE_CONFLICT',
+      );
+      const independent = {
+        ...definition,
+        taskId: randomUUID(),
+        executionMode: 'llm',
+      };
+      await submit(independent);
+      const moved = await claim();
+      assert.equal(moved.task.taskId, independent.taskId);
+      assert.equal(moved.nodeId, otherNode.id);
+      assert.equal(
+        (
+          await sql.query(
+            'SELECT node_id FROM pr_auth_bindings WHERE scope=$1',
+            [scope],
+          )
+        ).rows[0].node_id,
+        otherNode.id,
+      );
+      await api('POST', `/v1/tasks/${independent.taskId}/cancel`);
+      await cleaned(independent.taskId);
+      await api('POST', `/v1/nodes/${otherNode.id}/routing`, {
+        domains: [],
+        revision: 1,
+      });
+      assert.equal(await claim(), null);
+      await api('POST', `/v1/tasks/${first.task.taskId}/cancel`);
+      await cleaned(first.task.taskId);
+      const second = await until(
+        () => claim(),
+        (value) => value !== null,
+      );
+      assert.equal(second.task.taskId, secondId);
+      assert.equal(second.nodeId, firstNode.id);
+      const snapshots = await sql.query(
+        'SELECT s.auth_state FROM pr_executions e JOIN pr_sessions s ON s.execution_id=e.id WHERE e.task_id=ANY($1::text[])',
+        [[first.task.taskId, secondId]],
+      );
+      assert.equal(snapshots.rows.length, 2);
+      assert.deepEqual(
+        snapshots.rows[0].auth_state,
+        snapshots.rows[1].auth_state,
+      );
+      assert.equal(
+        (await api('GET', `/v1/tasks/${secondId}`)).data.queueReason,
+        null,
+      );
+      await api('POST', `/v1/tasks/${secondId}/cancel`);
+      await cleaned(secondId);
+    });
+
+    // 范围：真实调度和数据库绑定、同轮两组初始快照身份、重跑沿用可用节点偏好；节点文件和登录由独立引擎测试覆盖。
+    await suite.test('自动登录快照允许并行且重跑沿用节点偏好', async () => {
       const node = await addNode('auth-pair', 2);
       const definition = {
         ...task('auth-pair'),
