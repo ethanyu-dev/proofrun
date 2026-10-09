@@ -206,6 +206,10 @@
             "trace": {
               "type": "boolean",
               "description": "支持 Chromium trace 的采集、可靠上传和下载。"
+            },
+            "renewableSessions": {
+              "type": "boolean",
+              "description": "支持人工等待暂停时限的可续期会话。"
             }
           },
           "required": [

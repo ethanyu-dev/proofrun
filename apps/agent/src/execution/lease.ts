@@ -1,5 +1,5 @@
 import type { ExecutionGrant } from '@proofrun/contracts';
-import type { ControlClient } from '../client.js';
+import type { ControlClient, ExecutionTiming } from '../client.js';
 import { AgentFault, pause } from '../http.js';
 
 /** 避免极短租约形成忙循环；续期频率始终快于正常租约的三分之一。 */
@@ -12,8 +12,12 @@ export class LeaseGuard {
   private readonly controller = new AbortController();
   private readonly heartbeat: Promise<void>;
   private leaseTimer: ReturnType<typeof setTimeout> | undefined;
-  private readonly deadlineTimer: ReturnType<typeof setTimeout>;
-  private readonly deadline: number;
+  private deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+  private deadline: number;
+  /** 仅接受新控制代次，防止慢心跳覆盖已确认的暂停或恢复。 */
+  private revision = 0;
+  private paused = false;
+  private deadlineAt: string;
 
   constructor(
     client: Pick<ControlClient, 'heartbeat'>,
@@ -21,6 +25,7 @@ export class LeaseGuard {
     stop: AbortSignal,
   ) {
     this.signal = AbortSignal.any([stop, this.controller.signal]);
+    this.deadlineAt = execution.taskDeadlineAt;
     this.deadline =
       performance.now() +
       Math.max(0, Date.parse(execution.taskDeadlineAt) - Date.now());
@@ -40,9 +45,11 @@ export class LeaseGuard {
           ),
           signal,
         );
-        expires = await client.heartbeat(execution, signal);
+        const reply = await client.heartbeat(execution, signal);
         // 回复到达时可能已经被原期限撤权；迟到响应绝不重启一个失效执行。
         signal.throwIfAborted();
+        this.syncTiming(reply);
+        expires = reply.leaseExpiresAt;
         this.arm(expires);
       }
     })().catch(() => {
@@ -50,7 +57,39 @@ export class LeaseGuard {
         this.fail('LEASE_LOST', '控制面续租失败，已停止执行');
     });
   }
-  /** 任务期限在领取时映射到单调时钟，续租不能增加任务预算。 */
+  /** 仅控制面已确认的代次切换可暂停或刷新预算，普通续租不能加时。 */
+  syncTiming(view: ExecutionTiming): void {
+    if (
+      this.signal.aborted ||
+      !view.controlMode ||
+      view.controlRevision === undefined ||
+      view.controlRevision < this.revision
+    )
+      return;
+    const paused = view.controlMode !== 'AUTO';
+    const deadlineAt = view.taskDeadlineAt ?? this.deadlineAt;
+    if (!Number.isFinite(Date.parse(deadlineAt))) {
+      this.fail('INVALID_EXECUTION_VIEW', '执行截止时间无效');
+      return;
+    }
+    if (this.paused === paused && this.deadlineAt === deadlineAt) {
+      this.revision = view.controlRevision;
+      return;
+    }
+    this.revision = view.controlRevision;
+    this.paused = paused;
+    this.deadlineAt = deadlineAt;
+    clearTimeout(this.deadlineTimer);
+    this.deadline = paused
+      ? Infinity
+      : performance.now() + Math.max(0, Date.parse(deadlineAt) - Date.now());
+    if (!paused)
+      this.deadlineTimer = setTimeout(
+        () => this.fail('TASK_DEADLINE', '任务总时限已到'),
+        this.remaining(),
+      );
+  }
+  /** 自动执行使用单调时钟；暂停期间仍保留独立的 worker 租约计时器。 */
   remaining(): number {
     return Math.max(0, this.deadline - performance.now());
   }

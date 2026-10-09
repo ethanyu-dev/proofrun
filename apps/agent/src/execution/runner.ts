@@ -313,12 +313,13 @@ class Execution {
         this.guard.signal,
       );
   }
-  /** 暂停等待不调用模型，也不增加预算；恢复后必须重新观察页面。 */
+  /** 暂停等待不调用模型；时钟跟随控制面代次，恢复后必须重新观察页面。 */
   private async checkpoint(): Promise<boolean> {
     for (;;) {
       const view = await this.client.view(this.grant, this.guard.signal);
       if (view.taskState !== 'RUNNING')
         throw new AgentFault('EXECUTION_ENDED', '控制面已终止任务');
+      this.guard.syncTiming(view);
       this.details.actions = Math.max(
         this.details.actions,
         view.actionCount ?? 0,
@@ -853,7 +854,7 @@ class Execution {
     }
     throw new AgentFault('MODEL_TURN_BUDGET_EXCEEDED', '模型决策轮数已耗尽');
   }
-  /** 所有接管沿用原租约与预算；登录恢复后重新访问目标，使人工 Cookie 在请求中生效。 */
+  /** 接管保留原租约和动作预算，执行时钟由控制面重置；登录恢复后重新访问目标使 Cookie 生效。 */
   private async requestIntervention(
     reason: string,
     items: string[] | undefined,
@@ -867,6 +868,11 @@ class Execution {
       this.guard.signal,
       items,
     );
+    // 请求成功即暂停本地时钟，不等待下一轮心跳；后台仍独立续租。
+    this.guard.syncTiming({
+      controlMode: 'REQUESTED',
+      controlRevision: this.controlRevision + 1,
+    });
     await this.checkpoint();
     this.workflow.invalidateRecovery();
     this.tracker.reset();

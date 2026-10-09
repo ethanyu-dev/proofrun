@@ -26,7 +26,7 @@
     "taskDeadlineAt": {
       "type": "string",
       "format": "date-time",
-      "description": "包含排队时间的任务硬期限。"
+      "description": "初始执行截止时间；人工暂停及恢复后以控制面视图为准。"
     },
     "sessionId": {
       "type": "string",

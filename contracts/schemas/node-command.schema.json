@@ -95,6 +95,10 @@
             "liveView": {
               "type": "boolean",
               "description": "允许本会话在人工介入时提供实时浏览器画面。"
+            },
+            "renewable": {
+              "type": "boolean",
+              "description": "仅人工介入会话允许持续续期；不固定初始总时长，仍由独立短租约撤权。"
             }
           },
           "required": ["type", "leaseRequestId", "leaseTtlMs", "maxDurationMs"],

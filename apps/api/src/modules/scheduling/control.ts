@@ -3,11 +3,16 @@ import { ApiError, digest } from '../../domain.js';
 import { executionContext, type ExecutionContext } from './state.js';
 import { randomUUID } from 'node:crypto';
 import { interventionToken } from './hitl-token.js';
+import {
+  executionDeadline,
+  HITL_LINK_MS,
+  RESUMED_EXECUTION_MS,
+} from './execution-time.js';
 
 /** 保留近期命令即可检查介入过程；完整历史仍在数据库中。 */
 const ACTIVITY_LIMIT = 100;
 
-/** 人工控制只改变操作权，不新建会话、不续租，也不改写上层任务。 */
+/** 人工控制暂停执行时钟，恢复时重置截止时间；不新建会话或改写任务定义。 */
 export class ExecutionControl {
   constructor(
     private readonly db: Database,
@@ -105,12 +110,15 @@ export class ExecutionControl {
             next,
             digest(interventionToken(this.secret, interventionId)),
             JSON.stringify(items ?? [reason!]),
-            new Date(
-              Math.min(context.deadline_at.getTime(), Date.now() + 30 * 60_000),
-            ),
+            new Date(Date.now() + HITL_LINK_MS),
           ],
         );
       } else if (action === 'resume') {
+        // 与控制代次在同一事务提交；重复恢复在上面的幂等分支返回，不能再次加时。
+        await client.query(
+          "UPDATE pr_tasks SET deadline_at=clock_timestamp()+$2*interval '1 millisecond' WHERE id=$1",
+          [context.task_id, RESUMED_EXECUTION_MS],
+        );
         await client.query(
           'UPDATE pr_interventions SET completed_at=clock_timestamp() WHERE execution_id=$1 AND revision=$2',
           [id, revision],
@@ -130,7 +138,7 @@ export class ExecutionControl {
       context.execution_state !== 'RUNNING' ||
       context.session_state !== 'ACTIVE' ||
       context.lease_expires_at.getTime() <= Date.now() ||
-      context.deadline_at.getTime() <= Date.now()
+      executionDeadline(context) <= Date.now()
     )
       throw new ApiError(
         409,
@@ -145,6 +153,38 @@ export class ExecutionControl {
       controlRevision: context.control_revision,
       controlReason: context.control_reason,
     };
+  }
+
+  /** 受信任任务页可更新过期链接；轮换身份使旧链接不能随续期复活。 */
+  async currentInterventionId(id: string): Promise<string | null> {
+    return this.db.transaction(async (client) => {
+      const context = await executionContext(client, id);
+      try {
+        this.active(context);
+      } catch {
+        return null;
+      }
+      if (context.control_mode === 'AUTO') return null;
+      const row = (
+        await client.query<{ id: string; expires_at: Date }>(
+          'SELECT id,expires_at FROM pr_interventions WHERE execution_id=$1 AND revision=$2 AND completed_at IS NULL FOR UPDATE',
+          [id, context.control_revision],
+        )
+      ).rows[0];
+      if (!row) return null;
+      if (row.expires_at.getTime() > Date.now()) return row.id;
+      const next = randomUUID();
+      await client.query(
+        'UPDATE pr_interventions SET id=$2,token_hash=$3,expires_at=$4 WHERE id=$1',
+        [
+          row.id,
+          next,
+          digest(interventionToken(this.secret, next)),
+          new Date(Date.now() + HITL_LINK_MS),
+        ],
+      );
+      return next;
+    });
   }
 
   /** 管理页面只读操作摘要，不返回命令输入值、机器凭据或执行令牌。 */

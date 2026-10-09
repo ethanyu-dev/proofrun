@@ -114,6 +114,8 @@ export function task(pool: string, screenshot = false) {
 
 /** WebSocket 协议夹具；模拟节点结果和故障，不运行浏览器或 systemd。 */
 export class SimulatedNode {
+  /** 允许单独验证旧节点不能领取暂停时钟的任务。 */
+  renewableSessions = true;
   readonly id = randomUUID();
   readonly epoch = randomUUID();
   token = '';
@@ -246,6 +248,7 @@ export class SimulatedNode {
         networkEvidence: this.networkEvidence,
         authState: this.authState,
         liveView: true,
+        renewableSessions: this.renewableSessions,
         trace: this.trace,
       },
     });

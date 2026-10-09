@@ -18,7 +18,7 @@ export type VerificationTask = {
      */
     nodePool: string;
     /**
-     * 是否允许人工辅助；等待计入原任务预算，人工不能修改验收标准。
+     * 是否允许人工辅助；等待暂停执行时限，完成后重新计时二十分钟，人工不能修改验收标准。
      */
     allowIntervention?: boolean;
     auth?: {
@@ -276,7 +276,7 @@ export interface ExecutionGrant {
    */
   leaseExpiresAt: string;
   /**
-   * 包含排队时间的任务硬期限。
+   * 初始执行截止时间；人工暂停及恢复后以控制面视图为准。
    */
   taskDeadlineAt: string;
   /**

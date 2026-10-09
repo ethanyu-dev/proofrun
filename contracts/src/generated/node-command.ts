@@ -96,6 +96,10 @@ export interface OpenSession {
    * 允许本会话在人工介入时提供实时浏览器画面。
    */
   liveView?: boolean;
+  /**
+   * 仅人工介入会话允许持续续期；不固定初始总时长，仍由独立短租约撤权。
+   */
+  renewable?: boolean;
 }
 /**
  * 延长仍然有效的会话租约，不排在浏览器操作队列后。

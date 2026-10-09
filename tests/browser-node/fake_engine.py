@@ -44,6 +44,11 @@ elif operation in ['fill', 'click', 'press', 'scroll']:
         time.sleep(30)
 elif operation == 'wait':
     time.sleep(30)
+# 范围：仅允许可续期会话初始化视口及流服务；不提供真实画面或浏览器交互。
+elif operation == 'set':
+    data = {}
+elif operation == 'stream':
+    data = {'enabled': True}
 # 范围：固定视口仅支撑截图管道夹具，不模拟真实布局或视觉命中。
 elif operation == 'eval':
     data = {'result': {'url': 'http://fixture/', 'width': 1280, 'height': 720, 'x': 0, 'y': 0}}
