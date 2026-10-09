@@ -5,6 +5,7 @@ import { execute } from '../../apps/agent/dist/execution/runner.js';
 import { ChatModel } from '../../apps/agent/dist/model/chat.js';
 import { ControlClient } from '../../apps/agent/dist/client.js';
 import { AgentFault, pause } from '../../apps/agent/dist/http.js';
+import { LeaseGuard } from '../../apps/agent/dist/execution/lease.js';
 import { config, grant, FakeControl, finish, modelServer } from './fixture.mjs';
 
 /** 每次调用独占一个本地模型 HTTP 端口，保证失败也关闭监听。 */
@@ -597,37 +598,103 @@ test('未授权人工介入时返回明确阻塞', async () => {
   assert.equal(report.executionDetails.reasonCode, 'INTERVENTION_DISABLED');
 });
 
-// 范围：人工等待仍受原截止时间撤权并生成错误报告；不依赖页面关闭触发回收。
-test('人工等待不会延长原任务时限', async () => {
+// 范围：人工等待跨过初始时限并在恢复后重新计时；控制面与用户完成动作由夹具模拟。
+test('人工等待暂停时钟，恢复后使用控制面的新截止时间', async () => {
   const execution = grant();
   execution.taskDeadlineAt = new Date(Date.now() + 100).toISOString();
   execution.task.environment.allowIntervention = true;
   const client = new FakeControl();
-  let mode = 'AUTO';
+  let mode = 'AUTO',
+    revision = 0,
+    deadline = execution.taskDeadlineAt,
+    turns = 0;
   const originalView = client.view.bind(client);
   client.view = async (grant) => ({
     ...(await originalView(grant)),
     controlMode: mode,
-    controlRevision: mode === 'AUTO' ? 0 : 1,
+    controlRevision: revision,
+    taskDeadlineAt: deadline,
     actionCount: 1,
   });
   client.intervene = async () => {
     mode = 'REQUESTED';
+    revision = 1;
   };
   client.acknowledge = async () => {
     mode = 'HUMAN';
+    setTimeout(() => {
+      mode = 'AUTO';
+      revision = 2;
+      deadline = new Date(Date.now() + 400).toISOString();
+    }, 250);
   };
   const model = {
-    decide: async () => ({
-      decision: { type: 'verification.intervene', reason: '需要登录' },
-      promptTokens: 0,
-      completionTokens: 0,
-    }),
+    decide: async (_input, signal) => {
+      turns++;
+      if (turns > 1) await pause(2000, signal);
+      return {
+        decision: { type: 'verification.intervene', reason: '需要登录' },
+        promptTokens: 0,
+        completionTokens: 0,
+      };
+    },
   };
   const report = await execute(config, client, model, execution);
   assert.equal(report.executionDisposition, 'ERROR');
   assert.equal(report.executionDetails.reasonCode, 'TASK_DEADLINE');
-  assert.equal(report.executionDetails.modelCalls, 1);
+  assert.equal(turns, 2);
+});
+
+// 范围：乱序心跳不能覆盖恢复代次，暂停仍服从租约及撤销信号；不代表四小时真实运行压测。
+test('人工时钟忽略旧代次，普通续租不重置二十分钟', async () => {
+  const execution = grant();
+  const stop = new AbortController();
+  const guard = new LeaseGuard(new FakeControl(), execution, stop.signal);
+  try {
+    guard.syncTiming({ controlMode: 'HUMAN', controlRevision: 1 });
+    assert.equal(guard.remaining(), Infinity);
+    const taskDeadlineAt = new Date(Date.now() + 20 * 60000).toISOString();
+    guard.syncTiming({
+      controlMode: 'AUTO',
+      controlRevision: 2,
+      taskDeadlineAt,
+    });
+    const remaining = guard.remaining();
+    assert.ok(remaining > 20 * 60000 - 1000);
+    guard.syncTiming({
+      controlMode: 'HUMAN',
+      controlRevision: 1,
+      taskDeadlineAt: execution.taskDeadlineAt,
+    });
+    guard.syncTiming({
+      controlMode: 'AUTO',
+      controlRevision: 2,
+      taskDeadlineAt,
+    });
+    assert.ok(guard.remaining() <= remaining);
+    stop.abort(new Error('取消'));
+    assert.equal(guard.signal.aborted, true);
+  } finally {
+    await guard.close();
+  }
+});
+
+// 范围：暂停状态下独立租约计时仍撤权；心跳挂起由夹具模拟。
+test('人工暂停仍终止续租挂起的 worker', async () => {
+  const execution = grant();
+  execution.leaseExpiresAt = new Date(Date.now() + 100).toISOString();
+  const client = new FakeControl();
+  client.hangingHeartbeat = true;
+  const guard = new LeaseGuard(client, execution, new AbortController().signal);
+  try {
+    guard.syncTiming({ controlMode: 'HUMAN', controlRevision: 1 });
+    await new Promise((resolve) =>
+      guard.signal.addEventListener('abort', resolve, { once: true }),
+    );
+    assert.equal(guard.signal.reason.code, 'LEASE_LOST');
+  } finally {
+    await guard.close();
+  }
 });
 
 // 范围：初始导航后的连续控制权切换只刷新观察，不重复导航；不模拟未知写入。

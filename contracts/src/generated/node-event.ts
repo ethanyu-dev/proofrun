@@ -83,6 +83,10 @@ export type NodeEvent =
          * 支持 Chromium trace 的采集、可靠上传和下载。
          */
         trace?: boolean;
+        /**
+         * 支持人工等待暂停时限的可续期会话。
+         */
+        renewableSessions?: boolean;
       };
       /**
        * 节点接受的租约和会话硬期限上限，控制面不得超额授权。

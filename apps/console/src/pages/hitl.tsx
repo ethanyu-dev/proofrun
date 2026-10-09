@@ -251,7 +251,7 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
                 <p className="muted">任务 {state.taskId}</p>
                 <p className="note">
                   有效至 {new Date(state.expiresAt).toLocaleString()}
-                  ，等待时间计入任务预算。
+                  ，人工等待不计入执行时限；完成后重新计时 20 分钟。
                   <strong
                     className={
                       Date.parse(state.expiresAt) - now <= 60000
@@ -259,7 +259,7 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
                         : 'hitl-time'
                     }
                   >
-                    剩余处理时间：{remainingTime(state.expiresAt, now)}
+                    处理链接剩余有效期：{remainingTime(state.expiresAt, now)}
                   </strong>
                 </p>
                 <div className="hitl-checks">
@@ -326,7 +326,7 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
             <p className="muted note">
               {state?.canSaveAuth &&
                 '完成时保存登录状态；其他会话已更新时保留较新的快照。'}
-              完成后自动关闭此页。直接离开只会断开画面，任务继续等待人工处理。
+              完成后自动关闭此页。直接离开只会断开画面，任务继续等待人工处理。链接过期后请从任务详情重新打开处理页。
             </p>
           </aside>
           <section

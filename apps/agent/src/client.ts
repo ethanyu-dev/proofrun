@@ -31,7 +31,7 @@ export type BrowserOperation = Extract<
 >;
 export type CommandResult = Extract<NodeEvent, { type: 'command.result' }>;
 /** 执行视图只用于生命周期控制；节点和会话身份始终来自领取响应。 */
-export interface ExecutionView {
+export interface ExecutionView extends ExecutionTiming {
   /** 任务终态用于撤销模型调用，不依赖模型理解取消文本。 */
   taskState: string;
   /** 操作权与代次独立于任务生命周期，暂停期间仍由原 worker 续租。 */
@@ -45,6 +45,13 @@ export interface ExecutionView {
   leaseExpiresAt: string;
   /** 服务端登记的证据及交付状态，不接受模型自报的 URL。 */
   artifacts: Array<{ id: string; kind: string; sha256: string; state: string }>;
+}
+
+/** 控制面时间快照；旧版心跳未带这些字段时不能自行推断预算已刷新。 */
+export interface ExecutionTiming {
+  taskDeadlineAt?: string;
+  controlMode?: 'AUTO' | 'REQUESTED' | 'HUMAN';
+  controlRevision?: number;
 }
 
 /** worker 只连接控制面，从不直接连接浏览器节点或业务内网。 */
@@ -139,17 +146,17 @@ export class ControlClient {
   async heartbeat(
     execution: ExecutionGrant,
     signal: AbortSignal,
-  ): Promise<string> {
+  ): Promise<ExecutionTiming & { leaseExpiresAt: string }> {
     const value = (await this.request(
       execution,
       '/heartbeat',
       'POST',
       undefined,
       signal,
-    )) as { leaseExpiresAt: string };
+    )) as ExecutionTiming & { leaseExpiresAt: string };
     if (!value || !Number.isFinite(Date.parse(value.leaseExpiresAt)))
       throw new AgentFault('INVALID_LEASE', '续租回复无效');
-    return value.leaseExpiresAt;
+    return value;
   }
   /** 同一命令在所有重送中保持完整内容不变，绝不换 ID 重试不确定写入。 */
   async command(

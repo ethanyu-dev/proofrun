@@ -58,7 +58,7 @@ pub struct Session {
     pub fence: u64,
     /// 当前租约期限，使用跨进程一致的 CLOCK_BOOTTIME 毫秒。
     pub deadline: AtomicU64,
-    /// 会话绝对硬期限，续租不得超过它。
+    /// 普通会话的总时限；人工可续期会话为 u64::MAX，仍受 deadline 短租约限制。
     pub hard_deadline: u64,
     /// 登录槽与网络采集只在创建时绑定，恢复不复用旧会话。
     auth_state: Option<std::path::PathBuf>,
@@ -256,7 +256,19 @@ impl Sessions {
             ),
             _ => (None, false, false, None, false, false),
         };
-        let hard_deadline = process::boot_ms() + max_ms;
+        // 可续期会话只取消初始总时长；父进程和 host 的短租约看门狗仍各自撤权。
+        let renewable = matches!(
+            &command.command,
+            BrowserCommand::SessionOpen {
+                renewable: Some(true),
+                ..
+            }
+        );
+        let hard_deadline = if renewable {
+            u64::MAX
+        } else {
+            process::boot_ms() + max_ms
+        };
         let (work, rx) = mpsc::channel(1);
         let (renew, renew_rx) = watch::channel(deadline.min(hard_deadline));
         let (closed_tx, closed) = watch::channel(None);
@@ -381,7 +393,7 @@ async fn start(
     store: &Store,
     record: &mut SessionRecord,
     deadline: u64,
-    max_ms: u64,
+    max_ms: Option<u64>,
     session: &Session,
 ) -> anyhow::Result<HostIo> {
     let directory = config.home.join("sessions").join(&record.launch_id);
@@ -451,7 +463,7 @@ async fn supervise(
     let startup = tokio::select! {
         result = tokio::time::timeout(Duration::from_millis(startup_budget), start(
             &config, &store, &mut record, session.deadline.load(Ordering::SeqCst),
-            session.hard_deadline.saturating_sub(process::boot_ms()), &session,
+            (session.hard_deadline != u64::MAX).then(|| session.hard_deadline.saturating_sub(process::boot_ms())), &session,
         )) => result.unwrap_or_else(|_| Err(anyhow::anyhow!("startup timed out"))),
         _ = session.cancel.cancelled() => Err(anyhow::anyhow!("startup cancelled")),
     };

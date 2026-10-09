@@ -83,7 +83,7 @@ export class FakeControl {
   async heartbeat(_execution, signal) {
     this.renewals++;
     if (this.hangingHeartbeat) await pause(10_000, signal);
-    return new Date(Date.now() + 3000).toISOString();
+    return { leaseExpiresAt: new Date(Date.now() + 3000).toISOString() };
   }
   async command(execution, id, operation) {
     this.calls.push({ id, operation });

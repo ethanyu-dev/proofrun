@@ -18,7 +18,7 @@ export type VerificationTask = {
      */
     nodePool: string;
     /**
-     * 是否允许人工辅助；等待计入原任务预算，人工不能修改验收标准。
+     * 是否允许人工辅助；等待暂停执行时限，完成后重新计时二十分钟，人工不能修改验收标准。
      */
     allowIntervention?: boolean;
     auth?: {

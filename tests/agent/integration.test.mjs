@@ -596,10 +596,11 @@ test(
         assert.equal(stored.report.verdict, null);
       });
 
-      // 范围：真实 Agent/HTTP/租约与人工交接闭环；人工动作由协议节点模拟，不代表业务登录有效。
+      // 范围：真实 Agent/HTTP/租约跨过初始截止时间后恢复；人工和浏览器为协议夹具，不代表业务登录有效。
       await suite.test('模型请求人工、管理员操作后恢复并报告', async () => {
         const definition = task('human-agent');
         definition.environment.allowIntervention = true;
+        definition.budget.timeoutMs = 3000;
         let operator;
         const outcome = await run(definition, (context, turn) => {
           if (turn === 1) {
@@ -609,6 +610,13 @@ test(
                 (d) => d.executions[0]?.control_mode === 'HUMAN',
               );
               const execution = detail.executions[0];
+              await pause(
+                Math.max(0, Date.parse(detail.deadline_at) - Date.now()) + 150,
+              );
+              assert.equal(
+                (await api('GET', `/v1/tasks/${definition.taskId}`)).state,
+                'RUNNING',
+              );
               const basePath = `/v1/admin/executions/${execution.id}`;
               const commandId = randomUUID();
               await api('POST', `${basePath}/commands`, {
@@ -636,6 +644,7 @@ test(
               reason: '人工处理页面前提',
             };
           }
+          assert.ok(context.budgetRemaining.timeMs > 19 * 60000);
           return finish(context);
         });
         await operator;

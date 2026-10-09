@@ -114,7 +114,11 @@ pub async fn unit_info(unit: &str) -> Result<BTreeMap<String, String>> {
     Ok(map)
 }
 /// 在独立 systemd 服务和 cgroup 中启动同版本二进制的 session-host。
-pub async fn launch(record: &SessionRecord, session_dir: &Path, max_ms: u64) -> Result<Child> {
+pub async fn launch(
+    record: &SessionRecord,
+    session_dir: &Path,
+    max_ms: Option<u64>,
+) -> Result<Child> {
     ensure!(
         cfg!(target_os = "linux"),
         "production session isolation requires Linux/systemd"
@@ -128,20 +132,25 @@ pub async fn launch(record: &SessionRecord, session_dir: &Path, max_ms: u64) -> 
         "--property=KillMode=control-group",
         "--property=Restart=no",
         "--property=TimeoutStopSec=3s",
-    ])
-    .arg(format!(
-        "--property=RuntimeMaxSec={}ms",
-        max_ms + RUNTIME_GRACE_MS
-    ))
-    .arg(format!("--unit={}", record.unit))
-    .arg(format!("--description=proofrun:{}", record.launch_id))
-    .arg(std::env::current_exe()?)
-    .args(["session-host", "--directory"])
-    .arg(session_dir)
-    .stdin(Stdio::piped())
-    .stdout(Stdio::piped())
-    .stderr(Stdio::piped())
-    .kill_on_drop(true);
+    ]);
+    // 人工等待不设固定 systemd 总时长；host 断管道或短租约到期退出后仍清理整个 cgroup。
+    if let Some(max_ms) = max_ms {
+        cmd.arg(format!(
+            "--property=RuntimeMaxSec={}ms",
+            max_ms + RUNTIME_GRACE_MS
+        ));
+    } else {
+        cmd.arg("--property=RuntimeMaxSec=infinity");
+    }
+    cmd.arg(format!("--unit={}", record.unit))
+        .arg(format!("--description=proofrun:{}", record.launch_id))
+        .arg(std::env::current_exe()?)
+        .args(["session-host", "--directory"])
+        .arg(session_dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
     Ok(cmd.spawn()?)
 }
 /// 核对 unit 描述和启动身份，再把 cgroup 记录到恢复账本。

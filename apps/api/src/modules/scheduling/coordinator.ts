@@ -1,3 +1,4 @@
+import { executionDeadline } from './execution-time.js';
 import { summarizeReport } from '@proofrun/contracts';
 import { randomUUID } from 'node:crypto';
 import {
@@ -648,6 +649,9 @@ export class Coordinator {
               context,
               {
                 type: 'session.open',
+                ...(task.environment.allowIntervention
+                  ? { renewable: true }
+                  : {}),
                 liveView:
                   task.environment.allowIntervention === true ||
                   !!task.comparison,
@@ -691,6 +695,8 @@ export class Coordinator {
       (!task.steps || heartbeat.limits.maxSessionMs >= task.budget.timeoutMs) &&
       (!(task.environment.allowIntervention || task.comparison) ||
         heartbeat.capabilities.liveView === true) &&
+      (!task.environment.allowIntervention ||
+        heartbeat.capabilities.renewableSessions === true) &&
       (!sessionAuth(task) || heartbeat.capabilities.authState === true) &&
       (!task.acceptanceCriteria.some((c) =>
         c.evidenceKinds.includes('NETWORK'),
@@ -718,7 +724,7 @@ export class Coordinator {
         this.config.nodeLeaseMs,
         heartbeat.limits.maxLeaseMs,
         context.lease_expires_at.getTime() - Date.now(),
-        context.deadline_at.getTime() - Date.now(),
+        executionDeadline(context) - Date.now(),
       ),
     );
   }
@@ -734,13 +740,13 @@ export class Coordinator {
     if (active) this.active(context);
   }
 
-  /** 人工介入不延长任务期限，也不能复活失联 worker 的执行权。 */
+  /** 人工等待暂停执行时钟，但不能复活失联 worker 的执行权。 */
   private active(context: ExecutionContext): void {
     if (
       context.task_state !== 'RUNNING' ||
       !['STARTING', 'RUNNING'].includes(context.execution_state) ||
       context.lease_expires_at.getTime() <= Date.now() ||
-      context.deadline_at.getTime() <= Date.now()
+      executionDeadline(context) <= Date.now()
     )
       throw new ApiError(409, 'EXECUTION_EXPIRED', 'Execution lease ended');
   }
@@ -752,7 +758,7 @@ export class Coordinator {
       this.authorize(context, token, true);
       const expires = new Date(
         Math.min(
-          context.deadline_at.getTime(),
+          executionDeadline(context),
           Date.now() + this.config.workerLeaseMs,
         ),
       );
@@ -760,7 +766,12 @@ export class Coordinator {
         'UPDATE pr_executions SET lease_expires_at=$2 WHERE id=$1',
         [id, expires],
       );
-      return { leaseExpiresAt: expires };
+      return {
+        leaseExpiresAt: expires,
+        taskDeadlineAt: context.deadline_at,
+        controlMode: context.control_mode,
+        controlRevision: context.control_revision,
+      };
     });
   }
 
@@ -905,7 +916,7 @@ export class Coordinator {
       }
       const budget = Math.max(
         1,
-        Math.min(timeoutMs, context.deadline_at.getTime() - Date.now()),
+        Math.min(timeoutMs, executionDeadline(context) - Date.now()),
       );
       await insertCommand(
         client,
@@ -973,7 +984,7 @@ export class Coordinator {
       // 截止时间已经过去时，报告不能抢在定时扫描前将任务记录为正常完成。
       if (
         context.task_state === 'RUNNING' &&
-        context.deadline_at.getTime() <= Date.now()
+        executionDeadline(context) <= Date.now()
       ) {
         await stopExecution(client, context, 'TIMED_OUT', 'TASK_DEADLINE');
         context.task_state = 'TIMED_OUT';
@@ -1210,7 +1221,7 @@ export class Coordinator {
         context.task_state !== 'RUNNING' ||
         context.execution_state !== 'RUNNING' ||
         context.lease_expires_at.getTime() <= Date.now() ||
-        context.deadline_at.getTime() <= Date.now()
+        executionDeadline(context) <= Date.now()
       )
         continue;
       await insertCommand(
@@ -1387,14 +1398,14 @@ export class Coordinator {
     );
     const expired = await this.db.query(
       `SELECT e.id FROM pr_executions e JOIN pr_tasks t ON t.id=e.task_id
-      WHERE e.state IN ('STARTING','RUNNING') AND (e.lease_expires_at<=clock_timestamp() OR t.deadline_at<=clock_timestamp()) LIMIT $1`,
+      WHERE e.state IN ('STARTING','RUNNING') AND (e.lease_expires_at<=clock_timestamp() OR (e.control_mode='AUTO' AND t.deadline_at<=clock_timestamp())) LIMIT $1`,
       [BATCH_SIZE],
     );
     for (const row of expired.rows)
       await this.db.transaction(async (client) => {
         const context = await executionContext(client, row.id as string);
         if (!['STARTING', 'RUNNING'].includes(context.execution_state)) return;
-        if (context.deadline_at.getTime() <= Date.now())
+        if (executionDeadline(context) <= Date.now())
           await stopExecution(
             client,
             context,

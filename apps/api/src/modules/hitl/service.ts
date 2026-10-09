@@ -93,7 +93,6 @@ export class HitlService {
     if (
       grant.completed_at ||
       grant.expires_at.getTime() <= Date.now() ||
-      grant.deadline_at.getTime() <= Date.now() ||
       grant.lease_expires_at.getTime() <= Date.now() ||
       grant.task_state !== 'RUNNING' ||
       grant.execution_state !== 'RUNNING' ||
@@ -105,14 +104,9 @@ export class HitlService {
   }
   /** 只供已经验证过执行者或管理员身份的 HTTP 路由读取链接。 */
   async current(executionId: string) {
-    const row = (
-      await this.db.query(
-        'SELECT id FROM pr_interventions WHERE execution_id=$1 ORDER BY revision DESC LIMIT 1',
-        [executionId],
-      )
-    ).rows[0];
-    if (!row) return { intervention: null };
-    const grant = await this.grant(row.id);
+    const id = await this.control.currentInterventionId(executionId);
+    if (!id) return { intervention: null };
+    const grant = await this.grant(id);
     try {
       this.active(grant);
     } catch {

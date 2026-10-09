@@ -121,7 +121,7 @@ impl Node {
             "sessionId":record.session_id,"state":record.state,"leaseId":record.lease_id,"fence":record.fence
         })).collect();
         Ok(
-            json!({"type":"node.heartbeat","protocolVersion":"0.1","nodeId":self.id,"nodeEpoch":self.epoch,"leaseRequestId":request,"pool":self.config.pool,"capacity":self.config.capacity,"limits":{"maxLeaseMs":self.config.max_lease_ms,"maxSessionMs":self.config.max_session_ms},"occupied":occupied,"capabilities":{"observe":true,"screenshot":true,"conditionWait":true,"writeActions":self.config.allow_unverified_writes,"engineWritesVerified":false,"networkEvidence":true,"authState":true,"liveView":true,"trace":true}}),
+            json!({"type":"node.heartbeat","protocolVersion":"0.1","nodeId":self.id,"nodeEpoch":self.epoch,"leaseRequestId":request,"pool":self.config.pool,"capacity":self.config.capacity,"limits":{"maxLeaseMs":self.config.max_lease_ms,"maxSessionMs":self.config.max_session_ms},"occupied":occupied,"capabilities":{"observe":true,"screenshot":true,"conditionWait":true,"writeActions":self.config.allow_unverified_writes,"engineWritesVerified":false,"networkEvidence":true,"authState":true,"liveView":true,"renewableSessions":true,"trace":true}}),
         )
     }
     /// 将控制面的 TTL 锚定到对应心跳的发出时刻，网络延迟也消耗租约。
@@ -297,8 +297,16 @@ impl Node {
                 lease_request_id,
                 lease_ttl_ms,
                 max_duration_ms,
+                renewable,
+                live_view,
                 ..
             } => {
+                if renewable.unwrap_or(false) && !live_view.unwrap_or(false) {
+                    return Err(Fault::rejected(
+                        "INVALID_ARGUMENT",
+                        "renewable session requires live view",
+                    ));
+                }
                 if *max_duration_ms == 0 || *max_duration_ms > self.config.max_session_ms {
                     return Err(Fault::rejected(
                         "INVALID_ARGUMENT",

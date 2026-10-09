@@ -2146,6 +2146,230 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       );
     });
 
+    // 范围：数据库时钟前移模拟长等待，验证暂停、链接轮换、恢复幂等和失联回收；不等待真实四小时或操作真实浏览器。
+    await suite.test(
+      '人工等待不消耗执行时限，链接四小时且恢复重置二十分钟',
+      async (t) => {
+        const node = await addNode('human-time');
+        node.renewableSessions = false;
+        node.heartbeat();
+        await until(
+          async () => (await api('GET', '/v1/nodes')).data.nodes,
+          (rows) =>
+            rows.some(
+              (n: any) =>
+                n.id === node.id && n.capabilities.renewableSessions === false,
+            ),
+        );
+        const definition = {
+          ...task('human-time'),
+          environment: {
+            id: 'fixture',
+            nodePool: 'human-time',
+            allowIntervention: true,
+          },
+          budget: { timeoutMs: 60000, maxActions: 20 },
+        };
+        await submit(definition);
+        assert.equal(
+          (
+            await api(
+              'POST',
+              '/v1/worker/claim',
+              { type: 'worker.claim', workerId: 'legacy-check' },
+              WORKER,
+            )
+          ).data.execution,
+          null,
+        );
+        node.renewableSessions = true;
+        node.heartbeat();
+        const execution = await claim();
+        const worker = new SimulatedWorker(base, execution);
+        t.after(() => worker.close());
+        await ready(execution);
+        const adminPath = `/v1/admin/executions/${execution.id}`;
+        const workerPath = `/v1/executions/${execution.id}`;
+        await api('POST', `${adminPath}/intervene`, {
+          type: 'execution.intervene',
+          reason: '等待用户',
+          controlRevision: 0,
+        });
+        const link = (await api('GET', `${adminPath}/intervention`)).data
+          .intervention;
+        assert.ok(Date.parse(link.expiresAt) - Date.now() > 4 * 3600000 - 5000);
+        assert.ok(Date.parse(link.expiresAt) - Date.now() <= 4 * 3600000);
+        await sql.query(
+          "UPDATE pr_tasks SET deadline_at=clock_timestamp()-interval '1 hour' WHERE id=$1",
+          [definition.taskId],
+        );
+        await delay(150);
+        assert.equal(
+          (await api('GET', `/v1/tasks/${definition.taskId}`)).data.state,
+          'RUNNING',
+        );
+        const heartbeat = await api(
+          'POST',
+          `${workerPath}/heartbeat`,
+          undefined,
+          execution.leaseToken,
+        );
+        assert.equal(heartbeat.status, 200);
+        assert.equal(heartbeat.data.controlMode, 'REQUESTED');
+        assert.ok(Date.parse(heartbeat.data.leaseExpiresAt) > Date.now());
+        assert.equal(
+          (
+            await api(
+              'POST',
+              `${workerPath}/control`,
+              {
+                type: 'execution.control',
+                action: 'acknowledge',
+                controlRevision: 1,
+              },
+              execution.leaseToken,
+            )
+          ).status,
+          200,
+        );
+        await sql.query(
+          "UPDATE pr_interventions SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",
+          [link.id],
+        );
+        await delay(150);
+        assert.equal(
+          (await api('GET', `/v1/tasks/${definition.taskId}`)).data.state,
+          'RUNNING',
+        );
+        const renewed = (await api('GET', `${adminPath}/intervention`)).data
+          .intervention;
+        assert.notEqual(renewed.id, link.id);
+        assert.notEqual(renewed.url, link.url);
+        assert.ok(
+          Date.parse(renewed.expiresAt) - Date.now() > 4 * 3600000 - 5000,
+        );
+        assert.equal(
+          (await api('GET', `${adminPath}/intervention`)).data.intervention.id,
+          renewed.id,
+        );
+        const stale = new WebSocket(
+          `${base.replace(/^http/, 'ws')}/v1/hitl/connect`,
+          { origin: base },
+        );
+        t.after(() => stale.close());
+        const messages: any[] = [];
+        stale.on('message', (d) => messages.push(JSON.parse(d.toString())));
+        await new Promise<void>((resolve) => stale.once('open', resolve));
+        stale.send(
+          JSON.stringify({
+            type: 'authenticate',
+            id: link.id,
+            token: link.path.split('/').at(-1),
+          }),
+        );
+        await until(
+          async () => messages,
+          (rows) => rows.some((m) => m.type === 'error'),
+        );
+        const commandId = randomUUID();
+        assert.equal(
+          (
+            await api('POST', `${adminPath}/commands`, {
+              type: 'execution.command',
+              commandId,
+              controlRevision: 1,
+              timeoutMs: 1000,
+              command: { type: 'browser.input', action: 'press', value: 'Tab' },
+            })
+          ).status,
+          202,
+        );
+        await until(
+          async () => (await api('GET', `${adminPath}/activity`)).data,
+          (d) =>
+            d.commands.some(
+              (c: any) => c.id === commandId && c.status === 'SUCCEEDED',
+            ),
+        );
+        const resume = {
+          type: 'execution.control',
+          action: 'resume',
+          controlRevision: 1,
+        };
+        assert.equal(
+          (await api('POST', `${adminPath}/control`, resume)).status,
+          200,
+        );
+        const resumed = (
+          await api('GET', workerPath, undefined, execution.leaseToken)
+        ).data;
+        assert.equal(resumed.controlMode, 'AUTO');
+        assert.equal(resumed.actionCount, 1);
+        assert.ok(
+          Date.parse(resumed.taskDeadlineAt) - Date.now() > 20 * 60000 - 5000,
+        );
+        assert.ok(
+          Date.parse(resumed.taskDeadlineAt) - Date.now() <= 20 * 60000,
+        );
+        await api('POST', `${adminPath}/control`, resume);
+        assert.equal(
+          (await api('GET', workerPath, undefined, execution.leaseToken)).data
+            .taskDeadlineAt,
+          resumed.taskDeadlineAt,
+        );
+        // 恢复后重新服从时限；只有人工暂停可越过旧 deadline。
+        await sql.query(
+          'UPDATE pr_tasks SET deadline_at=clock_timestamp() WHERE id=$1',
+          [definition.taskId],
+        );
+        await until(
+          async () => (await api('GET', `/v1/tasks/${definition.taskId}`)).data,
+          (d) => d.state === 'TIMED_OUT',
+        );
+        assert.equal(
+          (await api('POST', `${adminPath}/control`, resume)).status,
+          409,
+        );
+        await cleaned(definition.taskId);
+      },
+    );
+
+    // 范围：人工暂停不能续活失联 worker；数据库回拨租约，不模拟真实网络故障。
+    await suite.test('人工等待仍回收已失联的执行租约', async () => {
+      await addNode('human-lost');
+      const definition = {
+        ...task('human-lost'),
+        environment: {
+          id: 'fixture',
+          nodePool: 'human-lost',
+          allowIntervention: true,
+        },
+      };
+      await submit(definition);
+      const execution = await claim();
+      await ready(execution);
+      await api('POST', `/v1/admin/executions/${execution.id}/intervene`, {
+        type: 'execution.intervene',
+        reason: '等待人工',
+        controlRevision: 0,
+      });
+      await sql.query(
+        'UPDATE pr_executions SET lease_expires_at=clock_timestamp() WHERE id=$1',
+        [execution.id],
+      );
+      const ended = await until(
+        async () => (await api('GET', `/v1/tasks/${definition.taskId}`)).data,
+        (d) => d.state === 'ERROR',
+      );
+      assert.equal(ended.error.code, 'WORKER_LEASE_EXPIRED');
+      assert.equal(
+        (await api('GET', `/v1/admin/executions/${execution.id}/intervention`))
+          .data.intervention,
+        null,
+      );
+      await cleaned(definition.taskId);
+    });
+
     // 范围：跨初始租约的人工接管与重连、独立链接、单一操作者、输入去重和完成撤权；节点画面为夹具，不证明 Chrome 交互。
     await suite.test('独立 HITL 链接限定本次任务并在完成后撤权', async (t) => {
       const node = await addNode('hitl-link');

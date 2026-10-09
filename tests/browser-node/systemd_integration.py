@@ -76,8 +76,9 @@ class Client:
         self.send(command)
         return self.result(command)
 
-    def open(self, session, ttl=60000):
-        return self.call(session, 'session.open', leaseRequestId=self.heartbeat['leaseRequestId'], leaseTtlMs=ttl, maxDurationMs=120000)
+    def open(self, session, ttl=60000, max_ms=120000, renewable=False):
+        options = {'renewable': True, 'liveView': True} if renewable else {}
+        return self.call(session, 'session.open', leaseRequestId=self.heartbeat['leaseRequestId'], leaseTtlMs=ttl, maxDurationMs=max_ms, **options)
 
     def fresh_heartbeat(self):
         # cgroup 核查耗时可能让旧心跳滞留在测试读取队列中。
@@ -192,6 +193,24 @@ def run():
         assert (client.directory('two') / 'writes').read_text() == '1'
         checks.append('unknown write is never replayed')
 
+        # 范围：普通会话保留总时限；人工可续期会话跨过初始时限，仍在短租约到期时清理。引擎为故障夹具。
+        assert client.heartbeat['capabilities']['renewableSessions'] is True
+        client.fresh_heartbeat()
+        assert_ok(client.open('fixed-time', max_ms=1000))
+        wait_gone(client.pids('fixed-time'))
+        client.fresh_heartbeat()
+        assert_ok(client.open('human-time', ttl=3000, max_ms=1000, renewable=True))
+        human_pids = client.pids('human-time')
+        runtime = subprocess.check_output(['systemctl', '--user', 'show', client.record('human-time')['unit'], '-p', 'RuntimeMaxUSec', '--value'], text=True).strip()
+        assert runtime == 'infinity', runtime
+        assert_ok(client.call('human-time', 'session.renew', leaseRequestId=client.heartbeat['leaseRequestId'], leaseTtlMs=5000))
+        time.sleep(1.5)
+        assert_ok(client.call('human-time', 'browser.observe'))
+        wait_gone(human_pids)
+        late = client.call('human-time', 'session.renew', leaseRequestId=client.heartbeat['leaseRequestId'], leaseTtlMs=60000)
+        assert late['operationStatus'] != 'SUCCEEDED', late
+        checks.append('renewable HITL session crosses initial duration but expires with lease')
+
         # 续租控制路径：长等待期间续租绕过浏览器操作许可，关闭仍可取消等待。
         # 这里通过本地管道送命令，不覆盖网络延迟或断线后的续租。
         client.fresh_heartbeat()
@@ -219,7 +238,7 @@ def run():
 
         # 主进程 SIGKILL：新 epoch 启动后关闭旧进程范围，未提交命令恢复为 UNKNOWN。
         # 不模拟主机重启或 SQLite 损坏。
-        assert_ok(client.open('restart'))
+        assert_ok(client.open('restart', renewable=True))
         restart_pids = client.pids('restart')
         old_epoch = client.heartbeat['nodeEpoch']
         interrupted = client.request('restart', 'browser.wait', selector='#never', text='ready', timeout_ms=30000)

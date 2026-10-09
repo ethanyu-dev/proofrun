@@ -21,7 +21,7 @@ export interface ExecutionContext {
   definition: VerificationTask;
   /** 是否允许继续业务执行；与物理清理进度独立。 */
   task_state: string;
-  /** 包含排队时间的任务硬期限。 */
+  /** 自动执行的截止时间；人工暂停期间不生效，恢复后重置。 */
   deadline_at: Date;
   /** 本次执行令牌摘要，不能用全局 worker 凭据代替。 */
   token_hash: string;
