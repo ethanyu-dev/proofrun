@@ -37,6 +37,12 @@ elif operation == 'snapshot':
     data = {'snapshot': '- button "Save" [ref=e1]', 'refs': {'e1': {'role': 'button', 'name': 'Save'}, 'e2': {'role': 'button', 'name': 'Slow save'}}}
 elif operation == 'get':
     data = {args[1]: Path('url').read_text() if args[1] == 'url' else 'Fixture'}
+    # 范围：单次模拟 DOM 采集时活动页暂不可用；不模拟真实 CDP 网络故障。
+    if args[1] == 'cdp-url' and Path('fail-dom-observation').exists():
+        Path('fail-dom-observation').unlink()
+        data = {'cdpUrl': 'ws://127.0.0.1:1'}
+elif operation == 'tab' and args[1] == 'list':
+    data = {'tabs': []}
 elif operation in ['fill', 'click', 'press', 'scroll']:
     path = Path('writes')
     path.write_text(str(int(path.read_text()) + 1 if path.exists() else 1))

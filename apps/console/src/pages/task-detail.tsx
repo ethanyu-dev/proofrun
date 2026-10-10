@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { TaskDetail } from '@proofrun/contracts';
 import { ApiClient, errorMessage } from '../api';
 import { useResource } from '../use-resource';
-import { ExecutionControl } from '../components/execution-control';
+import { TaskLive, TaskExecutionStatus } from '../components/task-live';
 import { TaskRerun } from '../components/task-rerun';
 import { Comparison } from '../components/comparison';
 import {
@@ -12,13 +12,7 @@ import {
   TaskDefinition,
 } from '../components/task-sections';
 import { DecisionContext } from '../components/decision-context';
-import {
-  Empty,
-  ErrorNotice,
-  PageHeader,
-  RefreshBar,
-  Status,
-} from '../components/ui';
+import { Empty, ErrorNotice, PageHeader, RefreshBar } from '../components/ui';
 
 /** 任务结果与资源清理并列显示；取消的成功响应不能冒充节点已释放。 */
 export function TaskDetailPage({ api, id }: { api: ApiClient; id: string }) {
@@ -158,7 +152,7 @@ export function TaskDetailPage({ api, id }: { api: ApiClient; id: string }) {
               {paired ? (
                 <span className="status">两组独立执行</span>
               ) : (
-                <Status value={task.state} />
+                <TaskExecutionStatus task={task} />
               )}
             </div>
             <dl className="facts">
@@ -196,14 +190,7 @@ export function TaskDetailPage({ api, id }: { api: ApiClient; id: string }) {
             <Comparison api={api} id={id} />
           ) : (
             <>
-              {task.executions.map((execution) => (
-                <ExecutionControl
-                  key={execution.id}
-                  api={api}
-                  execution={execution}
-                  task={task}
-                />
-              ))}
+              <TaskLive api={api} task={task} />
               <TaskResources task={task} />
               {task.executions.map((execution) => (
                 <DecisionContext

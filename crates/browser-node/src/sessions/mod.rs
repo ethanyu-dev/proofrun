@@ -502,8 +502,10 @@ async fn supervise(
                 },
                 message = work.recv() => {
                     let Some(message) = message else { break };
+                    let read_only_observation = matches!(&message.command, BrowserCommand::BrowserObserve { .. });
                     let result = run_operation(io, &session, &mut renew, message.command, message.deadline_ms).await;
-                    let failed = result.as_ref().is_err_and(|fault| fault.effect != "NOT_STARTED");
+                    // 与 host 使用同一白名单；仅采集失败不能提前回收仍可用的会话。
+                    let failed = result.as_ref().is_err_and(|fault| fault.requires_session_close(read_only_observation));
                     let _ = message.result.send(result);
                     if failed { break; }
                 }

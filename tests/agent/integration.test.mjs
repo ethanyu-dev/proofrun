@@ -111,14 +111,29 @@ test(
     const run = async (
       definition,
       decide,
-      { unknown = false, vision = false, thinking, beforeComplete } = {},
+      {
+        unknown = false,
+        vision = false,
+        thinking,
+        beforeComplete,
+        observeFailuresAfterClick = 0,
+      } = {},
     ) => {
       const node = new SimulatedNode(base, definition.environment.nodePool);
       nodes.push(node);
       node.unknownWrite = unknown;
+      if (observeFailuresAfterClick)
+        node.observationTargets = [
+          { target: 'element-1', role: 'button', name: '提交' },
+        ];
       const uploads = [];
       const original = node.execute.bind(node);
       node.execute = (command) => {
+        if (
+          command.command.type === 'browser.act' &&
+          command.command.action === 'click'
+        )
+          node.domObservationFailures = observeFailuresAfterClick;
         original(command);
         const result = node.results.get(command.commandId);
         for (const ref of result?.data?.artifactRefs ?? [])
@@ -197,6 +212,26 @@ test(
       }
     };
     try {
+      // 范围：真实 Agent/API/PostgreSQL 贯通 DOM 故障恢复；节点与模型为夹具，不代表真实站点通过。
+      await suite.test(
+        '点击后 DOM 故障可补采，控制面保留执行直到报告交付',
+        async () => {
+          const { report, stored } = await run(
+            task('dom-observation-recovery'),
+            (context, turn) =>
+              turn === 1
+                ? { type: 'browser.act', action: 'click', target: 'element-1' }
+                : finish(context),
+            { observeFailuresAfterClick: 2 },
+          );
+          assert.equal(stored.state, 'COMPLETED');
+          assert.equal(report.verdict, 'PASSED');
+          assert.equal(report.executionDetails.actions, 2);
+          assert.equal(report.executionDetails.modelCalls, 2);
+          assert.ok(stored.executions.every((e) => e.closure_verified));
+        },
+      );
+
       // 范围：真实模型协议夹具到 PostgreSQL 的正文、鉴权、幂等和不可变性；不验证真实模型推理或浏览器页面。
       // 范围：新版 HTTP 输入经真实执行器、步骤持久化和同任务清理形成闭环；浏览器与模型均为夹具。
       await suite.test(

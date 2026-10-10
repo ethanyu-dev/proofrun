@@ -12,6 +12,12 @@ pub struct Fault {
     pub effect: String,
 }
 impl Fault {
+    /// 只读 DOM 采集失败允许重新观察；写入、超时和其他未知故障仍须关闭会话。
+    /// read_only_observation 必须由原始类型化命令确定，不能由错误正文推断。
+    pub fn requires_session_close(&self, read_only_observation: bool) -> bool {
+        self.effect != "NOT_STARTED" && !(read_only_observation && self.code == "DOM_ENGINE_FAILED")
+    }
+
     /// 明确在派发前拒绝，保证该命令没有开始执行。
     pub fn rejected(code: &str, message: impl Into<String>) -> Self {
         Self {
@@ -30,3 +36,20 @@ impl Fault {
     }
 }
 pub type Result<T> = std::result::Result<T, Fault>;
+
+#[cfg(test)]
+mod tests {
+    use super::Fault;
+
+    // 范围：仅校验错误分类白名单；实际进程存活与观察恢复由 Linux 集成测试覆盖。
+    #[test]
+    fn only_dom_observation_failure_preserves_session() {
+        let dom = Fault::unknown("DOM_ENGINE_FAILED", "read failed");
+        assert!(!dom.requires_session_close(true));
+        assert!(dom.requires_session_close(false));
+        for code in ["DEADLINE_EXCEEDED", "ENGINE_IO", "STORE_FAILED", "UNKNOWN"] {
+            assert!(Fault::unknown(code, "failure").requires_session_close(true));
+        }
+        assert!(!Fault::rejected("STALE_OBSERVATION", "rejected").requires_session_close(false));
+    }
+}

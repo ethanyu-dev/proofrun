@@ -2897,3 +2897,131 @@ test('清理独立时钟忽略旧心跳，人工暂停不重置预算', async ()
     await guard.close();
   }
 });
+
+/** 注入观察结果故障而不生成伪证据；写入结果仍由原夹具记录。 */
+function failDomObservations(client, shouldFail) {
+  const original = client.command.bind(client);
+  client.command = async (...args) => {
+    if (args[2].type === 'browser.observe' && shouldFail()) {
+      client.calls.push({ id: args[1], operation: args[2] });
+      return {
+        operationStatus: 'UNKNOWN',
+        effect: 'MAY_HAVE_HAPPENED',
+        error: { code: 'DOM_ENGINE_FAILED' },
+      };
+    }
+    return original(...args);
+  };
+}
+
+// 范围：成功点击后的 DOM 读取恢复只补采，不重复点击或消耗模型轮次；不验证真实 CDP 故障。
+test('DOM 观察暂时失败只补采两次，不重放已完成点击', async () => {
+  let failures = 0;
+  const { report, client } = await run(
+    (context, turn) =>
+      turn === 1
+        ? { type: 'browser.act', action: 'click', target: '@e2' }
+        : finish(context),
+    (client) =>
+      failDomObservations(client, () => client.submitted && failures++ < 2),
+  );
+  assert.equal(report.verdict, 'PASSED');
+  assert.equal(report.executionDetails.modelCalls, 2);
+  assert.equal(report.executionDetails.actions, 2);
+  assert.equal(
+    client.calls.filter((c) => c.operation.action === 'click').length,
+    1,
+  );
+  assert.equal(
+    client.calls.filter((c) => c.operation.type === 'browser.observe').length,
+    4,
+  );
+  assert.equal(
+    new Set(client.calls.map((c) => c.id)).size,
+    client.calls.length,
+  );
+});
+
+// 范围：连续三次读取失败记录本步骤错误，后续业务和清理重新取证；不声称故障页面已经恢复。
+test('DOM 观察持续失败有上限，并保留后续独立步骤与清理机会', async () => {
+  let reads = 0;
+  const seen = [];
+  const { report, client } = await run(
+    (context) => {
+      seen.push(context.executionStep.stepId);
+      return {
+        ...finish(context),
+        evidenceRefs: context.observation.artifactRefs.map((a) => a.artifactId),
+      };
+    },
+    (client, execution) => {
+      structuredGrant(execution, [{}, {}, { type: 'setup', expected: [] }]);
+      execution.task.cleanupStepIds = ['step-3'];
+      failDomObservations(client, () => reads++ < 3);
+    },
+  );
+  assert.deepEqual(seen, ['step-2', 'step-3']);
+  assert.deepEqual(
+    report.steps.map((s) => s.status),
+    ['ERROR', 'COMPLETED', 'COMPLETED'],
+  );
+  assert.equal(report.executionDetails.reasonCode, 'DOM_OBSERVATION_FAILED');
+  assert.deepEqual(report.steps[0].evidenceRefs, []);
+  assert.equal(
+    client.calls.filter((c) => c.operation.type === 'browser.observe').length,
+    5,
+  );
+});
+
+// 范围：重试等待中的控制面撤权阻止下一次观察，不覆盖网络断连或真实人工输入。
+test('DOM 补采前重新检查控制权，取消后不再发命令', async () => {
+  let failed = false;
+  const { report, client } = await run(
+    () => {
+      throw new Error('不应调用模型');
+    },
+    (client) => {
+      const originalView = client.view.bind(client);
+      client.view = async (...args) => ({
+        ...(await originalView(...args)),
+        taskState: failed ? 'CANCELLED' : 'RUNNING',
+      });
+      failDomObservations(client, () => {
+        failed = true;
+        return true;
+      });
+    },
+  );
+  assert.equal(report.executionDetails.reasonCode, 'EXECUTION_ENDED');
+  assert.equal(
+    client.calls.filter((c) => c.operation.type === 'browser.observe').length,
+    1,
+  );
+  assert.equal(report.executionDetails.modelCalls, 0);
+});
+
+// 范围：相同 DOM 错误来自点击时仍保留未知写入保护；不模拟浏览器实际副作用。
+test('DOM 错误码不能让未知点击进入观察重试', async () => {
+  const { report, client } = await run(
+    () => ({ type: 'browser.act', action: 'click', target: '@e2' }),
+    (client) => {
+      client.unknown = true;
+      const original = client.command.bind(client);
+      client.command = async (...args) => {
+        const result = await original(...args);
+        if (args[2].action === 'click')
+          result.error = { code: 'DOM_ENGINE_FAILED' };
+        return result;
+      };
+    },
+  );
+  assert.equal(report.executionDetails.reasonCode, 'BROWSER_EFFECT_UNKNOWN');
+  assert.equal(
+    client.calls.filter((c) => c.operation.action === 'click').length,
+    1,
+  );
+  assert.equal(
+    client.calls.filter((c) => c.operation.type === 'browser.observe').length,
+    1,
+  );
+});

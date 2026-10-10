@@ -2180,6 +2180,46 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       await cleaned(definition.taskId);
     });
 
+    // 范围：节点只读 DOM 故障保留原始回执且不撤权，可采集新观察；不验证真实 CDP 可恢复性。
+    await suite.test(
+      '只读 DOM 故障不终止执行，也不自动重放原命令',
+      async () => {
+        const node = await addNode('dom-read-recovery');
+        node.domObservationFailures = 1;
+        const definition = task('dom-read-recovery');
+        await submit(definition);
+        const execution = await claim();
+        await ready(execution);
+        const failed = await command(execution, { type: 'browser.observe' });
+        assert.equal(failed.result.error.code, 'DOM_ENGINE_FAILED');
+        assert.equal(failed.result.effect, 'MAY_HAVE_HAPPENED');
+        assert.equal(
+          (await api('GET', `/v1/tasks/${definition.taskId}`)).data.state,
+          'RUNNING',
+        );
+        const recovered = await command(execution, { type: 'browser.observe' });
+        assert.equal(recovered.result.operationStatus, 'SUCCEEDED');
+        assert.equal(node.calls.get(failed.request.commandId), 1);
+        assert.equal(node.calls.get(recovered.request.commandId), 1);
+        await api('POST', `/v1/tasks/${definition.taskId}/cancel`, {});
+        await cleaned(definition.taskId);
+        assert.equal(
+          (
+            await api(
+              'POST',
+              `/v1/executions/${execution.id}/commands`,
+              {
+                ...recovered.request,
+                commandId: randomUUID(),
+              },
+              execution.leaseToken,
+            )
+          ).status,
+          409,
+        );
+      },
+    );
+
     // 范围：不确定写入结束执行且不能使用新命令绕过；不证明真实引擎内部没有重试。
     await suite.test('未知写入不自动重放，旧执行不能继续操作', async () => {
       const node = await addNode('unknown');
