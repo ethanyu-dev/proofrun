@@ -645,11 +645,16 @@ test(
             };
           }
           assert.ok(context.budgetRemaining.timeMs > 19 * 60000);
+          assert.equal(
+            context.budgetRemaining.actions,
+            definition.budget.maxActions - 1,
+          );
           return finish(context);
         });
         await operator;
         assert.equal(outcome.report.verdict, 'PASSED');
-        assert.equal(outcome.report.executionDetails.actions, 2);
+        // 只统计 Agent 的首次导航；人工操作不出现在 Agent 动作消耗中。
+        assert.equal(outcome.report.executionDetails.actions, 1);
       });
       // 范围：真实 HTTP/WS 控制面在节点仍连接时能完成关闭；不覆盖进程强杀或 VM 断电。
       await suite.test(

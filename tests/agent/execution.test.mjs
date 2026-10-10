@@ -544,7 +544,7 @@ test('人工处理后丢弃旧模型决定并刷新观察', async () => {
     ...(await originalView(grant)),
     controlMode: mode,
     controlRevision: revision,
-    actionCount: 1,
+    actionCount: mode === 'AUTO' ? 1 : execution.task.budget.maxActions,
   });
   client.acknowledge = async () => {
     acknowledged++;
@@ -570,6 +570,11 @@ test('人工处理后丢弃旧模型决定并刷新观察', async () => {
       }
       const context = JSON.parse(input.text);
       assert.match(context.observation.text, /Human/);
+      // 模拟升级后服务端剔除人工计数，本地不能保留等待时看到的虚高值。
+      assert.equal(
+        context.budgetRemaining.actions,
+        execution.task.budget.maxActions - 1,
+      );
       return {
         decision: finish(context),
         promptTokens: 0,
