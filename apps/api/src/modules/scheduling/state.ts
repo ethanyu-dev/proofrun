@@ -1,3 +1,4 @@
+import type { BudgetState } from './step-budget.js';
 import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import type { NodeCommand, VerificationTask } from '@proofrun/contracts';
@@ -33,6 +34,8 @@ export interface ExecutionContext {
   execution_state: string;
   /** 已准入的 Agent 动作数；人工操作不占额度，重复命令不重复计数。 */
   action_count: number;
+  /** 新版步骤额度游标，旧任务为空。 */
+  budget_state: BudgetState | null;
   /** 自动与人工操作互斥，代次绑定当前观察。 */
   control_mode: 'AUTO' | 'REQUESTED' | 'HUMAN';
   control_revision: number;
@@ -60,7 +63,7 @@ export async function executionContext(
 ): Promise<ExecutionContext> {
   const result = await client.query<ExecutionContext>(
     `
-    SELECT e.id,e.task_id,e.token_hash,e.lease_expires_at,e.state AS execution_state,e.action_count,e.control_mode,e.control_revision,e.control_reason,
+    SELECT e.id,e.task_id,e.token_hash,e.lease_expires_at,e.state AS execution_state,e.action_count,e.budget_state,e.control_mode,e.control_revision,e.control_reason,
       t.definition,t.state AS task_state,t.deadline_at,t.cleanup_deadline_at,
       s.id AS session_id,s.state AS session_state,s.node_id,s.node_epoch,s.lease_id,s.fence,s.closure_verified
     FROM pr_executions e JOIN pr_tasks t ON t.id=e.task_id JOIN pr_sessions s ON s.execution_id=e.id

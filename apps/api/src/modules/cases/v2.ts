@@ -28,6 +28,11 @@ export class CaseV2Service {
     private readonly profile: CaseProfile | undefined,
     /** 构造同源公开证据地址，不透传内部报告地址。 */
     private readonly publicUrl: string,
+    /** 显式复现历史预算时才传入；默认重跑按当前策略编译。 */
+    private readonly originalBudget?: Pick<
+      VerificationTask,
+      'budget' | 'stepBudget'
+    >,
   ) {}
 
   /** 身份不是任意内部任务路径；清理结果也只通过所属 case 读取。 */
@@ -104,7 +109,16 @@ export class CaseV2Service {
             'CASE_NOT_CONFIGURED',
             '平台未配置 case 执行环境',
           );
-        definitions.push(compileCase(item, validateCaseProfile(this.profile)));
+        const compiled = compileCase(item, validateCaseProfile(this.profile));
+        if (this.originalBudget) {
+          compiled.budget = structuredClone(this.originalBudget.budget);
+          if (this.originalBudget.stepBudget)
+            compiled.stepBudget = structuredClone(
+              this.originalBudget.stepBudget,
+            );
+          else delete compiled.stepBudget;
+        }
+        definitions.push(compiled);
       }
     }
     await this.tasks.submitCaseBatch(definitions);
@@ -112,7 +126,11 @@ export class CaseV2Service {
   }
 
   /** 重跑从主组冻结配置恢复整个 case；新身份重新编译收尾，不复制执行状态或报告。 */
-  async rerun(id: string, caseId: unknown): Promise<CaseResultV2> {
+  async rerun(
+    id: string,
+    caseId: unknown,
+    budgetMode: 'current' | 'original' = 'current',
+  ): Promise<CaseResultV2> {
     if (
       typeof caseId !== 'string' ||
       !/^[A-Za-z0-9_-]{1,80}$/.test(caseId) ||
@@ -129,7 +147,19 @@ export class CaseV2Service {
       evidenceKinds: [...definition.acceptanceCriteria[0]!.evidenceKinds],
     };
     // 复用提交的幂等检查与原子拆组；重试使用目标已冻结的配置，不产生额外任务。
-    const service = new CaseV2Service(this.tasks, profile, this.publicUrl);
+    const service = new CaseV2Service(
+      this.tasks,
+      profile,
+      this.publicUrl,
+      budgetMode === 'original'
+        ? {
+            budget: definition.budget,
+            ...(definition.stepBudget
+              ? { stepBudget: definition.stepBudget }
+              : {}),
+          }
+        : undefined,
+    );
     const [result] = await service.submit([
       { ...structuredClone(definition.caseV2Definition!), caseId },
     ]);

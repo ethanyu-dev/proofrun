@@ -133,6 +133,10 @@ export interface ClaimExecution {
    * worker 支持结构化步骤、等待和逐步结果；旧 worker 不得领取新版任务。
    */
   structuredSteps?: boolean;
+  /**
+   * 只将逐步预算任务派给能隔离并继续后续步骤的 worker。
+   */
+  stepBudgetVersion?: 1;
 }
 export interface SubmitBrowserCommand {
   /**
@@ -419,4 +423,21 @@ export interface StepResult {
    * 步骤结束时间；未结束或无法确认时为 null。
    */
   finishedAt: string | null;
+  /**
+   * 稳定的未完成原因码，预算耗尽按受阻记录。
+   */
+  reasonCode?: string | null;
+  /**
+   * 本步骤实际用量；清理多步各记录增量，额度由整段清理共享。业务耗时排除人工等待。
+   */
+  budgetUsage?: {
+    elapsedMs: number;
+    modelCalls: number;
+    actions: number;
+    limit: {
+      timeoutMs: number;
+      maxActions: number;
+      maxModelCalls: number;
+    };
+  };
 }

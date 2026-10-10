@@ -1,3 +1,5 @@
+import { stepLimit } from '@proofrun/contracts';
+import { StepAllowance } from './step-budget.js';
 import { stepObjective } from '../prompts/step.js';
 import { randomUUID } from 'node:crypto';
 import {
@@ -96,7 +98,10 @@ class Execution {
   private readonly loginInterventions = new Set<number>();
   /** 原任务阶段和恢复计划由所有决策模式共享。 */
   private workflow: Workflow;
-  /** 业务共享原预算，进入清理后采用控制面签发的独立期限；每步只开放当前标准。 */
+  /** 新版业务逐步独立计数，整段清理共享另一份额度；旧任务沿用冻结语义。 */
+  private allowance: StepAllowance | undefined;
+  /** 后续清理之间只切换 stepId，保留整段累计计数。 */
+  private cleanupAllowance: StepAllowance | undefined;
   private stepIndex = 0;
   /** 逐步进度快照只由执行器推进，完成后不可再改写。 */
   private stepResults: StepResult[] = [];
@@ -121,7 +126,9 @@ class Execution {
     private readonly grant: ExecutionGrant,
     stop: AbortSignal,
   ) {
-    this.guard = new LeaseGuard(client, grant, stop);
+    this.guard = new LeaseGuard(client, grant, stop, (view) =>
+      this.allowance?.sync(view),
+    );
     this.workflow = new Workflow(grant.task.objective);
     this.stepResults = (grant.task.steps ?? []).map((step) => ({
       stepId: step.stepId!,
@@ -151,7 +158,9 @@ class Execution {
         ? error
         : new AgentFault('AGENT_ERROR', '执行器发生异常，未得出业务验收结论');
     return this.report(
-      'ERROR',
+      fault.code.startsWith('STEP_') && fault.code.endsWith('_BUDGET_EXCEEDED')
+        ? 'BLOCKED'
+        : 'ERROR',
       fault.message,
       this.task.acceptanceCriteria.map((c) => ({
         criterionId: c.id,
@@ -211,8 +220,17 @@ class Execution {
   /** 所有动作都串行提交，命令身份只生成一次；未知效果直接结束。 */
   private async command(operation: BrowserOperation) {
     this.guard.signal.throwIfAborted();
+    if (operation.type !== 'browser.trace') this.allowance?.assertTime();
     if (operation.type === 'browser.act') {
-      if (this.details.actions >= this.grant.task.budget.maxActions)
+      this.allowance?.assert(
+        'actions',
+        this.details.actions,
+        this.details.modelCalls,
+      );
+      if (
+        !this.allowance &&
+        this.details.actions >= this.grant.task.budget.maxActions
+      )
         throw new AgentFault('ACTION_BUDGET_EXCEEDED', '浏览器动作预算已耗尽');
       this.details.actions++;
     }
@@ -233,7 +251,12 @@ class Execution {
       .catch((error: unknown) => {
         if (
           error instanceof AgentFault &&
-          error.code === 'CONTROL_CHANGED' &&
+          [
+            'CONTROL_CHANGED',
+            'STEP_ACTION_BUDGET_EXCEEDED',
+            'STEP_TIME_BUDGET_EXCEEDED',
+            'STEP_NOT_STARTED',
+          ].includes(error.code) &&
           operation.type === 'browser.act'
         )
           this.details.actions--;
@@ -292,15 +315,22 @@ class Execution {
     countProgress = true,
   ): Promise<void> {
     const result = await this.readObservation(screenshot);
+    this.allowance?.assertTime();
     const current = observation(result);
     if (!current.artifactRefs.some((ref) => ref.kind === 'DOM'))
       throw new AgentFault('EVIDENCE_UNAVAILABLE', '本次观察没有交付 DOM 引用');
     await waitForEvidence(
       current.artifactRefs,
       (signal) => this.client.view(this.grant, signal),
-      this.config.evidenceMs,
+      Math.min(
+        this.config.evidenceMs,
+        this.allowance ? Math.max(1, this.allowance.remaining()) : Infinity,
+      ),
       this.guard.signal,
-    );
+    ).catch((error) => {
+      this.allowance?.assertTime();
+      throw error;
+    });
     if (this.current)
       rememberObservation(this.previousObservations, this.current);
     this.changes = this.tracker.observe(current, countProgress);
@@ -362,10 +392,12 @@ class Execution {
       if (view.actionCount !== undefined)
         this.details.actions = view.actionCount;
       if (!view.controlMode || view.controlMode === 'AUTO') {
+        if (!view.stepBudget) this.allowance?.resume();
         const changed = this.controlRevision !== (view.controlRevision ?? 0);
         this.controlRevision = view.controlRevision ?? 0;
         return changed;
       }
+      this.allowance?.pause();
       if (view.controlMode === 'REQUESTED')
         await this.client.acknowledge(
           this.grant,
@@ -381,7 +413,10 @@ class Execution {
       task: this.task,
       executionStep: this.grant.task.steps?.[this.stepIndex],
       workflow: this.workflow.view(),
-      budgetRemaining: {
+      budgetRemaining: this.allowance?.available(
+        this.details.actions,
+        this.details.modelCalls,
+      ) ?? {
         actions: this.grant.task.budget.maxActions - this.details.actions,
         modelCalls: this.config.maxTurns - this.details.modelCalls,
         timeMs: Math.floor(this.guard.remaining()),
@@ -468,11 +503,13 @@ class Execution {
       const target = this.current?.targets.find(
         (t) => t.target === decision.target,
       );
-      if (
-        !target ||
-        !['up', 'down', 'left', 'right'].includes(decision.value ?? '') ||
-        (target.operations && !target.operations.includes('scroll'))
-      )
+      if (!target) throw invalid();
+      if (target.operations && !target.operations.includes('scroll'))
+        throw new AgentFault(
+          'INVALID_MODEL_DECISION',
+          `目标 ${decision.target}（${target.role}）不支持 scroll，可用操作：${target.operations.join('、')}。请滚动页面（不指定 target）或选择当前观察中的可滚动容器。`,
+        );
+      if (!['up', 'down', 'left', 'right'].includes(decision.value ?? ''))
         throw invalid();
       return { ...decision, observationId: this.current!.observationId };
     } else if (decision.action === 'visual.click') {
@@ -580,7 +617,7 @@ class Execution {
     let workflowRecoveries = 0;
     // 连续遮挡只允许有限次重新规划；仍消耗原动作与模型预算。
     let obscured = 0;
-    while (this.details.modelCalls < this.config.maxTurns) {
+    while (this.allowance || this.details.modelCalls < this.config.maxTurns) {
       this.guard.signal.throwIfAborted();
       try {
         if (await this.checkpoint()) {
@@ -588,6 +625,11 @@ class Execution {
           this.workflow.invalidateRecovery();
           this.tracker.reset();
         }
+        this.allowance?.assert(
+          'modelCalls',
+          this.details.actions,
+          this.details.modelCalls,
+        );
         if (
           !this.traceStarted &&
           this.task.acceptanceCriteria.some((c) =>
@@ -671,7 +713,16 @@ class Execution {
         const input = this.context();
         const decisionIndex = ++this.decisionIndex;
         input.traceRequest = async (request) => {
-          if (this.details.modelCalls >= this.config.maxTurns)
+          traced = true;
+          this.allowance?.assert(
+            'modelCalls',
+            this.details.actions,
+            this.details.modelCalls,
+          );
+          if (
+            !this.allowance &&
+            this.details.modelCalls >= this.config.maxTurns
+          )
             throw new AgentFault('MODEL_BUDGET_EXCEEDED', '模型请求预算已用完');
           const id = randomUUID();
           await this.client
@@ -705,10 +756,20 @@ class Execution {
           };
         };
         let counted = false;
+        let traced = false;
         // 混合调用即使后续格式校验失败，供应商已返回的用量也必须进入总计。
         let usageRecorded = false;
         input.recordRequest = (model) => {
-          if (this.details.modelCalls >= this.config.maxTurns)
+          if (!traced)
+            this.allowance?.assert(
+              'modelCalls',
+              this.details.actions,
+              this.details.modelCalls,
+            );
+          if (
+            !this.allowance &&
+            this.details.modelCalls >= this.config.maxTurns
+          )
             throw new AgentFault('MODEL_BUDGET_EXCEEDED', '模型请求预算已用完');
           this.details.modelCalls++;
           counted = true;
@@ -749,7 +810,7 @@ class Execution {
             throw error;
           })
           .finally(() => {
-            if (!counted) this.details.modelCalls++;
+            if (!counted && !traced) this.details.modelCalls++;
           });
         this.guard.signal.throwIfAborted();
         if (!usageRecorded) {
@@ -763,6 +824,7 @@ class Execution {
           await this.observe();
           continue;
         }
+        this.allowance?.assertTime();
         const decision = output.decision;
         if (!validateAgentDecision(decision))
           throw new AgentFault('INVALID_MODEL_DECISION', '决定不满足工具协议');
@@ -910,6 +972,7 @@ class Execution {
       controlMode: 'REQUESTED',
       controlRevision: this.controlRevision + 1,
     });
+    this.allowance?.pause();
     await this.checkpoint();
     this.workflow.invalidateRecovery();
     this.tracker.reset();
@@ -929,13 +992,13 @@ class Execution {
   private async waitStep(durationMs: number) {
     if (durationMs >= this.guard.remaining())
       throw new AgentFault('WAIT_EXCEEDS_BUDGET', '剩余任务时间不足以完成等待');
-    const until = performance.now() + durationMs;
-    while (performance.now() < until) {
+    let remaining = durationMs;
+    while (remaining > 0) {
       await this.checkpoint();
-      await pause(
-        Math.min(1000, Math.max(0, until - performance.now())),
-        this.guard.signal,
-      );
+      this.allowance?.assertTime();
+      const started = performance.now();
+      await pause(Math.min(1000, remaining), this.guard.signal);
+      remaining -= performance.now() - started;
     }
     await this.checkpoint();
     this.current = undefined;
@@ -982,7 +1045,7 @@ class Execution {
     };
   }
 
-  /** 逐步记录失败并继续后续业务，前置条件由各步核实；所有预算累计，撤权立即停止操作。 */
+  /** 逐步记录失败并继续后续业务，前置条件由各步核实；新版预算独立，撤权或未知操作效果立即停止。 */
   private async sequence(): Promise<VerificationReport> {
     const steps = this.grant.task.steps!;
     await this.checkpoint();
@@ -1015,6 +1078,7 @@ class Execution {
       };
       delete this.currentTask.caseV2Definition;
       delete this.currentTask.steps;
+      delete this.currentTask.stepBudget;
       delete this.currentTask.cleanupStepIds;
       this.workflow = new Workflow(this.currentTask.objective, step.stepId);
       this.stepEvidence = new Set(this.evidence.keys());
@@ -1026,6 +1090,31 @@ class Execution {
       this.settlePending = true;
       this.tracker.reset();
       this.changes = undefined;
+      const limit = stepLimit(this.grant.task, step.stepId!);
+      if (limit)
+        this.currentTask.budget = {
+          timeoutMs: limit.timeoutMs,
+          maxActions: Math.max(1, limit.maxActions),
+        };
+      if (limit) {
+        const cleanup = cleanupIds.has(step.stepId!);
+        this.allowance =
+          cleanup && this.cleanupAllowance
+            ? this.cleanupAllowance
+            : new StepAllowance(
+                step.stepId!,
+                limit,
+                this.details.actions,
+                this.details.modelCalls,
+                cleanup,
+              );
+        this.allowance.stepId = step.stepId!;
+        if (cleanup) this.cleanupAllowance = this.allowance;
+      }
+      const startUsage = this.allowance?.usage(
+        this.details.actions,
+        this.details.modelCalls,
+      );
       state.status = 'RUNNING';
       state.startedAt = new Date().toISOString();
       state.summary = '执行中';
@@ -1053,6 +1142,19 @@ class Execution {
       } catch (error) {
         report = this.failure(error);
       }
+      if (this.allowance && startUsage) {
+        const usage = this.allowance.usage(
+          this.details.actions,
+          this.details.modelCalls,
+        );
+        state.budgetUsage = {
+          ...usage,
+          actions: usage.actions - startUsage.actions,
+          modelCalls: usage.modelCalls - startUsage.modelCalls,
+          elapsedMs: Math.max(0, usage.elapsedMs - startUsage.elapsedMs),
+        };
+        state.reasonCode = report.executionDetails?.reasonCode ?? null;
+      }
       if (report.executionDisposition !== 'EXECUTED') {
         state.status =
           report.executionDisposition === 'BLOCKED' ? 'BLOCKED' : 'ERROR';
@@ -1061,12 +1163,25 @@ class Execution {
         state.evidenceRefs = [...this.evidence.keys()].filter(
           (id) => !this.stepEvidence.has(id),
         );
-        if (!stopped || report.executionDisposition === 'ERROR')
+        if (
+          !cleanupIds.has(step.stepId!) &&
+          (!stopped || report.executionDisposition === 'ERROR')
+        )
           stopped = report;
         if (!this.guard.signal.aborted)
           await this.client.recordSteps(this.grant, this.stepResults);
         // 清理自身失败后不继续可能依赖它的清理，也不自动重放写入。
-        if (cleanupIds.has(step.stepId!)) break;
+        if (
+          cleanupIds.has(step.stepId!) ||
+          this.guard.signal.aborted ||
+          [
+            'BROWSER_EFFECT_UNKNOWN',
+            'LEASE_LOST',
+            'EXECUTION_ENDED',
+            'EXECUTION_EXPIRED',
+          ].includes(report.executionDetails?.reasonCode ?? '')
+        )
+          break;
         continue;
       }
       state.status = 'COMPLETED';
