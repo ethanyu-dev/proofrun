@@ -201,7 +201,7 @@ export interface SaveAuthentication {
   type: 'browser.auth.save';
 }
 /**
- * 仅人工处理页使用的受限视口输入；每次计入原动作预算。
+ * 仅人工处理页使用的受限视口输入；不计入 Agent 动作次数，仍受控制权与单条命令超时约束。
  */
 export interface BrowserInput {
   type: 'browser.input';

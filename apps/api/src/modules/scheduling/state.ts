@@ -29,7 +29,7 @@ export interface ExecutionContext {
   lease_expires_at: Date;
   /** worker 执行和资源停止阶段。 */
   execution_state: string;
-  /** 已准入的写动作数，重复命令不重复计数。 */
+  /** 已准入的 Agent 动作数；人工操作不占额度，重复命令不重复计数。 */
   action_count: number;
   /** 自动与人工操作互斥，代次绑定当前观察。 */
   control_mode: 'AUTO' | 'REQUESTED' | 'HUMAN';

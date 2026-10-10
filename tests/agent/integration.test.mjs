@@ -111,7 +111,7 @@ test(
     const run = async (
       definition,
       decide,
-      { unknown = false, vision = false, thinking } = {},
+      { unknown = false, vision = false, thinking, beforeComplete } = {},
     ) => {
       const node = new SimulatedNode(base, definition.environment.nodePool);
       nodes.push(node);
@@ -176,6 +176,7 @@ test(
           new ChatModel(settings),
           execution,
         );
+        await beforeComplete?.();
         await client.complete(execution, report);
         const stored = await until(
           () => api('GET', `/v1/tasks/${definition.taskId}`),
@@ -587,10 +588,21 @@ test(
       await suite.test('任务截止后仍可保存可追溯故障报告', async () => {
         const definition = task('agent-timeout');
         definition.budget.timeoutMs = 750;
-        const { stored } = await run(definition, async (context) => {
-          await pause(1100);
-          return finish(context);
-        });
+        const { stored } = await run(
+          definition,
+          async (context) => {
+            await pause(1100);
+            return finish(context);
+          },
+          {
+            // 明确验证迟到报告：Agent 定时器可能提前不足 1ms 唤醒，不能靠其返回时机代替控制面截止。
+            beforeComplete: () =>
+              until(
+                () => api('GET', `/v1/tasks/${definition.taskId}`),
+                (value) => value.state === 'TIMED_OUT',
+              ),
+          },
+        );
         assert.equal(stored.state, 'TIMED_OUT');
         assert.equal(stored.report.lifecycle, 'TIMED_OUT');
         assert.equal(stored.report.verdict, null);
@@ -645,11 +657,16 @@ test(
             };
           }
           assert.ok(context.budgetRemaining.timeMs > 19 * 60000);
+          assert.equal(
+            context.budgetRemaining.actions,
+            definition.budget.maxActions - 1,
+          );
           return finish(context);
         });
         await operator;
         assert.equal(outcome.report.verdict, 'PASSED');
-        assert.equal(outcome.report.executionDetails.actions, 2);
+        // 只统计 Agent 的首次导航；人工操作不出现在 Agent 动作消耗中。
+        assert.equal(outcome.report.executionDetails.actions, 1);
       });
       // 范围：真实 HTTP/WS 控制面在节点仍连接时能完成关闭；不覆盖进程强杀或 VM 断电。
       await suite.test(

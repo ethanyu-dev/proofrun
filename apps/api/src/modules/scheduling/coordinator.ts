@@ -898,11 +898,8 @@ export class Coordinator {
           'SESSION_BUSY',
           'One browser operation at a time',
         );
-      if (
-        operation.type === 'browser.act' ||
-        operation.type === 'browser.input' ||
-        operation.type === 'browser.cookies.set'
-      ) {
+      // 人工操作仍经过权限、代次和串行检查，但不占用或受限于 Agent 动作预算。
+      if (actor === 'AGENT' && operation.type === 'browser.act') {
         if (context.action_count >= context.definition.budget.maxActions)
           throw new ApiError(
             409,

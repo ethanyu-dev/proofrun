@@ -320,10 +320,9 @@ class Execution {
       if (view.taskState !== 'RUNNING')
         throw new AgentFault('EXECUTION_ENDED', '控制面已终止任务');
       this.guard.syncTiming(view);
-      this.details.actions = Math.max(
-        this.details.actions,
-        view.actionCount ?? 0,
-      );
+      // 控制面是准入次数的权威；升级校准旧版人工计数后不能保留本地虚高值。
+      if (view.actionCount !== undefined)
+        this.details.actions = view.actionCount;
       if (!view.controlMode || view.controlMode === 'AUTO') {
         const changed = this.controlRevision !== (view.controlRevision ?? 0);
         this.controlRevision = view.controlRevision ?? 0;

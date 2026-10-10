@@ -2,7 +2,7 @@ import WebSocket from 'ws';
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
 import { randomUUID, createHash } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:net';
@@ -2304,7 +2304,7 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
           await api('GET', workerPath, undefined, execution.leaseToken)
         ).data;
         assert.equal(resumed.controlMode, 'AUTO');
-        assert.equal(resumed.actionCount, 1);
+        assert.equal(resumed.actionCount, 0);
         assert.ok(
           Date.parse(resumed.taskDeadlineAt) - Date.now() > 20 * 60000 - 5000,
         );
@@ -2330,6 +2330,135 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
           (await api('POST', `${adminPath}/control`, resume)).status,
           409,
         );
+        await cleaned(definition.taskId);
+      },
+    );
+
+    // 范围：真实控制面中 Agent 额度耗尽后人工仍能操作、去重且不加时/加额度；节点为协议夹具，不验证真实登录。
+    await suite.test(
+      'HITL 不受 Agent 动作预算限制，迁移校准活动执行计数',
+      async (t) => {
+        const node = await addNode('human-actions');
+        const definition = {
+          ...task('human-actions'),
+          environment: {
+            id: 'fixture',
+            nodePool: 'human-actions',
+            allowIntervention: true,
+          },
+          budget: { timeoutMs: 60000, maxActions: 1 },
+        };
+        await submit(definition);
+        const execution = await claim();
+        const worker = new SimulatedWorker(base, execution);
+        t.after(() => worker.close());
+        await ready(execution);
+        await command(execution, {
+          type: 'browser.act',
+          action: 'navigate',
+          target: definition.target.url,
+        });
+        const adminPath = `/v1/admin/executions/${execution.id}`;
+        const workerPath = `/v1/executions/${execution.id}`;
+        await api('POST', `${adminPath}/intervene`, {
+          type: 'execution.intervene',
+          reason: '人工处理',
+          controlRevision: 0,
+        });
+        await api(
+          'POST',
+          `${workerPath}/control`,
+          {
+            type: 'execution.control',
+            action: 'acknowledge',
+            controlRevision: 1,
+          },
+          execution.leaseToken,
+        );
+        const operations = [
+          { type: 'browser.input', action: 'scroll', x: 1, y: 1, deltaY: 20 },
+          {
+            type: 'browser.cookies.set',
+            url: definition.target.url,
+            name: 'token',
+            value: 'fixture',
+            httpOnly: true,
+          },
+          { type: 'browser.act', action: 'reload' },
+        ];
+        for (const operation of operations) {
+          const commandId = randomUUID();
+          const request = {
+            type: 'execution.command',
+            commandId,
+            controlRevision: 1,
+            timeoutMs: 1000,
+            command: operation,
+          };
+          assert.equal(
+            (await api('POST', `${adminPath}/commands`, request)).status,
+            202,
+          );
+          await until(
+            async () => (await api('GET', `${adminPath}/activity`)).data,
+            (d) =>
+              d.commands.some(
+                (c: any) => c.id === commandId && c.status === 'SUCCEEDED',
+              ),
+          );
+          assert.equal(
+            (await api('POST', `${adminPath}/commands`, request)).status,
+            202,
+          );
+          assert.equal(node.calls.get(commandId), 1);
+        }
+        const view = async () =>
+          (await api('GET', workerPath, undefined, execution.leaseToken)).data;
+        assert.equal((await view()).actionCount, 1);
+        // 模拟旧版将三个人工命令也计数；迁移只恢复实际自动额度，重复执行结果不变。
+        await sql.query('UPDATE pr_executions SET action_count=4 WHERE id=$1', [
+          execution.id,
+        ]);
+        const migration = await readFile(
+          new URL('../migrations/011-agent-action-budget.sql', import.meta.url),
+          'utf8',
+        );
+        const historical = (
+          await sql.query(
+            "SELECT id,action_count FROM pr_executions WHERE state='FINISHED' ORDER BY id",
+          )
+        ).rows;
+        await sql.query(migration);
+        await sql.query(migration);
+        assert.equal((await view()).actionCount, 1);
+        assert.deepEqual(
+          (
+            await sql.query(
+              "SELECT id,action_count FROM pr_executions WHERE state='FINISHED' ORDER BY id",
+            )
+          ).rows,
+          historical,
+        );
+        await api('POST', `${adminPath}/control`, {
+          type: 'execution.control',
+          action: 'resume',
+          controlRevision: 1,
+        });
+        const denied = await api(
+          'POST',
+          `${workerPath}/commands`,
+          {
+            type: 'execution.command',
+            commandId: randomUUID(),
+            controlRevision: 2,
+            timeoutMs: 1000,
+            command: { type: 'browser.act', action: 'reload' },
+          },
+          execution.leaseToken,
+        );
+        assert.equal(denied.status, 409);
+        assert.equal(denied.data.code, 'ACTION_BUDGET_EXCEEDED');
+        await api('POST', `/v1/tasks/${definition.taskId}/cancel`);
         await cleaned(definition.taskId);
       },
     );
@@ -2517,7 +2646,7 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         assert.equal(
           (await api('GET', `/v1/tasks/${definition.taskId}`)).data
             .executions[0].action_count,
-          1,
+          0,
         );
         assert.equal(
           (
@@ -2536,7 +2665,7 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
           ).status,
           403,
         );
-        // 范围：Cookie 沿用 HITL 身份、同源范围、去重和预算；节点为协议夹具，不代表真实登录成功。
+        // 范围：Cookie 沿用 HITL 身份、同源范围和去重，但不消耗 Agent 预算；节点为协议夹具，不代表真实登录成功。
         const cookie = {
           type: 'browser.cookies.set',
           url: definition.target.url,
@@ -2568,7 +2697,7 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         assert.equal(
           (await api('GET', `/v1/tasks/${definition.taskId}`)).data
             .executions[0].action_count,
-          2,
+          0,
         );
         assert.ok(!JSON.stringify(first.messages).includes(cookie.value));
         assert.equal(
@@ -2646,7 +2775,7 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         assert.equal(
           (await api('GET', `/v1/tasks/${definition.taskId}`)).data
             .executions[0].action_count,
-          4,
+          0,
         );
         // 无效目的地不派发节点命令，处理者可继续修正地址。
         const invalidNavigation = randomUUID();
