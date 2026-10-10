@@ -7,6 +7,13 @@ const QUEUE_LIMIT = 8;
 /** 与输入协议一致；连续滚动合并后仍不能超出单次范围。 */
 const SCROLL_LIMIT = 2000;
 
+/** 与控制面一致：保存登录快照不消耗动作次数，导航、输入及 Cookie 写入会消耗。 */
+function usesActionBudget(command: NodeCommand['command']): boolean {
+  return ['browser.act', 'browser.input', 'browser.cookies.set'].includes(
+    command.type,
+  );
+}
+
 /** 每个动作只发送一次，只有匹配的成功回执才允许发送后续动作。 */
 interface Pending {
   /** 用于对应回执；迟到或重复回执不能释放其他动作。 */
@@ -23,6 +30,8 @@ export class HitlInputQueue {
   private pending: Pending | null = null;
   /** 回执超时后暂停，必须由连接重建显式重置。 */
   private stopped = false;
+  /** 次数耗尽属于任务状态；重连不能解除，但仍允许保存登录快照。 */
+  private exhausted = false;
   /** 防止 WebSocket 仍打开却永远收不到回执。 */
   private timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -42,7 +51,8 @@ export class HitlInputQueue {
 
   /** 接收动作；滚动手势产生的密集事件只占一个待发送位置。 */
   enqueue(command: NodeCommand['command']): boolean {
-    if (this.stopped) return false;
+    if (this.stopped || (this.exhausted && usesActionBudget(command)))
+      return false;
     const last = this.queue.at(-1);
     if (
       command.type === 'browser.input' &&
@@ -69,7 +79,11 @@ export class HitlInputQueue {
 
   /** 组合操作整体入队，避免容量不足时只接收 Cookie 而遗漏刷新。 */
   enqueueBatch(commands: NodeCommand['command'][]): boolean {
-    if (this.stopped || this.queue.length + commands.length > QUEUE_LIMIT)
+    if (
+      this.stopped ||
+      (this.exhausted && commands.some(usesActionBudget)) ||
+      this.queue.length + commands.length > QUEUE_LIMIT
+    )
       return false;
     this.queue.push(
       ...commands.map((command) => ({
@@ -94,8 +108,15 @@ export class HitlInputQueue {
     return !this.stopped;
   }
 
-  /** 断线、卸载或新连接时清理；调用方负责决定何时重新开放输入。 */
-  reset() {
+  /** 明确拒绝后丢弃待发操作并锁住消耗次数的动作；不关闭画面，也不把拒绝当成未知结果。 */
+  exhaustActionBudget() {
+    this.reset();
+    this.exhausted = true;
+  }
+
+  /** 清空连接队列；只有切换到另一人工任务时才能清除次数耗尽状态。 */
+  reset(newTask = false) {
+    if (newTask) this.exhausted = false;
     clearTimeout(this.timer);
     this.queue = [];
     this.pending = null;

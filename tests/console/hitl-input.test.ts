@@ -220,3 +220,50 @@ test('Cookie 写入等待确认且失败后不派发后续输入', () => {
     f.queue.reset();
   }
 });
+
+// 范围：明确的次数拒绝停止滚动及组合操作，迟到回执不解锁；保存快照不受该预算限制。不验证真实页面渲染或生产登录。
+test('动作次数耗尽后保持锁定，保存登录状态仍可用', () => {
+  const f = fixture();
+  try {
+    f.queue.enqueue(click());
+    f.queue.enqueue(click(40));
+    f.queue.exhaustActionBudget();
+    assert.equal(f.busy, false);
+    assert.equal(f.stopped, 0);
+    assert.equal(f.ack(0), false);
+    for (let i = 0; i < 50; i++) {
+      assert.equal(
+        f.queue.enqueue({
+          type: 'browser.input',
+          action: 'scroll',
+          deltaY: 20,
+          x: 1,
+          y: 1,
+        }),
+        false,
+      );
+      assert.equal(f.busy, false);
+    }
+    assert.equal(f.sent.length, 1);
+    assert.equal(
+      f.queue.enqueueBatch([
+        {
+          type: 'browser.cookies.set',
+          url: 'https://example.com',
+          name: 'token',
+          value: 'fixture',
+        },
+        { type: 'browser.act', action: 'reload' },
+      ]),
+      false,
+    );
+    assert.equal(f.queue.enqueue({ type: 'browser.auth.save' }), true);
+    assert.equal(f.ack(1), true);
+    f.queue.reset();
+    assert.equal(f.queue.enqueue(click()), false);
+    f.queue.reset(true);
+    assert.equal(f.queue.enqueue(click()), true);
+  } finally {
+    f.queue.reset();
+  }
+});

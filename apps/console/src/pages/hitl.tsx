@@ -7,6 +7,9 @@ import { HitlCookies } from './hitl-cookies';
 
 /** 完成前包含登录快照落盘，等待窗口应覆盖服务端保存命令和结果确认。 */
 const COMPLETION_ACK_MS = 30_000;
+/** 次数耗尽不可由滚动、成功保存或重连清除；保存登录状态和完成交接仍可用。 */
+const ACTION_BUDGET_NOTICE =
+  '动作次数已耗尽（人工点击、输入和滚动也计入）。已暂停后续页面操作，仍可保存登录状态或完成交接；完成后不会重置动作次数。';
 
 /** 当前介入的授权与待办，只通过认证连接获得。 */
 interface State {
@@ -68,6 +71,7 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
     height: number;
   }>();
   const [error, setError] = useState('');
+  const [budgetExhausted, setBudgetExhausted] = useState(false);
   const [connected, setConnected] = useState(false);
   const [done, setDone] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -129,6 +133,10 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
     if (value) enqueue({ type: 'browser.input', action: 'text', value });
   };
   useEffect(() => {
+    input.current!.reset(true);
+    setBudgetExhausted(false);
+  }, [id, token]);
+  useEffect(() => {
     completed.current = false;
     completing.current = false;
     input.current!.reset();
@@ -156,8 +164,18 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
           height: message.height,
         });
       else if (message.type === 'error') {
-        setError(message.message);
-        input.current!.reset();
+        setError(
+          message.code === 'ACTION_BUDGET_EXCEEDED' ? '' : message.message,
+        );
+        if (message.code === 'ACTION_BUDGET_EXCEEDED') {
+          // 不再让连续滚动反复清错和派发；清掉尚未提交的文字，保留实时画面。
+          input.current!.exhaustActionBudget();
+          setBudgetExhausted(true);
+          setRemoteFocused(false);
+          clearTimeout(typingTimer.current);
+          typing.current = '';
+          setTypingPending(false);
+        } else input.current!.reset();
         clearTimeout(completionTimer.current);
         setBusy(false);
         completing.current = false;
@@ -222,7 +240,9 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
   const expired = !!state && Date.parse(state.expiresAt) <= now;
   const interactive =
     connected && state?.mode === 'HUMAN' && !!frame && !done && !expired;
-  const controlling = interactive && remoteFocused;
+  const pageInteractive = interactive && !budgetExhausted;
+  const controlling = pageInteractive && remoteFocused;
+
   return (
     <main className="hitl-page">
       <header className="hitl-header">
@@ -289,6 +309,11 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
                   : '正在等待 Agent 完成交接…'
                 : '未连接'}
             </p>
+            {budgetExhausted && (
+              <p role="alert" className="error-notice">
+                {ACTION_BUDGET_NOTICE}
+              </p>
+            )}
             {error && (
               <p role="alert" className="error-notice">
                 {error}
@@ -348,7 +373,7 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
             <HitlNavigation
               key={state?.targetUrl}
               targetUrl={state?.targetUrl}
-              disabled={!interactive || busy || typingPending}
+              disabled={!pageInteractive || busy || typingPending}
               submit={enqueue}
             />
             <div className="hitl-focus-notice" role="status">
@@ -369,7 +394,7 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
               <button
                 type="button"
                 className="button button-small button-secondary"
-                disabled={!interactive}
+                disabled={!pageInteractive}
                 onClick={() => {
                   screen.current?.blur();
                   setRemoteFocused(false);
@@ -382,7 +407,7 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
               <img
                 ref={screen}
                 className="hitl-screen"
-                aria-disabled={!interactive}
+                aria-disabled={!pageInteractive}
                 onFocus={() => setRemoteFocused(true)}
                 onBlur={() => {
                   flush();
@@ -390,9 +415,9 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
                 }}
                 alt="当前任务的实时浏览器画面，点击后可输入"
                 src={`data:image/jpeg;base64,${frame.data}`}
-                tabIndex={interactive ? 0 : -1}
+                tabIndex={pageInteractive ? 0 : -1}
                 onClick={(event) => {
-                  if (!interactive) return;
+                  if (!pageInteractive) return;
                   flush();
                   event.currentTarget.focus();
                   const r = event.currentTarget.getBoundingClientRect();
@@ -404,7 +429,7 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
                   });
                 }}
                 onWheel={(event) => {
-                  if (!interactive) return;
+                  if (!pageInteractive) return;
                   flush();
                   const r = event.currentTarget.getBoundingClientRect();
                   enqueue({
@@ -423,7 +448,7 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
                   });
                 }}
                 onKeyDown={(event) => {
-                  if (!interactive || event.nativeEvent.isComposing) return;
+                  if (!pageInteractive || event.nativeEvent.isComposing) return;
                   if (
                     KEYS.has(event.key) ||
                     ((event.ctrlKey || event.metaKey) &&
@@ -496,12 +521,12 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
                   value={text}
                   maxLength={4096}
                   onChange={(event) => setText(event.target.value)}
-                  disabled={!interactive}
+                  disabled={!pageInteractive}
                 />
               </label>
               <button
                 className="button button-secondary"
-                disabled={!interactive || !text}
+                disabled={!pageInteractive || !text}
               >
                 输入
               </button>
@@ -509,7 +534,7 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
             {state?.targetUrl && (
               <HitlCookies
                 targetUrl={state.targetUrl}
-                disabled={!interactive || busy || typingPending}
+                disabled={!pageInteractive || busy || typingPending}
                 submit={enqueue}
               />
             )}
@@ -518,7 +543,7 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
                 <button
                   key={key}
                   className="button button-secondary button-small"
-                  disabled={!interactive}
+                  disabled={!pageInteractive}
                   onClick={() => {
                     flush();
                     enqueue({
