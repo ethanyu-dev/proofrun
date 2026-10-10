@@ -27,6 +27,8 @@ def run():
     try:
         harness.start_api();harness.add_node()
         definition=task();definition['environment']['allowIntervention']=True
+        # 首次 Agent 导航耗尽预算后，人工点击、输入及按键仍须完成；仅验证本地夹具，不代表真实账号登录验收。
+        definition['budget']['maxActions']=1
         definition['target']['url']=f'http://127.0.0.1:{page.server_port}'
         api('POST','/v1/tasks',definition,expected=202)
         execution=harness.claim();harness.ready(execution)
@@ -37,7 +39,8 @@ def run():
         driver=subprocess.run(['node',str(ROOT/'tests/hitl/drive.mjs')],env=dict(os.environ,PROOFRUN_HITL_BASE=BASE,PROOFRUN_HITL_LINK=json.dumps(link)),capture_output=True,text=True,timeout=60)
         assert driver.returncode==0,(driver.stdout,driver.stderr)
         assert page.writes==['--cdp HITL中文'],page.writes
-        view=harness.execution(execution);assert view['controlMode']=='AUTO' and view['actionCount']==5,view
+        # 人工操作不计入 Agent 预算；恢复自动执行后仍保留已消耗的一次导航。
+        view=harness.execution(execution);assert view['controlMode']=='AUTO' and view['actionCount']==1,view
         command_id=uuid.uuid4().hex
         api('POST',f'/v1/executions/{execution["id"]}/commands',{'type':'execution.command','commandId':command_id,'timeoutMs':15000,'controlRevision':2,'command':{'type':'browser.observe','screenshot':True}},execution['leaseToken'],202)
         result=until(lambda:api('GET',f'/v1/executions/{execution["id"]}/commands/{command_id}',token=execution['leaseToken'])['result'])
