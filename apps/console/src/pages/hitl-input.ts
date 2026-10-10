@@ -7,12 +7,17 @@ const QUEUE_LIMIT = 8;
 /** 与输入协议一致；连续滚动合并后仍不能超出单次范围。 */
 const SCROLL_LIMIT = 2000;
 
+/** 只确认整组命令完成，不代表站点已经接受登录身份。 */
+export type BatchResult = 'succeeded' | 'unconfirmed';
+
 /** 每个动作只发送一次，只有匹配的成功回执才允许发送后续动作。 */
 interface Pending {
   /** 用于对应回执；迟到或重复回执不能释放其他动作。 */
   commandId: string;
   /** 封闭的浏览器命令，不包含任意远端脚本。 */
   command: NodeCommand['command'];
+  /** 仅组内最后一项持有回调；断线清队列时同样通知调用方。 */
+  settled?: (result: BatchResult) => void;
 }
 
 /** 与 React 渲染生命周期无关的串行队列，断线或超时后不重放输入。 */
@@ -68,13 +73,18 @@ export class HitlInputQueue {
   }
 
   /** 组合操作整体入队，避免容量不足时只接收 Cookie 而遗漏刷新。 */
-  enqueueBatch(commands: NodeCommand['command'][]): boolean {
+  enqueueBatch(
+    commands: NodeCommand['command'][],
+    settled?: (result: BatchResult) => void,
+  ): boolean {
+    if (!commands.length) return false;
     if (this.stopped || this.queue.length + commands.length > QUEUE_LIMIT)
       return false;
     this.queue.push(
-      ...commands.map((command) => ({
+      ...commands.map((command, index) => ({
         commandId: crypto.randomUUID(),
         command,
+        ...(index === commands.length - 1 && settled ? { settled } : {}),
       })),
     );
     this.next();
@@ -85,11 +95,13 @@ export class HitlInputQueue {
   acknowledge(message: Extract<HitlServer, { type: 'result' }>) {
     if (message.commandId !== this.pending?.commandId) return false;
     clearTimeout(this.timer);
-    this.pending = null;
     if (message.status !== 'SUCCEEDED') {
       this.stop();
       return false;
     }
+    const finished = this.pending;
+    this.pending = null;
+    finished.settled?.('succeeded');
     this.next();
     return !this.stopped;
   }
@@ -97,10 +109,12 @@ export class HitlInputQueue {
   /** 断线、卸载或新连接时清理；调用方负责决定何时重新开放输入。 */
   reset() {
     clearTimeout(this.timer);
+    const abandoned = [...(this.pending ? [this.pending] : []), ...this.queue];
     this.queue = [];
     this.pending = null;
     this.stopped = false;
     this.changed(false);
+    for (const item of abandoned) item.settled?.('unconfirmed');
   }
 
   /** 未确认动作不能重试，也不能因迟到回执而继续执行旧队列。 */

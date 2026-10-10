@@ -1137,82 +1137,185 @@ summary {
 .hitl-page {
   max-width: 1600px;
   margin: auto;
-  padding: 24px;
-}
-.hitl-header {
-  display: flex;
-  align-items: center;
-  gap: 24px;
-  margin-bottom: 28px;
-}
-.hitl-header > :last-child {
-  margin-left: auto;
+  padding: 12px 24px 24px;
 }
 .hitl-layout {
   display: grid;
-  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
-  gap: 20px;
+  gap: 12px;
+}
+.hitl-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1.65fr) minmax(300px, 1fr);
+  gap: 16px;
   align-items: start;
 }
+.hitl-tools,
+.hitl-todo {
+  min-width: 0;
+  padding: 20px;
+}
+.hitl-tools h2,
 .hitl-todo h1 {
-  font-size: 1.6rem;
-  line-height: 1.4;
+  font-size: 18px;
+  line-height: 1.5;
+  margin: 0 0 8px;
+  overflow-wrap: anywhere;
+}
+.hitl-todo .muted {
   overflow-wrap: anywhere;
 }
 .hitl-todo > .button {
   width: 100%;
-  margin-top: 16px;
+  margin-top: 12px;
 }
 .hitl-checks {
   display: grid;
-  gap: 16px;
-  margin: 24px 0;
+  gap: 10px;
+  margin: 16px 0;
 }
 .hitl-checks label {
-  display: flex;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
   gap: 10px;
   align-items: start;
+  line-height: 22px;
   overflow-wrap: anywhere;
 }
+/* 复选框不能继承文本框的高度和内边距；与多行待办的首行居中对齐。 */
 .hitl-checks input {
   width: 18px;
   height: 18px;
-  flex-shrink: 0;
+  min-height: 0;
+  padding: 0;
+  margin: 2px 0 0;
 }
 .hitl-browser {
   min-width: 0;
+  background: var(--color-surface);
+  border-radius: 8px;
 }
 .hitl-screen {
   display: block;
-  width: 100%;
+  width: auto;
+  max-width: 100%;
+  max-height: 72vh;
   height: auto;
-  /* 图片按自身比例缩放；边框不占内容坐标，避免点击映射偏移。 */
+  margin: auto;
+  /* 保持图片本身比例，不引入 object-fit 留白，坐标始终映射到真实画面。 */
   box-shadow: 0 0 0 1px var(--color-border);
   touch-action: none;
 }
 .hitl-screen:focus {
-  outline: 2px solid currentColor;
+  outline: 3px solid #2563eb;
   outline-offset: 2px;
 }
 .hitl-placeholder {
-  min-height: 300px;
+  min-height: 45vh;
   display: grid;
   place-items: center;
 }
-.hitl-browser .control-form {
-  margin-top: 20px;
+.hitl-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 13px;
+}
+.hitl-focus-hint {
+  flex: 1;
+  color: var(--color-muted);
+}
+.hitl-tools .control-form {
+  margin-top: 12px;
+}
+.hitl-text-input {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+}
+.hitl-text-input label {
+  flex: 1;
+}
+.hitl-text-input .button {
+  flex-shrink: 0;
+}
+.hitl-cookies {
+  padding-bottom: 16px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--color-border);
+}
+.hitl-cookie-entries {
+  display: grid;
+  gap: 10px;
+}
+.hitl-cookie-row {
+  display: grid;
+  grid-template-columns: minmax(100px, 1fr) minmax(140px, 1.5fr) auto auto;
+  gap: 8px;
+  align-items: end;
+}
+.hitl-cookie-row input:not([type='checkbox']) {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+}
+.hitl-cookie-row label {
+  font-size: 13px;
+}
+.hitl-cookie-row .hitl-cookie-option {
+  min-height: 44px;
+}
+.hitl-cookie-row > .button {
+  min-height: 44px;
+}
+.hitl-cookie-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+.hitl-cookie-options > .button:last-child {
+  margin-left: auto;
+}
+.hitl-cookie-result {
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-left: 3px solid #368060;
+  border-radius: 6px;
+  font-size: 14px;
+}
+.hitl-cookie-help {
+  margin-top: 12px;
+  font-size: 13px;
 }
 .hitl-done {
   max-width: 640px;
   margin: 60px auto;
   text-align: center;
 }
-@media (max-width: 800px) {
+@media (max-width: 900px) {
   .hitl-page {
-    padding: 16px;
+    padding: 12px;
   }
-  .hitl-layout {
+  .hitl-controls {
     grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 550px) {
+  .hitl-tools,
+  .hitl-todo {
+    padding: 14px;
+  }
+  .hitl-cookie-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .hitl-cookie-row .hitl-cookie-option {
+    min-height: 40px;
+  }
+  .hitl-focus-hint {
+    flex-basis: 100%;
+    order: 1;
   }
 }
 
@@ -1802,44 +1905,6 @@ summary {
   }
 }
 
-/* 焦点提示使用轮廓和阴影，不改变远端点击坐标的内容区域。 */
-.hitl-browser.hitl-controlling {
-  outline: 3px solid #2563eb;
-  outline-offset: 3px;
-}
-.hitl-focus-notice {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px;
-  margin: 16px 0;
-  border-radius: 8px;
-  background: var(--color-surface);
-}
-.hitl-controlling .hitl-focus-notice {
-  color: #fff;
-  background: #1d4ed8;
-  font-weight: 600;
-}
-/* 两段提示共占同一网格，切换焦点不推移画面，避免首击坐标偏移。 */
-.hitl-focus-label {
-  display: grid;
-  flex: 1;
-}
-.hitl-focus-label > span {
-  grid-area: 1 / 1;
-}
-.hitl-focus-notice {
-  font-weight: 600;
-}
-.hitl-focus-notice button {
-  flex-shrink: 0;
-}
-.hitl-controlling .hitl-screen:focus {
-  outline: 3px solid #2563eb;
-  outline-offset: 2px;
-}
 .hitl-navigation {
   display: flex;
   flex-wrap: wrap;
@@ -1862,15 +1927,17 @@ summary {
 .hitl-time-warning {
   color: #b45309;
 }
-.control-form .hitl-cookie-option {
+.hitl-cookie-option {
   display: flex;
   flex-direction: row;
   align-items: center;
   gap: 8px;
 }
-.control-form .hitl-cookie-option input {
+.hitl-cookie-option input {
   width: 18px;
   height: 18px;
   min-height: 0;
+  padding: 0;
+  margin: 0;
   flex-shrink: 0;
 }
