@@ -51,17 +51,22 @@ export function compileCase(
   input: VerificationCaseV2,
   profile: CaseProfile,
 ): VerificationTask {
-  const steps = normalizeSteps(input.steps);
-  normalizeSteps(
-    input.cleanup.map((step) => ({
+  const businessSteps = normalizeSteps(input.steps);
+  const cleanupSteps = normalizeSteps(
+    input.cleanup.map((step, index) => ({
       ...step,
+      stepId: step.stepId ?? `cleanup-${index + 1}`,
       type: 'setup',
       policy: step.policy ?? [],
       expected: step.expected ?? [],
     })),
   );
-  const budget = caseBudget(profile, steps.length);
-  const waitMs = steps.reduce(
+  const steps = [...businessSteps, ...cleanupSteps];
+  // 两段分别排序后拼接；清理顺序不能把它插入业务步骤之间。
+  if (new Set(steps.map((step) => step.stepId)).size !== steps.length)
+    throw new ApiError(422, 'INVALID_CASE', '业务和清理步骤身份不能重复');
+  const budget = caseBudget(profile, businessSteps.length);
+  const waitMs = businessSteps.reduce(
     (total, step) => total + (step.wait?.durationMs ?? 0),
     0,
   );
@@ -86,9 +91,7 @@ export function compileCase(
     target: { url: input.entry },
     environment: structuredClone(profile.environment),
     budget,
-    ...(input.cleanup.length
-      ? { cleanupBudget: caseBudget(profile, input.cleanup.length) }
-      : {}),
+    cleanupStepIds: cleanupSteps.map((step) => step.stepId!),
     executionMode: profile.executionMode ?? 'parallel',
     purpose: 'verification',
     steps: steps as NonNullable<VerificationTask['steps']>,
@@ -98,8 +101,10 @@ export function compileCase(
   };
 }
 
-/** 清理使用独立任务和完整预算，原定义中的具体恢复值由上游提供，不推测原始业务数据。 */
+/** 兼容历史冻结定义的独立清理；新 case 不再通过此处生成任务。 */
 export function cleanupTask(task: VerificationTask): VerificationTask | null {
+  // 仅兼容升级前冻结的定义；新任务在原会话内收尾。
+  if (task.cleanupStepIds !== undefined) return null;
   const cleanup = task.caseV2Definition?.cleanup;
   if (!cleanup?.length) return null;
   const steps = normalizeSteps(

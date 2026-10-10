@@ -73,9 +73,16 @@ export function TaskDetailPage({ api, id }: { api: ApiClient; id: string }) {
             查看验证报告
           </a>
         )}
-        {task && !task.definition.steps && (
-          <TaskRerun api={api} id={id} paired={!!task.definition.comparison} />
-        )}
+        {task &&
+          (!task.definition.steps || task.definition.caseV2Definition) && (
+            <TaskRerun
+              key={id}
+              api={api}
+              id={id}
+              paired={!!task.definition.comparison}
+              caseId={task.definition.caseV2Definition?.caseId}
+            />
+          )}
         {task && !paired && !task.definition.steps && (
           <button
             className="button button-primary"
@@ -189,6 +196,14 @@ export function TaskDetailPage({ api, id }: { api: ApiClient; id: string }) {
             <Comparison api={api} id={id} />
           ) : (
             <>
+              {task.executions.map((execution) => (
+                <ExecutionControl
+                  key={execution.id}
+                  api={api}
+                  execution={execution}
+                  task={task}
+                />
+              ))}
               <TaskResources task={task} />
               {task.executions.map((execution) => (
                 <DecisionContext
@@ -198,15 +213,6 @@ export function TaskDetailPage({ api, id }: { api: ApiClient; id: string }) {
                   running={
                     task.state === 'RUNNING' && execution.state === 'RUNNING'
                   }
-                />
-              ))}
-              {task.executions.map((execution) => (
-                <ExecutionControl
-                  key={execution.id}
-                  api={api}
-                  execution={execution}
-                  task={task}
-                  refresh={resource.refresh}
                 />
               ))}
               <TaskReport api={api} task={task} />

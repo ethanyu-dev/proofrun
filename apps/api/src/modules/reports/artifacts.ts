@@ -416,12 +416,8 @@ export class ArtifactStore {
         )
           throw invalid();
       }
-      if (
-        step.status !== 'COMPLETED' ||
-        (definition.type === 'setup' &&
-          step.criteria.some((c) => c.verdict !== 'PASSED'))
-      )
-        stopped = true;
+      // 已结束的失败/受阻步骤不阻挡后续；尚未开始或仍运行时不能越步执行。
+      if (['PENDING', 'RUNNING'].includes(step.status)) stopped = true;
     }
   }
 

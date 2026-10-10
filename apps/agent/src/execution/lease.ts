@@ -18,6 +18,8 @@ export class LeaseGuard {
   private revision = 0;
   private paused = false;
   private deadlineAt: string;
+  /** 一旦进入清理，只接受携带同一清理期限的后续时间快照。 */
+  private cleanupDeadlineAt: string | undefined;
 
   constructor(
     client: Pick<ControlClient, 'heartbeat'>,
@@ -48,33 +50,40 @@ export class LeaseGuard {
         const reply = await client.heartbeat(execution, signal);
         // 回复到达时可能已经被原期限撤权；迟到响应绝不重启一个失效执行。
         signal.throwIfAborted();
-        this.syncTiming(reply);
+        if (!this.syncTiming(reply)) continue;
         expires = reply.leaseExpiresAt;
-        this.arm(expires);
       }
     })().catch(() => {
       if (!this.signal.aborted)
         this.fail('LEASE_LOST', '控制面续租失败，已停止执行');
     });
   }
-  /** 仅控制面已确认的代次切换可暂停或刷新预算，普通续租不能加时。 */
-  syncTiming(view: ExecutionTiming): void {
+  /** 只接受控制面确认的期限；清理使用固定墙钟预算，旧心跳不能退回业务阶段。 */
+  syncTiming(view: ExecutionTiming): boolean {
     if (
       this.signal.aborted ||
-      !view.controlMode ||
-      view.controlRevision === undefined ||
-      view.controlRevision < this.revision
+      (view.controlRevision !== undefined &&
+        view.controlRevision < this.revision) ||
+      (this.cleanupDeadlineAt !== undefined &&
+        view.cleanupDeadlineAt !== this.cleanupDeadlineAt)
     )
-      return;
-    const paused = view.controlMode !== 'AUTO';
-    const deadlineAt = view.taskDeadlineAt ?? this.deadlineAt;
+      return false;
+    if (!view.controlMode || view.controlRevision === undefined) {
+      if (view.leaseExpiresAt) this.arm(view.leaseExpiresAt);
+      return true;
+    }
+    if (view.cleanupDeadlineAt) this.cleanupDeadlineAt = view.cleanupDeadlineAt;
+    const paused = !this.cleanupDeadlineAt && view.controlMode !== 'AUTO';
+    const deadlineAt =
+      this.cleanupDeadlineAt ?? view.taskDeadlineAt ?? this.deadlineAt;
     if (!Number.isFinite(Date.parse(deadlineAt))) {
       this.fail('INVALID_EXECUTION_VIEW', '执行截止时间无效');
-      return;
+      return false;
     }
     if (this.paused === paused && this.deadlineAt === deadlineAt) {
       this.revision = view.controlRevision;
-      return;
+      if (view.leaseExpiresAt) this.arm(view.leaseExpiresAt);
+      return true;
     }
     this.revision = view.controlRevision;
     this.paused = paused;
@@ -85,9 +94,19 @@ export class LeaseGuard {
       : performance.now() + Math.max(0, Date.parse(deadlineAt) - Date.now());
     if (!paused)
       this.deadlineTimer = setTimeout(
-        () => this.fail('TASK_DEADLINE', '任务总时限已到'),
+        () =>
+          this.fail(
+            this.cleanupDeadlineAt
+              ? 'CLEANUP_DEADLINE_EXCEEDED'
+              : 'TASK_DEADLINE',
+            this.cleanupDeadlineAt
+              ? '后续清理超过三分钟预算'
+              : '任务总时限已到',
+          ),
         this.remaining(),
       );
+    if (view.leaseExpiresAt) this.arm(view.leaseExpiresAt);
+    return true;
   }
   /** 自动执行使用单调时钟；暂停期间仍保留独立的 worker 租约计时器。 */
   remaining(): number {
@@ -104,7 +123,11 @@ export class LeaseGuard {
       return;
     }
     this.leaseTimer = setTimeout(
-      () => this.fail('LEASE_LOST', '执行租约已过期'),
+      () =>
+        this.cleanupDeadlineAt &&
+        Date.parse(this.cleanupDeadlineAt) <= Date.now()
+          ? this.fail('CLEANUP_DEADLINE_EXCEEDED', '后续清理超过三分钟预算')
+          : this.fail('LEASE_LOST', '执行租约已过期'),
       remaining,
     );
   }

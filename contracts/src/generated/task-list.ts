@@ -16,6 +16,10 @@ export interface TaskSummary {
    */
   parentTaskId?: string | null;
   id: string;
+  /**
+   * 结构化 case 的原始身份；两组及历史清理指向同一 case，普通任务为 null。
+   */
+  caseId?: string | null;
   objective: string;
   node_pool: string;
   target_url: string;

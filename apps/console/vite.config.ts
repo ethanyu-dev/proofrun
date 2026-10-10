@@ -16,6 +16,7 @@ export default defineConfig({
       : {}),
     proxy: {
       '/v1': { target: apiTarget, ws: true },
+      '/v2': { target: apiTarget },
       '/health': { target: apiTarget },
     },
   },

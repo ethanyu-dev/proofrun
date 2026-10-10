@@ -27,7 +27,7 @@ export type VerificationReport = {
    * 结构化任务的逐步执行事实；异常终止仍保留已完成验收。
    *
    * @minItems 1
-   * @maxItems 32
+   * @maxItems 64
    */
   steps?: [StepResult, ...StepResult[]];
 };

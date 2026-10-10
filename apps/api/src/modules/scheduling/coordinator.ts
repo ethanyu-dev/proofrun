@@ -1,4 +1,5 @@
-import { executionDeadline } from './execution-time.js';
+import { executionDeadline, CLEANUP_EXECUTION_MS } from './execution-time.js';
+import { inlineCleanup } from '../cases/inline-cleanup.js';
 import { summarizeReport } from '@proofrun/contracts';
 import { randomUUID } from 'node:crypto';
 import {
@@ -75,6 +76,7 @@ export class Coordinator {
   async submit(task: VerificationTask) {
     if (
       task.steps ||
+      task.cleanupStepIds !== undefined ||
       task.caseV2Definition ||
       task.purpose === 'cleanup' ||
       CASE_TASK_ID.test(task.taskId)
@@ -220,7 +222,7 @@ export class Coordinator {
     });
   }
 
-  /** 主任务的清理状态单独读取，不能覆盖原业务结论。 */
+  /** 优先投影同任务收尾；历史独立清理仍从关联表读取。 */
   async caseCleanup(id: string): Promise<{
     taskId: string;
     status:
@@ -234,6 +236,19 @@ export class Coordinator {
       | 'ERROR';
     report: VerificationReport | null;
   } | null> {
+    const parent = (
+      await this.db.query<{
+        definition: VerificationTask;
+        state: string;
+        report: VerificationReport | null;
+        stepResults: StepResult[] | null;
+      }>(
+        'SELECT definition,state,report,step_results AS "stepResults" FROM pr_tasks WHERE id=$1',
+        [id],
+      )
+    ).rows[0];
+    if (parent?.definition.cleanupStepIds !== undefined)
+      return inlineCleanup(parent);
     return (
       (
         await this.db.query<{
@@ -251,7 +266,7 @@ export class Coordinator {
     );
   }
 
-  /** 清理意图在提交事务中保存；终态且资源确认关闭后才生成一次独立任务。 */
+  /** 仅调度历史独立清理意图；新 case 的收尾由原任务执行器推进。 */
   private async scheduleCaseCleanups() {
     await this.db.transaction(async (client) => {
       const jobs = await client.query(
@@ -308,16 +323,47 @@ export class Coordinator {
   async recordSteps(id: string, token: string, input: unknown) {
     if (!validateStepResults(input))
       throw new ApiError(400, 'INVALID_STEPS', '步骤结果格式无效');
-    await this.db.transaction(async (client) => {
+    return this.db.transaction(async (client) => {
       const context = await executionContext(client, id);
       this.authorize(context, token, true);
       await this.artifacts.validateSteps(client, context, input);
+      const startsCleanup =
+        !context.cleanup_deadline_at &&
+        input.some(
+          (step) =>
+            step.status === 'RUNNING' &&
+            context.definition.cleanupStepIds?.includes(step.stepId),
+        );
+      if (startsCleanup) {
+        // 与首次 RUNNING 快照原子提交；使用服务端时间，忽略 worker 自报的 startedAt。
+        const deadline = new Date(Date.now() + CLEANUP_EXECUTION_MS);
+        await client.query(
+          'UPDATE pr_tasks SET deadline_at=$2,cleanup_deadline_at=$2 WHERE id=$1',
+          [context.task_id, deadline],
+        );
+        context.deadline_at = deadline;
+        context.cleanup_deadline_at = deadline;
+        context.lease_expires_at = new Date(
+          Math.min(deadline.getTime(), Date.now() + this.config.workerLeaseMs),
+        );
+        await client.query(
+          'UPDATE pr_executions SET lease_expires_at=$2 WHERE id=$1',
+          [id, context.lease_expires_at],
+        );
+      }
       await client.query('UPDATE pr_tasks SET step_results=$2 WHERE id=$1', [
         context.task_id,
         JSON.stringify(input),
       ]);
+      return {
+        saved: true,
+        taskDeadlineAt: context.deadline_at,
+        cleanupDeadlineAt: context.cleanup_deadline_at,
+        leaseExpiresAt: context.lease_expires_at,
+        controlMode: context.control_mode,
+        controlRevision: context.control_revision,
+      };
     });
-    return { saved: true };
   }
 
   /** 并行组分别携带实际策略，不能继承来源任务的单组模式；两组从同一不可变登录快照启动。 */
@@ -452,6 +498,7 @@ export class Coordinator {
       ...summarizeReport(
         task.report,
         task.definition.acceptanceCriteria.map((c) => c.id),
+        task.definition,
       ),
       executions,
       ...(task.definition.caseV2Definition
@@ -662,7 +709,8 @@ export class Coordinator {
                 leaseRequestId: heartbeat.leaseRequestId,
                 leaseTtlMs: this.leaseTtl(context, heartbeat),
                 maxDurationMs: Math.min(
-                  remaining,
+                  remaining +
+                    (task.cleanupStepIds?.length ? CLEANUP_EXECUTION_MS : 0),
                   heartbeat.limits.maxSessionMs,
                 ),
               },
@@ -692,7 +740,10 @@ export class Coordinator {
   private eligible(heartbeat: Heartbeat, task: VerificationTask): boolean {
     return (
       heartbeat.pool === task.environment.nodePool &&
-      (!task.steps || heartbeat.limits.maxSessionMs >= task.budget.timeoutMs) &&
+      (!task.steps ||
+        heartbeat.limits.maxSessionMs >=
+          task.budget.timeoutMs +
+            (task.cleanupStepIds?.length ? CLEANUP_EXECUTION_MS : 0)) &&
       (!(task.environment.allowIntervention || task.comparison) ||
         heartbeat.capabilities.liveView === true) &&
       (!task.environment.allowIntervention ||
@@ -769,6 +820,7 @@ export class Coordinator {
       return {
         leaseExpiresAt: expires,
         taskDeadlineAt: context.deadline_at,
+        cleanupDeadlineAt: context.cleanup_deadline_at,
         controlMode: context.control_mode,
         controlRevision: context.control_revision,
       };
@@ -800,6 +852,7 @@ export class Coordinator {
         closureVerified: context.closure_verified,
         leaseExpiresAt: context.lease_expires_at,
         taskDeadlineAt: context.deadline_at,
+        cleanupDeadlineAt: context.cleanup_deadline_at,
         artifacts,
       };
     });
@@ -983,7 +1036,14 @@ export class Coordinator {
         context.task_state === 'RUNNING' &&
         executionDeadline(context) <= Date.now()
       ) {
-        await stopExecution(client, context, 'TIMED_OUT', 'TASK_DEADLINE');
+        await stopExecution(
+          client,
+          context,
+          'TIMED_OUT',
+          context.cleanup_deadline_at
+            ? 'CLEANUP_DEADLINE_EXCEEDED'
+            : 'TASK_DEADLINE',
+        );
         context.task_state = 'TIMED_OUT';
       }
       const stored = (
@@ -1395,7 +1455,7 @@ export class Coordinator {
     );
     const expired = await this.db.query(
       `SELECT e.id FROM pr_executions e JOIN pr_tasks t ON t.id=e.task_id
-      WHERE e.state IN ('STARTING','RUNNING') AND (e.lease_expires_at<=clock_timestamp() OR (e.control_mode='AUTO' AND t.deadline_at<=clock_timestamp())) LIMIT $1`,
+      WHERE e.state IN ('STARTING','RUNNING') AND (e.lease_expires_at<=clock_timestamp() OR t.cleanup_deadline_at<=clock_timestamp() OR (e.control_mode='AUTO' AND t.deadline_at<=clock_timestamp())) LIMIT $1`,
       [BATCH_SIZE],
     );
     for (const row of expired.rows)
@@ -1407,7 +1467,9 @@ export class Coordinator {
             client,
             context,
             'TIMED_OUT',
-            'TASK_DEADLINE_EXCEEDED',
+            context.cleanup_deadline_at
+              ? 'CLEANUP_DEADLINE_EXCEEDED'
+              : 'TASK_DEADLINE_EXCEEDED',
           );
         else if (context.lease_expires_at.getTime() <= Date.now())
           await stopExecution(client, context, 'ERROR', 'WORKER_LEASE_EXPIRED');

@@ -80,11 +80,11 @@ export type VerificationTask = {
    * 服务端规范化的串行步骤；每项均有稳定 stepId。
    *
    * @minItems 1
-   * @maxItems 32
+   * @maxItems 64
    */
   steps?: [CaseStep, ...CaseStep[]];
   /**
-   * 清理是独立内部任务，不扩展公开步骤类型。
+   * 兼容历史独立清理任务；新 case 的清理使用同任务末尾步骤。
    */
   purpose?: 'verification' | 'cleanup';
   /**
@@ -96,12 +96,18 @@ export type VerificationTask = {
    */
   resourceKey?: string;
   /**
-   * v2 首次提交冻结的独立清理预算；历史任务缺失时沿用主任务预算。
+   * 历史独立清理的冻结预算；新 case 不再设置此字段，所有步骤共享 budget。
    */
   cleanupBudget?: {
     timeoutMs: number;
     maxActions: number;
   };
+  /**
+   * 同一任务末尾的业务清理步骤身份；存在时不再创建独立清理任务。
+   *
+   * @maxItems 32
+   */
+  cleanupStepIds?: string[];
 };
 export type CaseStep = {
   /**
@@ -348,7 +354,7 @@ export interface VerificationCaseV2 {
    */
   steps: [CaseStep, ...CaseStep[]];
   /**
-   * 结束后独立执行的业务清理操作，不是浏览器资源回收。
+   * 在同一任务和浏览器会话末尾执行的业务清理操作，不是浏览器资源回收。
    *
    * @maxItems 32
    */

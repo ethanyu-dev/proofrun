@@ -196,7 +196,7 @@
     "steps": {
       "type": "array",
       "minItems": 1,
-      "maxItems": 32,
+      "maxItems": 64,
       "items": {
         "$ref": "step-result.schema.json"
       },

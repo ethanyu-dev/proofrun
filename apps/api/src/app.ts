@@ -307,6 +307,24 @@ export async function buildApp(
     (request) => casesV2.get(request.params.id),
   );
   app.post<{ Params: IdParams }>(
+    '/v2/cases/:id/rerun',
+    { preHandler: admin },
+    async (request, reply) => {
+      const body = request.body as { caseId?: unknown } | undefined;
+      if (
+        !body ||
+        typeof body !== 'object' ||
+        Array.isArray(body) ||
+        Object.keys(body).length !== 1 ||
+        !('caseId' in body)
+      )
+        throw new ApiError(400, 'INVALID_RERUN', '重跑仅接受新的 caseId');
+      return reply
+        .code(202)
+        .send(await casesV2.rerun(request.params.id, body.caseId));
+    },
+  );
+  app.post<{ Params: IdParams }>(
     '/v2/cases/:id/cancel',
     { preHandler: admin },
     (request) => casesV2.cancel(request.params.id),

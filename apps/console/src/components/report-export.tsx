@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { TaskDetail, VerificationReport } from '@proofrun/contracts';
 import { ErrorNotice } from './ui';
+import { executionModeLabel } from '../execution-mode';
 
 /** 导出呈现原报告与统一状态，浏览器不能下载时仍可读取和复制给上层 Agent。 */
 export function ReportExport({
@@ -10,12 +11,19 @@ export function ReportExport({
 }: {
   report: VerificationReport;
   /** 导出保留存档原文，并附上与 API 一致的状态和覆盖统计。 */
-  assessment: Pick<TaskDetail, 'reportStatus' | 'criteriaCounts'>;
+  assessment: Pick<
+    TaskDetail,
+    'reportStatus' | 'criteriaCounts' | 'definition'
+  >;
   close: () => void;
 }) {
   const json = JSON.stringify(
     {
       ...report,
+      executionMode: assessment.definition.executionMode ?? 'llm',
+      executionModeLabel: executionModeLabel(
+        assessment.definition.executionMode,
+      ),
       reportStatus: assessment.reportStatus,
       criteriaCounts: assessment.criteriaCounts,
     },

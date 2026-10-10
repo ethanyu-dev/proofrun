@@ -240,7 +240,7 @@
           "required": ["taskId", "status", "result"]
         }
       ],
-      "description": "独立业务清理任务的身份、状态与结果；没有清理定义时为 null。"
+      "description": "业务清理状态与结果；新任务的 taskId 指向原任务，历史独立清理保留旧身份；没有清理定义时为 null。"
     },
     "reportStatus": {
       "enum": ["PASSED", "FAILED", "INCONCLUSIVE", null],
@@ -569,7 +569,7 @@
                     "required": ["taskId", "status", "result"]
                   }
                 ],
-                "description": "独立业务清理任务的身份、状态与结果；没有清理定义时为 null。"
+                "description": "业务清理状态与结果；新任务的 taskId 指向原任务，历史独立清理保留旧身份；没有清理定义时为 null。"
               },
               "reportStatus": {
                 "enum": ["PASSED", "FAILED", "INCONCLUSIVE", null],

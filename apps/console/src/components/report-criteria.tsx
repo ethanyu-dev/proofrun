@@ -4,6 +4,8 @@ import { ApiClient } from '../api';
 import { ReportSummary } from './report-summary';
 import { ReportStatus } from './report-status';
 import { ReportEvidenceButton, ReportEvidenceDrawer } from './report-evidence';
+import { stepStatus } from './step-completion';
+import { Status } from './ui';
 
 /** 未通过优先，其次是缺失或无法判定项，通过项默认折叠。 */
 const PRIORITY = { FAILED: 0, INCONCLUSIVE: 1, SKIPPED: 1, PASSED: 2 };
@@ -21,11 +23,15 @@ export function ReportCriteria({
     context: string;
   }>();
   const criteria = task.definition.acceptanceCriteria
+    .filter(
+      (item) => !task.definition.cleanupStepIds?.includes(item.stepId ?? ''),
+    )
     .map((definition) => ({
       definition,
-      result: task.report?.criteria.find(
-        (item) => item.criterionId === definition.id,
-      ),
+      result: (
+        task.report?.criteria ??
+        task.stepResults?.flatMap((step) => step.criteria)
+      )?.find((item) => item.criterionId === definition.id),
     }))
     .sort(
       (a, b) =>
@@ -42,9 +48,74 @@ export function ReportCriteria({
           </p>
         </div>
       </div>
+      {task.definition.steps
+        ?.filter(
+          (step) =>
+            !task.definition.cleanupStepIds?.includes(step.stepId!) &&
+            !criteria.some((item) => item.definition.stepId === step.stepId),
+        )
+        .map((step) => {
+          const result = (task.report?.steps ?? task.stepResults)?.find(
+            (item) => item.stepId === step.stepId,
+          );
+          const status = stepStatus(task, result);
+          return (
+            <details
+              className="report-criterion"
+              key={step.stepId}
+              open={status !== 'COMPLETED'}
+            >
+              <summary>
+                <span>
+                  <small className="mono muted">{step.stepId} · 执行要求</small>
+                  <strong>{step.description}</strong>
+                </span>
+                <Status value={status === 'SKIPPED' ? '未执行' : status} />
+              </summary>
+              <div className="report-criterion-body">
+                <p className="muted">
+                  本步骤未配置独立验收项，以下为执行要求与记录。
+                </p>
+                {step.policy.map((policy, index) => (
+                  <p key={index}>{policy}</p>
+                ))}
+                {result ? (
+                  <ReportSummary text={result.summary} />
+                ) : (
+                  <p>本步骤尚未执行。</p>
+                )}
+                <div className="report-evidence-grid">
+                  {result?.evidenceRefs.map((ref) => {
+                    const artifact = task.report?.artifacts.find(
+                      (item) => item.id === ref,
+                    );
+                    return artifact ? (
+                      <ReportEvidenceButton
+                        key={ref}
+                        api={api}
+                        artifact={artifact}
+                        archived={!!task.archived_at}
+                        onSelect={() =>
+                          setSelection({
+                            artifact,
+                            context: `${step.stepId} · ${step.description}`,
+                          })
+                        }
+                      />
+                    ) : (
+                      <p key={ref} className="muted wrap">
+                        证据 {ref} 暂不可预览。
+                      </p>
+                    );
+                  })}
+                </div>
+              </div>
+            </details>
+          );
+        })}
       {criteria.length === 0 && (
         <p className="muted">
-          本次没有产品验收项，操作执行结果见下方执行过程。
+          本次没有产品验收项，操作执行结果见执行要求与记录。
         </p>
       )}
       {criteria.map(({ definition, result }) => (

@@ -105,7 +105,7 @@ export interface VerificationCaseV2 {
    */
   steps: [CaseStep, ...CaseStep[]];
   /**
-   * 结束后独立执行的业务清理操作，不是浏览器资源回收。
+   * 在同一任务和浏览器会话末尾执行的业务清理操作，不是浏览器资源回收。
    *
    * @maxItems 32
    */

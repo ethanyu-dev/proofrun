@@ -99,7 +99,7 @@
         },
         "required": ["url", "exec_order", "description"]
       },
-      "description": "结束后独立执行的业务清理操作，不是浏览器资源回收。"
+      "description": "在同一任务和浏览器会话末尾执行的业务清理操作，不是浏览器资源回收。"
     }
   },
   "required": ["caseId", "platform", "entry", "steps", "cleanup"]

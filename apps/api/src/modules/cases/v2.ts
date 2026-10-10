@@ -111,6 +111,31 @@ export class CaseV2Service {
     return Promise.all(input.map((item) => this.get(item.caseId)));
   }
 
+  /** 重跑从主组冻结配置恢复整个 case；新身份重新编译收尾，不复制执行状态或报告。 */
+  async rerun(id: string, caseId: unknown): Promise<CaseResultV2> {
+    if (
+      typeof caseId !== 'string' ||
+      !/^[A-Za-z0-9_-]{1,80}$/.test(caseId) ||
+      caseId === id
+    )
+      throw new ApiError(400, 'INVALID_RERUN', '重跑需要一个新的有效 caseId');
+    const { definition } = await this.stored(id);
+    const profile: CaseProfile = {
+      environment: structuredClone(definition.environment),
+      budget: structuredClone(definition.budget),
+      executionMode: definition.comparison
+        ? 'parallel'
+        : (definition.executionMode ?? 'llm'),
+      evidenceKinds: [...definition.acceptanceCriteria[0]!.evidenceKinds],
+    };
+    // 复用提交的幂等检查与原子拆组；重试使用目标已冻结的配置，不产生额外任务。
+    const service = new CaseV2Service(this.tasks, profile, this.publicUrl);
+    const [result] = await service.submit([
+      { ...structuredClone(definition.caseV2Definition!), caseId },
+    ]);
+    return result!;
+  }
+
   /** 即使 worker 异常退出，已持久化的步骤结果仍可查询。 */
   async get(id: string): Promise<CaseResultV2> {
     const task = await this.stored(id);
@@ -178,6 +203,7 @@ export class CaseV2Service {
       ...summarizeReport(
         task.report,
         task.definition.acceptanceCriteria.map((c) => c.id),
+        task.definition,
       ),
       result: this.result(id, task.report),
       steps,
@@ -191,7 +217,7 @@ export class CaseV2Service {
     };
   }
 
-  /** 取消主任务不取消已声明的副作用清理，清理等待原会话确认关闭。 */
+  /** 取消同任务业务与收尾；历史独立清理仍按旧调度规则处理。 */
   async cancel(id: string): Promise<CaseResultV2> {
     const task = await this.stored(id);
     for (const taskId of caseArmIds(task.definition))

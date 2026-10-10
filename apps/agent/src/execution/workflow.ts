@@ -123,7 +123,7 @@ export class Workflow {
   private state: WorkflowView;
   /** 同一步重新评估不反复清空全局循环计数。 */
   private credited = new Set<string>();
-  constructor(objective: string) {
+  constructor(objective: string, structuredStepId?: string) {
     const lines = objective.split('\n');
     const starts = lines.flatMap((line, index) =>
       STEP_LINE.test(line) ? [index] : [],
@@ -139,17 +139,18 @@ export class Workflow {
     );
     // 过长或非编号任务仍完整保留，由模型按原文执行，不机械截掉尾部要求。
     const requirements =
-      numbered.length > 1 && numbered.length <= MAX_STEPS
+      !structuredStepId && numbered.length > 1 && numbered.length <= MAX_STEPS
         ? numbered
         : [objective];
     this.state = {
       steps: requirements.map((requirement, i) => ({
-        id: `step-${i + 1}`,
+        // 结构化执行已经由上层拆步，不能再次编号或解析说明中的编号列表。
+        id: structuredStepId ?? `step-${i + 1}`,
         requirement,
         status: 'pending',
         evidenceRefs: [],
       })),
-      activeStep: 'step-1',
+      activeStep: structuredStepId ?? 'step-1',
       recovery: null,
       revision: 0,
     };

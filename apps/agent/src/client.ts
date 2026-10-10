@@ -50,6 +50,9 @@ export interface ExecutionView extends ExecutionTiming {
 /** 控制面时间快照；旧版心跳未带这些字段时不能自行推断预算已刷新。 */
 export interface ExecutionTiming {
   taskDeadlineAt?: string;
+  /** 控制面首次进入清理时固定的期限，不能被较早的业务心跳覆盖。 */
+  cleanupDeadlineAt?: string | null;
+  leaseExpiresAt?: string;
   controlMode?: 'AUTO' | 'REQUESTED' | 'HUMAN';
   controlRevision?: number;
 }
@@ -74,8 +77,13 @@ export class ControlClient {
   async recordSteps(
     execution: ExecutionGrant,
     steps: StepResult[],
-  ): Promise<void> {
-    await this.request(execution, '/steps', 'POST', steps);
+  ): Promise<ExecutionTiming | void> {
+    return (await this.request(
+      execution,
+      '/steps',
+      'POST',
+      steps,
+    )) as ExecutionTiming;
   }
   /** 同一次调用不重试 claim：回执丢失时由短租约回收，不冒险重复领取。 */
   async claim(signal?: AbortSignal): Promise<ExecutionGrant | null> {

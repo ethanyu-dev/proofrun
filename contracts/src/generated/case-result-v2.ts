@@ -69,7 +69,7 @@ export interface CaseResultV2 {
    */
   steps: StepResult[];
   /**
-   * 独立业务清理任务的身份、状态与结果；没有清理定义时为 null。
+   * 业务清理状态与结果；新任务的 taskId 指向原任务，历史独立清理保留旧身份；没有清理定义时为 null。
    */
   cleanup: null | {
     taskId: string;
@@ -242,7 +242,7 @@ export interface CaseResultV2 {
          */
         steps: StepResult[];
         /**
-         * 独立业务清理任务的身份、状态与结果；没有清理定义时为 null。
+         * 业务清理状态与结果；新任务的 taskId 指向原任务，历史独立清理保留旧身份；没有清理定义时为 null。
          */
         cleanup: null | {
           taskId: string;
@@ -408,7 +408,7 @@ export interface CaseResultV2 {
          */
         steps: StepResult[];
         /**
-         * 独立业务清理任务的身份、状态与结果；没有清理定义时为 null。
+         * 业务清理状态与结果；新任务的 taskId 指向原任务，历史独立清理保留旧身份；没有清理定义时为 null。
          */
         cleanup: null | {
           taskId: string;

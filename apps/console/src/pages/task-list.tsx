@@ -230,7 +230,7 @@ export function TaskListPage({
                         查看报告
                       </a>
                     ) : (
-                      <TaskRerun api={api} id={task.id} />
+                      <TaskRerun api={api} id={task.id} caseId={task.caseId} />
                     )}
                   </td>
                 </tr>
