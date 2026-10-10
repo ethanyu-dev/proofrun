@@ -1,3 +1,4 @@
+import { inlineCleanup } from '../src/modules/cases/inline-cleanup.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
@@ -104,7 +105,10 @@ function fixture(profile: CaseProfile = PROFILE) {
       return record;
     },
     async caseCleanup(id) {
-      const cleanup = cleanupTask((await this.task(id)).definition);
+      const parent = await this.task(id);
+      if (parent.definition.cleanupStepIds !== undefined)
+        return inlineCleanup(parent);
+      const cleanup = cleanupTask(parent.definition);
       return cleanup
         ? { taskId: cleanup.taskId, status: 'PENDING', report: null }
         : null;
@@ -118,7 +122,7 @@ function fixture(profile: CaseProfile = PROFILE) {
   };
 }
 
-// 范围：乱序与同序稳定排序、原文约束、标准身份和独立清理定义；不验证页面输入效果。
+// 范围：乱序与同序稳定排序、原文约束、标准身份和同任务收尾定义；不验证页面输入效果。
 test('v2 结构化编译保持步骤身份和标准归属', () => {
   assert(validateVerificationCaseV2(INPUT));
   const task = compileCase(INPUT, PROFILE);
@@ -128,7 +132,7 @@ test('v2 结构化编译保持步骤身份和标准归属', () => {
   );
   assert.deepEqual(
     task.steps!.map((s) => s.stepId),
-    ['step-2', 'step-1', 'step-3'],
+    ['step-2', 'step-1', 'step-3', 'cleanup-1'],
   );
   assert.deepEqual(task.steps![0]!.policy, ['500～10000 的整数']);
   assert.deepEqual(
@@ -136,29 +140,23 @@ test('v2 结构化编译保持步骤身份和标准归属', () => {
     ['step-1', 'step-3'],
   );
   assert.deepEqual(task.caseV2Definition, INPUT);
-  const cleanup = cleanupTask(task)!;
-  assert(
-    validateVerificationTask(cleanup),
-    JSON.stringify(validateVerificationTask.errors),
-  );
-  assert.equal(cleanup.purpose, 'cleanup');
-  assert.equal(cleanup.parentTaskId, task.taskId);
-  assert.deepEqual(cleanup.acceptanceCriteria, []);
-  assert.equal(cleanup.resourceKey, task.resourceKey);
+  assert.equal(cleanupTask(task), null);
+  assert.deepEqual(task.cleanupStepIds, ['cleanup-1']);
+  assert.equal(task.steps!.at(-1)!.type, 'setup');
   assert.notEqual(
     compileCase({ ...INPUT, entry: 'https://other.test' }, PROFILE).resourceKey,
     task.resourceKey,
   );
 });
 
-// 范围：新 case 身份隔离、同身份编译稳定及父子清理关联；不验证数据库调度或真实登录态。
+// 范围：新 case 身份隔离、同身份编译稳定及同任务清理标记；不验证数据库调度或真实登录态。
 test('v2 互斥范围包含任务身份，新任务不继承历史清理阻塞', () => {
   const first = compileCase(INPUT, PROFILE);
   const second = compileCase({ ...INPUT, caseId: 'case-2' }, PROFILE);
   assert.equal(compileCase(INPUT, PROFILE).resourceKey, first.resourceKey);
   assert.notEqual(second.resourceKey, first.resourceKey);
-  assert.equal(cleanupTask(first)!.resourceKey, first.resourceKey);
-  assert.equal(cleanupTask(second)!.resourceKey, second.resourceKey);
+  assert.equal(cleanupTask(first), null);
+  assert.equal(cleanupTask(second), null);
 });
 
 // 范围：协议拒绝非法类型、空验证标准、重复身份与预算不足；不判断自然语言约束能否被模型理解。
@@ -287,29 +285,26 @@ test('v2 返回排队原因并在超时后保留', async () => {
   assert.equal((await service.get(INPUT.caseId)).queueReason, null);
 });
 
-// 范围：按真实 steps 数计算默认总预算、清理独立计数和显式覆盖；不验证单步墙钟时间或真实浏览器。
-test('v2 默认每步贡献 300 秒，主任务和清理独立计算预算', () => {
+// 范围：业务步数决定默认预算，清理使用独立三分钟；不验证真实浏览器或模型耗时。
+test('v2 默认业务每步贡献 300 秒，清理不占业务预算', () => {
   const profile: CaseProfile = { ...PROFILE, budget: { maxActions: 30 } };
   const task = compileCase(INPUT, profile);
   assert.equal(task.budget.timeoutMs, 900_000);
   assert.equal(task.budget.maxActions, 30);
-  assert.equal(cleanupTask(task)!.budget.timeoutMs, 300_000);
+  assert.equal(cleanupTask(task), null);
   assert.equal(
     compileCase({ ...INPUT, steps: [INPUT.steps[0]!] }, profile).budget
       .timeoutMs,
     300_000,
   );
   assert.equal(compileCase(INPUT, PROFILE).budget.timeoutMs, 10_000);
-  assert.equal(
-    cleanupTask(compileCase(INPUT, PROFILE))!.budget.timeoutMs,
-    10_000,
-  );
+  assert.equal(cleanupTask(compileCase(INPUT, PROFILE)), null);
   assert.throws(
     () =>
       compileCase(
         {
           ...INPUT,
-          steps: [{ ...INPUT.steps[0]!, wait: { durationMs: 300_000 } }],
+          steps: [{ ...INPUT.steps[0]!, wait: { durationMs: 600_000 } }],
         },
         profile,
       ),
@@ -317,7 +312,7 @@ test('v2 默认每步贡献 300 秒，主任务和清理独立计算预算', () 
   );
 });
 
-// 范围：默认双跑、两组完整预算、独立清理、查询和取消、配置改变后幂等；不模拟数据库隔离与模型质量。
+// 范围：默认双跑、两组完整预算、各自原任务收尾、查询和取消、配置改变后幂等；不模拟数据库隔离与模型质量。
 test('v2 默认双跑返回两组独立结果，并取消两组', async () => {
   const profile: CaseProfile = {
     environment: PROFILE.environment,
@@ -341,11 +336,8 @@ test('v2 默认双跑返回两组独立结果，并取消两组', async () => {
   assert.notEqual(llm!.definition.resourceKey, jev!.definition.resourceKey);
   for (const arm of [llm!, jev!]) {
     assert(validateVerificationTask(arm.definition));
-    const cleanup = cleanupTask(arm.definition)!;
-    assert(validateVerificationTask(cleanup));
-    assert.equal(cleanup.budget.timeoutMs, 300_000);
-    assert.equal(cleanup.executionMode, arm.definition.executionMode);
-    assert.equal(cleanup.resourceKey, arm.definition.resourceKey);
+    assert.equal(cleanupTask(arm.definition), null);
+    assert.deepEqual(arm.definition.cleanupStepIds, ['cleanup-1']);
   }
   const disabled = new CaseV2Service(tasks, undefined, 'https://proofrun.test');
   assert.deepEqual(await disabled.submit([INPUT]), [result]);
@@ -386,4 +378,171 @@ test('v2 双跑命名空间与历史单组保持隔离', async () => {
   assert.equal((await parallel.submit([INPUT]))[0]!.comparison, undefined);
   await parallel.submit([{ ...INPUT, caseId: `${INPUT.caseId}-jev` }]);
   assert.equal(records.size, 3);
+});
+
+// 范围：清理分段排序、身份冲突及最大 64 步协议；不连接数据库或浏览器。
+test('清理始终置后，业务与清理身份唯一且支持各 32 步', () => {
+  const input = {
+    ...INPUT,
+    steps: Array.from({ length: 32 }, (_, index) => ({
+      ...INPUT.steps[0]!,
+      exec_order: 100 + index,
+    })),
+    cleanup: Array.from({ length: 32 }, (_, index) => ({
+      ...INPUT.cleanup[0]!,
+      exec_order: 32 - index,
+    })),
+  };
+  const task = compileCase(input as VerificationCaseV2, PROFILE);
+  assert(
+    validateVerificationTask(task),
+    JSON.stringify(validateVerificationTask.errors),
+  );
+  assert.equal(task.steps!.length, 64);
+  assert.equal(task.steps![32]!.stepId, 'cleanup-32');
+  assert.equal(task.steps!.at(-1)!.stepId, 'cleanup-1');
+  assert.throws(
+    () =>
+      compileCase(
+        { ...INPUT, cleanup: [{ ...INPUT.cleanup[0]!, stepId: 'step-1' }] },
+        PROFILE,
+      ),
+    { code: 'INVALID_CASE' },
+  );
+});
+
+// 范围：新任务不生成独立清理，旧冻结定义仍可恢复旧任务；不验证历史数据库迁移。
+test('仅历史定义保留独立清理兼容', () => {
+  const task = compileCase(INPUT, PROFILE);
+  assert.equal(cleanupTask(task), null);
+  delete task.cleanupStepIds;
+  task.steps!.pop();
+  const legacy = cleanupTask(task)!;
+  assert(validateVerificationTask(legacy));
+  assert.equal(legacy.taskId, `cleanup-${task.taskId}`);
+  assert.equal(legacy.parentTaskId, task.taskId);
+});
+
+// 范围：清理状态使用原任务步骤，故障业务不污染清理投影；不验证证据上传或真实验收。
+test('同任务清理投影复用任务身份并保留独立状态', async () => {
+  const { service, records } = fixture();
+  await service.submit([INPUT]);
+  const task = records.get(`case-v2-${INPUT.caseId}`)!;
+  assert.equal(
+    (await service.get(INPUT.caseId)).cleanup!.taskId,
+    task.definition.taskId,
+  );
+  task.state = 'CANCELLED';
+  assert.equal((await service.get(INPUT.caseId)).cleanup!.status, 'SKIPPED');
+  task.state = 'RUNNING';
+  task.stepResults = task.definition.steps!.map((step) => ({
+    stepId: step.stepId!,
+    status: 'COMPLETED',
+    summary: '夹具已完成',
+    criteria: [],
+    evidenceRefs: [],
+    startedAt: '2026-10-10T00:00:00Z',
+    finishedAt: '2026-10-10T00:00:01Z',
+  }));
+  task.stepResults.at(-1)!.status = 'RUNNING';
+  assert.equal((await service.get(INPUT.caseId)).cleanup!.status, 'RUNNING');
+  task.stepResults.at(-1)!.status = 'COMPLETED';
+  task.report = {
+    protocolVersion: '0.1',
+    taskId: task.definition.taskId,
+    lifecycle: 'COMPLETED',
+    executionDisposition: 'BLOCKED',
+    verdict: null,
+    summary: '业务阻塞',
+    criteria: [],
+    artifacts: [],
+    steps: task.stepResults as NonNullable<
+      import('@proofrun/contracts').VerificationReport['steps']
+    >,
+  };
+  assert.equal(
+    (await service.get(INPUT.caseId)).cleanup!.result!.outcome,
+    'PASSED',
+  );
+});
+
+// 范围：三种模式重跑保留冻结配置、完整步骤和末尾清理；不连接数据库、模型或浏览器。
+test('v2 重跑保留原配置及整个 case，重试不重复创建', async () => {
+  for (const executionMode of ['llm', 'jev', 'parallel'] as const) {
+    const f = fixture({ ...PROFILE, executionMode });
+    await f.service.submit([INPUT]);
+    await f.service.cancel(INPUT.caseId);
+    const before = structuredClone([...f.records.entries()]);
+    const changed = new CaseV2Service(
+      f.tasks,
+      {
+        ...PROFILE,
+        executionMode: 'llm',
+        budget: { timeoutMs: 99999, maxActions: 99 },
+      },
+      'https://proofrun.test',
+    );
+    const result = await changed.rerun(INPUT.caseId, 'new-case');
+    assert(validateCaseResultV2(result));
+    const fresh = f.records.get('case-v2-new-case')!;
+    assert.equal(fresh.state, 'QUEUED');
+    assert.equal(fresh.report, null);
+    assert.deepEqual(fresh.definition.budget, PROFILE.budget);
+    assert.deepEqual(fresh.definition.environment, PROFILE.environment);
+    assert.deepEqual(fresh.definition.caseV2Definition, {
+      ...INPUT,
+      caseId: 'new-case',
+    });
+    assert.deepEqual(fresh.definition.cleanupStepIds, ['cleanup-1']);
+    assert.equal(fresh.definition.steps!.at(-1)!.stepId, 'cleanup-1');
+    assert.notEqual(
+      fresh.definition.resourceKey,
+      before[0]![1].definition.resourceKey,
+    );
+    if (executionMode === 'parallel') {
+      assert.deepEqual(
+        result.comparison!.arms.map((a) => a.executionMode),
+        ['llm', 'jev'],
+      );
+      assert.equal(f.records.size, 4);
+    } else {
+      assert.equal(result.comparison, undefined);
+      assert.equal(fresh.definition.executionMode, executionMode);
+      assert.equal(f.records.size, 2);
+    }
+    const count = f.records.size;
+    assert.deepEqual(await changed.rerun(INPUT.caseId, 'new-case'), result);
+    assert.equal(f.records.size, count);
+    for (const [id, record] of before)
+      assert.deepEqual(f.records.get(id), record);
+  }
+});
+
+// 范围：无平台配置仍可重跑，非法身份、缺失源和冲突不会创建任务；不验证真实 HTTP 认证。
+test('v2 重跑校验身份并沿用提交的冲突语义', async () => {
+  const f = fixture();
+  await f.service.submit([
+    INPUT,
+    { ...INPUT, caseId: 'occupied', platform: '另一份定义' },
+  ]);
+  const service = new CaseV2Service(
+    f.tasks,
+    undefined,
+    'https://proofrun.test',
+  );
+  for (const id of [undefined, INPUT.caseId, '', 'a/b', 'a'.repeat(81), 42])
+    await assert.rejects(
+      service.rerun(INPUT.caseId, id),
+      (e: unknown) => e instanceof ApiError && e.code === 'INVALID_RERUN',
+    );
+  await assert.rejects(
+    service.rerun('missing', 'fresh'),
+    (e: unknown) => e instanceof ApiError && e.code === 'CASE_MISSING',
+  );
+  await assert.rejects(
+    service.rerun(INPUT.caseId, 'occupied'),
+    (e: unknown) => e instanceof ApiError && e.code === 'CASE_CONFLICT',
+  );
+  assert.equal(f.records.size, 2);
+  assert.equal((await service.rerun(INPUT.caseId, 'fresh')).caseId, 'fresh');
 });

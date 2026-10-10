@@ -117,7 +117,12 @@ export class ExecutionControl {
         // 与控制代次在同一事务提交；重复恢复在上面的幂等分支返回，不能再次加时。
         await client.query(
           "UPDATE pr_tasks SET deadline_at=clock_timestamp()+$2*interval '1 millisecond' WHERE id=$1",
-          [context.task_id, RESUMED_EXECUTION_MS],
+          [
+            context.task_id,
+            context.cleanup_deadline_at
+              ? Math.max(0, context.cleanup_deadline_at.getTime() - Date.now())
+              : RESUMED_EXECUTION_MS,
+          ],
         );
         await client.query(
           'UPDATE pr_interventions SET completed_at=clock_timestamp() WHERE execution_id=$1 AND revision=$2',

@@ -12,12 +12,12 @@ import {
   TaskDefinition,
 } from './task-sections';
 import { ReportSummary } from './report-summary';
+import { ReportStatus } from './report-status';
 
 /** 模块顺序在两列保持一致；每个模块的组件状态按任务身份独立挂载。 */
 const DETAIL_SECTIONS = [
   { id: 'resources', title: '执行与资源清理' },
   { id: 'context', title: '决策上下文' },
-  { id: 'operations', title: '人工介入与操作记录' },
   { id: 'report', title: '验收报告' },
   { id: 'evidence', title: '全部证据' },
   { id: 'definition', title: '原始任务定义' },
@@ -206,7 +206,12 @@ function Arm({
           </span>
           <h3>{jev ? 'JEV + LLM' : '纯 LLM'}</h3>
         </div>
-        <Status value={task.state} />
+        <div className="comparison-arm-controls">
+          {execution && (
+            <ExecutionControl api={api} execution={execution} task={task} />
+          )}
+          <Status value={task.state} />
+        </div>
       </header>
       <p className="comparison-description">
         {jev
@@ -244,7 +249,7 @@ function Arm({
         </div>
         <div>
           <span>验收结论</span>
-          <Status value={task.report?.verdict} />
+          <ReportStatus value={task.reportStatus} />
         </div>
       </div>
       {metrics && (
@@ -281,7 +286,7 @@ function Arm({
       )}
       {task.error && (
         <p className="error-notice" role="alert">
-          {task.report?.summary ?? '执行失败，请查看操作记录。'}
+          {task.report?.summary ?? '执行失败，请查看验收报告与决策上下文。'}
           <br />
           {JSON.stringify(task.error)}
         </p>
@@ -388,11 +393,9 @@ function CancelArm({
 export function ComparisonDetails({
   api,
   arms,
-  refresh,
 }: {
   api: ApiClient;
   arms: TaskDetail[];
-  refresh: () => void;
 }) {
   return (
     <div className="comparison-details">
@@ -439,15 +442,12 @@ export function ComparisonDetails({
                   <span className="mono muted wrap">{task.id}</span>
                 </header>
                 {section.id === 'resources' && <TaskResources task={task} />}
-                {(section.id === 'context' || section.id === 'operations') &&
-                  !task.executions.length && (
-                    <section className="panel">
-                      <h2>{section.title}</h2>
-                      <p className="muted">
-                        尚未分配执行，等待本组浏览器会话。
-                      </p>
-                    </section>
-                  )}
+                {section.id === 'context' && !task.executions.length && (
+                  <section className="panel">
+                    <h2>{section.title}</h2>
+                    <p className="muted">尚未分配执行，等待本组浏览器会话。</p>
+                  </section>
+                )}
                 {section.id === 'context' &&
                   task.executions.map((execution) => (
                     <DecisionContext
@@ -458,16 +458,6 @@ export function ComparisonDetails({
                         task.state === 'RUNNING' &&
                         execution.state === 'RUNNING'
                       }
-                    />
-                  ))}
-                {section.id === 'operations' &&
-                  task.executions.map((execution) => (
-                    <ExecutionControl
-                      key={execution.id}
-                      api={api}
-                      execution={execution}
-                      task={task}
-                      refresh={refresh}
                     />
                   ))}
                 {section.id === 'report' && (
@@ -530,7 +520,6 @@ export function Comparison({ api, id }: { api: ApiClient; id: string }) {
           key={comparison.id}
           api={api}
           arms={comparison.arms}
-          refresh={resource.refresh}
         />
       )}
     </>

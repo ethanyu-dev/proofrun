@@ -2,16 +2,18 @@
 
 所有命令从仓库根目录执行。工具只处理明确提供的任务和证据；原始请求、响应与临时结果写入 Git 忽略的 `.proofrun/`，不在文档中维护实验运行记录。
 
-| 工具                        | 用途                                                 |
-| --------------------------- | ---------------------------------------------------- |
-| `generate-contracts.mjs`    | 从 JSON Schema 生成类型，`--check` 检查漂移          |
-| `generate-public-api.mjs`   | 生成公开 OpenAPI，与契约生成流程配套                 |
-| `download-test-engine.mjs`  | 下载固定原生引擎并核对摘要                           |
-| `accept-task.mjs`           | 提交既定任务、等待执行与关闭、导出报告和摘要匹配证据 |
-| `audit-acceptance.mjs`      | 离线审计已有导出的一致性、证据摘要、验收引用和用量   |
-| `test-jev.mjs`              | 历史观察的 JEV 建议测试，支持仅准备输入              |
-| `compare-jev.mjs`           | 相同历史输入下交替请求 JEV 与文本模型                |
-| `replay-agent-baseline.mjs` | 使用原 Agent 提示与工具协议重放历史观察              |
+| 工具                                      | 用途                                                          |
+| ----------------------------------------- | ------------------------------------------------------------- |
+| `generate-contracts.mjs`                  | 从 JSON Schema 生成类型，`--check` 检查漂移                   |
+| `dev-local.mjs`                           | 在 Mac 启动 API、Agent、Console，复用既有 Docker 数据库和节点 |
+| `dev-api-relay.mjs` / `dev-node-relay.py` | 本机 API 与 Docker 节点之间的证书校验 TLS 转发                |
+| `generate-public-api.mjs`                 | 生成公开 OpenAPI，与契约生成流程配套                          |
+| `download-test-engine.mjs`                | 下载固定原生引擎并核对摘要                                    |
+| `accept-task.mjs`                         | 提交既定任务、等待执行与关闭、导出报告和摘要匹配证据          |
+| `audit-acceptance.mjs`                    | 离线审计已有导出的一致性、证据摘要、验收引用和用量            |
+| `test-jev.mjs`                            | 历史观察的 JEV 建议测试，支持仅准备输入                       |
+| `compare-jev.mjs`                         | 相同历史输入下交替请求 JEV 与文本模型                         |
+| `replay-agent-baseline.mjs`               | 使用原 Agent 提示与工具协议重放历史观察                       |
 
 ## 验收材料审计
 
@@ -47,6 +49,15 @@ pnpm test:jev:agent-baseline
 ```dotenv
 TYPESAFE_API_KEY=你的真实密钥
 TYPESAFE_MODEL=jev-latest
+```
+
+使用 `pnpm dev:local` 时，若 JEV 需要本机 HTTP 代理，可在同一文件中追加以下配置（端口按本机代理修改）。启动脚本将这些设置传给 Agent；Node 24 的 `fetch` 需要 `NODE_USE_ENV_PROXY=1` 才会使用代理。`NO_PROXY` 中列出控制面及需要直连的文本模型域名，Docker 中的浏览器代理由节点单独配置。修改后需重启 Agent 才能生效。
+
+```dotenv
+NODE_USE_ENV_PROXY=1
+HTTP_PROXY=http://127.0.0.1:8234
+HTTPS_PROXY=http://127.0.0.1:8234
+NO_PROXY=localhost,127.0.0.1,::1,apiproxy.paigod.work
 ```
 
 配置方法参考 [TypeSafe Quick Start](https://docs.typesafe.ai/introduction/quickstart.md)。该密钥用于 TypeSafe 模型服务；Console 访问凭据和现有其他模型的密钥不能直接替代它。

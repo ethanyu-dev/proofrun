@@ -10,11 +10,13 @@ import {
   Status,
   time,
 } from '../components/ui';
-import { ReportCounts, ReportStatus } from '../components/report-status';
+import { ReportStatus } from '../components/report-status';
 import { ReportCriteria } from '../components/report-criteria';
-import { ReportSummary } from '../components/report-summary';
 import { ReportExport } from '../components/report-export';
 import { TaskEvidence } from '../components/task-sections';
+import { StepCompletion } from '../components/step-completion';
+import { FollowUpCleanup } from '../components/follow-up-cleanup';
+import { executionModeLabel } from '../execution-mode';
 
 /** 报告按单次任务身份读取；重新执行产生新任务，不覆盖此页的历史结论。 */
 export function ReportDetailPage({ api, id }: { api: ApiClient; id: string }) {
@@ -71,9 +73,6 @@ export function ReportDetails({
         。执行终态本身不产生验收结论。
       </Empty>
     );
-  const unresolved =
-    (task.criteriaCounts?.inconclusive ?? 0) +
-    (task.criteriaCounts?.skipped ?? 0);
   return (
     <div className="verification-report">
       <section className="panel report-overview" aria-label="报告结论">
@@ -92,28 +91,17 @@ export function ReportDetails({
         <h2>{task.definition.objective}</h2>
         <p className="muted wrap">{task.definition.target.url}</p>
         <div className="report-context">
+          <span>
+            验证模式：{executionModeLabel(task.definition.executionMode)}
+          </span>
           <span>环境：{task.definition.environment.id}</span>
           <span>验证结束：{time(task.finished_at)}</span>
           <span>
-            执行状态：
+            任务执行状态（含清理）：
             <Status value={task.state} />{' '}
             <Status value={report.executionDisposition} />
           </span>
         </div>
-        <ReportCounts counts={task.criteriaCounts} />
-        <ReportSummary text={report.summary} />
-        {unresolved > 0 && (
-          <p className="report-notice">
-            {unresolved} 项尚未得出结论，本报告不能证明这些验收要求已满足。
-          </p>
-        )}
-        {report.executionDisposition !== 'EXECUTED' && (
-          <p className="report-notice">
-            本次执行
-            {report.executionDisposition === 'BLOCKED' ? '受阻' : '异常终止'}
-            。执行异常本身不表示产品缺陷，已完成的逐项结论保留如下。
-          </p>
-        )}
         {task.archived_at && (
           <p className="report-notice">
             原始证据已于 {time(task.archived_at)}{' '}
@@ -128,37 +116,9 @@ export function ReportDetails({
           close={() => setExportOpen(false)}
         />
       )}
+      {task.definition.steps && <StepCompletion task={task} card />}
       <ReportCriteria api={api} task={task} />
-      <details className="panel report-support">
-        <summary>
-          执行过程{' '}
-          <span className="muted">
-            {report.steps?.length ?? 0} 个结构化步骤
-          </span>
-        </summary>
-        {report.steps?.length ? (
-          report.steps.map((step) => (
-            <article className="report-step" key={step.stepId}>
-              <div className="section-heading">
-                <h3>
-                  {task.definition.steps?.find(
-                    (item) => item.stepId === step.stepId,
-                  )?.description ?? step.stepId}
-                </h3>
-                <Status value={step.status} />
-              </div>
-              <p className="muted">
-                {step.stepId} · {time(step.startedAt)} → {time(step.finishedAt)}
-              </p>
-              <ReportSummary text={step.summary} />
-            </article>
-          ))
-        ) : (
-          <p className="muted">
-            本次没有结构化步骤记录，动作与模型调用记录可在任务详情查看。
-          </p>
-        )}
-      </details>
+      <FollowUpCleanup api={api} task={task} />
       <details className="panel report-support">
         <summary>
           全部证据{' '}
@@ -183,10 +143,8 @@ export function ReportDetails({
             </dd>
           </div>
           <div>
-            <dt>执行模式</dt>
-            <dd>
-              {task.definition.executionMode === 'jev' ? 'LLM + JEV' : '纯 LLM'}
-            </dd>
+            <dt>验证模式</dt>
+            <dd>{executionModeLabel(task.definition.executionMode)}</dd>
           </div>
           <div>
             <dt>模型</dt>

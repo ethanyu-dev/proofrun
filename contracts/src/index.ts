@@ -55,7 +55,7 @@ ajv.addSchema(readSchema('step-result'), 'step-result.schema.json');
 export const validateStepResults = ajv.compile<StepResult[]>({
   type: 'array',
   minItems: 1,
-  maxItems: 32,
+  maxItems: 64,
   items: { $ref: 'step-result.schema.json' },
 });
 ajv.addSchema(
@@ -153,4 +153,8 @@ export const validateNodeRoutingWrite = ajv.compile<NodeRoutingWrite>(
   readSchema('node-routing-write'),
 );
 
-export { summarizeReport, type ReportFacts } from './report-status.js';
+export {
+  summarizeReport,
+  type ReportFacts,
+  type ReportScope,
+} from './report-status.js';

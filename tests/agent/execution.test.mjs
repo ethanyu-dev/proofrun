@@ -6,6 +6,7 @@ import { ChatModel } from '../../apps/agent/dist/model/chat.js';
 import { ControlClient } from '../../apps/agent/dist/client.js';
 import { AgentFault, pause } from '../../apps/agent/dist/http.js';
 import { LeaseGuard } from '../../apps/agent/dist/execution/lease.js';
+import { Workflow } from '../../apps/agent/dist/execution/workflow.js';
 import { config, grant, FakeControl, finish, modelServer } from './fixture.mjs';
 
 /** 每次调用独占一个本地模型 HTTP 端口，保证失败也关闭监听。 */
@@ -2163,29 +2164,31 @@ test('结构化步骤逐个执行并独立保存结果，不向模型暴露后�
   );
 });
 
-// 范围：setup 验收不通过阻止后续操作并保留已知结论；不将夹具结论视为产品缺陷。
-test('setup 失败后跳过后续步骤，保留该步验收证据', async () => {
+// 范围：setup 验收不通过仍尝试后续步骤，保留已知结论和前序异常提示；不将夹具结论视为产品缺陷。
+test('setup 失败后继续后续步骤，保留该步验收证据', async () => {
   const { report, client } = await run(
     (context) => {
       const result = finish(context);
-      result.criteria[0].verdict = 'FAILED';
+      if (context.executionStep.stepId === 'step-1')
+        result.criteria[0].verdict = 'FAILED';
+      else assert.match(context.task.objective, /前序异常：step-1/);
       return result;
     },
     (_client, execution) => structuredGrant(execution, [{ type: 'setup' }, {}]),
   );
-  assert.equal(report.executionDisposition, 'BLOCKED');
-  assert.equal(report.verdict, null);
+  assert.equal(report.executionDisposition, 'EXECUTED');
+  assert.equal(report.verdict, 'FAILED');
   assert.deepEqual(
     report.criteria.map((c) => c.verdict),
-    ['FAILED', 'SKIPPED'],
+    ['FAILED', 'PASSED'],
   );
   assert.deepEqual(
     report.steps.map((s) => s.status),
-    ['COMPLETED', 'SKIPPED'],
+    ['COMPLETED', 'COMPLETED'],
   );
   assert.equal(
     client.calls.filter((c) => c.operation.action === 'navigate').length,
-    1,
+    2,
   );
 });
 
@@ -2268,7 +2271,7 @@ test('setup 空标准不能在没有证据时直接完成', async () => {
   );
   assert.equal(report.executionDisposition, 'ERROR');
   assert.equal(report.steps[0].status, 'ERROR');
-  assert.equal(report.steps[1].status, 'SKIPPED');
+  assert.equal(report.steps[1].status, 'COMPLETED');
 });
 
 // 范围：结构化步骤切换重置 JEV 局部停滞，模型总调用仍累计；不调用真实供应商。
@@ -2643,4 +2646,254 @@ test('人工返回后仍是登录页，不循环自动请求 HITL', async () => 
   assert.equal(report.executionDisposition, 'BLOCKED');
   assert.equal(report.executionDetails.reasonCode, 'NO_PROGRESS');
   assert.equal(report.verdict, null);
+});
+
+// 范围：同一次领取完成业务和两步清理，复用执行身份与会话；网页和模型均为夹具。
+test('cleanup 在原任务末尾串行执行，只提交一次报告', async () => {
+  const seen = [];
+  const { report, client } = await run(
+    (context) => {
+      seen.push(context.executionStep.stepId);
+      assert.equal(context.task.cleanupStepIds, undefined);
+      return {
+        ...finish(context),
+        evidenceRefs: context.observation.artifactRefs.map((a) => a.artifactId),
+      };
+    },
+    (_client, execution) => {
+      structuredGrant(execution, [
+        {},
+        { type: 'setup', expected: [] },
+        { type: 'setup', expected: [] },
+      ]);
+      execution.task.cleanupStepIds = ['step-2', 'step-3'];
+    },
+  );
+  assert.deepEqual(seen, ['step-1', 'step-2', 'step-3']);
+  assert.deepEqual(
+    report.steps.map((step) => step.status),
+    ['COMPLETED', 'COMPLETED', 'COMPLETED'],
+  );
+  assert.equal(report.executionDetails.actions, 3);
+  assert.equal(client.reports.length, 1);
+});
+
+// 范围：前置失败与模型阻塞均继续后续业务和收尾；不保证真实业务清理幂等。
+test('业务失败或阻塞后继续后续业务和清理，保留原结论', async () => {
+  for (const mode of ['failed', 'blocked']) {
+    const seen = [];
+    const { report, client } = await run(
+      (context) => {
+        seen.push(context.executionStep.stepId);
+        if (context.executionStep.stepId === 'step-1') {
+          if (mode === 'blocked')
+            return { type: 'verification.block', summary: '夹具阻塞' };
+          const result = finish(context);
+          result.criteria[0].verdict = 'FAILED';
+          return result;
+        }
+        return {
+          ...finish(context),
+          evidenceRefs: context.observation.artifactRefs.map(
+            (a) => a.artifactId,
+          ),
+        };
+      },
+      (_client, execution) => {
+        structuredGrant(execution, [
+          { type: 'setup' },
+          {},
+          { type: 'setup', expected: [] },
+        ]);
+        execution.task.cleanupStepIds = ['step-3'];
+      },
+    );
+    assert.deepEqual(seen, ['step-1', 'step-2', 'step-3']);
+    assert.equal(
+      report.executionDisposition,
+      mode === 'failed' ? 'EXECUTED' : 'BLOCKED',
+    );
+    assert.deepEqual(
+      report.steps.map((step) => step.status),
+      [mode === 'failed' ? 'COMPLETED' : 'BLOCKED', 'COMPLETED', 'COMPLETED'],
+    );
+    assert.equal(
+      report.criteria[0].verdict,
+      mode === 'failed' ? 'FAILED' : 'SKIPPED',
+    );
+    assert.equal(client.reports.length, 1);
+  }
+});
+
+// 范围：清理阻塞不会自动重放或执行后续清理，业务证据保留；不验证真实页面失败原因。
+test('清理自身阻塞后停止收尾，保留业务验收', async () => {
+  const seen = [];
+  const { report } = await run(
+    (context) => {
+      seen.push(context.executionStep.stepId);
+      return seen.length === 1
+        ? finish(context)
+        : { type: 'verification.block', summary: '夹具清理受阻' };
+    },
+    (_client, execution) => {
+      structuredGrant(execution, [
+        {},
+        { type: 'setup', expected: [] },
+        { type: 'setup', expected: [] },
+      ]);
+      execution.task.cleanupStepIds = ['step-2', 'step-3'];
+    },
+  );
+  assert.deepEqual(seen, ['step-1', 'step-2']);
+  assert.deepEqual(
+    report.steps.map((step) => step.status),
+    ['COMPLETED', 'BLOCKED', 'SKIPPED'],
+  );
+  assert.equal(report.criteria[0].verdict, 'PASSED');
+});
+
+// 范围：撤权后禁止末尾清理动作；使用本地 AbortSignal，不模拟节点断网或真实超时。
+test('取消原任务后不会进入 cleanup', async () => {
+  const execution = grant();
+  structuredGrant(execution, [{}, { type: 'setup', expected: [] }]);
+  execution.task.cleanupStepIds = ['step-2'];
+  const client = new FakeControl();
+  const controller = new AbortController();
+  let calls = 0;
+  const report = await execute(
+    config,
+    client,
+    {
+      decide: async () => {
+        calls++;
+        controller.abort(new AgentFault('TASK_CANCELLED', '夹具取消'));
+        throw controller.signal.reason;
+      },
+    },
+    execution,
+    controller.signal,
+  );
+  assert.equal(calls, 1);
+  assert.deepEqual(
+    report.steps.map((step) => step.status),
+    ['ERROR', 'SKIPPED'],
+  );
+  assert.equal(
+    client.calls.filter((call) => call.operation.action === 'navigate').length,
+    1,
+  );
+});
+
+// 范围：结构化第二步与自定义身份贯通模型 workflow，说明中的编号不再次拆步；不调用真实模型。
+test('结构化 workflow 使用当前 stepId，避免第二步被误判非法', async () => {
+  const seen = [];
+  const { report } = await run(
+    (context) => {
+      const id = context.executionStep.stepId;
+      seen.push(id);
+      assert.equal(context.workflow.activeStep, id);
+      assert.deepEqual(
+        context.workflow.steps.map((s) => s.id),
+        [id],
+      );
+      return {
+        ...finish(context),
+        workflow: {
+          activeStep: id,
+          assessments: [
+            {
+              stepId: id,
+              outcome: 'complete',
+              summary: '本步已有证据',
+              evidenceRefs: context.observation.artifactRefs.map(
+                (a) => a.artifactId,
+              ),
+            },
+          ],
+        },
+      };
+    },
+    (_client, execution) => {
+      structuredGrant(execution, [
+        {},
+        { description: '1. 检查提示\n2. 检查奖励' },
+      ]);
+    },
+  );
+  assert.deepEqual(seen, ['step-1', 'step-2']);
+  assert.equal(report.verdict, 'PASSED');
+  const workflow = new Workflow('1. 内容\n2. 内容', 'custom-check');
+  assert.deepEqual(
+    workflow.view().steps.map((s) => s.id),
+    ['custom-check'],
+  );
+});
+
+// 范围：局部模型错误耗尽重试后仍尝试下一业务步骤，保存错误证据和成功项；取消/租约另有测试，不模拟真实供应商故障。
+test('一个步骤模型错误不会跳过后续独立业务步骤', async () => {
+  const { report, client } = await run(
+    (context) =>
+      context.executionStep.stepId === 'step-1'
+        ? { type: 'browser.act', action: 'click', target: 'not-registered' }
+        : finish(context),
+    (_client, execution) => structuredGrant(execution, [{}, {}]),
+  );
+  assert.deepEqual(
+    report.steps.map((s) => s.status),
+    ['ERROR', 'COMPLETED'],
+  );
+  assert.deepEqual(
+    report.criteria.map((c) => c.verdict),
+    ['SKIPPED', 'PASSED'],
+  );
+  assert.equal(report.executionDisposition, 'ERROR');
+  assert(report.steps[0].evidenceRefs.length > 0);
+  assert.match(report.summary, /业务步骤执行完成 1\/2/);
+  assert.match(report.summary, /step-1（ERROR）/);
+  assert.equal(client.reports.length, 1);
+});
+
+// 范围：控制面签发清理期限后，旧业务心跳和人工暂停不能延长或缩短该期限；缩短时钟夹具不证明真实三分钟运行。
+test('清理独立时钟忽略旧心跳，人工暂停不重置预算', async () => {
+  const execution = grant();
+  execution.taskDeadlineAt = new Date(Date.now() + 100).toISOString();
+  const client = new FakeControl();
+  client.hangingHeartbeat = true;
+  const guard = new LeaseGuard(client, execution, new AbortController().signal);
+  try {
+    const deadline = new Date(Date.now() + 450).toISOString();
+    guard.syncTiming({
+      controlMode: 'AUTO',
+      controlRevision: 0,
+      taskDeadlineAt: deadline,
+      cleanupDeadlineAt: deadline,
+      leaseExpiresAt: new Date(Date.now() + 3000).toISOString(),
+    });
+    assert(guard.remaining() > 300);
+    assert.equal(
+      guard.syncTiming({
+        controlMode: 'AUTO',
+        controlRevision: 0,
+        taskDeadlineAt: execution.taskDeadlineAt,
+        cleanupDeadlineAt: null,
+        leaseExpiresAt: new Date(Date.now() + 20).toISOString(),
+      }),
+      false,
+    );
+    guard.syncTiming({
+      controlMode: 'HUMAN',
+      controlRevision: 1,
+      taskDeadlineAt: new Date(Date.now() + 1200000).toISOString(),
+      cleanupDeadlineAt: deadline,
+    });
+    assert(guard.remaining() <= 450);
+    await pause(150);
+    assert.equal(guard.signal.aborted, false);
+    await new Promise((resolve) =>
+      guard.signal.addEventListener('abort', resolve, { once: true }),
+    );
+    assert.equal(guard.signal.reason.code, 'CLEANUP_DEADLINE_EXCEEDED');
+  } finally {
+    await guard.close();
+  }
 });

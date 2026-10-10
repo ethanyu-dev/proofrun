@@ -1,3 +1,4 @@
+import { stepObjective } from '../prompts/step.js';
 import { randomUUID } from 'node:crypto';
 import {
   validateAgentDecision,
@@ -91,7 +92,7 @@ class Execution {
   private readonly loginInterventions = new Set<number>();
   /** 原任务阶段和恢复计划由所有决策模式共享。 */
   private workflow: Workflow;
-  /** 结构化步骤共享总预算和租约，每步只向模型开放当前操作与标准。 */
+  /** 业务共享原预算，进入清理后采用控制面签发的独立期限；每步只开放当前标准。 */
   private stepIndex = 0;
   /** 逐步进度快照只由执行器推进，完成后不可再改写。 */
   private stepResults: StepResult[] = [];
@@ -917,7 +918,7 @@ class Execution {
         step.finishedAt = new Date().toISOString();
       } else if (step.status === 'PENDING') {
         step.status = 'SKIPPED';
-        step.summary = '前置步骤或执行终止，未执行';
+        step.summary = `执行已终止，未执行：${summary}`;
       }
     }
     const recorded = this.stepResults.flatMap((step) => step.criteria);
@@ -930,15 +931,21 @@ class Execution {
           evidenceRefs: [],
         },
     );
+    const cleanupIds = new Set(this.grant.task.cleanupStepIds ?? []);
+    const business = this.stepResults.filter(
+      (step) => !cleanupIds.has(step.stepId),
+    );
+    const incomplete = business.filter((step) => step.status !== 'COMPLETED');
+    const progress = `业务步骤执行完成 ${business.length - incomplete.length}/${business.length}；未完成：${incomplete.map((step) => `${step.stepId}（${step.status}）`).join('、') || '无'}。`;
     return {
-      ...this.report(disposition, summary, criteria, code),
+      ...this.report(disposition, `${progress}\n${summary}`, criteria, code),
       steps: structuredClone(this.stepResults) as NonNullable<
         VerificationReport['steps']
       >,
     };
   }
 
-  /** 一个浏览器会话逐步执行，所有预算全程累计，前置失败或未知写入立即停止后续步骤。 */
+  /** 逐步记录失败并继续后续业务，前置条件由各步核实；所有预算累计，撤权立即停止操作。 */
   private async sequence(): Promise<VerificationReport> {
     const steps = this.grant.task.steps!;
     await this.checkpoint();
@@ -950,12 +957,20 @@ class Execution {
       await pause(POLL_MS, this.guard.signal);
       await this.checkpoint();
     }
+    let stopped: VerificationReport | undefined;
+    const cleanupIds = new Set(this.grant.task.cleanupStepIds ?? []);
     for (; this.stepIndex < steps.length; this.stepIndex++) {
       const step = steps[this.stepIndex]!;
       const state = this.stepResults[this.stepIndex]!;
+      this.guard.signal.throwIfAborted();
+      await this.checkpoint();
       this.currentTask = {
         ...this.grant.task,
-        objective: `任务背景：${this.grant.task.objective}\n当前步骤：${step.description}\n操作约束：${JSON.stringify(step.policy)}\n只执行当前步骤；verification.finish 只提交本步验收和执行证据。`,
+        objective: stepObjective(
+          this.grant.task,
+          step,
+          this.stepResults.slice(0, this.stepIndex),
+        ),
         target: { url: step.url },
         acceptanceCriteria: this.grant.task.acceptanceCriteria.filter(
           (c) => c.stepId === step.stepId,
@@ -963,7 +978,8 @@ class Execution {
       };
       delete this.currentTask.caseV2Definition;
       delete this.currentTask.steps;
-      this.workflow = new Workflow(this.currentTask.objective);
+      delete this.currentTask.cleanupStepIds;
+      this.workflow = new Workflow(this.currentTask.objective, step.stepId);
       this.stepEvidence = new Set(this.evidence.keys());
       this.completionEvidence = [];
       this.navigated = false;
@@ -976,7 +992,11 @@ class Execution {
       state.status = 'RUNNING';
       state.startedAt = new Date().toISOString();
       state.summary = '执行中';
-      await this.client.recordSteps(this.grant, this.stepResults);
+      const timing = await this.client.recordSteps(
+        this.grant,
+        this.stepResults,
+      );
+      if (timing) this.guard.syncTiming(timing);
       let report: VerificationReport;
       try {
         if (step.wait) {
@@ -996,12 +1016,22 @@ class Execution {
       } catch (error) {
         report = this.failure(error);
       }
-      if (report.executionDisposition !== 'EXECUTED')
-        return this.sequenceReport(
-          report.executionDisposition,
-          report.summary,
-          report.executionDetails?.reasonCode ?? null,
+      if (report.executionDisposition !== 'EXECUTED') {
+        state.status =
+          report.executionDisposition === 'BLOCKED' ? 'BLOCKED' : 'ERROR';
+        state.summary = report.summary;
+        state.finishedAt = new Date().toISOString();
+        state.evidenceRefs = [...this.evidence.keys()].filter(
+          (id) => !this.stepEvidence.has(id),
         );
+        if (!stopped || report.executionDisposition === 'ERROR')
+          stopped = report;
+        if (!this.guard.signal.aborted)
+          await this.client.recordSteps(this.grant, this.stepResults);
+        // 清理自身失败后不继续可能依赖它的清理，也不自动重放写入。
+        if (cleanupIds.has(step.stepId!)) break;
+        continue;
+      }
       state.status = 'COMPLETED';
       state.summary = report.summary;
       state.criteria = report.criteria;
@@ -1011,13 +1041,22 @@ class Execution {
       if (
         step.type === 'setup' &&
         report.criteria.some((c) => c.verdict !== 'PASSED')
-      )
-        return this.sequenceReport(
-          'BLOCKED',
-          `前置步骤 ${step.stepId} 未通过验收，后续步骤未执行`,
-          'SETUP_NOT_PASSED',
-        );
+      ) {
+        if (cleanupIds.has(step.stepId!)) {
+          stopped ??= this.blocked(
+            `清理步骤 ${step.stepId} 未通过验收，后续清理未执行`,
+            'SETUP_NOT_PASSED',
+          );
+          break;
+        }
+      }
     }
+    if (stopped)
+      return this.sequenceReport(
+        stopped.executionDisposition,
+        stopped.summary,
+        stopped.executionDetails?.reasonCode ?? null,
+      );
     return this.sequenceReport(
       'EXECUTED',
       '已按 exec_order 顺序完成所有步骤，逐项结论见步骤及验收结果',

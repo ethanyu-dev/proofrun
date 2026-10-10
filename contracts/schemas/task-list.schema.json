@@ -36,6 +36,10 @@
           "id": {
             "type": "string"
           },
+          "caseId": {
+            "type": ["string", "null"],
+            "description": "结构化 case 的原始身份；两组及历史清理指向同一 case，普通任务为 null。"
+          },
           "objective": {
             "type": "string"
           },

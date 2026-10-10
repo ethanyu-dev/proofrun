@@ -1246,6 +1246,33 @@ summary {
   padding: 22px 22px 0;
   gap: 12px;
 }
+.comparison-arm-controls {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+  min-width: 0;
+}
+.execution-intervention {
+  padding: 12px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 10px;
+  background: #fbf3e5;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+.execution-intervention p {
+  margin: 6px 0;
+}
+.execution-intervention .note {
+  display: block;
+  margin-top: 6px;
+}
+.comparison-arm-controls .execution-intervention {
+  max-width: 280px;
+  margin-bottom: 0;
+}
 .comparison-arm-heading h3 {
   margin: 5px 0 0;
   font-size: 23px;
@@ -1563,6 +1590,14 @@ summary {
 .verification-report {
   max-width: 1120px;
   margin-inline: auto;
+}
+/* 表格贴合卡片边缘，内容间距由单元格负责；窄屏仍在表格容器内横向滚动。 */
+.verification-summary-card {
+  padding: 0;
+  overflow: hidden;
+}
+.verification-summary-card > .table-scroll {
+  border-block: 0;
 }
 .report-overview {
   padding: 32px;

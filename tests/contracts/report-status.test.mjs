@@ -74,3 +74,57 @@ test('重复项不扩大通过数量，未知项不进入定义范围', () => {
   facts.criteria.push({ criterionId: 'c0', verdict: 'PASSED' });
   assert.equal(summarizeReport(facts, ['c0']).reportStatus, 'INCONCLUSIVE');
 });
+
+// 范围：清理独立于业务判定，保留前置受阻、业务失败及缺失记录；不验证报告证据真实性。
+test('后续清理不影响业务判定或验收统计', () => {
+  const scope = {
+    cleanupStepIds: ['cleanup-1'],
+    steps: [
+      { stepId: 'step-1' },
+      { stepId: 'step-2' },
+      { stepId: 'cleanup-1' },
+    ],
+    acceptanceCriteria: [
+      { id: 'c0', stepId: 'step-2' },
+      { id: 'c1', stepId: 'cleanup-1' },
+    ],
+  };
+  const facts = {
+    ...report(['PASSED', 'FAILED'], 'ERROR'),
+    steps: [
+      { stepId: 'step-1', status: 'COMPLETED' },
+      { stepId: 'step-2', status: 'COMPLETED' },
+      { stepId: 'cleanup-1', status: 'ERROR' },
+    ],
+  };
+  let summary = summarizeReport(facts, ['c0', 'c1'], scope);
+  assert.equal(summary.reportStatus, 'PASSED');
+  assert.deepEqual(summary.criteriaCounts, {
+    total: 1,
+    passed: 1,
+    failed: 0,
+    inconclusive: 0,
+    skipped: 0,
+  });
+  facts.verdict = 'FAILED';
+  assert.equal(
+    summarizeReport(facts, ['c0', 'c1'], scope).reportStatus,
+    'PASSED',
+  );
+  facts.steps[0].status = 'BLOCKED';
+  assert.equal(
+    summarizeReport(facts, ['c0', 'c1'], scope).reportStatus,
+    'INCONCLUSIVE',
+  );
+  facts.criteria[0].verdict = 'FAILED';
+  assert.equal(
+    summarizeReport(facts, ['c0', 'c1'], scope).reportStatus,
+    'FAILED',
+  );
+  facts.criteria[0].verdict = 'PASSED';
+  facts.steps = [];
+  assert.equal(
+    summarizeReport(facts, ['c0', 'c1'], scope).reportStatus,
+    'INCONCLUSIVE',
+  );
+});

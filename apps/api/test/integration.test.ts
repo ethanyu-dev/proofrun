@@ -12,6 +12,7 @@ import { retain } from '../src/maintenance.js';
 import { Database } from '../src/db.js';
 import { canonical, digest } from '../src/domain.js';
 import { sessionAuth } from '../src/modules/scheduling/auth.js';
+import { cleanupTask } from '../src/modules/cases/structured.js';
 import { buildApp } from '../src/app.js';
 import type { CaseProfile } from '../src/modules/cases/profile.js';
 import {
@@ -297,36 +298,28 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       );
       await cleaned(first.task.taskId);
       await cleaned(second.task.taskId);
-      await until(
-        () => api('GET', `/v2/cases/${input.caseId}`),
-        (response) =>
-          response.data.comparison.arms.every(
-            (arm: any) => arm.cleanup.status === 'QUEUED',
-          ),
+      const final = (await api('GET', `/v2/cases/${input.caseId}`)).data;
+      assert(
+        final.comparison.arms.every(
+          (arm: any) =>
+            arm.cleanup.status === 'SKIPPED' &&
+            arm.cleanup.taskId === arm.taskId,
+        ),
       );
-      for (let index = 0; index < 2; index++) {
-        const cleanup = await until(
-          () => claim(true),
-          (value) => value !== null,
-        );
-        assert(cleanup);
-        assert.equal(cleanup.task.purpose, 'cleanup');
-        assert.equal(cleanup.task.budget.timeoutMs, 300_000);
-        assert(
-          arms.some(
-            (arm: any) =>
-              arm.taskId === cleanup.task.parentTaskId &&
-              arm.executionMode === cleanup.task.executionMode,
-          ),
-        );
-        await ready(cleanup);
-        await api('POST', `/v1/tasks/${cleanup.task.taskId}/cancel`);
-        await cleaned(cleanup.task.taskId);
-      }
+      assert.equal(await claim(true), null);
+      assert.equal(
+        (
+          await sql.query(
+            'SELECT count(*)::int AS count FROM pr_case_cleanups WHERE parent_task_id=ANY($1)',
+            [arms.map((arm: any) => arm.taskId)],
+          )
+        ).rows[0].count,
+        0,
+      );
     });
 
     // 范围：真实 PostgreSQL 批量事务、同站点任务独立、逐步证据和清理顺序；节点为协议夹具，不执行业务浏览器。
-    await suite.test('v2 批量原子接收、独立任务与关联清理', async () => {
+    await suite.test('v2 批量原子接收、独立任务与同会话清理', async () => {
       const node = await addNode('case-fixture', 3);
       const step = {
         type: 'verification',
@@ -343,6 +336,7 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         steps: [step],
         cleanup: [
           { url: step.url, exec_order: 1, description: '恢复明确的测试值' },
+          { url: step.url, exec_order: 2, description: '核实清理后的状态' },
         ],
       };
       const submitted = await api('POST', '/v2/cases', [
@@ -400,6 +394,7 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
           startedAt: null as string | null,
           finishedAt: null as string | null,
         }));
+        let cleanupDeadline: string | undefined;
         for (const [i, state] of steps.entries()) {
           state.status = 'RUNNING';
           state.startedAt = new Date().toISOString();
@@ -411,6 +406,31 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
             execution.leaseToken,
           );
           assert.equal(saved.status, 200, JSON.stringify(saved));
+          // 两个清理步骤共享一次三分钟签发；重送快照不重新计时，业务阶段维持原期限。
+          if (definition.cleanupStepIds.includes(state.stepId)) {
+            if (!cleanupDeadline) {
+              cleanupDeadline = saved.data.cleanupDeadlineAt;
+              assert.ok(Date.parse(cleanupDeadline!) - Date.now() > 179_000);
+              assert.ok(Date.parse(cleanupDeadline!) - Date.now() <= 180_000);
+              assert.ok(
+                Date.parse(cleanupDeadline!) >
+                  Date.parse(execution.taskDeadlineAt),
+              );
+            }
+            assert.equal(saved.data.cleanupDeadlineAt, cleanupDeadline);
+            const repeated = await api(
+              'POST',
+              `/v1/executions/${execution.id}/steps`,
+              steps,
+              execution.leaseToken,
+            );
+            assert.equal(repeated.data.cleanupDeadlineAt, cleanupDeadline);
+            assert.equal(repeated.data.taskDeadlineAt, cleanupDeadline);
+          } else {
+            assert.equal(saved.data.cleanupDeadlineAt, null);
+            assert.equal(saved.data.taskDeadlineAt, execution.taskDeadlineAt);
+          }
+
           await command(execution, { type: 'browser.observe' });
           const view = (
             await api(
@@ -501,31 +521,12 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       await complete(first);
       assert.equal(
         (await api('GET', '/v2/cases/v2-first')).data.cleanup.status,
-        'PENDING',
+        'COMPLETED',
       );
       assert.equal(await claim(true), null);
       node.ignoreClose = false;
       for (const id of [...node.sessions.keys()]) node.closed(id);
-      await until(
-        async () =>
-          (await api('GET', '/v2/cases/v2-first')).data.cleanup.status,
-        (state) => state === 'QUEUED',
-      );
-      // 关闭确认和空闲心跳独立到达，清理入队不代表容量心跳已刷新。
-      const cleanup = await until(
-        () => claim(true),
-        (value) => value !== null,
-      );
-      assert.equal(cleanup.task.parentTaskId, first.task.taskId);
-      assert.equal(cleanup.task.purpose, 'cleanup');
-      assert.deepEqual(cleanup.task.acceptanceCriteria, []);
-      assert.equal(await claim(true), null);
-      await complete(cleanup);
-      await until(
-        async () =>
-          (await api('GET', '/v2/cases/v2-first')).data.cleanup.status,
-        (state) => state === 'COMPLETED',
-      );
+      await cleaned(first.task.taskId);
       const final = (await api('GET', '/v2/cases/v2-first')).data;
       assert(
         validateCaseResultV2(final),
@@ -533,6 +534,9 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       );
       assert.equal(final.result!.outcome, 'PASSED');
       assert.equal(final.cleanup!.result!.outcome, 'PASSED');
+      assert.equal(final.cleanup!.taskId, first.task.taskId);
+      assert.equal(final.steps.at(-1)!.stepId, 'cleanup-2');
+      assert.equal(await claim(true), null);
       assert.equal(
         (
           await api(
@@ -555,8 +559,98 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       node.close();
     });
 
-    // 范围：真实 HTTP、数据库和调度器验证清理故障不阻塞新 case、幂等重提不重跑；导航故障由节点夹具注入，不证明网络或浏览器行为。
-    await suite.test('v2 历史清理失败后同站点的新任务仍可领取', async () => {
+    // 范围：数据库持久化清理期限并在人工模式下强制到期；缩短数据库期限替代真实三分钟等待，不验证网页清理效果。
+    await suite.test('清理独立期限到期后撤权，不受人工暂停影响', async () => {
+      const node = await addNode('case-fixture');
+      const caseId = 'cleanup-clock';
+      await api('POST', '/v2/cases', [
+        {
+          caseId,
+          platform: '清理时钟夹具',
+          entry: 'https://cleanup-clock.example.test',
+          steps: [
+            {
+              type: 'verification',
+              url: 'https://cleanup-clock.example.test',
+              exec_order: 1,
+              description: '检查',
+              policy: [],
+              expected: ['预期'],
+            },
+          ],
+          cleanup: [
+            {
+              url: 'https://cleanup-clock.example.test',
+              exec_order: 1,
+              description: '清理',
+            },
+          ],
+        },
+      ]);
+      const execution = await claim(true);
+      await ready(execution);
+      const results = execution.task.steps.map(
+        (step: { stepId: string }, index: number) => ({
+          stepId: step.stepId,
+          status: index === 0 ? 'BLOCKED' : 'RUNNING',
+          summary: '夹具',
+          criteria: [],
+          evidenceRefs: [],
+          startedAt: new Date().toISOString(),
+          finishedAt: index === 0 ? new Date().toISOString() : null,
+        }),
+      );
+      const saved = await api(
+        'POST',
+        `/v1/executions/${execution.id}/steps`,
+        results,
+        execution.leaseToken,
+      );
+      assert.equal(saved.status, 200, JSON.stringify(saved));
+      const stored = (
+        await sql.query(
+          'SELECT cleanup_deadline_at,deadline_at FROM pr_tasks WHERE id=$1',
+          [execution.task.taskId],
+        )
+      ).rows[0];
+      assert.equal(
+        stored.cleanup_deadline_at.toISOString(),
+        saved.data.cleanupDeadlineAt,
+      );
+      await sql.query(
+        "UPDATE pr_executions SET control_mode='HUMAN' WHERE id=$1",
+        [execution.id],
+      );
+      await sql.query(
+        "UPDATE pr_tasks SET cleanup_deadline_at=clock_timestamp()-interval '1 second',deadline_at=clock_timestamp()+interval '1 hour' WHERE id=$1",
+        [execution.task.taskId],
+      );
+      await until(
+        async () =>
+          (await api('GET', `/v1/tasks/${execution.task.taskId}`)).data.state,
+        (state) => state === 'TIMED_OUT',
+      );
+      const detail = (await api('GET', `/v1/tasks/${execution.task.taskId}`))
+        .data;
+      assert.equal(detail.error.code, 'CLEANUP_DEADLINE_EXCEEDED');
+      assert.equal(
+        (
+          await api(
+            'POST',
+            `/v1/executions/${execution.id}/steps`,
+            results,
+            execution.leaseToken,
+          )
+        ).status,
+        409,
+      );
+      await cleaned(execution.task.taskId);
+      await api('POST', `/v1/nodes/${node.id}/revoke`);
+      node.close();
+    });
+
+    // 范围：真实 HTTP、数据库和调度器验证未知写入撤权不另起清理、不阻塞新 case、幂等重提不重跑；导航故障由节点夹具注入，不证明网络或浏览器行为。
+    await suite.test('v2 未知写入终止同任务清理，新任务仍可领取', async () => {
       const node = await addNode('case-fixture', 2);
       const input = {
         caseId: 'v2-failed-cleanup',
@@ -590,33 +684,15 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         target: input.entry,
       });
       await cleaned(first.task.taskId);
-      await until(
-        async () =>
-          (await api('GET', `/v2/cases/${input.caseId}`)).data.cleanup.status,
-        (state) => state === 'QUEUED',
-      );
-      // 关闭确认和空闲心跳独立到达，清理入队不代表容量心跳已刷新。
-      const cleanup = await until(
-        () => claim(true),
-        (value) => value !== null,
-      );
-      assert.equal(cleanup.task.parentTaskId, first.task.taskId);
-      assert.equal(cleanup.task.resourceKey, first.task.resourceKey);
-      await ready(cleanup);
-      await command(cleanup, {
-        type: 'browser.act',
-        action: 'navigate',
-        target: input.entry,
-      });
-      await cleaned(cleanup.task.taskId);
+      assert.equal(await claim(true), null);
       const failed = (await api('GET', `/v2/cases/${input.caseId}`)).data;
       assert.equal(failed.status, 'ERROR');
-      assert.equal(failed.cleanup.status, 'ERROR');
+      assert.equal(failed.cleanup.status, 'SKIPPED');
 
       const repeated = await api('POST', '/v2/cases', [input]);
       assert.equal(repeated.status, 202);
       assert.equal(repeated.data[0].status, 'ERROR');
-      assert.equal(repeated.data[0].cleanup.status, 'ERROR');
+      assert.equal(repeated.data[0].cleanup.status, 'SKIPPED');
       assert.equal(await claim(true), null);
 
       node.unknownWrite = false;
@@ -628,7 +704,7 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       assert.notEqual(execution.task.resourceKey, first.task.resourceKey);
       assert.equal(
         (await api('GET', `/v2/cases/${input.caseId}`)).data.cleanup.status,
-        'ERROR',
+        'SKIPPED',
       );
       await api('POST', `/v2/cases/${next.caseId}/cancel`);
       await cleaned(execution.task.taskId);
@@ -636,8 +712,8 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       node.close();
     });
 
-    // 范围：真实 HTTP/数据库核实主任务终态、关闭回执、原节点归属及跨 case 独立；节点协议为夹具，不证明浏览器清理业务效果。
-    await suite.test('清理等待所属 case 关闭且始终沿用原节点', async () => {
+    // 范围：历史独立清理的主任务终态、关闭回执、原节点归属及跨 case 独立；数据库构造旧版记录，节点不执行业务浏览器。
+    await suite.test('历史清理等待所属 case 关闭且始终沿用原节点', async () => {
       const original = await addNode('case-fixture', 2);
       const spare = await addNode('case-fixture', 2);
       const host = 'cleanup-parent.example.test';
@@ -678,6 +754,31 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         cleanup: [],
       };
       await api('POST', '/v2/cases', [input, unrelated]);
+      // 新提交已使用同任务收尾；领取前构造升级前的冻结定义与清理意图，验证兼容调度而非旧创建行为。
+      const legacy = (
+        await sql.query('SELECT definition FROM pr_tasks WHERE id=$1', [
+          `case-v2-${input.caseId}`,
+        ])
+      ).rows[0].definition as VerificationTask;
+      const cleanupIds = new Set(legacy.cleanupStepIds);
+      const businessSteps = legacy.steps!.filter(
+        (step) => !cleanupIds.has(step.stepId!),
+      );
+      assert(businessSteps[0]);
+      legacy.steps = [businessSteps[0], ...businessSteps.slice(1)];
+      legacy.acceptanceCriteria = legacy.acceptanceCriteria.filter(
+        (criterion) => !cleanupIds.has(criterion.stepId!),
+      );
+      delete legacy.cleanupStepIds;
+      const legacyCleanup = cleanupTask(legacy)!;
+      await sql.query(
+        'UPDATE pr_tasks SET definition=$2,definition_hash=$3 WHERE id=$1',
+        [legacy.taskId, legacy, digest(canonical(legacy))],
+      );
+      await sql.query(
+        'INSERT INTO pr_case_cleanups(parent_task_id,task_id,definition) VALUES($1,$2,$3)',
+        [legacy.taskId, legacyCleanup.taskId, legacyCleanup],
+      );
       const parent = await claim(true);
       const other = await claim(true);
       assert.equal(parent.task.taskId, `case-v2-${input.caseId}`);
@@ -1499,6 +1600,118 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       assert.equal(list.tasks[0].report_facts, undefined);
       assert.equal(list.tasks[0].criterion_ids, undefined);
     });
+
+    // 范围：列表和详情隔离清理失败，同时保留前置受阻；数据库报告夹具不代表真实清理验收。
+    await suite.test(
+      '后续清理失败不影响业务结论，列表与详情口径一致',
+      async () => {
+        const base = task('cleanup-report-unconnected');
+        const id = 'cleanup-report-projection';
+        await submit({ ...base, taskId: id });
+        await api('POST', `/v1/tasks/${id}/cancel`);
+        const definition = {
+          ...base,
+          taskId: id,
+          cleanupStepIds: ['cleanup-1'],
+          steps: ['step-1', 'step-2', 'cleanup-1'].map((stepId, index) => ({
+            stepId,
+            type: index === 1 ? 'verification' : 'setup',
+            exec_order: index + 1,
+            url: base.target.url,
+            description: stepId,
+            policy: [],
+            expected: index === 0 ? [] : ['达到预期'],
+          })),
+          acceptanceCriteria: [
+            {
+              ...base.acceptanceCriteria[0],
+              id: 'business-check',
+              stepId: 'step-2',
+            },
+            {
+              ...base.acceptanceCriteria[0],
+              id: 'cleanup-check',
+              stepId: 'cleanup-1',
+            },
+          ],
+        };
+        const report = {
+          protocolVersion: '0.1',
+          taskId: id,
+          lifecycle: 'TIMED_OUT',
+          executionDisposition: 'ERROR',
+          verdict: null,
+          summary: '清理超时夹具',
+          artifacts: [
+            {
+              id: 'cleanup-report-evidence',
+              kind: 'DOM',
+              uri: 'https://example.test/v1/artifacts/cleanup-report-evidence',
+              sha256: 'a'.repeat(64),
+            },
+          ],
+          steps: ['step-1', 'step-2', 'cleanup-1'].map((stepId) => ({
+            stepId,
+            status: stepId === 'cleanup-1' ? 'ERROR' : 'COMPLETED',
+            summary: '夹具',
+            criteria: [],
+            evidenceRefs: [],
+            startedAt: null,
+            finishedAt: null,
+          })),
+          criteria: [
+            {
+              criterionId: 'business-check',
+              verdict: 'PASSED',
+              summary: '业务通过夹具',
+              evidenceRefs: ['cleanup-report-evidence'],
+            },
+            {
+              criterionId: 'cleanup-check',
+              verdict: 'FAILED',
+              summary: '清理失败夹具',
+              evidenceRefs: ['cleanup-report-evidence'],
+            },
+          ],
+        };
+        await sql.query(
+          'UPDATE pr_tasks SET definition=$2,report=$3,state=$4 WHERE id=$1',
+          [id, definition, report, 'TIMED_OUT'],
+        );
+        for (const blocked of [false, true]) {
+          if (blocked) {
+            report.steps[0]!.status = 'BLOCKED';
+            await sql.query('UPDATE pr_tasks SET report=$2 WHERE id=$1', [
+              id,
+              report,
+            ]);
+          }
+          const detail = (await api('GET', `/v1/tasks/${id}`)).data;
+          const list = (await api('GET', `/v1/tasks?q=${id}&reportOnly=true`))
+            .data;
+          assert.equal(
+            validateTaskList(list),
+            true,
+            JSON.stringify(validateTaskList.errors),
+          );
+          assert.equal(
+            detail.reportStatus,
+            blocked ? 'INCONCLUSIVE' : 'PASSED',
+          );
+          assert.deepEqual(detail.criteriaCounts, {
+            total: 1,
+            passed: 1,
+            failed: 0,
+            inconclusive: 0,
+            skipped: 0,
+          });
+          assert.equal(list.tasks[0].reportStatus, detail.reportStatus);
+          assert.deepEqual(list.tasks[0].criteriaCounts, detail.criteriaCounts);
+          assert.equal(list.tasks[0].report_scope, undefined);
+          assert.deepEqual(detail.report, report);
+        }
+      },
+    );
 
     // 范围：角色凭据、一次性注册和任务定义幂等；不测试用户 SSO 或多租户权限。
     await suite.test('注册权限与不可变任务定义', async () => {
@@ -3501,6 +3714,105 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         400,
       );
     });
+
+    // 范围：HTTP 认证、并发重跑幂等、双组持久化和列表归属；不调用真实模型或业务浏览器。
+    await suite.test(
+      '结构化 case 重跑整体创建两组且列表携带 case 身份',
+      async () => {
+        const sourceId = `case-source-${randomUUID()}`;
+        const caseId = `case-rerun-${randomUUID()}`;
+        const profile: CaseProfile = config.caseProfile;
+        const previousMode = profile.executionMode;
+        profile.executionMode = 'parallel';
+        const input = {
+          caseId: sourceId,
+          platform: '重跑夹具',
+          entry: 'https://rerun.example.test',
+          steps: [
+            {
+              type: 'verification',
+              url: 'https://rerun.example.test',
+              exec_order: 1,
+              description: '检查结果',
+              policy: [],
+              expected: ['结果正确'],
+            },
+          ],
+          cleanup: [
+            {
+              url: 'https://rerun.example.test',
+              exec_order: 1,
+              description: '清理夹具',
+            },
+          ],
+        };
+        try {
+          assert.equal((await api('POST', '/v2/cases', [input])).status, 202);
+        } finally {
+          if (previousMode === undefined) delete profile.executionMode;
+          else profile.executionMode = previousMode;
+        }
+        await api('POST', `/v2/cases/${sourceId}/cancel`, {});
+        const path = `/v2/cases/${sourceId}/rerun`;
+        assert.equal((await api('POST', path, { caseId }, WORKER)).status, 401);
+        for (const invalid of [
+          {},
+          { caseId: sourceId },
+          { caseId, extra: true },
+          { caseId: 'a/b' },
+          'invalid',
+        ])
+          assert.equal((await api('POST', path, invalid)).status, 400);
+        const results = await Promise.all([
+          api('POST', path, { caseId }),
+          api('POST', path, { caseId }),
+        ]);
+        for (const result of results) {
+          assert.equal(result.status, 202, JSON.stringify(result));
+          assert(validateCaseResultV2(result.data));
+          assert(result.data.comparison);
+          assert.deepEqual(
+            result.data.comparison.arms.map((a: any) => a.executionMode),
+            ['llm', 'jev'],
+          );
+        }
+        const listing = (await api('GET', `/v1/tasks?q=${caseId}`)).data.tasks;
+        assert.equal(listing.length, 2);
+        assert(
+          listing.every(
+            (t: any) => t.caseId === caseId && t.state === 'QUEUED',
+          ),
+        );
+        for (const arm of results[0]!.data.comparison.arms) {
+          const fresh = (await api('GET', `/v1/tasks/${arm.taskId}`)).data;
+          assert.equal(fresh.report, null);
+          assert.deepEqual(fresh.definition.caseV2Definition, {
+            ...input,
+            caseId,
+          });
+          assert.deepEqual(fresh.definition.cleanupStepIds, ['cleanup-1']);
+          assert.equal(fresh.definition.steps.at(-1).stepId, 'cleanup-1');
+          // 内部重跑入口仍拒绝结构化任务，防止绕过 case 的归属与拆组。
+          assert.equal(
+            (
+              await api('POST', `/v1/tasks/${arm.taskId}/rerun`, {
+                runId: `forbidden-${randomUUID()}`,
+              })
+            ).data.code,
+            'CASE_ENDPOINT_REQUIRED',
+          );
+        }
+        const old = (await api('GET', `/v2/cases/${sourceId}`)).data;
+        assert(old.comparison.arms.every((a: any) => a.status === 'CANCELLED'));
+        await api('POST', `/v2/cases/${caseId}/cancel`, {});
+        const retry = await api('POST', path, { caseId });
+        assert(
+          retry.data.comparison.arms.every(
+            (a: any) => a.status === 'CANCELLED',
+          ),
+        );
+      },
+    );
 
     // 范围：重跑复制配置、重复请求幂等、旧记录不变与对照成对重建；不启动真实模型或浏览器。
     await suite.test('任务重跑保留历史并防止重复创建', async () => {

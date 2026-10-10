@@ -4,8 +4,11 @@ import { ApiClient } from '../api';
 import { Evidence } from './evidence';
 import { ReportExport } from './report-export';
 import { ReportStatus } from './report-status';
-import { ReportSummary } from './report-summary';
 import { Status, time } from './ui';
+import { StepCompletion } from './step-completion';
+import { ReportCriteria } from './report-criteria';
+import { FollowUpCleanup } from './follow-up-cleanup';
+import { executionModeLabel } from '../execution-mode';
 
 /** 单组结果组件始终接收完整任务，执行、报告和证据不能跨组共享身份。 */
 type TaskSectionProps = { api: ApiClient; task: TaskDetail };
@@ -43,8 +46,10 @@ export function TaskResources({ task }: { task: TaskDetail }) {
           <p>
             业务清理：
             <Status value={task.businessCleanup.status} />{' '}
-            {task.businessCleanup.status !== 'PENDING' &&
-            task.businessCleanup.status !== 'SKIPPED' ? (
+            {task.definition.cleanupStepIds !== undefined ? (
+              <span className="muted">本任务末尾执行，详情见步骤结果</span>
+            ) : task.businessCleanup.status !== 'PENDING' &&
+              task.businessCleanup.status !== 'SKIPPED' ? (
               <a
                 href={`#/tasks/${encodeURIComponent(task.businessCleanup.taskId)}`}
               >
@@ -132,9 +137,7 @@ export function TaskResources({ task }: { task: TaskDetail }) {
 /** 报告导出与引用预览仅使用当前组报告，两个组可分别打开和关闭。 */
 export function TaskReport({ api, task }: TaskSectionProps) {
   const report = task.report;
-  const [artifactId, setArtifactId] = useState<string>();
   const [exportOpen, setExportOpen] = useState(false);
-  const selected = report?.artifacts.find((item) => item.id === artifactId);
   return (
     <>
       {exportOpen && report && (
@@ -163,114 +166,27 @@ export function TaskReport({ api, task }: TaskSectionProps) {
               >
                 导出此组报告
               </button>
-              <Status value={report.executionDisposition} />
               <ReportStatus value={task.reportStatus} />
             </div>
           )}
         </div>
+        <p className="muted">
+          验证模式：{executionModeLabel(task.definition.executionMode)}
+        </p>
         {task.archived_at && (
           <p className="error-notice">
             证据内容已于 {time(task.archived_at)}{' '}
             按保留策略清理。报告结论仍可查阅，原始证据已不可下载。
           </p>
         )}
-        {report ? (
-          <ReportSummary text={report.summary} />
-        ) : (
+        {!report && (
           <p className="muted">
             尚未生成报告。任务状态本身不代表产品验收结论。
           </p>
         )}
-        {task.definition.steps && (
-          <div className="criteria-list" aria-label="步骤执行结果">
-            {task.definition.steps.map((step) => {
-              const result = (report?.steps ?? task.stepResults)?.find(
-                (s) => s.stepId === step.stepId,
-              );
-              return (
-                <article className="criterion" key={step.stepId}>
-                  <div className="section-heading">
-                    <h3>
-                      {step.exec_order}. {step.description}
-                    </h3>
-                    <Status value={result?.status ?? 'PENDING'} />
-                  </div>
-                  <p className="muted">
-                    {step.type === 'setup' ? '前置操作' : '业务验收'} ·{' '}
-                    {step.stepId}
-                  </p>
-                  <p className="wrap">入口：{step.url}</p>
-                  {step.policy.length > 0 && (
-                    <p>操作约束：{step.policy.join('；')}</p>
-                  )}
-                  {step.wait && (
-                    <p>等待时长：{step.wait.durationMs / 1000} 秒</p>
-                  )}
-                  {result && <ReportSummary text={result.summary} />}
-                  {!!result?.evidenceRefs.length && (
-                    <div className="evidence-links">
-                      {result.evidenceRefs.map((ref) => (
-                        <button
-                          key={ref}
-                          className="button button-secondary button-small"
-                          disabled={
-                            !report?.artifacts.some((a) => a.id === ref)
-                          }
-                          onClick={() => setArtifactId(ref)}
-                        >
-                          步骤证据 {ref.slice(0, 8)}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </article>
-              );
-            })}
-          </div>
-        )}
-        <div className="criteria-list">
-          {task.definition.acceptanceCriteria.map((criterion) => {
-            const result = report?.criteria.find(
-              (item) => item.criterionId === criterion.id,
-            );
-            return (
-              <article className="criterion" key={criterion.id}>
-                <div className="section-heading">
-                  <div>
-                    <span className="mono muted">{criterion.id}</span>
-                    <h3>{criterion.description}</h3>
-                  </div>
-                  <Status value={result?.verdict} />
-                </div>
-                <p>
-                  <span className="muted">预期结果：</span>
-                  {criterion.expectedResult}
-                </p>
-                <p className="muted">
-                  要求证据：{criterion.evidenceKinds.join(' / ')}
-                </p>
-                {result && <ReportSummary text={result.summary} />}
-                {!!result?.evidenceRefs.length && (
-                  <div className="evidence-links">
-                    {result.evidenceRefs.map((ref) => (
-                      <button
-                        className="button button-secondary button-small"
-                        key={ref}
-                        onClick={() => setArtifactId(ref)}
-                      >
-                        {report?.artifacts.find((item) => item.id === ref)
-                          ?.kind === 'SCREENSHOT'
-                          ? '查看截图'
-                          : '查看 DOM'}{' '}
-                        <span className="mono">{ref.slice(0, 8)}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </article>
-            );
-          })}
-        </div>
+        <StepCompletion task={task} />
+        <ReportCriteria api={api} task={task} />
+        <FollowUpCleanup api={api} task={task} />
         {report?.executionDetails && (
           <dl className="facts report-metrics">
             <div>
@@ -300,14 +216,6 @@ export function TaskReport({ api, task }: TaskSectionProps) {
           </dl>
         )}
       </section>
-      {selected && (
-        <Evidence
-          key={selected.id}
-          api={api}
-          artifact={selected}
-          close={() => setArtifactId(undefined)}
-        />
-      )}
     </>
   );
 }

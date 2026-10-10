@@ -23,6 +23,8 @@ export interface ExecutionContext {
   task_state: string;
   /** 自动执行的截止时间；人工暂停期间不生效，恢复后重置。 */
   deadline_at: Date;
+  /** 首个清理步骤启动时签发的固定截止时间；空值表示尚未进入清理。 */
+  cleanup_deadline_at: Date | null;
   /** 本次执行令牌摘要，不能用全局 worker 凭据代替。 */
   token_hash: string;
   /** worker 权限期限，节点心跳不能延长它。 */
@@ -59,7 +61,7 @@ export async function executionContext(
   const result = await client.query<ExecutionContext>(
     `
     SELECT e.id,e.task_id,e.token_hash,e.lease_expires_at,e.state AS execution_state,e.action_count,e.control_mode,e.control_revision,e.control_reason,
-      t.definition,t.state AS task_state,t.deadline_at,
+      t.definition,t.state AS task_state,t.deadline_at,t.cleanup_deadline_at,
       s.id AS session_id,s.state AS session_state,s.node_id,s.node_epoch,s.lease_id,s.fence,s.closure_verified
     FROM pr_executions e JOIN pr_tasks t ON t.id=e.task_id JOIN pr_sessions s ON s.execution_id=e.id
     WHERE e.id=$1 FOR UPDATE OF e,t,s`,

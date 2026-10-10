@@ -143,6 +143,22 @@ const document = {
         ref('CaseResultV2'),
       ),
     },
+    '/v2/cases/{id}/rerun': {
+      parameters: [pathId],
+      post: operation(
+        'rerunCaseV2',
+        '使用新 caseId 沿用原配置重跑整个 case，保留历史结果',
+        ref('CaseResultV2'),
+        {
+          status: '202',
+          requestBody: body(
+            object({
+              caseId: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,80}$' },
+            }),
+          ),
+        },
+      ),
+    },
     '/v2/cases/{id}/cancel': {
       parameters: [pathId],
       post: operation(

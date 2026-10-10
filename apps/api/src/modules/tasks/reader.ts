@@ -1,6 +1,7 @@
 import {
   summarizeReport,
   type ReportFacts,
+  type ReportScope,
   type TaskList,
   type TaskSummary,
 } from '@proofrun/contracts';
@@ -106,14 +107,21 @@ export class TaskReader {
           archived_at: Date | null;
           report_facts: ReportFacts | null;
           criterion_ids: string[];
+          report_scope: ReportScope;
         }
       >(
         `SELECT id,left(definition->>'objective',240) AS objective,definition#>>'{environment,nodePool}' AS node_pool,
-        definition#>>'{target,url}' AS target_url,definition->>'parentTaskId' AS "parentTaskId",state,created_at,finished_at,archived_at,
+        definition#>>'{target,url}' AS target_url,definition#>>'{caseV2Definition,caseId}' AS "caseId",definition->>'parentTaskId' AS "parentTaskId",state,created_at,finished_at,archived_at,
         CASE WHEN report IS NULL THEN NULL ELSE jsonb_build_object(
           'executionDisposition', report->'executionDisposition', 'verdict', report->'verdict',
+          'steps', (SELECT coalesce(jsonb_agg(jsonb_build_object('stepId',s->'stepId','status',s->'status')),'[]'::jsonb) FROM jsonb_array_elements(report->'steps') s),
           'criteria', (SELECT coalesce(jsonb_agg(jsonb_build_object('criterionId',c->'criterionId','verdict',c->'verdict')),'[]'::jsonb) FROM jsonb_array_elements(report->'criteria') c)) END AS report_facts,
         ARRAY(SELECT c->>'id' FROM jsonb_array_elements(definition->'acceptanceCriteria') c) AS criterion_ids,
+        jsonb_build_object(
+          'cleanupStepIds', coalesce(definition->'cleanupStepIds','[]'::jsonb),
+          'steps', (SELECT coalesce(jsonb_agg(jsonb_build_object('stepId',s->'stepId')),'[]'::jsonb) FROM jsonb_array_elements(definition->'steps') s),
+          'acceptanceCriteria', (SELECT coalesce(jsonb_agg(jsonb_build_object('id',c->'id','stepId',c->'stepId')),'[]'::jsonb) FROM jsonb_array_elements(definition->'acceptanceCriteria') c)
+        ) AS report_scope,
         jsonb_array_length(report->'artifacts') AS "evidenceCount",
         report->>'executionDisposition' AS execution_disposition,report->>'verdict' AS verdict,
         to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_at
@@ -136,9 +144,15 @@ export class TaskReader {
     const last = page.at(-1);
     return {
       tasks: page.map(
-        ({ cursor_at: _, report_facts, criterion_ids, ...task }) => ({
+        ({
+          cursor_at: _,
+          report_facts,
+          criterion_ids,
+          report_scope,
+          ...task
+        }) => ({
           ...task,
-          ...summarizeReport(report_facts, criterion_ids),
+          ...summarizeReport(report_facts, criterion_ids, report_scope),
           archived_at: task.archived_at?.toISOString() ?? null,
           created_at: task.created_at.toISOString(),
           finished_at: task.finished_at?.toISOString() ?? null,

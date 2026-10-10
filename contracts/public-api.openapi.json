@@ -88,6 +88,50 @@
         }
       }
     },
+    "/v2/cases/{id}/rerun": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string" }
+        }
+      ],
+      "post": {
+        "operationId": "rerunCaseV2",
+        "tags": ["Case API v2"],
+        "summary": "使用新 caseId 沿用原配置重跑整个 case，保留历史结果",
+        "responses": {
+          "202": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CaseResultV2" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["caseId"],
+                "properties": {
+                  "caseId": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,80}$"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v2/cases/{id}/cancel": {
       "parameters": [
         {
@@ -833,7 +877,7 @@
               },
               "required": ["url", "exec_order", "description"]
             },
-            "description": "结束后独立执行的业务清理操作，不是浏览器资源回收。"
+            "description": "在同一任务和浏览器会话末尾执行的业务清理操作，不是浏览器资源回收。"
           }
         },
         "required": ["caseId", "platform", "entry", "steps", "cleanup"]
@@ -1082,7 +1126,7 @@
                 "required": ["taskId", "status", "result"]
               }
             ],
-            "description": "独立业务清理任务的身份、状态与结果；没有清理定义时为 null。"
+            "description": "业务清理状态与结果；新任务的 taskId 指向原任务，历史独立清理保留旧身份；没有清理定义时为 null。"
           },
           "reportStatus": {
             "enum": ["PASSED", "FAILED", "INCONCLUSIVE", null],
@@ -1410,7 +1454,7 @@
                           "required": ["taskId", "status", "result"]
                         }
                       ],
-                      "description": "独立业务清理任务的身份、状态与结果；没有清理定义时为 null。"
+                      "description": "业务清理状态与结果；新任务的 taskId 指向原任务，历史独立清理保留旧身份；没有清理定义时为 null。"
                     },
                     "reportStatus": {
                       "enum": ["PASSED", "FAILED", "INCONCLUSIVE", null],

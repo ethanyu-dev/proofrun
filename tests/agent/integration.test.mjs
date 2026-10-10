@@ -198,7 +198,7 @@ test(
     };
     try {
       // 范围：真实模型协议夹具到 PostgreSQL 的正文、鉴权、幂等和不可变性；不验证真实模型推理或浏览器页面。
-      // 范围：新版 HTTP 输入经真实执行器、步骤持久化和清理任务形成闭环；浏览器与模型均为夹具。
+      // 范围：新版 HTTP 输入经真实执行器、步骤持久化和同任务清理形成闭环；浏览器与模型均为夹具。
       await suite.test(
         '结构化 case 的逐步执行、部分结论和清理贯通',
         async () => {
@@ -267,28 +267,29 @@ test(
           assert.equal(main.report.verdict, 'PASSED');
           assert.deepEqual(
             main.report.steps.map((s) => s.status),
-            ['COMPLETED', 'COMPLETED'],
+            ['COMPLETED', 'COMPLETED', 'COMPLETED'],
           );
-          await until(
-            () => api('GET', '/v2/cases/v2-run'),
-            (c) => c.cleanup.status === 'QUEUED',
-          );
-          const cleaned = await executeNext(completed);
-          assert.equal(cleaned.grant.task.purpose, 'cleanup');
-          assert.equal(cleaned.report.verdict, 'PASSED');
           const result = await api('GET', '/v2/cases/v2-run');
           assert.equal(result.cleanup.result.outcome, 'PASSED');
+          assert.equal(result.cleanup.taskId, main.grant.task.taskId);
+          assert.equal(main.report.steps.at(-1).stepId, 'cleanup-1');
           await api('POST', '/v2/cases', [
             {
               caseId: 'v2-partial',
               platform: '夹具',
               entry: step.url,
-              steps: [step, { ...step, exec_order: 3 }],
-              cleanup: [],
+              steps: [
+                step,
+                { ...step, exec_order: 3 },
+                { ...step, exec_order: 4 },
+              ],
+              cleanup: [
+                { url: step.url, exec_order: 1, description: '收尾夹具' },
+              ],
             },
           ]);
           const partial = await executeNext((context) =>
-            context.executionStep.stepId === 'step-1'
+            context.executionStep.stepId !== 'step-2'
               ? completed(context)
               : { type: 'verification.block', summary: '夹具缺少下一项数据' },
           );
@@ -299,13 +300,15 @@ test(
           );
           assert.deepEqual(
             partial.report.criteria.map((c) => c.verdict),
-            ['PASSED', 'SKIPPED'],
+            ['PASSED', 'SKIPPED', 'PASSED'],
           );
           const persisted = await api('GET', '/v2/cases/v2-partial');
           assert.deepEqual(
             persisted.steps.map((s) => s.status),
-            ['COMPLETED', 'BLOCKED'],
+            ['COMPLETED', 'BLOCKED', 'COMPLETED', 'COMPLETED'],
           );
+          assert.equal(persisted.cleanup.result.outcome, 'PASSED');
+          assert.equal(persisted.cleanup.taskId, partial.grant.task.taskId);
           await api('POST', `/v1/nodes/${node.id}/revoke`);
           node.close();
         },

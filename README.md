@@ -47,6 +47,23 @@ deploy/                部署模板、运行维护和环境验收
 
 API `/health/ready` 检查数据库并返回当前能力，其中 `executionWorkerProtocol: true` 表示支持 worker 协议，不代表模型服务可用。Node doctor 返回 `productionReady: false`；任务校验命令仍返回 `executed: false`。Node 写操作默认关闭，原因与开发测试开关见 [节点说明](crates/browser-node/README.md)。
 
+## 本机启动：Mac 与既有 Docker 开发环境
+
+当前 Mac 的 `proofrun-preview` 环境可在仓库根目录执行：
+
+```sh
+pnpm dev:local
+# 原入口仍可使用：bash .proofrun/runtime/start-all.sh
+```
+
+API、Agent、Console 直接运行在 Mac；PostgreSQL 和 Browser Node 复用已有 Docker 容器。Console 地址为 `http://127.0.0.1:5173`，HTTP API 地址为 `http://127.0.0.1:4101`，数据库沿用 `127.0.0.1:55432`。Docker 原有 4100 端口映射保留，Mac API 使用 4101 避免冲突。节点通过校验证书的本机 TLS 转发连接 API，保留原节点身份与登录状态。
+
+模型、密钥和数据库配置读取 `.proofrun/local.env`；case v2 配置读取 `.proofrun/case-profile.json`，首次缺失时按 `internal` 节点池、双跑模式和每组 30 次动作额度创建。后续修改这两个文件后重新运行启动命令。启动器固定本地服务地址并注入配置路径，不再读取容器的 `/var/lib/proofrun/environment.json`。
+
+启动器构建最新代码，在后台运行服务，日志为 `.proofrun/runtime/local-{api,agent,console,relay}.log`。重复运行会重启已确认属于本项目的进程，不会因自己的旧 Console 占用 5173 而失败；有运行中的任务时拒绝重启。首次切换会停用容器中的 API/Agent，并复制已有证据到本机 `.proofrun/api-artifacts`，不会清空数据库。`pnpm dev:local --no-agent` 可只验证 HTTP 接入；此时提交后应取消测试 case，再启动 Agent，避免测试任务被执行。
+
+该命令用于恢复当前已配置的 Mac 环境，需要 Docker Desktop 已运行、既有容器及其配对数据存在。全新安装按下方步骤准备 Linux 节点；服务就绪不代表模型额度可用或业务验收通过。
+
 ## 完整启动：Linux 单机开发环境
 
 以下命令均从仓库根目录执行，每个标有“终端”的步骤使用独立终端。需要 Node.js 24、pnpm 10.30.2、Rust 1.98.0、Docker、Linux systemd 用户管理器和 cgroup v2，并预先安装与架构匹配的 **agent-browser 0.38.1 原生二进制**及 Chrome/Chromium。Browser Node 正式服务不能在 macOS 上运行；macOS 可运行数据库、API、Agent 和 Console，节点需部署到 Linux VM，并按 [部署说明](deploy/README.md)配置同源 HTTPS/WSS。

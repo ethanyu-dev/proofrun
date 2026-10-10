@@ -37,7 +37,8 @@
     "accept:task": "pnpm --filter @proofrun/contracts build && node scripts/accept-task.mjs",
     "test:hitl:linux": "PROOFRUN_TEST_REAL_AGENT=true PROOFRUN_TEST_HITL=true bash tests/control-plane/run-linux.sh",
     "audit:acceptance": "node scripts/audit-acceptance.mjs",
-    "test:acceptance": "pnpm --filter @proofrun/contracts build && node --test tests/acceptance/*.test.mjs"
+    "test:acceptance": "pnpm --filter @proofrun/contracts build && node --test tests/acceptance/*.test.mjs",
+    "dev:local": "node scripts/dev-local.mjs"
   },
   "devDependencies": {
     "@types/node": "24.13.6",
