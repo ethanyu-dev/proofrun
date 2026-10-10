@@ -13,13 +13,13 @@
     "callIndex": {
       "type": "integer",
       "minimum": 1,
-      "maximum": 200,
+      "maximum": 20000,
       "description": "当前执行内的模型请求顺序，混合策略的子请求也单独计数。"
     },
     "decisionIndex": {
       "type": "integer",
       "minimum": 1,
-      "maximum": 200,
+      "maximum": 20000,
       "description": "执行循环的决策轮次，同一轮可能调用多个模型。"
     },
     "model": {

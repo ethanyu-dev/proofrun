@@ -1,10 +1,11 @@
+import { consumeStepBudget } from '../scheduling/step-budget.js';
 import type { ModelCall, ModelCallWrite } from '@proofrun/contracts';
 import { Database } from '../../db.js';
 import { ApiError, canonical, digest, ID_PATTERN } from '../../domain.js';
 import { executionContext } from '../scheduling/state.js';
 
 /** 列表只读元数据，展开单次调用时才加载可能很长的正文。 */
-const CALL_LIMIT = 200;
+const CALL_LIMIT = 20_000;
 /** 仅允许实际模型正文参数；禁止存入请求地址、认证头或任意供应商扩展。 */
 const REQUEST_FIELDS = new Set([
   'model',
@@ -136,6 +137,7 @@ export class ModelCalls {
               'Invalid thinking parameter',
             );
         }
+        await consumeStepBudget(client, context, 'modelCalls');
         const inserted = await client.query(
           'INSERT INTO pr_model_calls(id,execution_id,call_index,record,start_hash) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING RETURNING id',
           [id, executionId, record.callIndex, JSON.stringify(record), hash],

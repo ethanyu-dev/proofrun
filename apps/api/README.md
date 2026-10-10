@@ -106,9 +106,9 @@ BLOCKED 报告结束任务为 COMPLETED，ERROR 报告结束任务为 ERROR；�
 
 任务详情及公开 v1/v2 case 结果返回可选的 `queueReason: { code, message } | null`，表示最近一次领取检查发现的原因：显式节点与路由冲突、同轮快照节点冲突、清理主任务未结束/关联缺失/原节点冲突、资源占用、无合格在线节点、容量已满或凭据轮换。诊断只含固定文案，不输出节点或登录槽身份。领取成功后清空；取消和排队超时后保留，超时错误码为 `TASK_QUEUE_TIMEOUT`。没有被 worker 扫描的任务可能仍为 null，不能据此认定资源可用。迁移 `010-queue-reason.sql` 只新增诊断列，已有自动绑定会直接按新偏好语义读取，无需清空绑定或登录文件。
 
-`/v2/cases` 默认以每步 300 秒计算总预算，并原子创建纯 LLM 与 JEV+LLM 两组；每组拥有完整预算，清理按自身步骤数独立计算。profile 的显式 timeoutMs 和执行模式可覆盖默认值，已有任务重提保持首次快照。查询的 comparison.arms 返回两组结果，取消作用于两组。配置与兼容细节见 [平台配置](../../docs/case-platform-config.md)。
+`/v2/cases` 每步冻结五分钟、10 次动作和 20 次模型请求（JEV 40 次）；耗尽后标记受阻并继续后续步骤。整段清理独立三分钟、10 次动作和 20/40 次模型请求。旧 profile 总预算不再覆盖新 v2，历史快照保持不变。重跑默认使用当前预算策略，可选 budgetMode=original。详见[平台配置](../../docs/case-platform-config.md)。
 
-当前任务总预算包含排队；每个 task 只有一次 execution。API 支持 DOM、SCREENSHOT、NETWORK 元数据和 TRACE 证据；TRACE 只调度到声明对应能力的节点。节点若关闭写动作则不会被分配需要执行浏览器任务的 worker；开发联调需明确启用节点测试开关，不能由 API 绕过。
+旧任务总预算包含排队，新版步骤额度从领取后开始；每个 task 只有一次 execution。API 支持 DOM、SCREENSHOT、NETWORK 元数据和 TRACE 证据；TRACE 只调度到声明对应能力的节点。节点若关闭写动作则不会被分配需要执行浏览器任务的 worker；开发联调需明确启用节点测试开关，不能由 API 绕过。
 
 ## 模块与状态
 

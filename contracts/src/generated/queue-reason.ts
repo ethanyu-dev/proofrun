@@ -13,6 +13,7 @@ export interface QueueReason {
     | 'RESOURCE_BUSY'
     | 'NO_ELIGIBLE_NODE'
     | 'NODE_CAPACITY'
-    | 'NODE_ROTATING';
+    | 'NODE_ROTATING'
+    | 'SESSION_BUDGET_UNSUPPORTED';
   message: string;
 }

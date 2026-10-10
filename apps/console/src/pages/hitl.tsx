@@ -449,7 +449,7 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
                   <p className="muted">任务 {state.taskId}</p>
                   <p className="note">
                     有效至 {new Date(state.expiresAt).toLocaleString()}
-                    ，人工等待不计入执行时限；完成后重新计时 20 分钟。
+                    ，业务步骤的人工等待不计时，完成后继续执行；后续清理仍受三分钟期限约束。
                     <strong
                       className={
                         Date.parse(state.expiresAt) - now <= 60000

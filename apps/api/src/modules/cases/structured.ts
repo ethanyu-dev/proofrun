@@ -1,3 +1,10 @@
+import {
+  compileStepBudget,
+  businessBudget,
+  CASE_MAX_MS,
+  CASE_MAX_ACTIONS,
+  CASE_MAX_MODEL_CALLS,
+} from '@proofrun/contracts';
 import { createHash } from 'node:crypto';
 import type {
   CaseStep,
@@ -5,7 +12,7 @@ import type {
   VerificationTask,
 } from '@proofrun/contracts';
 import { ApiError } from '../../domain.js';
-import { caseBudget, type CaseProfile } from './profile.js';
+import type { CaseProfile } from './profile.js';
 
 /** 前缀将新版 case 与旧公开入口、普通内部任务隔离。 */
 export const V2_PREFIX = 'case-v2-';
@@ -65,16 +72,27 @@ export function compileCase(
   // 两段分别排序后拼接；清理顺序不能把它插入业务步骤之间。
   if (new Set(steps.map((step) => step.stepId)).size !== steps.length)
     throw new ApiError(422, 'INVALID_CASE', '业务和清理步骤身份不能重复');
-  const budget = caseBudget(profile, businessSteps.length);
-  const waitMs = businessSteps.reduce(
-    (total, step) => total + (step.wait?.durationMs ?? 0),
-    0,
-  );
-  if (waitMs >= budget.timeoutMs)
+  const stepBudget = compileStepBudget({
+    steps: steps as NonNullable<VerificationTask['steps']>,
+    cleanupStepIds: cleanupSteps.map((step) => step.stepId!),
+    executionMode: profile.executionMode ?? 'parallel',
+  });
+  const budget = businessBudget(stepBudget);
+  if (
+    budget.timeoutMs +
+      stepBudget.settleMs * businessSteps.length +
+      (cleanupSteps.length ? stepBudget.cleanup.timeoutMs : 0) >
+      CASE_MAX_MS ||
+    budget.maxActions + stepBudget.cleanup.maxActions > CASE_MAX_ACTIONS ||
+    (stepBudget.steps.reduce((sum, step) => sum + step.maxModelCalls, 0) +
+      (cleanupSteps.length ? stepBudget.cleanup.maxModelCalls : 0)) *
+      ((profile.executionMode ?? 'parallel') === 'parallel' ? 2 : 1) >
+      CASE_MAX_MODEL_CALLS
+  )
     throw new ApiError(
       422,
-      'WAIT_EXCEEDS_BUDGET',
-      '显式等待总时长必须小于平台任务预算，并为排队和操作预留时间',
+      'CASE_BUDGET_EXCEEDED',
+      '步骤所需预算超过平台上限，请拆分 case；不会削减后续步骤额度',
     );
   const scope = JSON.stringify([
     `${V2_PREFIX}${input.caseId}`,
@@ -91,6 +109,7 @@ export function compileCase(
     target: { url: input.entry },
     environment: structuredClone(profile.environment),
     budget,
+    stepBudget,
     cleanupStepIds: cleanupSteps.map((step) => step.stepId!),
     executionMode: profile.executionMode ?? 'parallel',
     purpose: 'verification',
@@ -148,6 +167,22 @@ export function expandCaseTasks(task: VerificationTask): VerificationTask[] {
     ...structuredClone(task),
     taskId: arm === 'llm' ? task.taskId : `comparison-${task.taskId}-jev`,
     executionMode: arm,
+    ...(task.stepBudget
+      ? {
+          stepBudget: {
+            ...structuredClone(task.stepBudget),
+            steps: task.stepBudget.steps.map((step) => ({
+              ...step,
+              maxModelCalls: step.maxModelCalls * (arm === 'jev' ? 2 : 1),
+            })) as NonNullable<VerificationTask['stepBudget']>['steps'],
+            cleanup: {
+              ...task.stepBudget.cleanup,
+              maxModelCalls:
+                task.stepBudget.cleanup.maxModelCalls * (arm === 'jev' ? 2 : 1),
+            },
+          },
+        }
+      : {}),
     comparison: { id: task.taskId, sourceTaskId: task.taskId, arm },
     resourceKey: createHash('sha256')
       .update(`${task.resourceKey}:${arm}`)
