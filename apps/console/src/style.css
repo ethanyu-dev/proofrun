@@ -1327,6 +1327,17 @@ summary {
   object-fit: contain;
   pointer-events: none;
 }
+.comparison-screen.live-screen-empty {
+  aspect-ratio: auto;
+  min-height: 120px;
+}
+.task-live .comparison-screen {
+  max-height: 70vh;
+}
+.task-live .comparison-screen img {
+  max-height: 70vh;
+  object-fit: contain;
+}
 .comparison-placeholder {
   text-align: center;
   color: var(--color-muted);

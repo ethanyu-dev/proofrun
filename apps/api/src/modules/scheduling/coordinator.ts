@@ -1,6 +1,9 @@
 import { executionDeadline, CLEANUP_EXECUTION_MS } from './execution-time.js';
 import { inlineCleanup } from '../cases/inline-cleanup.js';
-import { summarizeReport } from '@proofrun/contracts';
+import {
+  summarizeReport,
+  recoverableObservationFailure,
+} from '@proofrun/contracts';
 import { randomUUID } from 'node:crypto';
 import {
   validateVerificationTask,
@@ -1377,7 +1380,8 @@ export class Coordinator {
           [context.id],
         );
       } else if (
-        event.effect === 'MAY_HAVE_HAPPENED' ||
+        (event.effect === 'MAY_HAVE_HAPPENED' &&
+          !recoverableObservationFailure(row.kind, event)) ||
         (['session.open', 'session.renew'].includes(row.kind as string) &&
           event.operationStatus !== 'SUCCEEDED')
       ) {

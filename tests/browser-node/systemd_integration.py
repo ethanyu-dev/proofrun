@@ -160,6 +160,25 @@ def run():
         checks.append('durable command deduplication')
         checks.append('action invalidates observation targets')
 
+        # 只读采集故障：保留原始 UNKNOWN 结果、host 和 supervisor，下一次观察可恢复。
+        # 不重放已完成的点击，旧观察失效；故障引擎不代表真实网站或 CDP 故障验收。
+        before_fault = client.call('one', 'browser.observe'); assert_ok(before_fault)
+        (client.directory('one') / 'fail-dom-observation').touch()
+        failed_read = client.request('one', 'browser.observe')
+        client.send(failed_read); failed_result = client.result(failed_read)
+        assert failed_result['operationStatus'] == 'UNKNOWN', failed_result
+        assert failed_result['effect'] == 'MAY_HAVE_HAPPENED', failed_result
+        assert failed_result['error']['code'] == 'DOM_ENGINE_FAILED', failed_result
+        client.send(failed_read); assert client.result(failed_read) == failed_result
+        stale_read = client.call('one', 'browser.act', action='click', target='element-1',
+                                 observationId=before_fault['data']['observationId'])
+        assert stale_read['error']['code'] == 'STALE_OBSERVATION', stale_read
+        assert_ok(client.call('one', 'browser.observe'))
+        assert client.record('one')['state'] == 'ACTIVE'
+        assert all(Path(f'/proc/{pid}').exists() for pid in pids_one)
+        assert (client.directory('one') / 'writes').read_text() == '1'
+        checks.append('DOM observation failure preserves session without replaying writes')
+
         # 会话隔离：等待时拒绝并发操作；关闭中断等待并回收本会话后代。
         # 另一个会话的后代仍存活，验证的是 systemd 范围而非页面状态。
         wait = client.request('one', 'browser.wait', selector='#never', text='ready', timeout_ms=30000)

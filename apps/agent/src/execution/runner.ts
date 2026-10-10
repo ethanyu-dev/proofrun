@@ -2,6 +2,7 @@ import { stepObjective } from '../prompts/step.js';
 import { randomUUID } from 'node:crypto';
 import {
   validateAgentDecision,
+  recoverableObservationFailure,
   validateVerificationReport,
   type AgentDecision,
   type ExecutionGrant,
@@ -41,6 +42,9 @@ const POLL_MS = 150;
 /** 导航后只有外壳菜单时最多补采两次，不把无关导航交给模型猜测；不是业务就绪保证。 */
 const SHELL_RETRIES = 2;
 const SHELL_WAIT_MS = 300;
+/** DOM 读取失败最多补采两次，只重试观察，仍受原任务期限及控制权约束。 */
+const OBSERVATION_RETRIES = 2;
+const OBSERVATION_RETRY_MS = 300;
 /** 只将近期操作和证据摘要放入上下文，完整事实保留在控制面。 */
 const HISTORY_LIMIT = 8;
 
@@ -253,6 +257,11 @@ class Execution {
       effect: result.effect,
     });
     if (this.history.length > HISTORY_LIMIT) this.history.shift();
+    if (recoverableObservationFailure(operation.type, result))
+      throw new AgentFault(
+        'DOM_OBSERVATION_FAILED',
+        '读取页面 DOM 失败（DOM_ENGINE_FAILED）',
+      );
     if (
       result.effect === 'MAY_HAVE_HAPPENED' ||
       result.operationStatus === 'UNKNOWN'
@@ -282,7 +291,7 @@ class Execution {
     screenshot = this.config.vision,
     countProgress = true,
   ): Promise<void> {
-    const result = await this.command({ type: 'browser.observe', screenshot });
+    const result = await this.readObservation(screenshot);
     const current = observation(result);
     if (!current.artifactRefs.some((ref) => ref.kind === 'DOM'))
       throw new AgentFault('EVIDENCE_UNAVAILABLE', '本次观察没有交付 DOM 引用');
@@ -313,6 +322,34 @@ class Execution {
         { id: png.artifactId, sha256: png.sha256 },
         this.guard.signal,
       );
+  }
+  /** 不重放已成功的动作；失败后清除旧观察，只有新证据采集成功才恢复模型决策。 */
+  private async readObservation(screenshot: boolean) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.command({ type: 'browser.observe', screenshot });
+      } catch (error) {
+        if (
+          !(error instanceof AgentFault) ||
+          error.code !== 'DOM_OBSERVATION_FAILED'
+        )
+          throw error;
+        this.current = undefined;
+        this.image = undefined;
+        this.changes = undefined;
+        if (attempt >= OBSERVATION_RETRIES)
+          throw new AgentFault(
+            'DOM_OBSERVATION_FAILED',
+            '读取页面 DOM 连续失败，已停止本步骤（DOM_ENGINE_FAILED）',
+          );
+        await pause(OBSERVATION_RETRY_MS, this.guard.signal);
+        // 人工介入、取消或撤权优先于重试；交接后不恢复旧动作或旧观察身份。
+        if (await this.checkpoint()) {
+          this.workflow.invalidateRecovery();
+          this.tracker.reset();
+        }
+      }
+    }
   }
   /** 暂停等待不调用模型；时钟跟随控制面代次，恢复后必须重新观察页面。 */
   private async checkpoint(): Promise<boolean> {

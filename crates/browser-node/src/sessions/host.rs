@@ -89,6 +89,8 @@ pub async fn run(directory: PathBuf) -> Result<()> {
                 timeout_ms,
             } => {
                 let expires = process::boot_ms() + timeout_ms;
+                let read_only_observation =
+                    matches!(&command, BrowserCommand::BrowserObserve { .. });
                 let execution = engine.execute(command, timeout_ms);
                 tokio::pin!(execution);
                 let result = loop {
@@ -112,9 +114,9 @@ pub async fn run(directory: PathBuf) -> Result<()> {
                 };
                 let failed = result
                     .as_ref()
-                    .is_err_and(|fault| fault.effect != "NOT_STARTED");
+                    .is_err_and(|fault| fault.requires_session_close(read_only_observation));
                 send(&mut writer, json!({"type":"host.result","result":result})).await?;
-                // 引擎结果不确定时结束会话，避免后续动作与潜在副作用并发。
+                // DOM 采集失败保留会话供有界补采；其他未知结果仍关闭，避免潜在副作用并发。
                 if failed {
                     break;
                 }

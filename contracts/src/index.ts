@@ -13,6 +13,7 @@ import type { AgentDecision } from './generated/agent-decision.js';
 export type { VerificationTask, VerificationReport };
 export type { NodeCommand } from './generated/node-command.js';
 export const protocolVersion = '0.1' as const;
+export { recoverableObservationFailure } from './observation-failure.js';
 
 const ajv = new Ajv({ allErrors: true, strict: true });
 formatsPlugin.default(ajv);
