@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { NodeCommand, HitlServer } from '@proofrun/contracts';
 import { ThemeToggle } from '../components/ui';
-import { HitlInputQueue } from './hitl-input';
+import { HitlInputQueue, type BatchResult } from './hitl-input';
+import { screenPoint, useHitlScreen } from './hitl-screen';
 import { HitlNavigation, remainingTime } from './hitl-navigation';
 import { HitlCookies } from './hitl-cookies';
 
@@ -47,17 +48,7 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
   const screen = useRef<HTMLImageElement | null>(null);
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
-    const release = () => {
-      screen.current?.blur();
-      setRemoteFocused(false);
-    };
-    window.addEventListener('blur', release);
-    document.addEventListener('visibilitychange', release);
-    return () => {
-      clearInterval(timer);
-      window.removeEventListener('blur', release);
-      document.removeEventListener('visibilitychange', release);
-    };
+    return () => clearInterval(timer);
   }, []);
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<State>();
@@ -82,7 +73,13 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
     input.current = new HitlInputQueue(
       (item) => {
         if (socket.current?.readyState !== WebSocket.OPEN) return false;
-        socket.current.send(JSON.stringify({ type: 'command', ...item }));
+        socket.current.send(
+          JSON.stringify({
+            type: 'command',
+            commandId: item.commandId,
+            command: item.command,
+          }),
+        );
         return true;
       },
       setBusy,
@@ -104,6 +101,7 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
   /** 区分交接、断线和队列繁忙，避免让短暂拥塞看起来像权限丢失。 */
   const enqueue = (
     command: NodeCommand['command'] | NodeCommand['command'][],
+    settled?: (result: BatchResult) => void,
   ) => {
     if (!connected || state?.mode !== 'HUMAN' || completing.current) {
       setError('当前未获得操作权，请等待交接完成或重新连接');
@@ -112,7 +110,7 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
     setError('');
     if (
       !(Array.isArray(command)
-        ? input.current!.enqueueBatch(command)
+        ? input.current!.enqueueBatch(command, settled)
         : input.current!.enqueue(command))
     ) {
       setError('操作队列已满，请等待已提交操作完成');
@@ -223,13 +221,17 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
   const interactive =
     connected && state?.mode === 'HUMAN' && !!frame && !done && !expired;
   const controlling = interactive && remoteFocused;
+  useHitlScreen({
+    screen,
+    interactive,
+    width: frame?.width ?? 0,
+    height: frame?.height ?? 0,
+    flush,
+    submit: enqueue,
+    release: () => setRemoteFocused(false),
+  });
   return (
     <main className="hitl-page">
-      <header className="hitl-header">
-        <span className="brand">ProofRun.</span>
-        <span>人工处理</span>
-        <ThemeToggle />
-      </header>
       {done ? (
         <section className="panel hitl-done">
           <h1>处理已完成</h1>
@@ -243,141 +245,7 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
         </section>
       ) : (
         <div className="hitl-layout">
-          <aside className="panel hitl-todo">
-            <p className="eyebrow">当前待办</p>
-            <h1>{state?.reason ?? '正在连接处理任务'}</h1>
-            {state && (
-              <>
-                <p className="muted">任务 {state.taskId}</p>
-                <p className="note">
-                  有效至 {new Date(state.expiresAt).toLocaleString()}
-                  ，人工等待不计入执行时限；完成后重新计时 20 分钟。
-                  <strong
-                    className={
-                      Date.parse(state.expiresAt) - now <= 60000
-                        ? 'hitl-time-warning'
-                        : 'hitl-time'
-                    }
-                  >
-                    处理链接剩余有效期：{remainingTime(state.expiresAt, now)}
-                  </strong>
-                </p>
-                <div className="hitl-checks">
-                  {state.items.map((item, index) => (
-                    <label key={index}>
-                      <input
-                        type="checkbox"
-                        checked={checked.includes(index)}
-                        onChange={(event) =>
-                          setChecked((values) =>
-                            event.target.checked
-                              ? [...values, index]
-                              : values.filter((v) => v !== index),
-                          )
-                        }
-                      />
-                      <span>{item}</span>
-                    </label>
-                  ))}
-                </div>
-              </>
-            )}
-            <p role="status">
-              {connected
-                ? state?.mode === 'HUMAN'
-                  ? '人工处理中'
-                  : '正在等待 Agent 完成交接…'
-                : '未连接'}
-            </p>
-            {error && (
-              <p role="alert" className="error-notice">
-                {error}
-              </p>
-            )}
-            {!connected && (
-              <button
-                className="button button-secondary"
-                onClick={() => setAttempt((n) => n + 1)}
-              >
-                重新连接
-              </button>
-            )}
-            <button
-              className="button button-primary"
-              disabled={
-                !interactive ||
-                busy ||
-                typingPending ||
-                checked.length !== state?.items.length
-              }
-              onClick={() => {
-                completing.current = true;
-                setBusy(true);
-                socket.current?.send(JSON.stringify({ type: 'complete' }));
-                completionTimer.current = setTimeout(() => {
-                  setError('交接结果未确认，请重新连接查看处理状态。');
-                  setConnected(false);
-                  socket.current?.close();
-                }, COMPLETION_ACK_MS);
-              }}
-            >
-              {state?.canSaveAuth ? '保存登录状态并继续任务' : '完成，继续任务'}
-            </button>
-            <p className="muted note">
-              {state?.canSaveAuth &&
-                '完成时保存登录状态；其他会话已更新时保留较新的快照。'}
-              完成后自动关闭此页。直接离开只会断开画面，任务继续等待人工处理。链接过期后请从任务详情重新打开处理页。
-            </p>
-          </aside>
-          <section
-            className={`panel hitl-browser${controlling ? ' hitl-controlling' : ''}`}
-            aria-label="当前任务浏览器"
-          >
-            <div className="section-heading">
-              <h2>当前浏览器</h2>
-              <span className="status">
-                {expired
-                  ? '处理已到期'
-                  : busy
-                    ? '操作处理中'
-                    : interactive
-                      ? '可操作'
-                      : '等待画面'}
-              </span>
-            </div>
-            <HitlNavigation
-              key={state?.targetUrl}
-              targetUrl={state?.targetUrl}
-              disabled={!interactive || busy || typingPending}
-              submit={enqueue}
-            />
-            <div className="hitl-focus-notice" role="status">
-              <span className="hitl-focus-label">
-                <span
-                  style={{ visibility: controlling ? 'visible' : 'hidden' }}
-                  aria-hidden={!controlling}
-                >
-                  ● 正在控制远端浏览器 · 键盘输入将发送到远端
-                </span>
-                <span
-                  style={{ visibility: controlling ? 'hidden' : 'visible' }}
-                  aria-hidden={controlling}
-                >
-                  点击画面开始控制远端浏览器；点击画面外退出键盘控制
-                </span>
-              </span>
-              <button
-                type="button"
-                className="button button-small button-secondary"
-                disabled={!interactive}
-                onClick={() => {
-                  screen.current?.blur();
-                  setRemoteFocused(false);
-                }}
-              >
-                退出键盘控制
-              </button>
-            </div>
+          <section className="hitl-browser" aria-label="当前任务浏览器">
             {frame ? (
               <img
                 ref={screen}
@@ -394,31 +262,17 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
                 onClick={(event) => {
                   if (!interactive) return;
                   flush();
-                  event.currentTarget.focus();
+                  event.currentTarget.focus({ preventScroll: true });
                   const r = event.currentTarget.getBoundingClientRect();
                   enqueue({
                     type: 'browser.input',
                     action: 'click',
-                    x: ((event.clientX - r.left) * frame.width) / r.width,
-                    y: ((event.clientY - r.top) * frame.height) / r.height,
-                  });
-                }}
-                onWheel={(event) => {
-                  if (!interactive) return;
-                  flush();
-                  const r = event.currentTarget.getBoundingClientRect();
-                  enqueue({
-                    type: 'browser.input',
-                    action: 'scroll',
-                    x: ((event.clientX - r.left) * frame.width) / r.width,
-                    y: ((event.clientY - r.top) * frame.height) / r.height,
-                    deltaX: Math.max(
-                      -2000,
-                      Math.min(2000, Math.round(event.deltaX)),
-                    ),
-                    deltaY: Math.max(
-                      -2000,
-                      Math.min(2000, Math.round(event.deltaY)),
+                    ...screenPoint(
+                      event.clientX,
+                      event.clientY,
+                      r,
+                      frame.width,
+                      frame.height,
                     ),
                   });
                 }}
@@ -473,81 +327,209 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
                   : '等待浏览器画面…'}
               </div>
             )}
-            <form
-              className="control-form"
-              onSubmit={(event) => {
-                event.preventDefault();
-                flush();
-                if (
-                  enqueue({
-                    type: 'browser.input',
-                    action: 'text',
-                    value: text,
-                  })
-                )
-                  setText('');
+          </section>
+          <div className="hitl-toolbar">
+            <span className="brand">ProofRun.</span>
+            <span className="status">
+              {expired
+                ? '处理已到期'
+                : busy
+                  ? '操作处理中'
+                  : interactive
+                    ? '人工处理中'
+                    : '等待连接'}
+            </span>
+            <span className="hitl-focus-hint" role="status">
+              {controlling
+                ? '● 已聚焦浏览器 · 键盘和滚轮仅作用于远端'
+                : '点击画面聚焦浏览器，点击画面外退出'}
+            </span>
+            <button
+              type="button"
+              className="button button-small button-secondary"
+              disabled={!controlling}
+              onClick={() => {
+                screen.current?.blur();
+                setRemoteFocused(false);
               }}
             >
-              <label>
-                向远端焦点输入文字（支持中文与粘贴）
-                <input
-                  type="password"
-                  autoComplete="off"
-                  value={text}
-                  maxLength={4096}
-                  onChange={(event) => setText(event.target.value)}
-                  disabled={!interactive}
+              退出聚焦
+            </button>
+            <ThemeToggle />
+          </div>
+          <div className="hitl-controls">
+            <section className="panel hitl-tools" aria-label="浏览器操作">
+              {state?.targetUrl && (
+                <HitlCookies
+                  targetUrl={state.targetUrl}
+                  disabled={!interactive || busy || typingPending}
+                  submit={enqueue}
                 />
-              </label>
-              <button
-                className="button button-secondary"
-                disabled={!interactive || !text}
-              >
-                输入
-              </button>
-            </form>
-            {state?.targetUrl && (
-              <HitlCookies
-                targetUrl={state.targetUrl}
+              )}
+              <h2>浏览器操作</h2>
+              <HitlNavigation
+                key={state?.targetUrl}
+                targetUrl={state?.targetUrl}
                 disabled={!interactive || busy || typingPending}
                 submit={enqueue}
               />
-            )}
-            <div className="page-actions">
-              {['Tab', 'Enter', 'Backspace', 'Escape'].map((key) => (
-                <button
-                  key={key}
-                  className="button button-secondary button-small"
-                  disabled={!interactive}
-                  onClick={() => {
-                    flush();
+              <form
+                className="control-form hitl-text-input"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  flush();
+                  if (
                     enqueue({
                       type: 'browser.input',
-                      action: 'press',
-                      value: key,
-                    });
-                  }}
-                >
-                  {key}
-                </button>
-              ))}
-              {state?.canSaveAuth && (
+                      action: 'text',
+                      value: text,
+                    })
+                  )
+                    setText('');
+                }}
+              >
+                <label>
+                  向远端焦点输入文字（支持中文与粘贴）
+                  <input
+                    type="password"
+                    autoComplete="off"
+                    value={text}
+                    maxLength={4096}
+                    onChange={(event) => setText(event.target.value)}
+                    disabled={!interactive}
+                  />
+                </label>
                 <button
-                  className="button button-secondary button-small"
-                  disabled={!interactive || busy}
-                  onClick={() => {
-                    flush();
-                    enqueue({ type: 'browser.auth.save' });
-                  }}
+                  className="button button-secondary"
+                  disabled={!interactive || !text}
                 >
-                  保存登录状态
+                  输入
+                </button>
+              </form>
+              <div className="page-actions">
+                {['Tab', 'Enter', 'Backspace', 'Escape'].map((key) => (
+                  <button
+                    key={key}
+                    className="button button-secondary button-small"
+                    disabled={!interactive}
+                    onClick={() => {
+                      flush();
+                      enqueue({
+                        type: 'browser.input',
+                        action: 'press',
+                        value: key,
+                      });
+                    }}
+                  >
+                    {key}
+                  </button>
+                ))}
+                {state?.canSaveAuth && (
+                  <button
+                    className="button button-secondary button-small"
+                    disabled={!interactive || busy}
+                    onClick={() => {
+                      flush();
+                      enqueue({ type: 'browser.auth.save' });
+                    }}
+                  >
+                    保存登录状态
+                  </button>
+                )}
+              </div>
+              <p className="muted note">
+                可直接点击画面、输入和滚动；中文可使用下方输入框。输入内容不会显示在操作摘要中。
+              </p>
+            </section>
+            <aside className="panel hitl-todo">
+              <p className="eyebrow">当前待办</p>
+              <h1>{state?.reason ?? '正在连接处理任务'}</h1>
+              {state && (
+                <>
+                  <p className="muted">任务 {state.taskId}</p>
+                  <p className="note">
+                    有效至 {new Date(state.expiresAt).toLocaleString()}
+                    ，人工等待不计入执行时限；完成后重新计时 20 分钟。
+                    <strong
+                      className={
+                        Date.parse(state.expiresAt) - now <= 60000
+                          ? 'hitl-time-warning'
+                          : 'hitl-time'
+                      }
+                    >
+                      处理链接剩余有效期：{remainingTime(state.expiresAt, now)}
+                    </strong>
+                  </p>
+                  <div className="hitl-checks">
+                    {state.items.map((item, index) => (
+                      <label key={index}>
+                        <input
+                          type="checkbox"
+                          checked={checked.includes(index)}
+                          onChange={(event) =>
+                            setChecked((values) =>
+                              event.target.checked
+                                ? [...values, index]
+                                : values.filter((v) => v !== index),
+                            )
+                          }
+                        />
+                        <span>{item}</span>
+                      </label>
+                    ))}
+                  </div>
+                </>
+              )}
+              <p role="status">
+                {connected
+                  ? state?.mode === 'HUMAN'
+                    ? '人工处理中'
+                    : '正在等待 Agent 完成交接…'
+                  : '未连接'}
+              </p>
+              {error && (
+                <p role="alert" className="error-notice">
+                  {error}
+                </p>
+              )}
+              {!connected && (
+                <button
+                  className="button button-secondary"
+                  onClick={() => setAttempt((n) => n + 1)}
+                >
+                  重新连接
                 </button>
               )}
-            </div>
-            <p className="muted note">
-              可直接点击画面、输入和滚动；中文可使用下方输入框。输入内容不会显示在操作摘要中。
-            </p>
-          </section>
+              <button
+                className="button button-primary"
+                disabled={
+                  !interactive ||
+                  busy ||
+                  typingPending ||
+                  checked.length !== state?.items.length
+                }
+                onClick={() => {
+                  completing.current = true;
+                  setBusy(true);
+                  socket.current?.send(JSON.stringify({ type: 'complete' }));
+                  completionTimer.current = setTimeout(() => {
+                    setError('交接结果未确认，请重新连接查看处理状态。');
+                    setConnected(false);
+                    socket.current?.close();
+                  }, COMPLETION_ACK_MS);
+                }}
+              >
+                {state?.canSaveAuth
+                  ? '保存登录状态并继续任务'
+                  : '完成，继续任务'}
+              </button>
+              <p className="muted note">
+                {state?.canSaveAuth &&
+                  '完成时保存登录状态；其他会话已更新时保留较新的快照。'}
+                完成后自动关闭此页。直接离开只会断开画面，任务继续等待人工处理。链接过期后请从任务详情重新打开处理页。
+              </p>
+            </aside>
+          </div>
         </div>
       )}
     </main>

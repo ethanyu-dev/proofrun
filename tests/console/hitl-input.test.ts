@@ -220,3 +220,45 @@ test('Cookie 写入等待确认且失败后不派发后续输入', () => {
     f.queue.reset();
   }
 });
+
+// 范围：整组回执、失败、断线、超时只通知一次，不把部分写入当成完成；不验证站点登录。
+test('批量 Cookie 的完成提示必须等待最后一次刷新回执', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  for (const outcome of ['success', 'failed', 'disconnect', 'timeout']) {
+    const f = fixture();
+    const results: string[] = [];
+    f.queue.enqueueBatch(
+      [click(1), click(2), { type: 'browser.act', action: 'reload' }],
+      (result) => results.push(result),
+    );
+    f.ack(0);
+    assert.deepEqual(results, []);
+    f.ack(1);
+    assert.deepEqual(results, []);
+    if (outcome === 'success') f.ack(2);
+    else if (outcome === 'failed') f.ack(2, 'FAILED');
+    else if (outcome === 'disconnect') f.queue.reset();
+    else t.mock.timers.tick(INPUT_ACK_MS);
+    f.ack(2);
+    f.queue.reset();
+    assert.deepEqual(results, [
+      outcome === 'success' ? 'succeeded' : 'unconfirmed',
+    ]);
+  }
+});
+
+// 范围：前一项失败时通知尚未派发的组合操作，空批次不产生成功提示；不模拟真实断网。
+test('批次尚未派发也能收到终止通知', () => {
+  const f = fixture();
+  const results: string[] = [];
+  assert.equal(
+    f.queue.enqueueBatch([], (r) => results.push(r)),
+    false,
+  );
+  f.queue.enqueue(click());
+  f.queue.enqueueBatch([click(2)], (r) => results.push(r));
+  f.ack(0, 'UNKNOWN');
+  f.queue.reset();
+  assert.deepEqual(results, ['unconfirmed']);
+  assert.equal(f.sent.length, 1);
+});
