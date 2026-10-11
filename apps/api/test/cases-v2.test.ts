@@ -179,12 +179,6 @@ test('v2 在接收前拒绝不完整的执行定义', async () => {
     ]),
     { code: 'INVALID_CASE' },
   );
-  await assert.rejects(
-    service.submit([
-      { ...INPUT, steps: [{ ...INPUT.steps[0], wait: { durationMs: 10000 } }] },
-    ]),
-    { code: 'WAIT_EXCEEDS_BUDGET' },
-  );
   assert.equal(records.size, 0);
 });
 
@@ -297,19 +291,22 @@ test('v2 默认业务每步贡献 300 秒，清理不占业务预算', () => {
       .timeoutMs,
     300_000,
   );
-  assert.equal(compileCase(INPUT, PROFILE).budget.timeoutMs, 10_000);
+  assert.equal(compileCase(INPUT, PROFILE).budget.timeoutMs, 900_000);
   assert.equal(cleanupTask(compileCase(INPUT, PROFILE)), null);
-  assert.throws(
-    () =>
-      compileCase(
-        {
-          ...INPUT,
-          steps: [{ ...INPUT.steps[0]!, wait: { durationMs: 600_000 } }],
-        },
-        profile,
-      ),
-    { code: 'WAIT_EXCEEDS_BUDGET' },
+  const waiting = compileCase(
+    {
+      ...INPUT,
+      steps: [{ ...INPUT.steps[0]!, wait: { durationMs: 600_000 } }],
+    },
+    profile,
   );
+  assert.equal(waiting.budget.timeoutMs, 900_000);
+  assert.equal(waiting.stepBudget!.steps[0]!.maxModelCalls, 20);
+  assert.deepEqual(task.stepBudget!.cleanup, {
+    timeoutMs: 180_000,
+    maxActions: 10,
+    maxModelCalls: 20,
+  });
 });
 
 // 范围：默认双跑、两组完整预算、各自原任务收尾、查询和取消、配置改变后幂等；不模拟数据库隔离与模型质量。
@@ -487,7 +484,10 @@ test('v2 重跑保留原配置及整个 case，重试不重复创建', async () 
     const fresh = f.records.get('case-v2-new-case')!;
     assert.equal(fresh.state, 'QUEUED');
     assert.equal(fresh.report, null);
-    assert.deepEqual(fresh.definition.budget, PROFILE.budget);
+    assert.deepEqual(fresh.definition.budget, {
+      timeoutMs: 900_000,
+      maxActions: 30,
+    });
     assert.deepEqual(fresh.definition.environment, PROFILE.environment);
     assert.deepEqual(fresh.definition.caseV2Definition, {
       ...INPUT,
@@ -545,4 +545,59 @@ test('v2 重跑校验身份并沿用提交的冲突语义', async () => {
   );
   assert.equal(f.records.size, 2);
   assert.equal((await service.rerun(INPUT.caseId, 'fresh')).caseId, 'fresh');
+});
+
+// 范围：模式倍率、纯等待、平台硬上限及显式历史预算复现；不验证模型质量或节点能力。
+test('v2 新预算按步骤冻结，混合组请求加倍，超过上限直接拒绝', async () => {
+  const arms = expandCaseTasks(
+    compileCase(INPUT, { ...PROFILE, executionMode: 'parallel' }),
+  );
+  assert.equal(arms[0]!.stepBudget!.steps[0]!.maxModelCalls, 20);
+  assert.equal(arms[1]!.stepBudget!.steps[0]!.maxModelCalls, 40);
+  assert.equal(arms[1]!.stepBudget!.cleanup.maxModelCalls, 40);
+  const pureWait = compileCase(
+    {
+      ...INPUT,
+      steps: [
+        { ...INPUT.steps[1]!, expected: [], wait: { durationMs: 90_000 } },
+      ],
+    },
+    PROFILE,
+  );
+  assert.deepEqual(pureWait.stepBudget!.steps[0], {
+    stepId: 'step-1',
+    timeoutMs: 120_000,
+    maxActions: 0,
+    maxModelCalls: 0,
+  });
+  assert.throws(
+    () =>
+      compileCase(
+        {
+          ...INPUT,
+          steps: [{ ...INPUT.steps[0]!, wait: { durationMs: 86_400_000 } }],
+        },
+        PROFILE,
+      ),
+    { code: 'CASE_BUDGET_EXCEEDED' },
+  );
+  const f = fixture();
+  await f.service.submit([INPUT]);
+  const original = f.records.get('case-v2-case-1')!.definition;
+  delete original.stepBudget;
+  original.budget = { timeoutMs: 300_000, maxActions: 30 };
+  await f.service.rerun(INPUT.caseId, 'current-budget');
+  await f.service.rerun(INPUT.caseId, 'original-budget', 'original');
+  assert.equal(
+    f.records.get('case-v2-current-budget')!.definition.stepBudget!.version,
+    1,
+  );
+  assert.equal(
+    f.records.get('case-v2-original-budget')!.definition.stepBudget,
+    undefined,
+  );
+  assert.deepEqual(
+    f.records.get('case-v2-original-budget')!.definition.budget,
+    original.budget,
+  );
 });

@@ -25,6 +25,7 @@ export class LeaseGuard {
     client: Pick<ControlClient, 'heartbeat'>,
     execution: ExecutionGrant,
     stop: AbortSignal,
+    private readonly timing?: (view: ExecutionTiming) => void,
   ) {
     this.signal = AbortSignal.any([stop, this.controller.signal]);
     this.deadlineAt = execution.taskDeadlineAt;
@@ -68,6 +69,7 @@ export class LeaseGuard {
         view.cleanupDeadlineAt !== this.cleanupDeadlineAt)
     )
       return false;
+    this.timing?.(view);
     if (!view.controlMode || view.controlRevision === undefined) {
       if (view.leaseExpiresAt) this.arm(view.leaseExpiresAt);
       return true;

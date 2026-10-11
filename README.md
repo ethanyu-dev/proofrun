@@ -58,7 +58,7 @@ pnpm dev:local
 
 API、Agent、Console 直接运行在 Mac；PostgreSQL 和 Browser Node 复用已有 Docker 容器。Console 地址为 `http://127.0.0.1:5173`，HTTP API 地址为 `http://127.0.0.1:4101`，数据库沿用 `127.0.0.1:55432`。Docker 原有 4100 端口映射保留，Mac API 使用 4101 避免冲突。节点通过校验证书的本机 TLS 转发连接 API，保留原节点身份与登录状态。
 
-模型、密钥和数据库配置读取 `.proofrun/local.env`；case v2 配置读取 `.proofrun/case-profile.json`，首次缺失时按 `internal` 节点池、双跑模式和每组 30 次动作额度创建。后续修改这两个文件后重新运行启动命令。启动器固定本地服务地址并注入配置路径，不再读取容器的 `/var/lib/proofrun/environment.json`。
+模型、密钥和数据库配置读取 `.proofrun/local.env`；case v2 配置读取 `.proofrun/case-profile.json`，首次缺失时按 `internal` 节点池、双跑模式创建；新 v2 每步独立五分钟、10 次动作、LLM 20 / JEV 40 次模型请求，cleanup 独立三分钟。后续修改这两个文件后重新运行启动命令。启动器固定本地服务地址并注入配置路径，不再读取容器的 `/var/lib/proofrun/environment.json`。
 
 启动器构建最新代码，在后台运行服务，日志为 `.proofrun/runtime/local-{api,agent,console,relay}.log`。重复运行会重启已确认属于本项目的进程，不会因自己的旧 Console 占用 5173 而失败；有运行中的任务时拒绝重启。首次切换会停用容器中的 API/Agent，并复制已有证据到本机 `.proofrun/api-artifacts`，不会清空数据库。`pnpm dev:local --no-agent` 可只验证 HTTP 接入；此时提交后应取消测试 case，再启动 Agent，避免测试任务被执行。
 

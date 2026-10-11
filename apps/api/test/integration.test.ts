@@ -153,7 +153,12 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       await api(
         'POST',
         '/v1/worker/claim',
-        { type: 'worker.claim', workerId: randomUUID(), structuredSteps },
+        {
+          type: 'worker.claim',
+          workerId: randomUUID(),
+          structuredSteps,
+          ...(structuredSteps ? { stepBudgetVersion: 1 } : {}),
+        },
         WORKER,
       )
     ).data.execution;
@@ -412,10 +417,7 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
               cleanupDeadline = saved.data.cleanupDeadlineAt;
               assert.ok(Date.parse(cleanupDeadline!) - Date.now() > 179_000);
               assert.ok(Date.parse(cleanupDeadline!) - Date.now() <= 180_000);
-              assert.ok(
-                Date.parse(cleanupDeadline!) >
-                  Date.parse(execution.taskDeadlineAt),
-              );
+              assert.notEqual(cleanupDeadline, execution.taskDeadlineAt);
             }
             assert.equal(saved.data.cleanupDeadlineAt, cleanupDeadline);
             const repeated = await api(
@@ -559,6 +561,276 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       node.close();
     });
 
+    // 范围：真实 HTTP/PostgreSQL 独立计数、幂等、耗尽推进和人工暂停；节点/模型结果为夹具，不验证网页行为。
+    await suite.test(
+      '逐步额度由服务端隔离，模型动作时间耗尽均允许下一步',
+      async () => {
+        const node = await addNode('case-fixture');
+        const caseId = 'step-budget-isolation';
+        const step = {
+          type: 'verification',
+          url: 'https://budget.example.test',
+          exec_order: 1,
+          description: '预算夹具',
+          policy: [],
+          expected: ['夹具结果'],
+        };
+        await api('POST', '/v2/cases', [
+          {
+            caseId,
+            platform: '预算夹具',
+            entry: step.url,
+            steps: [
+              step,
+              { ...step, exec_order: 2 },
+              { ...step, exec_order: 3 },
+            ],
+            cleanup: [{ url: step.url, exec_order: 1, description: '收尾' }],
+          },
+        ]);
+        // 缩小冻结的测试额度，避免为边界测试制造大量请求；生产定义不作修改。
+        const stored = (
+          await sql.query('SELECT definition FROM pr_tasks WHERE id=$1', [
+            `case-v2-${caseId}`,
+          ])
+        ).rows[0].definition;
+        stored.environment.allowIntervention = true;
+        for (const budget of stored.stepBudget.steps) {
+          budget.maxActions = 1;
+          budget.maxModelCalls = 1;
+        }
+        await sql.query('UPDATE pr_tasks SET definition=$2 WHERE id=$1', [
+          stored.taskId,
+          stored,
+        ]);
+        const oldWorker = await api(
+          'POST',
+          '/v1/worker/claim',
+          {
+            type: 'worker.claim',
+            workerId: randomUUID(),
+            structuredSteps: true,
+          },
+          WORKER,
+        );
+        assert.equal(oldWorker.data.execution, null);
+        const execution = await claim(true);
+        await ready(execution);
+        const workerPath = `/v1/executions/${execution.id}`;
+        const adminPath = `/v1/admin/executions/${execution.id}`;
+        const results = execution.task.steps.map(
+          (step: { stepId: string }) => ({
+            stepId: step.stepId,
+            status: 'PENDING',
+            summary: '夹具',
+            criteria: [],
+            evidenceRefs: [],
+            startedAt: null as string | null,
+            finishedAt: null as string | null,
+          }),
+        );
+        const start = async (index: number) => {
+          if (index > 0) {
+            results[index - 1].status = 'BLOCKED';
+            results[index - 1].finishedAt = new Date().toISOString();
+          }
+          results[index].status = 'RUNNING';
+          results[index].startedAt = new Date().toISOString();
+          const saved = await api(
+            'POST',
+            `${workerPath}/steps`,
+            results,
+            execution.leaseToken,
+          );
+          assert.equal(saved.status, 200, JSON.stringify(saved));
+          return saved.data;
+        };
+        await start(0);
+        const first = await command(execution, {
+          type: 'browser.act',
+          action: 'navigate',
+          target: step.url,
+        });
+        // 原命令重送不会二次扣款；新命令耗尽只拒绝本步。
+        assert.equal(
+          (
+            await api(
+              'POST',
+              `${workerPath}/commands`,
+              first.request,
+              execution.leaseToken,
+            )
+          ).status,
+          202,
+        );
+        const rejected = await api(
+          'POST',
+          `${workerPath}/commands`,
+          { ...first.request, commandId: randomUUID() },
+          execution.leaseToken,
+        );
+        assert.equal(rejected.data.code, 'STEP_ACTION_BUDGET_EXCEEDED');
+        await start(1);
+        await command(execution, {
+          type: 'browser.act',
+          action: 'navigate',
+          target: step.url,
+        });
+        const callId = randomUUID();
+        const request = {
+          phase: 'start',
+          record: {
+            id: callId,
+            callIndex: 201,
+            decisionIndex: 201,
+            model: 'fixture',
+            purpose: 'DECISION',
+            startedAt: new Date().toISOString(),
+            finishedAt: null,
+            status: 'PENDING',
+            request: '{"model":"fixture","messages":[]}',
+            requestSha256: 'a'.repeat(64),
+            response: null,
+            error: null,
+            promptTokens: null,
+            completionTokens: null,
+            elapsedMs: null,
+            imagesOmitted: 0,
+            archived: false,
+          },
+        };
+        assert.equal(
+          (
+            await api(
+              'POST',
+              `${workerPath}/model-calls/${callId}`,
+              request,
+              execution.leaseToken,
+            )
+          ).status,
+          200,
+        );
+        assert.equal(
+          (
+            await api(
+              'POST',
+              `${workerPath}/model-calls/${callId}`,
+              request,
+              execution.leaseToken,
+            )
+          ).status,
+          200,
+        );
+        const extraId = randomUUID();
+        const extra = await api(
+          'POST',
+          `${workerPath}/model-calls/${extraId}`,
+          {
+            ...request,
+            record: { ...request.record, id: extraId, callIndex: 202 },
+          },
+          execution.leaseToken,
+        );
+        assert.equal(extra.data.code, 'STEP_MODEL_BUDGET_EXCEEDED');
+        await api(
+          'POST',
+          `${workerPath}/model-calls/${callId}`,
+          {
+            phase: 'finish',
+            result: {
+              finishedAt: new Date().toISOString(),
+              status: 'ERROR',
+              response: null,
+              error: 'FIXTURE_FAILURE',
+              promptTokens: null,
+              completionTokens: null,
+              elapsedMs: 1,
+            },
+          },
+          execution.leaseToken,
+        );
+        await start(2);
+        const before = (
+          await api('GET', workerPath, undefined, execution.leaseToken)
+        ).data;
+        await api('POST', `${adminPath}/intervene`, {
+          type: 'execution.intervene',
+          controlRevision: 0,
+          reason: '夹具暂停',
+        });
+        await api(
+          'POST',
+          `${workerPath}/control`,
+          {
+            type: 'execution.control',
+            action: 'acknowledge',
+            controlRevision: 1,
+          },
+          execution.leaseToken,
+        );
+        await delay(30);
+        const resume = await api('POST', `${adminPath}/control`, {
+          type: 'execution.control',
+          action: 'resume',
+          controlRevision: 1,
+        });
+        assert.equal(resume.status, 200, JSON.stringify(resume));
+        const after = (
+          await api('GET', workerPath, undefined, execution.leaseToken)
+        ).data;
+        assert(
+          after.stepBudget.deadlineAt >= before.stepBudget.deadlineAt + 25,
+        );
+        assert(
+          after.stepBudget.deadlineAt - before.stepBudget.deadlineAt < 3000,
+        );
+        assert.equal(after.stepBudget.modelCalls, 0);
+        // 服务端计时到期，但整个任务仍保持授权，后续清理可取得独立额度。
+        await sql.query(
+          "UPDATE pr_executions SET budget_state=jsonb_set(budget_state,'{deadlineAt}',to_jsonb(0)) WHERE id=$1",
+          [execution.id],
+        );
+        const timed = await api(
+          'POST',
+          `${workerPath}/commands`,
+          {
+            type: 'execution.command',
+            commandId: randomUUID(),
+            controlRevision: 2,
+            timeoutMs: 1000,
+            command: { type: 'browser.observe' },
+          },
+          execution.leaseToken,
+        );
+        assert.equal(timed.data.code, 'STEP_TIME_BUDGET_EXCEEDED');
+        const cleanup = await start(3);
+        assert.equal(cleanup.stepBudget.actions, 0);
+        assert.equal(cleanup.stepBudget.modelCalls, 0);
+        assert(cleanup.stepBudget.deadlineAt - Date.now() > 179_000);
+        const cleanupAction = await api(
+          'POST',
+          `${workerPath}/commands`,
+          {
+            type: 'execution.command',
+            commandId: randomUUID(),
+            controlRevision: 2,
+            timeoutMs: 1000,
+            command: {
+              type: 'browser.act',
+              action: 'navigate',
+              target: step.url,
+            },
+          },
+          execution.leaseToken,
+        );
+        assert.equal(cleanupAction.status, 202, JSON.stringify(cleanupAction));
+        await api('POST', `/v2/cases/${caseId}/cancel`);
+        await cleaned(execution.task.taskId);
+        await api('POST', `/v1/nodes/${node.id}/revoke`);
+        node.close();
+      },
+    );
+
     // 范围：数据库持久化清理期限并在人工模式下强制到期；缩短数据库期限替代真实三分钟等待，不验证网页清理效果。
     await suite.test('清理独立期限到期后撤权，不受人工暂停影响', async () => {
       const node = await addNode('case-fixture');
@@ -677,6 +949,20 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       assert.equal((await api('POST', '/v2/cases', [input])).status, 202);
       const first = await claim(true);
       await ready(first);
+      await api(
+        'POST',
+        `/v1/executions/${first.id}/steps`,
+        first.task.steps.map((step: { stepId: string }, index: number) => ({
+          stepId: step.stepId,
+          status: index === 0 ? 'RUNNING' : 'PENDING',
+          summary: '夹具',
+          criteria: [],
+          evidenceRefs: [],
+          startedAt: index === 0 ? new Date().toISOString() : null,
+          finishedAt: null,
+        })),
+        first.leaseToken,
+      );
       node.unknownWrite = true;
       await command(first, {
         type: 'browser.act',
@@ -770,6 +1056,7 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         (criterion) => !cleanupIds.has(criterion.stepId!),
       );
       delete legacy.cleanupStepIds;
+      delete legacy.stepBudget;
       const legacyCleanup = cleanupTask(legacy)!;
       await sql.query(
         'UPDATE pr_tasks SET definition=$2,definition_hash=$3 WHERE id=$1',

@@ -310,18 +310,29 @@ export async function buildApp(
     '/v2/cases/:id/rerun',
     { preHandler: admin },
     async (request, reply) => {
-      const body = request.body as { caseId?: unknown } | undefined;
+      const body = request.body as
+        { caseId?: unknown; budgetMode?: 'current' | 'original' } | undefined;
       if (
         !body ||
         typeof body !== 'object' ||
         Array.isArray(body) ||
-        Object.keys(body).length !== 1 ||
+        Object.keys(body).some(
+          (key) => !['caseId', 'budgetMode'].includes(key),
+        ) ||
+        (body.budgetMode !== undefined &&
+          !['current', 'original'].includes(body.budgetMode)) ||
         !('caseId' in body)
       )
-        throw new ApiError(400, 'INVALID_RERUN', '重跑仅接受新的 caseId');
+        throw new ApiError(
+          400,
+          'INVALID_RERUN',
+          '重跑需要新的 caseId，budgetMode 可选 current 或 original',
+        );
       return reply
         .code(202)
-        .send(await casesV2.rerun(request.params.id, body.caseId));
+        .send(
+          await casesV2.rerun(request.params.id, body.caseId, body.budgetMode),
+        );
     },
   );
   app.post<{ Params: IdParams }>(
@@ -417,7 +428,11 @@ export async function buildApp(
   );
   app.post('/v1/worker/claim', { preHandler: worker }, (request) => {
     const body = parseRequest(request.body, 'worker.claim');
-    return coordinator.claim(body.workerId, body.structuredSteps === true);
+    return coordinator.claim(
+      body.workerId,
+      body.structuredSteps === true,
+      body.stepBudgetVersion,
+    );
   });
   app.get<{ Params: IdParams }>('/v1/executions/:id', (request) =>
     coordinator.execution(

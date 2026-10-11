@@ -1,3 +1,4 @@
+import { pauseStepBudget } from './step-budget.js';
 import { Database } from '../../db.js';
 import { ApiError, digest } from '../../domain.js';
 import { executionContext, type ExecutionContext } from './state.js';
@@ -100,6 +101,7 @@ export class ExecutionControl {
         'INSERT INTO pr_control_events(execution_id,mode,revision,reason) VALUES($1,$2,$3,$4)',
         [id, target, next, nextReason],
       );
+      await pauseStepBudget(client, context, action);
       if (action === 'request') {
         const interventionId = randomUUID();
         await client.query(
@@ -115,15 +117,19 @@ export class ExecutionControl {
         );
       } else if (action === 'resume') {
         // 与控制代次在同一事务提交；重复恢复在上面的幂等分支返回，不能再次加时。
-        await client.query(
-          "UPDATE pr_tasks SET deadline_at=clock_timestamp()+$2*interval '1 millisecond' WHERE id=$1",
-          [
-            context.task_id,
-            context.cleanup_deadline_at
-              ? Math.max(0, context.cleanup_deadline_at.getTime() - Date.now())
-              : RESUMED_EXECUTION_MS,
-          ],
-        );
+        if (!context.definition.stepBudget)
+          await client.query(
+            "UPDATE pr_tasks SET deadline_at=clock_timestamp()+$2*interval '1 millisecond' WHERE id=$1",
+            [
+              context.task_id,
+              context.cleanup_deadline_at
+                ? Math.max(
+                    0,
+                    context.cleanup_deadline_at.getTime() - Date.now(),
+                  )
+                : RESUMED_EXECUTION_MS,
+            ],
+          );
         await client.query(
           'UPDATE pr_interventions SET completed_at=clock_timestamp() WHERE execution_id=$1 AND revision=$2',
           [id, revision],

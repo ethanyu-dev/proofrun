@@ -1,3 +1,5 @@
+import { compileStepBudget } from '../../contracts/dist/index.js';
+import { StepAllowance } from '../../apps/agent/dist/execution/step-budget.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createServer } from 'node:http';
@@ -3024,4 +3026,212 @@ test('DOM 错误码不能让未知点击进入观察重试', async () => {
     client.calls.filter((c) => c.operation.type === 'browser.observe').length,
     1,
   );
+});
+
+// 范围：真实模型 HTTP 配合控制面夹具，逐一验证三类耗尽不传播到下一步及清理；不证明真实网页验收通过。
+for (const kind of ['model', 'action', 'time']) {
+  test(`逐步预算：${kind} 耗尽后后续步骤和清理仍可执行`, async () => {
+    const seen = [];
+    const { report, client } = await run(
+      async (context) => {
+        const id = context.executionStep.stepId;
+        seen.push(id);
+        if (id === 'step-1') {
+          if (kind === 'time') await pause(300);
+          return {
+            type: 'browser.act',
+            action: 'fill',
+            target: '@e1',
+            value: 'Alice',
+          };
+        }
+        assert.equal(context.budgetRemaining.modelCalls, 20);
+        assert.equal(context.budgetRemaining.actions, 9);
+        return {
+          ...finish(context),
+          evidenceRefs: context.observation.artifactRefs.map(
+            (a) => a.artifactId,
+          ),
+        };
+      },
+      (_client, execution) => {
+        structuredGrant(execution, [{}, {}, { type: 'setup', expected: [] }]);
+        execution.task.cleanupStepIds = ['step-3'];
+        execution.task.stepBudget = compileStepBudget(execution.task);
+        const first = execution.task.stepBudget.steps[0];
+        if (kind === 'model') first.maxModelCalls = 1;
+        if (kind === 'action') first.maxActions = 1;
+        if (kind === 'time') first.timeoutMs = 200;
+        // 旧全局额度故意小于总需求，证明新版不再被全局动作或 maxTurns 卡住。
+        execution.task.budget.maxActions = 1;
+      },
+      { maxTurns: 1 },
+    );
+    assert.deepEqual(
+      report.steps.map((s) => s.status),
+      ['BLOCKED', 'COMPLETED', 'COMPLETED'],
+    );
+    assert.equal(
+      report.steps[0].reasonCode,
+      `STEP_${{ model: 'MODEL', action: 'ACTION', time: 'TIME' }[kind]}_BUDGET_EXCEEDED`,
+    );
+    assert.equal(report.steps[0].budgetUsage.modelCalls, 1);
+    assert.equal(report.steps[1].budgetUsage.modelCalls, 1);
+    assert.equal(report.steps[2].budgetUsage.actions, 1);
+    assert.deepEqual(seen, ['step-1', 'step-2', 'step-3']);
+    assert.equal(client.reports.length, 1);
+    assert.equal(report.criteria[0].verdict, 'SKIPPED');
+    assert.equal(report.criteria[1].verdict, 'PASSED');
+  });
+}
+
+// 范围：多条清理共享一份额度，耗尽不改变已完成业务判定；不验证真实清理副作用。
+test('整段清理共享独立模型预算，不能每条清理重新充值', async () => {
+  const { report } = await run(
+    (context) => ({
+      ...finish(context),
+      evidenceRefs: context.observation.artifactRefs.map((a) => a.artifactId),
+    }),
+    (_client, execution) => {
+      structuredGrant(execution, [
+        {},
+        { type: 'setup', expected: [] },
+        { type: 'setup', expected: [] },
+      ]);
+      execution.task.cleanupStepIds = ['step-2', 'step-3'];
+      execution.task.stepBudget = compileStepBudget(execution.task);
+      execution.task.stepBudget.cleanup.maxModelCalls = 1;
+    },
+  );
+  assert.deepEqual(
+    report.steps.map((s) => s.status),
+    ['COMPLETED', 'COMPLETED', 'BLOCKED'],
+  );
+  assert.equal(report.steps[2].reasonCode, 'STEP_MODEL_BUDGET_EXCEEDED');
+  assert.equal(report.steps[2].budgetUsage.modelCalls, 0);
+  assert.equal(report.verdict, 'PASSED');
+});
+
+// 范围：新策略下的纯等待无需模型；不验证页面真实计时准确度。
+test('纯等待不消耗模型和动作，随后业务仍有完整额度', async () => {
+  const { report } = await run(finish, (_client, execution) => {
+    structuredGrant(execution, [
+      { type: 'setup', expected: [], wait: { durationMs: 5 } },
+      {},
+    ]);
+    execution.task.stepBudget = compileStepBudget(execution.task);
+  });
+  assert.deepEqual(
+    report.steps.map((s) => s.status),
+    ['COMPLETED', 'COMPLETED'],
+  );
+  assert.equal(report.steps[0].budgetUsage.modelCalls, 0);
+  assert.equal(report.steps[0].budgetUsage.actions, 0);
+});
+
+// 范围：暂停和过期快照的局部时钟规则，采用模拟服务端时间；不代表浏览器或人工登录验收。
+test('业务人工等待暂停剩余时间，清理不暂停，旧步骤快照不覆盖新步骤', () => {
+  const limit = { timeoutMs: 300_000, maxActions: 10, maxModelCalls: 20 };
+  const business = new StepAllowance('s1', limit, 10, 20, false);
+  const pausedAt = Date.now() - 60_000;
+  business.sync({
+    stepBudget: {
+      stepId: 's1',
+      actions: 3,
+      modelCalls: 4,
+      deadlineAt: pausedAt + 123_000,
+      pausedAt,
+    },
+  });
+  assert.equal(business.remaining(), 123_000);
+  assert.deepEqual(business.available(13, 24), {
+    actions: 7,
+    modelCalls: 16,
+    timeMs: 123_000,
+  });
+  business.sync({
+    stepBudget: {
+      stepId: 'old',
+      actions: 0,
+      modelCalls: 0,
+      deadlineAt: 0,
+      pausedAt: null,
+    },
+  });
+  assert.equal(business.remaining(), 123_000);
+  const cleanup = new StepAllowance('c1', limit, 0, 0, true);
+  cleanup.sync({
+    stepBudget: {
+      stepId: 'c1',
+      actions: 0,
+      modelCalls: 0,
+      deadlineAt: Date.now() - 1,
+      pausedAt,
+    },
+  });
+  assert.throws(() => cleanup.assertTime(), {
+    code: 'STEP_TIME_BUDGET_EXCEEDED',
+  });
+});
+
+// 范围：独立预算不取消无进展保护，且下一步仍核实自身条件；脚本模型不代表真实业务推理。
+test('新预算保留无进展保护与后续步骤前置条件检查', async () => {
+  const { report } = await run(
+    (context) => {
+      if (context.executionStep.stepId === 'step-1')
+        return { type: 'browser.observe' };
+      assert.match(context.task.objective, /前序异常：step-1/);
+      assert.match(context.task.objective, /前置条件已满足/);
+      return {
+        type: 'verification.block',
+        summary: '本步必要的访客状态尚未建立，不能判通过',
+      };
+    },
+    (_client, execution) => {
+      structuredGrant(execution, [{}, {}]);
+      execution.task.stepBudget = compileStepBudget(execution.task);
+    },
+  );
+  assert.equal(report.steps[0].reasonCode, 'NO_PROGRESS');
+  assert(report.steps[0].budgetUsage.modelCalls < 20);
+  assert.equal(report.steps[1].reasonCode, 'MODEL_BLOCKED');
+  assert.equal(report.steps[1].budgetUsage.modelCalls, 1);
+  assert.equal(report.verdict, null);
+});
+
+// 范围：命令在预算到期前已派发，必须先取得确定结果再换步；仅模拟延迟，不验证真实浏览器副作用。
+test('步骤时间到期不中断在途动作，确认结果后继续下一步', async () => {
+  let settled = false;
+  const { report } = await run(
+    (context) => {
+      if (context.executionStep.stepId === 'step-1')
+        return {
+          type: 'browser.act',
+          action: 'fill',
+          target: '@e1',
+          value: 'Alice',
+        };
+      assert.equal(settled, true);
+      return finish(context);
+    },
+    (client, execution) => {
+      structuredGrant(execution, [{}, {}]);
+      execution.task.stepBudget = compileStepBudget(execution.task);
+      execution.task.stepBudget.steps[0].timeoutMs = 200;
+      const command = client.command.bind(client);
+      client.command = async (...args) => {
+        if (args[2].type === 'browser.act' && args[2].action === 'fill') {
+          await pause(300);
+          settled = true;
+        }
+        return command(...args);
+      };
+    },
+  );
+  assert.deepEqual(
+    report.steps.map((s) => s.status),
+    ['BLOCKED', 'COMPLETED'],
+  );
+  assert.equal(report.steps[0].reasonCode, 'STEP_TIME_BUDGET_EXCEEDED');
+  assert.equal(report.steps[0].budgetUsage.actions, 2);
 });

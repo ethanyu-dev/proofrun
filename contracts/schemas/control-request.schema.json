@@ -79,6 +79,10 @@
         "structuredSteps": {
           "type": "boolean",
           "description": "worker 支持结构化步骤、等待和逐步结果；旧 worker 不得领取新版任务。"
+        },
+        "stepBudgetVersion": {
+          "const": 1,
+          "description": "只将逐步预算任务派给能隔离并继续后续步骤的 worker。"
         }
       },
       "required": ["type", "workerId"]

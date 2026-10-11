@@ -1,3 +1,4 @@
+import { BudgetUsage, BudgetTotal } from './budget-usage';
 import type { StepResult, TaskDetail } from '@proofrun/contracts';
 import { Status } from './ui';
 import { ReportStatus } from './report-status';
@@ -39,6 +40,7 @@ export function StepCompletion({
       <div className="section-heading">
         <h2>验证汇总</h2>
       </div>
+      <BudgetTotal task={task.definition} results={results} />
       <div className={card ? 'panel verification-summary-card' : undefined}>
         <div className="table-scroll report-table-scroll">
           <table aria-label="步骤与验收项汇总">
@@ -78,11 +80,14 @@ export function StepCompletion({
                         (item) => item.criterionId === definition.id,
                       ))
                     : undefined;
-                  const reason =
-                    criterion &&
-                    ['FAILED', 'INCONCLUSIVE', 'SKIPPED'].includes(
-                      criterion.verdict,
-                    )
+                  const reason = result?.reasonCode?.endsWith(
+                    '_BUDGET_EXCEEDED',
+                  )
+                    ? result.summary
+                    : criterion &&
+                        ['FAILED', 'INCONCLUSIVE', 'SKIPPED'].includes(
+                          criterion.verdict,
+                        )
                       ? criterion.summary
                       : ['BLOCKED', 'ERROR', 'SKIPPED'].includes(status)
                         ? (result?.summary ?? '本步骤未执行')
@@ -102,6 +107,7 @@ export function StepCompletion({
                             <Status
                               value={status === 'SKIPPED' ? '未执行' : status}
                             />
+                            <BudgetUsage usage={result?.budgetUsage} />
                           </td>
                         </>
                       )}
@@ -137,6 +143,9 @@ export function StepCompletion({
                       </td>
                       <td className="wrap">
                         {reason ? shortReason(reason) : '—'}
+                        {result?.reasonCode && (
+                          <p className="muted mono wrap">{result.reasonCode}</p>
+                        )}
                       </td>
                     </tr>
                   );

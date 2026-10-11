@@ -101,6 +101,12 @@ export function modelTraceFault(
   error: unknown,
   phase: 'start' | 'finish',
 ): AgentFault {
+  if (
+    error instanceof AgentFault &&
+    error.code.startsWith('STEP_') &&
+    error.code.endsWith('_BUDGET_EXCEEDED')
+  )
+    return error;
   const details: string[] = [];
   if (error instanceof AgentFault) {
     if (

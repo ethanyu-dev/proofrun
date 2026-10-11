@@ -452,3 +452,67 @@ test('验证汇总列全验收项，细节和后续清理分开呈现', () => {
   assert(!html.includes('report-counts'));
   assert(!html.includes('本 case 完成情况'));
 });
+
+// 范围：预算区分业务与清理的静态报告渲染；不代表浏览器真实耗时或模型实际验收。
+test('报告展示每步用量，业务与清理分别汇总', () => {
+  const task = cleanupFixture();
+  const cleanup = task.definition.steps![0]!;
+  task.definition.steps = [
+    {
+      ...cleanup,
+      stepId: 'step-1',
+      type: 'verification',
+      expected: ['夹具验收'],
+    },
+    cleanup,
+  ];
+  task.definition.stepBudget = {
+    version: 1,
+    settleMs: 120000,
+    steps: [
+      {
+        stepId: 'step-1',
+        timeoutMs: 300000,
+        maxActions: 10,
+        maxModelCalls: 20,
+      },
+    ],
+    cleanup: { timeoutMs: 180000, maxActions: 10, maxModelCalls: 20 },
+  };
+  const cleanResult = task.report!.steps![0]!;
+  task.report!.steps = [
+    {
+      ...cleanResult,
+      stepId: 'step-1',
+      status: 'BLOCKED',
+      reasonCode: 'STEP_MODEL_BUDGET_EXCEEDED',
+      summary: '本步模型预算耗尽',
+      budgetUsage: {
+        actions: 3,
+        modelCalls: 20,
+        elapsedMs: 42000,
+        limit: { timeoutMs: 300000, maxActions: 10, maxModelCalls: 20 },
+      },
+    },
+    {
+      ...cleanResult,
+      budgetUsage: {
+        actions: 1,
+        modelCalls: 2,
+        elapsedMs: 5000,
+        limit: { timeoutMs: 180000, maxActions: 10, maxModelCalls: 20 },
+      },
+    },
+  ];
+  const business = renderToStaticMarkup(
+    createElement(StepCompletion, { task }),
+  );
+  const cleaning = renderToStaticMarkup(
+    createElement(FollowUpCleanup, { task, api }),
+  );
+  assert.match(business, /模型 20\/20/);
+  assert.match(business, /STEP_MODEL_BUDGET_EXCEEDED/);
+  assert.doesNotMatch(business, /模型 22\/20/);
+  assert.match(cleaning, /清理独立预算/);
+  assert.match(cleaning, /模型 2\/20/);
+});

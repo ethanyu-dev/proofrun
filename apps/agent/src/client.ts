@@ -50,6 +50,14 @@ export interface ExecutionView extends ExecutionTiming {
 /** 控制面时间快照；旧版心跳未带这些字段时不能自行推断预算已刷新。 */
 export interface ExecutionTiming {
   taskDeadlineAt?: string;
+  /** 当前步骤的服务端计时与计数；旧 worker 不会领取携带此策略的新任务。 */
+  stepBudget?: {
+    stepId: string;
+    deadlineAt: number;
+    actions: number;
+    modelCalls: number;
+    pausedAt: number | null;
+  } | null;
   /** 控制面首次进入清理时固定的期限，不能被较早的业务心跳覆盖。 */
   cleanupDeadlineAt?: string | null;
   leaseExpiresAt?: string;
@@ -95,6 +103,7 @@ export class ControlClient {
         type: 'worker.claim',
         workerId: this.config.workerId,
         structuredSteps: true,
+        stepBudgetVersion: 1,
       },
       this.config.requestMs,
       signal,

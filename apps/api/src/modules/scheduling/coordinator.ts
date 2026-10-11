@@ -1,3 +1,5 @@
+import { sessionBudgetMs } from '@proofrun/contracts';
+import { startStepBudget, consumeStepBudget } from './step-budget.js';
 import { executionDeadline, CLEANUP_EXECUTION_MS } from './execution-time.js';
 import { inlineCleanup } from '../cases/inline-cleanup.js';
 import {
@@ -354,6 +356,7 @@ export class Coordinator {
           [id, context.lease_expires_at],
         );
       }
+      await startStepBudget(client, context, input);
       await client.query('UPDATE pr_tasks SET step_results=$2 WHERE id=$1', [
         context.task_id,
         JSON.stringify(input),
@@ -362,6 +365,7 @@ export class Coordinator {
         saved: true,
         taskDeadlineAt: context.deadline_at,
         cleanupDeadlineAt: context.cleanup_deadline_at,
+        stepBudget: context.budget_state,
         leaseExpiresAt: context.lease_expires_at,
         controlMode: context.control_mode,
         controlRevision: context.control_revision,
@@ -515,7 +519,11 @@ export class Coordinator {
   }
 
   /** worker 真正领取时才预留浏览器，任务等待期间不占用 Chrome。 */
-  async claim(workerId: string, structuredSteps = false) {
+  async claim(
+    workerId: string,
+    structuredSteps = false,
+    stepBudgetVersion?: number,
+  ) {
     const live = this.gateway.live();
     if (!live.length) return { execution: null };
     return this.db.transaction(async (client) => {
@@ -528,9 +536,9 @@ export class Coordinator {
       const tasks = await client.query<{ id: string }>(
         `SELECT candidate.id FROM unnest($1::text[]) AS pool(name)
         CROSS JOIN LATERAL (SELECT id,created_at FROM pr_tasks WHERE state='QUEUED'
-          AND deadline_at>clock_timestamp() AND definition#>>'{environment,nodePool}'=pool.name AND ($3 OR NOT (definition ? 'steps'))
+          AND deadline_at>clock_timestamp() AND definition#>>'{environment,nodePool}'=pool.name AND ($3 OR NOT (definition ? 'steps')) AND ($4 OR NOT (definition ? 'stepBudget'))
           ORDER BY created_at,id LIMIT $2) candidate ORDER BY candidate.created_at,candidate.id`,
-        [pools, BATCH_SIZE, structuredSteps],
+        [pools, BATCH_SIZE, structuredSteps, stepBudgetVersion === 1],
       );
       for (const candidate of tasks.rows) {
         const row = (
@@ -545,6 +553,7 @@ export class Coordinator {
         if (!row) continue;
         const task = row.definition;
         if (task.steps && !structuredSteps) continue;
+        if (task.stepBudget && stepBudgetVersion !== 1) continue;
         const routedNode = resolveRoute(
           routes,
           task.environment.nodePool,
@@ -602,6 +611,21 @@ export class Coordinator {
               a.heartbeat!.occupied.length - b.heartbeat!.occupied.length,
           );
         let queueCode: QueueReason['code'] = 'NO_ELIGIBLE_NODE';
+        const routed = live.filter(
+          (c) =>
+            c.heartbeat!.pool === task.environment.nodePool &&
+            (!routedNode || c.nodeId === routedNode) &&
+            (!requiredNode || c.nodeId === requiredNode),
+        );
+        if (
+          !candidates.length &&
+          task.steps &&
+          routed.length &&
+          routed.every(
+            (c) => c.heartbeat!.limits.maxSessionMs < sessionBudgetMs(task),
+          )
+        )
+          queueCode = 'SESSION_BUDGET_UNSUPPORTED';
         for (const connection of candidates) {
           const heartbeat = connection.heartbeat!;
           const node = (
@@ -657,6 +681,18 @@ export class Coordinator {
             );
           const executionId = randomUUID();
           const token = newToken();
+          // 排队时间不侵占新版逐步额度；领取后才启用自动执行的总安全期限。
+          if (task.stepBudget) {
+            row.deadline_at = new Date(
+              Date.now() +
+                task.budget.timeoutMs +
+                task.stepBudget.settleMs * task.stepBudget.steps.length,
+            );
+            await client.query(
+              'UPDATE pr_tasks SET deadline_at=$2 WHERE id=$1',
+              [task.taskId, row.deadline_at],
+            );
+          }
           const leaseEnd = new Date(
             Math.min(
               row.deadline_at.getTime(),
@@ -743,10 +779,7 @@ export class Coordinator {
   private eligible(heartbeat: Heartbeat, task: VerificationTask): boolean {
     return (
       heartbeat.pool === task.environment.nodePool &&
-      (!task.steps ||
-        heartbeat.limits.maxSessionMs >=
-          task.budget.timeoutMs +
-            (task.cleanupStepIds?.length ? CLEANUP_EXECUTION_MS : 0)) &&
+      (!task.steps || heartbeat.limits.maxSessionMs >= sessionBudgetMs(task)) &&
       (!(task.environment.allowIntervention || task.comparison) ||
         heartbeat.capabilities.liveView === true) &&
       (!task.environment.allowIntervention ||
@@ -824,6 +857,7 @@ export class Coordinator {
         leaseExpiresAt: expires,
         taskDeadlineAt: context.deadline_at,
         cleanupDeadlineAt: context.cleanup_deadline_at,
+        stepBudget: context.budget_state,
         controlMode: context.control_mode,
         controlRevision: context.control_revision,
       };
@@ -856,6 +890,7 @@ export class Coordinator {
         leaseExpiresAt: context.lease_expires_at,
         taskDeadlineAt: context.deadline_at,
         cleanupDeadlineAt: context.cleanup_deadline_at,
+        stepBudget: context.budget_state,
         artifacts,
       };
     });
@@ -955,8 +990,21 @@ export class Coordinator {
           'One browser operation at a time',
         );
       // 人工操作仍经过权限、代次和串行检查，但不占用或受限于 Agent 动作预算。
+      if (
+        actor === 'AGENT' &&
+        context.definition.stepBudget &&
+        operation.type !== 'browser.trace'
+      )
+        await consumeStepBudget(
+          client,
+          context,
+          operation.type === 'browser.act' ? 'actions' : 'observe',
+        );
       if (actor === 'AGENT' && operation.type === 'browser.act') {
-        if (context.action_count >= context.definition.budget.maxActions)
+        if (
+          !context.definition.stepBudget &&
+          context.action_count >= context.definition.budget.maxActions
+        )
           throw new ApiError(
             409,
             'ACTION_BUDGET_EXCEEDED',

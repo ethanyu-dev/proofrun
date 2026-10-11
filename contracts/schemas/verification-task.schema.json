@@ -217,6 +217,69 @@
         "pattern": "^[A-Za-z0-9_-]{1,80}$"
       },
       "description": "同一任务末尾的业务清理步骤身份；存在时不再创建独立清理任务。"
+    },
+    "stepBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "按步骤独立冻结的预算；缺失时保留旧任务总预算语义。清理共享独立额度。",
+      "required": ["version", "steps", "cleanup", "settleMs"],
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["timeoutMs", "maxActions", "maxModelCalls", "stepId"],
+            "properties": {
+              "timeoutMs": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "maxActions": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "maxModelCalls": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "stepId": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "cleanup": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["timeoutMs", "maxActions", "maxModelCalls"],
+          "properties": {
+            "timeoutMs": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "maxActions": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "maxModelCalls": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "settleMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 120000,
+          "description": "每步结束允许在途操作完成和持久化的额外时间，不可用于派发新操作。"
+        }
+      }
     }
   },
   "$schema": "http://json-schema.org/draft-07/schema#",

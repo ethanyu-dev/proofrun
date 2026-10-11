@@ -22,6 +22,7 @@ const MIGRATIONS = [
   '010-queue-reason.sql',
   '011-agent-action-budget.sql',
   '012-cleanup-budget.sql',
+  '013-step-budget.sql',
 ];
 
 /** 所有业务事务使用同一连接；独占连接单独维护控制面实例锁。 */

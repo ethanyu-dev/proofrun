@@ -108,6 +108,38 @@ export type VerificationTask = {
    * @maxItems 32
    */
   cleanupStepIds?: string[];
+  /**
+   * 按步骤独立冻结的预算；缺失时保留旧任务总预算语义。清理共享独立额度。
+   */
+  stepBudget?: {
+    version: 1;
+    /**
+     * @minItems 1
+     */
+    steps: [
+      {
+        timeoutMs: number;
+        maxActions: number;
+        maxModelCalls: number;
+        stepId: string;
+      },
+      ...{
+        timeoutMs: number;
+        maxActions: number;
+        maxModelCalls: number;
+        stepId: string;
+      }[],
+    ];
+    cleanup: {
+      timeoutMs: number;
+      maxActions: number;
+      maxModelCalls: number;
+    };
+    /**
+     * 每步结束允许在途操作完成和持久化的额外时间，不可用于派发新操作。
+     */
+    settleMs: number;
+  };
 };
 export type CaseStep = {
   /**

@@ -1,3 +1,4 @@
+import { BudgetUsage, BudgetTotal } from './budget-usage';
 import type { TaskDetail } from '@proofrun/contracts';
 import type { ApiClient } from '../api';
 import { CleanupResult } from './cleanup-result';
@@ -21,6 +22,11 @@ export function FollowUpCleanup({
     <section className="panel" aria-label="后续清理">
       <h2>后续清理</h2>
       <p className="muted">清理结果单独记录，不纳入最终验证判定。</p>
+      <BudgetTotal
+        task={task.definition}
+        results={task.report?.steps ?? task.stepResults ?? []}
+        cleanup
+      />
       {steps.map((step) => {
         const result = (task.report?.steps ?? task.stepResults)?.find(
           (item) => item.stepId === step.stepId,
@@ -34,6 +40,7 @@ export function FollowUpCleanup({
               </h3>
               <Status value={status === 'SKIPPED' ? '未执行' : status} />
             </div>
+            <BudgetUsage usage={result?.budgetUsage} />
             <CleanupResult
               api={api}
               task={task}

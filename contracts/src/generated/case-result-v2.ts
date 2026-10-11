@@ -542,6 +542,23 @@ export interface StepResult {
    * 步骤结束时间；未结束或无法确认时为 null。
    */
   finishedAt: string | null;
+  /**
+   * 稳定的未完成原因码，预算耗尽按受阻记录。
+   */
+  reasonCode?: string | null;
+  /**
+   * 本步骤实际用量；清理多步各记录增量，额度由整段清理共享。业务耗时排除人工等待。
+   */
+  budgetUsage?: {
+    elapsedMs: number;
+    modelCalls: number;
+    actions: number;
+    limit: {
+      timeoutMs: number;
+      maxActions: number;
+      maxModelCalls: number;
+    };
+  };
 }
 /**
  * 最近一次领取检查发现的排队原因；不包含节点身份或登录凭据，也不是业务验收结论。
@@ -556,6 +573,7 @@ export interface QueueReason {
     | 'RESOURCE_BUSY'
     | 'NO_ELIGIBLE_NODE'
     | 'NODE_CAPACITY'
-    | 'NODE_ROTATING';
+    | 'NODE_ROTATING'
+    | 'SESSION_BUDGET_UNSUPPORTED';
   message: string;
 }
