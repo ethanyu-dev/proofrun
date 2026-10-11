@@ -104,6 +104,7 @@ export class ControlClient {
         workerId: this.config.workerId,
         structuredSteps: true,
         stepBudgetVersion: 1,
+        identityVersion: 1,
       },
       this.config.requestMs,
       signal,

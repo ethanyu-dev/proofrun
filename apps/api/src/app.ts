@@ -71,6 +71,7 @@ export async function buildApp(
     coordinator,
     config.caseProfile,
     config.publicUrl,
+    config.identityCatalog,
   );
   const control = new ExecutionControl(db, config.adminToken);
   const gateway = new NodeGateway(
@@ -432,6 +433,7 @@ export async function buildApp(
       body.workerId,
       body.structuredSteps === true,
       body.stepBudgetVersion,
+      body.identityVersion,
     );
   });
   app.get<{ Params: IdParams }>('/v1/executions/:id', (request) =>

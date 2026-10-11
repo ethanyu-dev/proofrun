@@ -135,6 +135,43 @@
         }
       },
       "description": "本步骤实际用量；清理多步各记录增量，额度由整段清理共享。业务耗时排除人工等待。"
+    },
+    "preconditions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,80}$"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "status": {
+            "enum": ["SATISFIED", "UNSATISFIED", "UNCONFIRMED"]
+          },
+          "source": {
+            "enum": ["observation", "human"]
+          },
+          "evidenceRefs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32
+          },
+          "controlRevision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": ["id", "description", "status", "source", "evidenceRefs"]
+      },
+      "maxItems": 64
     }
   },
   "required": [

@@ -51,4 +51,18 @@ export interface StepResult {
       maxModelCalls: number;
     };
   };
+  /**
+   * @maxItems 64
+   */
+  preconditions?: {
+    id: string;
+    description: string;
+    status: 'SATISFIED' | 'UNSATISFIED' | 'UNCONFIRMED';
+    source: 'observation' | 'human';
+    /**
+     * @maxItems 32
+     */
+    evidenceRefs: string[];
+    controlRevision?: number;
+  }[];
 }

@@ -83,6 +83,9 @@
         "stepBudgetVersion": {
           "const": 1,
           "description": "只将逐步预算任务派给能隔离并继续后续步骤的 worker。"
+        },
+        "identityVersion": {
+          "const": 1
         }
       },
       "required": ["type", "workerId"]

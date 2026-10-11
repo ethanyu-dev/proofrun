@@ -1,3 +1,4 @@
+import { evaluateChecks, mergeChecks } from './identity.js';
 import { stepLimit } from '@proofrun/contracts';
 import { StepAllowance } from './step-budget.js';
 import { stepObjective } from '../prompts/step.js';
@@ -92,6 +93,10 @@ class Execution {
   private feedback: string | null = null;
   /** 人工介入后旧模型回复与旧观察均失效。 */
   private controlRevision = 0;
+  /** 人工证明仅绑定当前控制代次；模型不能自行签发。 */
+  private readonly confirmedChecks = new Map<string, number>();
+  /** 每一步最多一次身份恢复，失败后继续后续独立步骤。 */
+  private readonly identityInterventions = new Set<number>();
   /** 决策轮次与模型调用次数分开，混合策略可以在同一轮派发多个供应商请求。 */
   private decisionIndex = 0;
   /** 每一步最多自动请求一次登录辅助，人工未解决问题时不能无限暂停。 */
@@ -593,6 +598,60 @@ class Execution {
     }
     return this.report('EXECUTED', decision.summary, decision.criteria, null);
   }
+  /** 当前步骤只采信结构化条件和本会话的人工确认，不把账号显示名解释成角色。 */
+  private async checkIdentity(
+    allowIntervention: boolean,
+  ): Promise<VerificationReport | null> {
+    const original = this.grant.task;
+    const step = original.steps?.[this.stepIndex];
+    if (!this.current || original.cleanupStepIds?.includes(step?.stepId ?? ''))
+      return null;
+    const checks = mergeChecks(
+      original.sessionPlan?.candidates[0]?.checks ?? [],
+      original.sessionPlan?.requirements ?? [],
+      step?.preconditions ?? [],
+    );
+    if (!checks.length) return null;
+    const evaluate = () =>
+      evaluateChecks(
+        checks,
+        this.current!,
+        this.confirmedChecks,
+        this.controlRevision,
+      );
+    let results = evaluate();
+    if (
+      results.some((r) => r.status !== 'SATISFIED') &&
+      allowIntervention &&
+      original.environment.allowIntervention &&
+      !this.identityInterventions.has(this.stepIndex)
+    ) {
+      this.identityInterventions.add(this.stepIndex);
+      const revision = this.controlRevision;
+      await this.requestIntervention(
+        '请确认本次测试身份及前置条件；已登录不代表账号角色符合要求',
+        results
+          .filter((r) => r.status !== 'SATISFIED')
+          .map((r) => r.description),
+        true,
+      );
+      if (this.controlRevision > revision)
+        for (const check of checks)
+          if (check.method === 'manual')
+            this.confirmedChecks.set(check.id, this.controlRevision);
+      results = evaluate();
+    }
+    if (this.stepResults[this.stepIndex])
+      this.stepResults[this.stepIndex]!.preconditions = results;
+    const missing = results.filter((r) => r.status !== 'SATISFIED');
+    return missing.length
+      ? this.blocked(
+          `前置条件未满足：${missing.map((r) => r.description).join('；')}`,
+          'PRECONDITION_UNMET',
+        )
+      : null;
+  }
+
   /** 先确认远端会话可达，再进入有界的观察与决策循环。 */
   private async loop(): Promise<VerificationReport> {
     this.guard.signal.throwIfAborted();
@@ -697,6 +756,8 @@ class Execution {
           errors = 0;
           continue;
         }
+        const identityBlock = await this.checkIdentity(true);
+        if (identityBlock) return identityBlock;
         if ((this.changes?.unchangedRounds ?? 0) >= STALLED_ROUNDS)
           return this.blocked(
             '连续多轮操作和观察未获得新事实，停止重复执行；请检查页面覆盖或人工处理。',
@@ -849,6 +910,8 @@ class Execution {
           continue;
         }
         if (decision.type === 'verification.finish') {
+          const identityBlock = await this.checkIdentity(false);
+          if (identityBlock) return identityBlock;
           const traces = await this.captureTrace();
           for (const criterion of decision.criteria) {
             if (
@@ -1153,8 +1216,8 @@ class Execution {
           modelCalls: usage.modelCalls - startUsage.modelCalls,
           elapsedMs: Math.max(0, usage.elapsedMs - startUsage.elapsedMs),
         };
-        state.reasonCode = report.executionDetails?.reasonCode ?? null;
       }
+      state.reasonCode = report.executionDetails?.reasonCode ?? null;
       if (report.executionDisposition !== 'EXECUTED') {
         state.status =
           report.executionDisposition === 'BLOCKED' ? 'BLOCKED' : 'ERROR';

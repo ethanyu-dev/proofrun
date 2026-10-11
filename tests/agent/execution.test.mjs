@@ -3235,3 +3235,39 @@ test('步骤时间到期不中断在途动作，确认结果后继续下一步',
   assert.equal(report.steps[0].reasonCode, 'STEP_TIME_BUDGET_EXCEEDED');
   assert.equal(report.steps[0].budgetUsage.actions, 2);
 });
+
+// 范围：身份前提未满足时阻止模型伪造完成，但后续独立步骤及清理继续；页面与模型均为夹具。
+test('前置身份缺失不能由模型完成声明绕过，也不阻止独立后续步骤', async () => {
+  const seen = [];
+  const { report } = await run(
+    (context) => {
+      seen.push(context.executionStep.stepId);
+      return {
+        ...finish(context),
+        evidenceRefs: context.observation.artifactRefs.map((a) => a.artifactId),
+      };
+    },
+    (_client, execution) => {
+      structuredGrant(execution, [
+        { type: 'setup', expected: [] },
+        {},
+        { type: 'setup', expected: [] },
+      ]);
+      execution.task.cleanupStepIds = ['step-3'];
+      execution.task.steps[0].preconditions = [
+        {
+          id: 'member',
+          description: '当前为测试团队成员',
+          method: 'text',
+          value: '测试团队成员',
+        },
+      ];
+      execution.task.environment.allowIntervention = false;
+    },
+  );
+  assert.deepEqual(seen, ['step-2', 'step-3']);
+  assert.equal(report.steps[0].reasonCode, 'PRECONDITION_UNMET');
+  assert.equal(report.steps[0].preconditions[0].status, 'UNSATISFIED');
+  assert.equal(report.steps[1].status, 'COMPLETED');
+  assert.equal(report.steps[2].status, 'COMPLETED');
+});

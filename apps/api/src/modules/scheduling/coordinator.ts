@@ -1,3 +1,4 @@
+import { allocateIdentity } from '../identities/allocation.js';
 import { sessionBudgetMs } from '@proofrun/contracts';
 import { startStepBudget, consumeStepBudget } from './step-budget.js';
 import { executionDeadline, CLEANUP_EXECUTION_MS } from './execution-time.js';
@@ -523,6 +524,7 @@ export class Coordinator {
     workerId: string,
     structuredSteps = false,
     stepBudgetVersion?: number,
+    identityVersion?: number,
   ) {
     const live = this.gateway.live();
     if (!live.length) return { execution: null };
@@ -536,9 +538,15 @@ export class Coordinator {
       const tasks = await client.query<{ id: string }>(
         `SELECT candidate.id FROM unnest($1::text[]) AS pool(name)
         CROSS JOIN LATERAL (SELECT id,created_at FROM pr_tasks WHERE state='QUEUED'
-          AND deadline_at>clock_timestamp() AND definition#>>'{environment,nodePool}'=pool.name AND ($3 OR NOT (definition ? 'steps')) AND ($4 OR NOT (definition ? 'stepBudget'))
+          AND deadline_at>clock_timestamp() AND definition#>>'{environment,nodePool}'=pool.name AND ($3 OR NOT (definition ? 'steps')) AND ($4 OR NOT (definition ? 'stepBudget')) AND ($5 OR NOT (definition ? 'sessionPlan'))
           ORDER BY created_at,id LIMIT $2) candidate ORDER BY candidate.created_at,candidate.id`,
-        [pools, BATCH_SIZE, structuredSteps, stepBudgetVersion === 1],
+        [
+          pools,
+          BATCH_SIZE,
+          structuredSteps,
+          stepBudgetVersion === 1,
+          identityVersion === 1,
+        ],
       );
       for (const candidate of tasks.rows) {
         const row = (
@@ -551,7 +559,7 @@ export class Coordinator {
           )
         ).rows[0];
         if (!row) continue;
-        const task = row.definition;
+        let task = row.definition;
         if (task.steps && !structuredSteps) continue;
         if (task.stepBudget && stepBudgetVersion !== 1) continue;
         const routedNode = resolveRoute(
@@ -559,6 +567,13 @@ export class Coordinator {
           task.environment.nodePool,
           targetHostname(task.target.url),
         );
+        if (task.sessionPlan && identityVersion !== 1) continue;
+        const allocated = await allocateIdentity(client, task, routedNode);
+        if (!allocated) {
+          await recordQueueReason(client, task.taskId, 'IDENTITY_BUSY');
+          continue;
+        }
+        task = allocated;
         const cleanup = await cleanupPlacement(client, task, routedNode);
         if (cleanup.blocked) {
           await recordQueueReason(client, task.taskId, cleanup.blocked);

@@ -1,3 +1,7 @@
+import {
+  loadIdentityCatalog,
+  type IdentityCatalog,
+} from './modules/identities/catalog.js';
 import { resolve } from 'node:path';
 import { loadCaseProfile, type CaseProfile } from './modules/cases/profile.js';
 
@@ -11,6 +15,8 @@ const DEFAULTS = {
 
 /** 控制面只支持一个活动实例；队列、租约和消息均持久化到数据库。 */
 export interface ApiConfig {
+  /** 测试身份元数据，不包含原始密码或 Cookie。 */
+  identityCatalog?: IdentityCatalog;
   /** 平台预配置的 case 执行环境；省略时不接收新 case。 */
   caseProfile?: CaseProfile;
   /** 独立 PostgreSQL 数据库地址。 */
@@ -98,6 +104,9 @@ export function loadConfig(): ApiConfig {
   const caseProfile = loadCaseProfile(process.env.PROOFRUN_CASE_PROFILE_FILE);
   return {
     ...(caseProfile ? { caseProfile } : {}),
+    identityCatalog: loadIdentityCatalog(
+      process.env.PROOFRUN_IDENTITY_CATALOG_FILE,
+    ),
     databaseUrl,
     adminToken,
     workerToken,

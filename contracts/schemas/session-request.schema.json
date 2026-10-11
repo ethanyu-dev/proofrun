@@ -1,0 +1,67 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "mode": {
+      "enum": ["guest", "manual", "identity", "pool", "auto"]
+    },
+    "identityRef": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,80}$"
+    },
+    "poolRef": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,80}$"
+    },
+    "requirements": {
+      "type": "array",
+      "items": {
+        "$ref": "identity-check.schema.json"
+      },
+      "maxItems": 32
+    }
+  },
+  "required": ["mode"],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "mode": {
+            "const": "identity"
+          }
+        }
+      },
+      "then": {
+        "required": ["identityRef"],
+        "properties": {
+          "identityRef": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,80}$"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "mode": {
+            "const": "pool"
+          }
+        }
+      },
+      "then": {
+        "required": ["poolRef"],
+        "properties": {
+          "poolRef": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,80}$"
+          }
+        }
+      }
+    }
+  ],
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://proofrun.invalid/contracts/0.1/session-request.schema.json",
+  "title": "SessionRequest",
+  "description": "只声明身份引用与条件，禁止携带密码或 Cookie；guest 不恢复认证。"
+}

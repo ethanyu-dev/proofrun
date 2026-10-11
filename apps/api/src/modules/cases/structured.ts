@@ -1,3 +1,4 @@
+import { resolveSession, type IdentityCatalog } from '../identities/catalog.js';
 import {
   compileStepBudget,
   businessBudget,
@@ -57,6 +58,7 @@ export function stepCriteria(
 export function compileCase(
   input: VerificationCaseV2,
   profile: CaseProfile,
+  identities: IdentityCatalog = { identities: [], pools: [], sites: [] },
 ): VerificationTask {
   const businessSteps = normalizeSteps(input.steps);
   const cleanupSteps = normalizeSteps(
@@ -108,6 +110,12 @@ export function compileCase(
       input.description ?? `${input.platform}：按定义步骤执行并逐项验收`,
     target: { url: input.entry },
     environment: structuredClone(profile.environment),
+    sessionPlan: resolveSession(
+      identities,
+      input.session,
+      input.entry,
+      profile.environment,
+    ),
     budget,
     stepBudget,
     cleanupStepIds: cleanupSteps.map((step) => step.stepId!),

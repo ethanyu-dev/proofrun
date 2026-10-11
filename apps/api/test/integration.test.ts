@@ -157,7 +157,7 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
           type: 'worker.claim',
           workerId: randomUUID(),
           structuredSteps,
-          ...(structuredSteps ? { stepBudgetVersion: 1 } : {}),
+          ...(structuredSteps ? { stepBudgetVersion: 1, identityVersion: 1 } : {}),
         },
         WORKER,
       )

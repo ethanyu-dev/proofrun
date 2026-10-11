@@ -1,3 +1,4 @@
+import type { IdentityCatalog } from '../identities/catalog.js';
 import {
   summarizeReport,
   validateVerificationCaseV2,
@@ -29,6 +30,7 @@ export class CaseV2Service {
     /** 构造同源公开证据地址，不透传内部报告地址。 */
     private readonly publicUrl: string,
     /** 显式复现历史预算时才传入；默认重跑按当前策略编译。 */
+    private readonly identities?: IdentityCatalog,
     private readonly originalBudget?: Pick<
       VerificationTask,
       'budget' | 'stepBudget'
@@ -109,7 +111,11 @@ export class CaseV2Service {
             'CASE_NOT_CONFIGURED',
             '平台未配置 case 执行环境',
           );
-        const compiled = compileCase(item, validateCaseProfile(this.profile));
+        const compiled = compileCase(
+          item,
+          validateCaseProfile(this.profile),
+          this.identities,
+        );
         if (this.originalBudget) {
           compiled.budget = structuredClone(this.originalBudget.budget);
           if (this.originalBudget.stepBudget)
@@ -151,6 +157,7 @@ export class CaseV2Service {
       this.tasks,
       profile,
       this.publicUrl,
+      this.identities,
       budgetMode === 'original'
         ? {
             budget: definition.budget,

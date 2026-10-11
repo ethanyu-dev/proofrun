@@ -137,6 +137,7 @@ export interface ClaimExecution {
    * 只将逐步预算任务派给能隔离并继续后续步骤的 worker。
    */
   stepBudgetVersion?: 1;
+  identityVersion?: 1;
 }
 export interface SubmitBrowserCommand {
   /**
@@ -440,4 +441,18 @@ export interface StepResult {
       maxModelCalls: number;
     };
   };
+  /**
+   * @maxItems 64
+   */
+  preconditions?: {
+    id: string;
+    description: string;
+    status: 'SATISFIED' | 'UNSATISFIED' | 'UNCONFIRMED';
+    source: 'observation' | 'human';
+    /**
+     * @maxItems 32
+     */
+    evidenceRefs: string[];
+    controlRevision?: number;
+  }[];
 }

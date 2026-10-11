@@ -1,0 +1,98 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "mode": {
+      "enum": ["guest", "manual", "identity", "pool"]
+    },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,80}$"
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "accountKey": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,80}$"
+          },
+          "nodeId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,80}$"
+          },
+          "stateId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,80}$"
+          },
+          "origins": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uri"
+            },
+            "maxItems": 16
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "identity-check.schema.json"
+            },
+            "maxItems": 32
+          },
+          "loginRef": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,80}$"
+          },
+          "maxConcurrent": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 32
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "accountKey",
+          "origins",
+          "checks",
+          "maxConcurrent"
+        ]
+      },
+      "maxItems": 32
+    },
+    "requirements": {
+      "type": "array",
+      "items": {
+        "$ref": "identity-check.schema.json"
+      },
+      "maxItems": 32
+    },
+    "preparationMs": {
+      "type": "integer",
+      "minimum": 1000,
+      "maximum": 300000
+    }
+  },
+  "required": [
+    "version",
+    "mode",
+    "candidates",
+    "requirements",
+    "preparationMs"
+  ],
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://proofrun.invalid/contracts/0.1/session-plan.schema.json",
+  "title": "SessionPlan",
+  "description": "平台冻结的非敏感身份候选；分配在领取事务内完成，凭据只在节点解析。"
+}

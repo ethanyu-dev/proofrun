@@ -39,6 +39,10 @@ export type CaseStep = {
   wait?: {
     durationMs: number;
   };
+  /**
+   * @maxItems 32
+   */
+  preconditions?: IdentityCheck[];
 } & {
   /**
    * 步骤身份；省略时按原始数组位置生成，排序不改变身份。
@@ -78,6 +82,31 @@ export type CaseStep = {
   wait?: {
     durationMs: number;
   };
+  /**
+   * @maxItems 32
+   */
+  preconditions?: IdentityCheck[];
+};
+/**
+ * 显式前置条件；文本检查使用完整观察，人工条件只能由当前会话的人工确认满足。
+ */
+export type IdentityCheck = {
+  id: string;
+  description: string;
+  method: 'text' | 'absent' | 'manual';
+  value?: string;
+};
+/**
+ * 只声明身份引用与条件，禁止携带密码或 Cookie；guest 不恢复认证。
+ */
+export type SessionRequest = {
+  mode: 'guest' | 'manual' | 'identity' | 'pool' | 'auto';
+  identityRef?: string;
+  poolRef?: string;
+  /**
+   * @maxItems 32
+   */
+  requirements?: IdentityCheck[];
 };
 
 export interface VerificationCaseV2 {
@@ -126,4 +155,5 @@ export interface VerificationCaseV2 {
      */
     expected?: string[];
   }[];
+  session?: SessionRequest;
 }

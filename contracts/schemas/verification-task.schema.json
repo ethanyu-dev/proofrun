@@ -280,6 +280,9 @@
           "description": "每步结束允许在途操作完成和持久化的额外时间，不可用于派发新操作。"
         }
       }
+    },
+    "sessionPlan": {
+      "$ref": "session-plan.schema.json"
     }
   },
   "$schema": "http://json-schema.org/draft-07/schema#",
