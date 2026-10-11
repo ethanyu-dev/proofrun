@@ -28,6 +28,8 @@ const readSchema = (name: string) =>
 
 // 这里只做结构校验；租约归属、验收项覆盖和证据真实性由控制面领域层校验。
 export type { QueueReason } from './generated/queue-reason.js';
+for (const name of ['identity-check', 'session-request', 'session-plan'])
+  ajv.addSchema(readSchema(name), `${name}.schema.json`);
 ajv.addSchema(readSchema('queue-reason'), 'queue-reason.schema.json');
 export type { VerificationCase } from './generated/verification-case.js';
 export type { CaseResult } from './generated/case-result.js';
@@ -161,3 +163,11 @@ export {
 } from './report-status.js';
 
 export * from './step-budget.js';
+
+export type { IdentityCheck } from './generated/identity-check.js';
+export type { SessionRequest } from './generated/session-request.js';
+export type { SessionPlan } from './generated/session-plan.js';
+
+export const validateSessionPlan = ajv.getSchema<
+  import('./generated/session-plan.js').SessionPlan
+>('session-plan.schema.json')!;

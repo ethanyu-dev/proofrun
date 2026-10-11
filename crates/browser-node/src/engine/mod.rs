@@ -2,6 +2,7 @@
 //! CLI 结果不确定时结束该会话，避免后续动作与潜在副作用并发。
 mod cookies;
 mod dom;
+mod identity;
 
 use crate::{
     error::{Fault, Result},
@@ -38,6 +39,9 @@ pub struct EngineConfig {
     pub binary: PathBuf,
     /// 可选的 Chrome 绝对路径。
     pub chrome: Option<PathBuf>,
+    /// 私有登录配置路径；会话命令仅可引用其中的封闭标识。
+    #[serde(default)]
+    pub identity_library_file: Option<PathBuf>,
     /// 随本次会话生成的引擎 session 名，隔离 daemon 和 socket。
     pub session: String,
     /// profile、配置及临时截图的私有目录。
@@ -232,6 +236,44 @@ impl Engine {
     pub async fn close(&self) {
         let _ = self.cli(vec!["close".into()], 2000).await;
     }
+    /// 保存前由调用方核验身份；CAS 防止旧会话覆盖新状态。
+    async fn save_auth(&mut self, timeout_ms: u64) -> Result<Value> {
+        let destination = self.config.auth_state.clone().ok_or_else(|| {
+            Fault::rejected("AUTH_STATE_MISSING", "task has no authentication slot")
+        })?;
+        crate::auth::prepare_parent(&destination).map_err(|_| {
+            Fault::rejected(
+                "AUTH_STATE_UNAVAILABLE",
+                "private authentication directory unavailable",
+            )
+        })?;
+        let temporary = destination.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
+        let saved = self
+            .cli(
+                vec![
+                    "state".into(),
+                    "save".into(),
+                    temporary.to_string_lossy().into(),
+                ],
+                timeout_ms,
+            )
+            .await;
+        if saved.is_err() {
+            let _ = std::fs::remove_file(&temporary);
+        }
+        saved?;
+        let committed =
+            crate::auth::commit_if_current(&temporary, &destination, &mut self.auth_version)
+                .map_err(|_| {
+                    Fault::unknown(
+                        "AUTH_STATE_SAVE_FAILED",
+                        "authentication save result is uncertain",
+                    )
+                })?;
+        Ok(
+            json!({"saved":committed,"reason":if committed { "SAVED" } else { "NEWER_STATE_PRESERVED" }}),
+        )
+    }
     /// 将封闭的公共操作映射到固定 CLI 命令，并规范化观察和结果。
     pub async fn execute(&mut self, operation: BrowserCommand, timeout_ms: u64) -> Result<Value> {
         validate(&operation, self.config.allow_unverified_writes)?;
@@ -239,6 +281,9 @@ impl Engine {
         let remaining = || deadline.saturating_sub(process::boot_ms()).max(1);
         let raw = serde_json::to_value(&operation).unwrap();
         match operation {
+            BrowserCommand::BrowserIdentityPrepare { .. } => {
+                self.prepare_identity(&raw, deadline).await
+            }
             BrowserCommand::BrowserInput { .. } => {
                 self.observation = None;
                 self.targets.clear();
@@ -650,46 +695,7 @@ impl Engine {
                 dom.set_cookie(target, params).await?;
                 Ok(json!({"written":true}))
             }
-            BrowserCommand::BrowserAuthSave => {
-                let destination = self.config.auth_state.clone().ok_or_else(|| {
-                    Fault::rejected("AUTH_STATE_MISSING", "task has no authentication slot")
-                })?;
-                crate::auth::prepare_parent(&destination).map_err(|_| {
-                    Fault::rejected(
-                        "AUTH_STATE_UNAVAILABLE",
-                        "private authentication directory unavailable",
-                    )
-                })?;
-                let temporary = destination.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
-                let saved = self
-                    .cli(
-                        vec![
-                            "state".into(),
-                            "save".into(),
-                            temporary.to_string_lossy().into(),
-                        ],
-                        remaining(),
-                    )
-                    .await;
-                if saved.is_err() {
-                    let _ = std::fs::remove_file(&temporary);
-                }
-                saved?;
-                let committed = crate::auth::commit_if_current(
-                    &temporary,
-                    &destination,
-                    &mut self.auth_version,
-                )
-                .map_err(|_| {
-                    Fault::unknown(
-                        "AUTH_STATE_SAVE_FAILED",
-                        "authentication save result is uncertain",
-                    )
-                })?;
-                Ok(
-                    json!({"saved":committed,"reason":if committed { "SAVED" } else { "NEWER_STATE_PRESERVED" }}),
-                )
-            }
+            BrowserCommand::BrowserAuthSave => self.save_auth(remaining()).await,
             BrowserCommand::BrowserWait { selector, text } => {
                 if self.dom.is_none() {
                     let endpoint = self
@@ -786,6 +792,14 @@ fn navigation_ready(expected: &str, probe: &Value) -> bool {
 /// 在派发前拒绝未验证写动作和明显无效的操作参数。
 pub fn validate(command: &BrowserCommand, writes: bool) -> Result<()> {
     match command {
+        BrowserCommand::BrowserIdentityPrepare { .. } => {
+            if !writes {
+                return Err(Fault::rejected(
+                    "ENGINE_WRITES_UNVERIFIED",
+                    "identity preparation requires write opt-in",
+                ));
+            }
+        }
         BrowserCommand::BrowserCookiesSet { .. } => {
             if !writes {
                 return Err(Fault::rejected(

@@ -87,6 +87,10 @@ export type NodeEvent =
          * 支持人工等待暂停时限的可续期会话。
          */
         renewableSessions?: boolean;
+        /**
+         * 支持引用节点私有身份库并在独立准备阶段核验登录。
+         */
+        identityPreparation?: boolean;
       };
       /**
        * 节点接受的租约和会话硬期限上限，控制面不得超额授权。

@@ -1,3 +1,4 @@
+import { TaskIdentity } from '../components/task-identity';
 import { useState } from 'react';
 import type { TaskDetail } from '@proofrun/contracts';
 import { ApiClient } from '../api';
@@ -116,6 +117,7 @@ export function ReportDetails({
           close={() => setExportOpen(false)}
         />
       )}
+      <TaskIdentity task={task} />
       {task.definition.steps && <StepCompletion task={task} card />}
       <ReportCriteria api={api} task={task} />
       <FollowUpCleanup api={api} task={task} />

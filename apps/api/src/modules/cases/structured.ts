@@ -1,3 +1,4 @@
+import { resolveSession, type IdentityCatalog } from '../identities/catalog.js';
 import {
   compileStepBudget,
   businessBudget,
@@ -11,7 +12,7 @@ import type {
   VerificationCaseV2,
   VerificationTask,
 } from '@proofrun/contracts';
-import { ApiError } from '../../domain.js';
+import { ApiError, canonical } from '../../domain.js';
 import type { CaseProfile } from './profile.js';
 
 /** 前缀将新版 case 与旧公开入口、普通内部任务隔离。 */
@@ -57,6 +58,7 @@ export function stepCriteria(
 export function compileCase(
   input: VerificationCaseV2,
   profile: CaseProfile,
+  identities: IdentityCatalog = { identities: [], pools: [], sites: [] },
 ): VerificationTask {
   const businessSteps = normalizeSteps(input.steps);
   const cleanupSteps = normalizeSteps(
@@ -77,9 +79,46 @@ export function compileCase(
     cleanupStepIds: cleanupSteps.map((step) => step.stepId!),
     executionMode: profile.executionMode ?? 'parallel',
   });
+  const sessionPlan = resolveSession(
+    identities,
+    input.session,
+    input.entry,
+    profile.environment,
+  );
+  // 人工处理页最多呈现十项；在提交时拒绝溢出或冲突，不能事后漏确认某些角色条件。
+  for (const candidate of sessionPlan.candidates.length
+    ? sessionPlan.candidates
+    : [null]) {
+    for (const step of businessSteps) {
+      const checks = new Map<string, unknown>();
+      for (const check of [
+        ...(candidate?.checks ?? []),
+        ...sessionPlan.requirements,
+        ...(step.preconditions ?? []),
+      ]) {
+        if (
+          checks.has(check.id) &&
+          canonical(checks.get(check.id)) !== canonical(check)
+        )
+          throw new ApiError(
+            422,
+            'IDENTITY_CHECK_CONFLICT',
+            '步骤前提与身份条件使用相同 ID 但内容不同',
+          );
+        checks.set(check.id, check);
+      }
+      if (checks.size > 10)
+        throw new ApiError(
+          422,
+          'IDENTITY_CHECK_LIMIT',
+          '每一步合并后的身份与前置条件最多十项',
+        );
+    }
+  }
   const budget = businessBudget(stepBudget);
   if (
     budget.timeoutMs +
+      (sessionPlan.candidates.length ? sessionPlan.preparationMs : 0) +
       stepBudget.settleMs * businessSteps.length +
       (cleanupSteps.length ? stepBudget.cleanup.timeoutMs : 0) >
       CASE_MAX_MS ||
@@ -108,6 +147,7 @@ export function compileCase(
       input.description ?? `${input.platform}：按定义步骤执行并逐项验收`,
     target: { url: input.entry },
     environment: structuredClone(profile.environment),
+    sessionPlan,
     budget,
     stepBudget,
     cleanupStepIds: cleanupSteps.map((step) => step.stepId!),

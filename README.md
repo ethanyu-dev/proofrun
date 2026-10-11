@@ -4,7 +4,9 @@
 
 **Browser Node、最小控制面与执行 Agent 已接通，并通过脚本模型驱动的 Linux 真实浏览器闭环验证。模型服务和型号均可配置，Console 已接入任务、节点查询与证据报告。没有 Spec Runtime，也没有需求分析、Spec 生成或验收标准生成流程。** 上层 Agent 负责这些定义；ProofRun 负责输入校验、实际环境预检、执行与报告。
 
-**结构化任务接入：[Case API v2](docs/public-api-v2.md) · [批量示例](contracts/examples/public-api/cases-v2.json)。每个对象对应独立任务，内部按 exec_order 串行执行，业务清理由关联任务处理。**
+**结构化任务接入：[Case API v2](docs/public-api-v2.md) · [批量示例](contracts/examples/public-api/cases-v2.json)。每个对象对应独立任务，内部按 exec_order 串行执行，业务清理在原会话末尾执行，独立预算三分钟。**
+
+**测试身份：[身份库配置与集成](apps/api/src/modules/identities/README.md)。Web 主导航「测试身份」可配置外部库连接、身份目录、账号池与站点规则，并查看使用统计。支持访客隔离、身份条件核验、Cookie／密码登录，自动登录准备不占用业务步骤预算。**
 
 **原单 case 接入：[Case API](docs/public-api.md) · [OpenAPI](contracts/public-api.openapi.json) · [case 示例](contracts/examples/public-api/case.json)。** 调用方提交任务描述、待测 URL、可选步骤和验收项；环境、身份与预算由[平台配置](docs/case-platform-config.md)提供。
 

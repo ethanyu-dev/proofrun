@@ -209,6 +209,7 @@ async fn empty_engine_binary_is_not_reported_as_success() {
     let mut engine = Engine::new(EngineConfig {
         binary: "/usr/bin/false".into(),
         chrome: None,
+        identity_library_file: None,
         session: uuid::Uuid::new_v4().to_string(),
         directory: home.path().into(),
         allow_unverified_writes: false,

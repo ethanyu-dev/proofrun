@@ -6,6 +6,152 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
 }
+/* 身份管理表单使用单列分区，连接、目录、保存反馈与统计保持同一宽度。 */
+.identity-settings .task-editor {
+  width: 100%;
+}
+.identity-field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13px;
+}
+.identity-field > span {
+  color: var(--color-muted);
+}
+.identity-field input,
+.identity-field textarea,
+.identity-field select {
+  width: 100%;
+  min-width: 0;
+}
+.identity-field textarea {
+  resize: vertical;
+}
+.identity-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.identity-connection {
+  display: grid;
+  gap: 20px;
+}
+.identity-connection .section-heading {
+  margin-bottom: 0;
+}
+.identity-connection > .identity-field {
+  max-width: 420px;
+}
+.identity-editor {
+  display: grid;
+  gap: 36px;
+}
+.identity-entry {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+  margin: 0 0 16px;
+  padding: 20px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+}
+.identity-entry legend {
+  font-size: 14px;
+  padding: 0 8px;
+}
+.identity-entry details > div {
+  margin-top: 16px;
+}
+.identity-entry > .text-button {
+  justify-self: end;
+}
+.identity-checks {
+  display: grid;
+  gap: 12px;
+}
+.identity-check-row {
+  display: grid;
+  grid-template-columns:
+    minmax(90px, 1fr) minmax(160px, 2fr) minmax(110px, 1fr)
+    minmax(150px, 2fr) auto;
+  align-items: end;
+  gap: 12px;
+}
+.identity-check-row:has(.identity-field:nth-child(3):last-of-type) {
+  grid-template-columns:
+    minmax(90px, 1fr) minmax(160px, 4fr) minmax(110px, 1fr)
+    auto;
+}
+.identity-checks > .text-button {
+  justify-self: start;
+}
+.identity-pool-members {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+}
+.identity-empty {
+  padding: 16px;
+  background: var(--color-surface);
+  border-radius: var(--radius-control);
+}
+.identity-save-bar {
+  display: grid;
+  gap: 16px;
+}
+.identity-save-bar .page-actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+.identity-notice {
+  margin-bottom: 20px;
+  padding: 16px;
+  background: var(--color-secondary);
+  border-radius: var(--radius-control);
+}
+.identity-catalog-summary {
+  display: grid;
+  gap: 16px;
+}
+.identity-catalog-summary .table-scroll,
+.identity-usage .table-scroll {
+  overflow-x: auto;
+}
+.identity-catalog-summary table {
+  min-width: 640px;
+}
+.identity-catalog-summary h3:not(:first-child),
+.identity-usage h3 {
+  margin-top: 24px;
+}
+.identity-catalog-summary td,
+.identity-usage td {
+  overflow-wrap: anywhere;
+}
+.identity-usage .table-scroll {
+  margin-top: 12px;
+}
+@media (max-width: 900px) {
+  .identity-check-row,
+  .identity-check-row:has(.identity-field:nth-child(3):last-of-type) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 600px) {
+  .identity-form-grid,
+  .identity-check-row,
+  .identity-check-row:has(.identity-field:nth-child(3):last-of-type) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .identity-settings .section-heading {
+    flex-direction: column;
+    gap: 12px;
+  }
+  .identity-entry {
+    padding: 12px;
+  }
+}
 * {
   box-sizing: border-box;
 }

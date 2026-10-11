@@ -343,6 +343,78 @@
       }
     },
     "schemas": {
+      "IdentityCheck": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,80}$" },
+          "description": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "method": { "enum": ["text", "absent", "manual"] },
+          "value": { "type": "string", "minLength": 1, "maxLength": 2000 }
+        },
+        "required": ["id", "description", "method"],
+        "allOf": [
+          {
+            "if": {
+              "properties": { "method": { "enum": ["text", "absent"] } }
+            },
+            "then": {
+              "required": ["value"],
+              "properties": {
+                "value": { "type": "string", "minLength": 1, "maxLength": 2000 }
+              }
+            }
+          }
+        ],
+        "title": "IdentityCheck",
+        "description": "显式前置条件；文本检查使用完整观察，人工条件只能由当前会话的人工确认满足。"
+      },
+      "SessionRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "mode": { "enum": ["guest", "manual", "identity", "pool", "auto"] },
+          "identityRef": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,80}$"
+          },
+          "poolRef": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,80}$" },
+          "requirements": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/IdentityCheck" },
+            "maxItems": 32
+          }
+        },
+        "required": ["mode"],
+        "allOf": [
+          {
+            "if": { "properties": { "mode": { "const": "identity" } } },
+            "then": {
+              "required": ["identityRef"],
+              "properties": {
+                "identityRef": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,80}$"
+                }
+              }
+            }
+          },
+          {
+            "if": { "properties": { "mode": { "const": "pool" } } },
+            "then": {
+              "required": ["poolRef"],
+              "properties": {
+                "poolRef": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,80}$"
+                }
+              }
+            }
+          }
+        ],
+        "title": "SessionRequest",
+        "description": "只声明身份引用与条件，禁止携带密码或 Cookie；guest 不恢复认证。"
+      },
       "QueueReason": {
         "title": "QueueReason",
         "description": "最近一次领取检查发现的排队原因；不包含节点身份或登录凭据，也不是业务验收结论。",
@@ -361,7 +433,9 @@
               "NO_ELIGIBLE_NODE",
               "NODE_CAPACITY",
               "NODE_ROTATING",
-              "SESSION_BUDGET_UNSUPPORTED"
+              "SESSION_BUDGET_UNSUPPORTED",
+              "IDENTITY_BUSY",
+              "IDENTITY_UNAVAILABLE"
             ]
           },
           "message": { "type": "string", "minLength": 1 }
@@ -682,6 +756,11 @@
             },
             "required": ["durationMs"],
             "description": "显式等待，不调用模型；持续占用会话并计入任务预算。"
+          },
+          "preconditions": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/IdentityCheck" },
+            "maxItems": 32
           }
         },
         "required": [
@@ -802,6 +881,39 @@
               }
             },
             "description": "本步骤实际用量；清理多步各记录增量，额度由整段清理共享。业务耗时排除人工等待。"
+          },
+          "preconditions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,80}$" },
+                "description": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000
+                },
+                "status": {
+                  "enum": ["SATISFIED", "UNSATISFIED", "UNCONFIRMED"]
+                },
+                "source": { "enum": ["observation", "human"] },
+                "evidenceRefs": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "maxItems": 32
+                },
+                "controlRevision": { "type": "integer", "minimum": 0 }
+              },
+              "required": [
+                "id",
+                "description",
+                "status",
+                "source",
+                "evidenceRefs"
+              ]
+            },
+            "maxItems": 64
           }
         },
         "required": [
@@ -908,7 +1020,8 @@
               "required": ["url", "exec_order", "description"]
             },
             "description": "在同一任务和浏览器会话末尾执行的业务清理操作，不是浏览器资源回收。"
-          }
+          },
+          "session": { "$ref": "#/components/schemas/SessionRequest" }
         },
         "required": ["caseId", "platform", "entry", "steps", "cleanup"]
       },

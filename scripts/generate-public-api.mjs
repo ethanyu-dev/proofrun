@@ -3,6 +3,8 @@ import { format } from 'prettier';
 
 /** 对外文档仅包含上层调用入口；业务对象结构始终从共享 Schema 生成。 */
 const SCHEMAS = {
+  'identity-check': 'IdentityCheck',
+  'session-request': 'SessionRequest',
   'queue-reason': 'QueueReason',
   'verification-case': 'VerificationCase',
   'case-result': 'CaseResult',

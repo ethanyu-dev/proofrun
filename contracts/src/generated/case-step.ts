@@ -39,4 +39,17 @@ export type CaseStep = {
   wait?: {
     durationMs: number;
   };
+  /**
+   * @maxItems 32
+   */
+  preconditions?: IdentityCheck[];
+};
+/**
+ * 显式前置条件；文本检查使用完整观察，人工条件只能由当前会话的人工确认满足。
+ */
+export type IdentityCheck = {
+  id: string;
+  description: string;
+  method: 'text' | 'absent' | 'manual';
+  value?: string;
 };

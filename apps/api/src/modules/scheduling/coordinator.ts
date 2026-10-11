@@ -1,3 +1,6 @@
+import { identitySummary } from '../identities/metrics.js';
+import { authorizePreparation } from '../identities/preparation.js';
+import { allocateIdentity } from '../identities/allocation.js';
 import { sessionBudgetMs } from '@proofrun/contracts';
 import { startStepBudget, consumeStepBudget } from './step-budget.js';
 import { executionDeadline, CLEANUP_EXECUTION_MS } from './execution-time.js';
@@ -508,6 +511,15 @@ export class Coordinator {
         task.definition,
       ),
       executions,
+      ...(task.definition.sessionPlan
+        ? {
+            identity: await identitySummary(
+              this.db,
+              id,
+              task.definition.sessionPlan,
+            ),
+          }
+        : {}),
       ...(task.definition.caseV2Definition
         ? {
             businessCleanup: cleanup
@@ -523,6 +535,7 @@ export class Coordinator {
     workerId: string,
     structuredSteps = false,
     stepBudgetVersion?: number,
+    identityVersion?: number,
   ) {
     const live = this.gateway.live();
     if (!live.length) return { execution: null };
@@ -536,9 +549,15 @@ export class Coordinator {
       const tasks = await client.query<{ id: string }>(
         `SELECT candidate.id FROM unnest($1::text[]) AS pool(name)
         CROSS JOIN LATERAL (SELECT id,created_at FROM pr_tasks WHERE state='QUEUED'
-          AND deadline_at>clock_timestamp() AND definition#>>'{environment,nodePool}'=pool.name AND ($3 OR NOT (definition ? 'steps')) AND ($4 OR NOT (definition ? 'stepBudget'))
+          AND deadline_at>clock_timestamp() AND definition#>>'{environment,nodePool}'=pool.name AND ($3 OR NOT (definition ? 'steps')) AND ($4 OR NOT (definition ? 'stepBudget')) AND ($5 OR NOT (definition ? 'sessionPlan'))
           ORDER BY created_at,id LIMIT $2) candidate ORDER BY candidate.created_at,candidate.id`,
-        [pools, BATCH_SIZE, structuredSteps, stepBudgetVersion === 1],
+        [
+          pools,
+          BATCH_SIZE,
+          structuredSteps,
+          stepBudgetVersion === 1,
+          identityVersion === 1,
+        ],
       );
       for (const candidate of tasks.rows) {
         const row = (
@@ -551,7 +570,7 @@ export class Coordinator {
           )
         ).rows[0];
         if (!row) continue;
-        const task = row.definition;
+        let task = row.definition;
         if (task.steps && !structuredSteps) continue;
         if (task.stepBudget && stepBudgetVersion !== 1) continue;
         const routedNode = resolveRoute(
@@ -559,6 +578,66 @@ export class Coordinator {
           task.environment.nodePool,
           targetHostname(task.target.url),
         );
+        if (task.sessionPlan && identityVersion !== 1) continue;
+        const allocationTask = task;
+        // 把尚未出现在心跳中的会话预留也计入，池内其他账号可改用空闲节点。
+        const identityReservations = task.sessionPlan?.candidates.length
+          ? (
+              await client.query<{ node_id: string; ids: string[] }>(
+                'SELECT node_id,array_agg(id) AS ids FROM pr_sessions WHERE NOT closure_verified AND node_id=ANY($1::text[]) GROUP BY node_id',
+                [live.map((c) => c.nodeId)],
+              )
+            ).rows
+          : [];
+        const identityNodeFree = (c: (typeof live)[number]) =>
+          new Set([
+            ...(identityReservations.find((r) => r.node_id === c.nodeId)?.ids ??
+              []),
+            ...c.heartbeat!.occupied.map((s) => s.sessionId),
+          ]).size < c.heartbeat!.capacity;
+        const compatibleIdentity = (
+          identity: NonNullable<
+            VerificationTask['sessionPlan']
+          >['candidates'][number],
+          requireCapacity = false,
+        ) =>
+          live.some(
+            (c) =>
+              (!routedNode || c.nodeId === routedNode) &&
+              (!identity.nodeId || c.nodeId === identity.nodeId) &&
+              (!requireCapacity || identityNodeFree(c)) &&
+              this.eligible(c.heartbeat!, {
+                ...allocationTask,
+                sessionPlan: {
+                  ...allocationTask.sessionPlan!,
+                  candidates: [identity],
+                },
+              }),
+          );
+        const eligibleIdentity = (
+          identity: NonNullable<
+            VerificationTask['sessionPlan']
+          >['candidates'][number],
+        ) => compatibleIdentity(identity, true);
+        const allocated = await allocateIdentity(client, task, routedNode, {
+          reserve: false,
+          eligible: eligibleIdentity,
+        });
+        if (!allocated) {
+          await recordQueueReason(
+            client,
+            task.taskId,
+            task.sessionPlan?.candidates.some(eligibleIdentity)
+              ? 'IDENTITY_BUSY'
+              : task.sessionPlan?.candidates.some((identity) =>
+                    compatibleIdentity(identity),
+                  )
+                ? 'NODE_CAPACITY'
+                : 'IDENTITY_UNAVAILABLE',
+          );
+          continue;
+        }
+        task = allocated;
         const cleanup = await cleanupPlacement(client, task, routedNode);
         if (cleanup.blocked) {
           await recordQueueReason(client, task.taskId, cleanup.blocked);
@@ -679,6 +758,17 @@ export class Coordinator {
               'FENCE_EXHAUSTED',
               'Node fence counter exhausted',
             );
+          // 确认节点可分配后才冻结候选；排队失败不会将整个账号池钉死在第一个账号。
+          const selectedIdentity = task.sessionPlan?.candidates[0];
+          if (selectedIdentity)
+            await client.query(
+              'INSERT INTO pr_identity_assignments(task_id,account_key,identity) VALUES($1,$2,$3) ON CONFLICT(task_id) DO NOTHING',
+              [
+                task.taskId,
+                selectedIdentity.accountKey,
+                JSON.stringify(selectedIdentity),
+              ],
+            );
           const executionId = randomUUID();
           const token = newToken();
           // 排队时间不侵占新版逐步额度；领取后才启用自动执行的总安全期限。
@@ -686,7 +776,10 @@ export class Coordinator {
             row.deadline_at = new Date(
               Date.now() +
                 task.budget.timeoutMs +
-                task.stepBudget.settleMs * task.stepBudget.steps.length,
+                task.stepBudget.settleMs * task.stepBudget.steps.length +
+                (task.sessionPlan?.candidates.length
+                  ? task.sessionPlan.preparationMs
+                  : 0),
             );
             await client.query(
               'UPDATE pr_tasks SET deadline_at=$2 WHERE id=$1',
@@ -785,6 +878,8 @@ export class Coordinator {
       (!task.environment.allowIntervention ||
         heartbeat.capabilities.renewableSessions === true) &&
       (!sessionAuth(task) || heartbeat.capabilities.authState === true) &&
+      (!task.sessionPlan?.candidates.length ||
+        heartbeat.capabilities.identityPreparation === true) &&
       (!task.acceptanceCriteria.some((c) =>
         c.evidenceKinds.includes('NETWORK'),
       ) ||
@@ -912,6 +1007,12 @@ export class Coordinator {
         'Worker cannot manage node leases or sessions directly',
       );
     const actor = token === null ? 'HUMAN' : 'AGENT';
+    if (actor === 'HUMAN' && operation.type === 'browser.identity.prepare')
+      throw new ApiError(
+        403,
+        'IDENTITY_PREPARATION_FORBIDDEN',
+        '自动登录准备仅由执行器在业务步骤前发起',
+      );
     if (
       ['browser.auth.save', 'browser.input', 'browser.cookies.set'].includes(
         operation.type,
@@ -989,11 +1090,16 @@ export class Coordinator {
           'SESSION_BUSY',
           'One browser operation at a time',
         );
+      const preparationMs =
+        operation.type === 'browser.identity.prepare'
+          ? await authorizePreparation(client, context, operation)
+          : null;
       // 人工操作仍经过权限、代次和串行检查，但不占用或受限于 Agent 动作预算。
       if (
         actor === 'AGENT' &&
         context.definition.stepBudget &&
-        operation.type !== 'browser.trace'
+        operation.type !== 'browser.trace' &&
+        preparationMs === null
       )
         await consumeStepBudget(
           client,
@@ -1017,7 +1123,11 @@ export class Coordinator {
       }
       const budget = Math.max(
         1,
-        Math.min(timeoutMs, executionDeadline(context) - Date.now()),
+        Math.min(
+          timeoutMs,
+          preparationMs ?? timeoutMs,
+          executionDeadline(context) - Date.now(),
+        ),
       );
       await insertCommand(
         client,
@@ -1392,7 +1502,7 @@ export class Coordinator {
       row.kind === 'browser.observe',
     );
     await client.query(
-      'UPDATE pr_commands SET result=$2 WHERE id=$1 AND result IS NULL',
+      'UPDATE pr_commands SET result=$2,completed_at=clock_timestamp() WHERE id=$1 AND result IS NULL',
       [event.commandId, result],
     );
     if (
@@ -1543,14 +1653,17 @@ export class Coordinator {
           )
         ).rows[0];
         if (!command) return;
-        await client.query('UPDATE pr_commands SET result=$2 WHERE id=$1', [
-          command.id,
-          syntheticResult(
-            command.envelope,
-            Boolean(command.first_sent_at),
-            'DEADLINE_EXCEEDED',
-          ),
-        ]);
+        await client.query(
+          'UPDATE pr_commands SET result=$2,completed_at=clock_timestamp() WHERE id=$1',
+          [
+            command.id,
+            syntheticResult(
+              command.envelope,
+              Boolean(command.first_sent_at),
+              'DEADLINE_EXCEEDED',
+            ),
+          ],
+        );
         if (
           command.kind !== 'session.close' &&
           context.task_state === 'RUNNING' &&

@@ -67,6 +67,13 @@
       },
       "required": ["durationMs"],
       "description": "显式等待，不调用模型；持续占用会话并计入任务预算。"
+    },
+    "preconditions": {
+      "type": "array",
+      "items": {
+        "$ref": "identity-check.schema.json"
+      },
+      "maxItems": 32
     }
   },
   "required": [

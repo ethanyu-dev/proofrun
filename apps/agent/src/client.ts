@@ -8,6 +8,7 @@ import {
   type VerificationReport,
   type ModelCallWrite,
   type StepResult,
+  type ControlRequest,
 } from '@proofrun/contracts';
 import type { AgentConfig } from './config.js';
 import {
@@ -27,7 +28,14 @@ const RESULT_POLL_MS = 150;
 
 export type BrowserOperation = Extract<
   NodeCommand['command'],
-  { type: 'browser.act' | 'browser.observe' | 'browser.wait' | 'browser.trace' }
+  {
+    type:
+      | 'browser.act'
+      | 'browser.observe'
+      | 'browser.wait'
+      | 'browser.trace'
+      | 'browser.identity.prepare';
+  }
 >;
 export type CommandResult = Extract<NodeEvent, { type: 'command.result' }>;
 /** 执行视图只用于生命周期控制；节点和会话身份始终来自领取响应。 */
@@ -104,6 +112,7 @@ export class ControlClient {
         workerId: this.config.workerId,
         structuredSteps: true,
         stepBudgetVersion: 1,
+        identityVersion: 1,
       },
       this.config.requestMs,
       signal,
@@ -262,6 +271,10 @@ export class ControlClient {
     reason: string,
     signal: AbortSignal,
     items?: string[],
+    reasonCode?: Extract<
+      ControlRequest,
+      { type: 'execution.intervene' }
+    >['reasonCode'],
   ): Promise<void> {
     await this.request(
       execution,
@@ -272,6 +285,7 @@ export class ControlClient {
         controlRevision,
         reason,
         ...(items ? { items } : {}),
+        ...(reasonCode ? { reasonCode } : {}),
       },
       signal,
     );

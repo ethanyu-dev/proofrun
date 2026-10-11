@@ -116,6 +116,8 @@ export function task(pool: string, screenshot = false) {
 export class SimulatedNode {
   /** 允许单独验证旧节点不能领取暂停时钟的任务。 */
   renewableSessions = true;
+  /** 默认模拟旧节点，身份测试显式启用新准备协议。 */
+  identityPreparation = false;
   readonly id = randomUUID();
   readonly epoch = randomUUID();
   token = '';
@@ -254,6 +256,7 @@ export class SimulatedNode {
         liveView: true,
         renewableSessions: this.renewableSessions,
         trace: this.trace,
+        identityPreparation: this.identityPreparation,
       },
     });
   }
@@ -278,6 +281,13 @@ export class SimulatedNode {
     const { command: operation, timeoutMs: _, ...identity } = command;
     const data: Record<string, unknown> =
       kind === 'session.close' ? { state: 'CLOSED' } : {};
+    if (kind === 'browser.identity.prepare')
+      Object.assign(data, {
+        status: 'READY',
+        source: 'cookies',
+        reasonCode: 'IDENTITY_VERIFIED',
+        saved: true,
+      });
     if (kind === 'browser.auth.save') Object.assign(data, { saved: true });
     if (kind === 'browser.observe') {
       if (this.networkEvidence)

@@ -1,3 +1,4 @@
+import { evaluateChecks, mergeChecks } from './identity.js';
 import { stepLimit } from '@proofrun/contracts';
 import { StepAllowance } from './step-budget.js';
 import { stepObjective } from '../prompts/step.js';
@@ -78,6 +79,10 @@ class Execution {
   private readonly details: NonNullable<VerificationReport['executionDetails']>;
   /** 初始导航成功后不因人工切换重放，观察可单独作废。 */
   private navigated = false;
+  /** 自动登录最多执行一次，外部重入不会重置已提交登录。 */
+  private identityPrepared = false;
+  /** 节点只返回固定诊断，供 HITL 分类使用，不记录原始凭据。 */
+  private preparationReason: string | undefined;
   /** 每次导航只执行一次有界外壳等待，不在普通决策轮反复等待。 */
   private settlePending = true;
   /** TRACE 由执行器按验收需求采集，模型不能指定路径或伪造文件身份。 */
@@ -92,6 +97,10 @@ class Execution {
   private feedback: string | null = null;
   /** 人工介入后旧模型回复与旧观察均失效。 */
   private controlRevision = 0;
+  /** 人工证明仅绑定当前控制代次；模型不能自行签发。 */
+  private readonly confirmedChecks = new Map<string, number>();
+  /** 每一步最多一次身份恢复，失败后继续后续独立步骤。 */
+  private readonly identityInterventions = new Set<number>();
   /** 决策轮次与模型调用次数分开，混合策略可以在同一轮派发多个供应商请求。 */
   private decisionIndex = 0;
   /** 每一步最多自动请求一次登录辅助，人工未解决问题时不能无限暂停。 */
@@ -218,7 +227,10 @@ class Execution {
     );
   }
   /** 所有动作都串行提交，命令身份只生成一次；未知效果直接结束。 */
-  private async command(operation: BrowserOperation) {
+  private async command(
+    operation: BrowserOperation,
+    timeoutMs = this.config.commandMs,
+  ) {
     this.guard.signal.throwIfAborted();
     if (operation.type !== 'browser.trace') this.allowance?.assertTime();
     if (operation.type === 'browser.act') {
@@ -241,10 +253,7 @@ class Execution {
         this.grant,
         id,
         operation,
-        Math.max(
-          1,
-          Math.floor(Math.min(this.config.commandMs, this.guard.remaining())),
-        ),
+        Math.max(1, Math.floor(Math.min(timeoutMs, this.guard.remaining()))),
         this.guard.signal,
         this.controlRevision,
       )
@@ -593,6 +602,68 @@ class Execution {
     }
     return this.report('EXECUTED', decision.summary, decision.criteria, null);
   }
+  /** 显式条件统一驱动登录与角色交接，避免同一步先“登录”再“确认身份”重复 HITL。 */
+  private identityChecks() {
+    const original = this.grant.task;
+    const step = original.steps?.[this.stepIndex];
+    if (original.cleanupStepIds?.includes(step?.stepId ?? '')) return [];
+    return mergeChecks(
+      original.sessionPlan?.candidates[0]?.checks ?? [],
+      original.sessionPlan?.requirements ?? [],
+      step?.preconditions ?? [],
+    );
+  }
+
+  /** 当前步骤只采信结构化条件和本会话的人工确认，不把账号显示名解释成角色。 */
+  private async checkIdentity(
+    allowIntervention: boolean,
+  ): Promise<VerificationReport | null> {
+    const original = this.grant.task;
+    const step = original.steps?.[this.stepIndex];
+    if (!this.current || original.cleanupStepIds?.includes(step?.stepId ?? ''))
+      return null;
+    const checks = this.identityChecks();
+    if (!checks.length) return null;
+    const evaluate = () =>
+      evaluateChecks(
+        checks,
+        this.current!,
+        this.confirmedChecks,
+        this.controlRevision,
+      );
+    let results = evaluate();
+    if (
+      results.some((r) => r.status !== 'SATISFIED') &&
+      allowIntervention &&
+      original.environment.allowIntervention &&
+      !this.identityInterventions.has(this.stepIndex)
+    ) {
+      this.identityInterventions.add(this.stepIndex);
+      const revision = this.controlRevision;
+      await this.requestIntervention(
+        '请确认本次测试身份及前置条件；已登录不代表账号角色符合要求',
+        results
+          .filter((r) => r.status !== 'SATISFIED')
+          .map((r) => r.description),
+        true,
+      );
+      if (this.controlRevision > revision)
+        for (const check of checks)
+          if (check.method === 'manual')
+            this.confirmedChecks.set(check.id, this.controlRevision);
+      results = evaluate();
+    }
+    if (this.stepResults[this.stepIndex])
+      this.stepResults[this.stepIndex]!.preconditions = results;
+    const missing = results.filter((r) => r.status !== 'SATISFIED');
+    return missing.length
+      ? this.blocked(
+          `前置条件未满足：${missing.map((r) => r.description).join('；')}`,
+          'PRECONDITION_UNMET',
+        )
+      : null;
+  }
+
   /** 先确认远端会话可达，再进入有界的观察与决策循环。 */
   private async loop(): Promise<VerificationReport> {
     this.guard.signal.throwIfAborted();
@@ -671,6 +742,7 @@ class Execution {
         // 登录前置条件需要人工时先交接，不能先进入模型重复观察或长时间等待挑战。
         if (
           !this.loginInterventions.has(this.stepIndex) &&
+          !this.identityChecks().length &&
           needsLoginIntervention(this.grant.task, this.current!, this.stepIndex)
         ) {
           if (!this.grant.task.environment.allowIntervention)
@@ -697,6 +769,8 @@ class Execution {
           errors = 0;
           continue;
         }
+        const identityBlock = await this.checkIdentity(true);
+        if (identityBlock) return identityBlock;
         if ((this.changes?.unchangedRounds ?? 0) >= STALLED_ROUNDS)
           return this.blocked(
             '连续多轮操作和观察未获得新事实，停止重复执行；请检查页面覆盖或人工处理。',
@@ -849,6 +923,8 @@ class Execution {
           continue;
         }
         if (decision.type === 'verification.finish') {
+          const identityBlock = await this.checkIdentity(false);
+          if (identityBlock) return identityBlock;
           const traces = await this.captureTrace();
           for (const criterion of decision.criteria) {
             if (
@@ -966,6 +1042,13 @@ class Execution {
       reason,
       this.guard.signal,
       items,
+      login
+        ? this.loginReason() !== 'LOGIN_REQUIRED'
+          ? this.loginReason()
+          : this.identityInterventions.has(this.stepIndex)
+            ? 'IDENTITY_CHECK_UNMET'
+            : 'LOGIN_REQUIRED'
+        : 'GENERAL',
     );
     // 请求成功即暂停本地时钟，不等待下一轮心跳；后台仍独立续租。
     this.guard.syncTiming({
@@ -1153,8 +1236,8 @@ class Execution {
           modelCalls: usage.modelCalls - startUsage.modelCalls,
           elapsedMs: Math.max(0, usage.elapsedMs - startUsage.elapsedMs),
         };
-        state.reasonCode = report.executionDetails?.reasonCode ?? null;
       }
+      state.reasonCode = report.executionDetails?.reasonCode ?? null;
       if (report.executionDisposition !== 'EXECUTED') {
         state.status =
           report.executionDisposition === 'BLOCKED' ? 'BLOCKED' : 'ERROR';
@@ -1216,12 +1299,75 @@ class Execution {
     );
   }
 
+  /** 人工分类只接受封闭集合，节点任意错误字符串不能污染统计维度。 */
+  private loginReason():
+    | 'LOGIN_REQUIRED'
+    | 'LOGIN_RECIPE_MISSING'
+    | 'LOGIN_RECIPE_UNAVAILABLE'
+    | 'LOGIN_FORM_MISMATCH'
+    | 'LOGIN_CHALLENGE_OR_REJECTED' {
+    switch (this.preparationReason) {
+      case 'LOGIN_RECIPE_MISSING':
+      case 'LOGIN_RECIPE_UNAVAILABLE':
+      case 'LOGIN_FORM_MISMATCH':
+      case 'LOGIN_CHALLENGE_OR_REJECTED':
+        return this.preparationReason;
+      default:
+        return 'LOGIN_REQUIRED';
+    }
+  }
+
+  /** 身份准备占用独立额度，不扣业务动作或模型次数；失败仍由逐步门禁判断。 */
+  private async prepareIdentity(): Promise<void> {
+    const plan = this.grant.task.sessionPlan;
+    const identity = plan?.candidates[0];
+    if (!identity || this.identityPrepared) return;
+    for (;;) {
+      await this.checkpoint();
+      const view = await this.client.view(this.grant, this.guard.signal);
+      if (view.taskState !== 'RUNNING')
+        throw new AgentFault('EXECUTION_ENDED', '任务已结束');
+      if (view.state === 'RUNNING') break;
+      await pause(POLL_MS, this.guard.signal);
+    }
+    const checks = [...identity.checks, ...plan!.requirements];
+    const operation: BrowserOperation = {
+      type: 'browser.identity.prepare',
+      url: this.grant.task.target.url,
+      ...(identity.loginRef ? { profileRef: identity.loginRef } : {}),
+      checks: checks
+        .filter((c) => c.method !== 'manual')
+        .map((c) => ({
+          method: c.method as 'text' | 'absent',
+          value: c.value!,
+        })),
+      saveSnapshot: checks.every((c) => c.method !== 'manual'),
+    };
+    // 发送前固定已尝试标记；即使回执不明，也不能换一个命令 ID 再次提交。
+    this.identityPrepared = true;
+    try {
+      const prepared = await this.command(operation, plan!.preparationMs);
+      this.preparationReason =
+        typeof prepared.data?.reasonCode === 'string'
+          ? prepared.data.reasonCode
+          : undefined;
+    } catch (error) {
+      if (
+        !(error instanceof AgentFault) ||
+        error.code !== 'BROWSER_COMMAND_FAILED'
+      )
+        throw error;
+      // 明确拒绝的配置故障可继续业务观察/人工处理，未知副作用仍遵循原有停止规则。
+    }
+  }
+
   /** 无论正常还是异常都提交一次不可变报告；提交失败交给调用者记录，租约负责最终回收。 */
   async run(): Promise<VerificationReport> {
     try {
       for (;;) {
         let report: VerificationReport;
         try {
+          await this.prepareIdentity();
           report = this.grant.task.steps
             ? await this.sequence()
             : await this.loop();

@@ -102,6 +102,20 @@ export function StepCompletion({
                               {step.type === 'setup' ? '前置操作' : '业务验收'}
                             </strong>
                             <p className="wrap">{step.description}</p>
+                            {result?.preconditions?.map((check) => (
+                              <p key={check.id} className="wrap">
+                                {check.description}：
+                                {check.status === 'SATISFIED'
+                                  ? '已确认'
+                                  : check.status === 'UNSATISFIED'
+                                    ? '未满足'
+                                    : '未确认'}
+                                {check.source === 'human' &&
+                                check.status === 'SATISFIED'
+                                  ? '（人工确认）'
+                                  : ''}
+                              </p>
+                            ))}
                           </td>
                           <td rowSpan={rows.length}>
                             <Status

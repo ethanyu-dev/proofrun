@@ -8,6 +8,7 @@ import { ReportDetailPage } from './pages/report-detail';
 import { TaskDetailPage } from './pages/task-detail';
 import { TaskSubmitPage } from './pages/task-submit';
 import { NodesPage } from './pages/nodes';
+import { IdentitiesPage } from './pages/identities';
 import { HitlPage } from './pages/hitl';
 import { suspendCredentialRestore } from './credential-storage';
 import './tokens.css';
@@ -20,6 +21,7 @@ const REPORT_ROUTE = /^\/reports\/([A-Za-z0-9_-]{1,128})$/;
 const NAVIGATION = [
   ['/tasks', '验证任务'],
   ['/nodes', '执行节点'],
+  ['/identities', '测试身份'],
   ['/reports', '验证报告'],
 ];
 
@@ -71,6 +73,7 @@ function App() {
     page = <ReportDetailPage key={reportId} api={api} id={reportId} />;
   else if (taskId) page = <TaskDetailPage key={taskId} api={api} id={taskId} />;
   else if (path === '/nodes') page = <NodesPage api={api} />;
+  else if (path === '/identities') page = <IdentitiesPage api={api} />;
   else
     page = (
       <Empty title="页面不存在">

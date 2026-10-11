@@ -1,3 +1,5 @@
+import { identityMetrics } from './modules/identities/metrics.js';
+import { IdentitySettings } from './modules/identities/settings.js';
 import Fastify, { type FastifyRequest } from 'fastify';
 import websocket from '@fastify/websocket';
 import type { Readable } from 'node:stream';
@@ -67,10 +69,12 @@ export async function buildApp(
     config.caseProfile,
     config.publicUrl,
   );
+  const identities = new IdentitySettings(db, config);
   const casesV2 = new CaseV2Service(
     coordinator,
     config.caseProfile,
     config.publicUrl,
+    () => identities.catalog(),
   );
   const control = new ExecutionControl(db, config.adminToken);
   const gateway = new NodeGateway(
@@ -93,6 +97,29 @@ export async function buildApp(
     reply.header('Cache-Control', 'no-store');
     reply.header('X-Content-Type-Options', 'nosniff');
   };
+  app.get('/v1/admin/identities/metrics', { preHandler: admin }, () =>
+    identityMetrics(db),
+  );
+  app.get('/v1/admin/identities/settings', { preHandler: admin }, () =>
+    identities.view(),
+  );
+  app.post('/v1/admin/identities/settings', { preHandler: admin }, (request) =>
+    identities.save(request.body),
+  );
+  app.post('/v1/admin/identities/test', { preHandler: admin }, (request) =>
+    identities.test(request.body),
+  );
+  app.get('/v1/admin/identities', { preHandler: admin }, () =>
+    identities.snapshot(),
+  );
+  app.post('/v1/admin/identities/refresh', { preHandler: admin }, async () => {
+    const catalog = await identities.catalog(true);
+    return {
+      identities: catalog.identities.length,
+      pools: catalog.pools.length,
+      sites: catalog.sites.length,
+    };
+  });
   const worker = async (request: FastifyRequest) =>
     requireToken(request.headers.authorization, config.workerToken);
   const node = async (request: FastifyRequest) => {
@@ -432,6 +459,7 @@ export async function buildApp(
       body.workerId,
       body.structuredSteps === true,
       body.stepBudgetVersion,
+      body.identityVersion,
     );
   });
   app.get<{ Params: IdParams }>('/v1/executions/:id', (request) =>
@@ -527,6 +555,7 @@ export async function buildApp(
         body.controlRevision ?? 0,
         body.reason,
         body.items,
+        body.reasonCode,
       );
     },
   );
@@ -571,6 +600,7 @@ export async function buildApp(
       body.controlRevision ?? 0,
       body.reason,
       body.items,
+      body.reasonCode,
     );
   });
   app.post<{ Params: IdParams }>('/v1/executions/:id/control', (request) => {

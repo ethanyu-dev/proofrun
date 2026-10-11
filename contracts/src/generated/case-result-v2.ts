@@ -559,6 +559,20 @@ export interface StepResult {
       maxModelCalls: number;
     };
   };
+  /**
+   * @maxItems 64
+   */
+  preconditions?: {
+    id: string;
+    description: string;
+    status: 'SATISFIED' | 'UNSATISFIED' | 'UNCONFIRMED';
+    source: 'observation' | 'human';
+    /**
+     * @maxItems 32
+     */
+    evidenceRefs: string[];
+    controlRevision?: number;
+  }[];
 }
 /**
  * 最近一次领取检查发现的排队原因；不包含节点身份或登录凭据，也不是业务验收结论。
@@ -574,6 +588,8 @@ export interface QueueReason {
     | 'NO_ELIGIBLE_NODE'
     | 'NODE_CAPACITY'
     | 'NODE_ROTATING'
-    | 'SESSION_BUDGET_UNSUPPORTED';
+    | 'SESSION_BUDGET_UNSUPPORTED'
+    | 'IDENTITY_BUSY'
+    | 'IDENTITY_UNAVAILABLE';
   message: string;
 }

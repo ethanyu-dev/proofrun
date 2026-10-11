@@ -33,7 +33,7 @@ class Page(BaseHTTPRequestHandler):
 
 
 @contextmanager
-def host(root, state, restore, snapshot_id=None, optional=False):
+def host(root, state, restore, snapshot_id=None, optional=False, library=None):
     """每次使用独立 profile 与 daemon，验证共享的仅为存储状态。"""
     session = uuid.uuid4().hex
     directory = root / session
@@ -61,7 +61,7 @@ def host(root, state, restore, snapshot_id=None, optional=False):
     try:
         assert receive()['type'] == 'host.ready'
         boot_ms = int(float(Path('/proc/uptime').read_text().split()[0]) * 1000) if Path('/proc/uptime').exists() else 0
-        send({'type': 'init', 'config': {'binary': os.environ['PROOFRUN_AGENT_BROWSER_BIN'], 'chrome': os.environ['PROOFRUN_CHROME_BIN'], 'session': session, 'directory': str(directory), 'allow_unverified_writes': True, 'auth_state': str(state), 'restore_auth': restore, 'restore_auth_if_present': optional, 'auth_snapshot_id': snapshot_id, 'network_evidence': True}, 'deadline_ms': boot_ms + 120000})
+        send({'type': 'init', 'config': {'binary': os.environ['PROOFRUN_AGENT_BROWSER_BIN'], 'chrome': os.environ['PROOFRUN_CHROME_BIN'], 'session': session, 'directory': str(directory), 'allow_unverified_writes': True, 'auth_state': str(state), 'restore_auth': restore, 'restore_auth_if_present': optional, 'auth_snapshot_id': snapshot_id, 'network_evidence': True, 'identity_library_file': str(library) if library else None}, 'deadline_ms': boot_ms + 120000})
         message = receive()
         assert 'Ok' in message['result'], message
         yield command

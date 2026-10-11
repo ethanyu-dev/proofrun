@@ -33,6 +33,17 @@ export type ControlRequest =
         | [string, string, string, string, string, string, string, string]
         | [string, string, string, string, string, string, string, string, string]
         | [string, string, string, string, string, string, string, string, string, string];
+      /**
+       * 稳定的人工介入原因，不依赖自由文本聚合。
+       */
+      reasonCode?:
+        | 'GENERAL'
+        | 'LOGIN_REQUIRED'
+        | 'IDENTITY_CHECK_UNMET'
+        | 'LOGIN_RECIPE_MISSING'
+        | 'LOGIN_RECIPE_UNAVAILABLE'
+        | 'LOGIN_FORM_MISMATCH'
+        | 'LOGIN_CHALLENGE_OR_REJECTED';
     }
   | {
       type: 'execution.control';
@@ -55,7 +66,23 @@ export type BrowserCommand =
   | SaveAuthentication
   | BrowserInput
   | BrowserTrace
-  | SetBrowserCookie;
+  | SetBrowserCookie
+  | {
+      type: 'browser.identity.prepare';
+      url: string;
+      profileRef?: string;
+      /**
+       * @maxItems 32
+       */
+      checks: {
+        method: 'text' | 'absent';
+        value: string;
+      }[];
+      /**
+       * 仅全部身份条件可自动核验时保存快照；人工条件由 HITL 确认。
+       */
+      saveSnapshot: boolean;
+    };
 /**
  * 执行者按原验收标准提交的结果；控制面验证覆盖、聚合与证据归属。
  */
@@ -137,6 +164,7 @@ export interface ClaimExecution {
    * 只将逐步预算任务派给能隔离并继续后续步骤的 worker。
    */
   stepBudgetVersion?: 1;
+  identityVersion?: 1;
 }
 export interface SubmitBrowserCommand {
   /**
@@ -440,4 +468,18 @@ export interface StepResult {
       maxModelCalls: number;
     };
   };
+  /**
+   * @maxItems 64
+   */
+  preconditions?: {
+    id: string;
+    description: string;
+    status: 'SATISFIED' | 'UNSATISFIED' | 'UNCONFIRMED';
+    source: 'observation' | 'human';
+    /**
+     * @maxItems 32
+     */
+    evidenceRefs: string[];
+    controlRevision?: number;
+  }[];
 }

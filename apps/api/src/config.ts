@@ -1,3 +1,11 @@
+import {
+  providerUrl,
+  type CatalogProviderConfig,
+} from './modules/identities/provider.js';
+import {
+  loadIdentityCatalog,
+  type IdentityCatalog,
+} from './modules/identities/catalog.js';
 import { resolve } from 'node:path';
 import { loadCaseProfile, type CaseProfile } from './modules/cases/profile.js';
 
@@ -11,6 +19,12 @@ const DEFAULTS = {
 
 /** 控制面只支持一个活动实例；队列、租约和消息均持久化到数据库。 */
 export interface ApiConfig {
+  /** 测试身份元数据，不包含原始密码或 Cookie。 */
+  identityCatalog?: IdentityCatalog;
+  /** 外部元数据接口；配置与本地库二选一。 */
+  identityProvider?: CatalogProviderConfig;
+  /** Web 写入令牌的持久私有目录；默认位于证据卷内的隐藏子目录，不注册为证据。 */
+  identitySecretDirectory?: string;
   /** 平台预配置的 case 执行环境；省略时不接收新 case。 */
   caseProfile?: CaseProfile;
   /** 独立 PostgreSQL 数据库地址。 */
@@ -95,9 +109,34 @@ export function loadConfig(): ApiConfig {
     throw new Error(
       'PROOFRUN_CONSOLE_URL must be an HTTP(S) origin without credentials',
     );
+  const providerEndpoint = process.env.PROOFRUN_IDENTITY_CATALOG_URL;
+  const providerTokenFile = process.env.PROOFRUN_IDENTITY_CATALOG_TOKEN_FILE;
+  if (
+    !!providerEndpoint !== !!providerTokenFile ||
+    (providerEndpoint && process.env.PROOFRUN_IDENTITY_CATALOG_FILE)
+  )
+    throw new Error('外部身份库需要 URL 与 TOKEN_FILE，且不能同时配置本地目录');
   const caseProfile = loadCaseProfile(process.env.PROOFRUN_CASE_PROFILE_FILE);
   return {
     ...(caseProfile ? { caseProfile } : {}),
+    ...(providerEndpoint
+      ? {
+          identityProvider: {
+            url: providerUrl(providerEndpoint),
+            tokenFile: providerTokenFile!,
+          },
+        }
+      : {}),
+    identityCatalog: loadIdentityCatalog(
+      process.env.PROOFRUN_IDENTITY_CATALOG_FILE,
+    ),
+    ...(process.env.PROOFRUN_IDENTITY_SECRET_DIRECTORY
+      ? {
+          identitySecretDirectory: resolve(
+            process.env.PROOFRUN_IDENTITY_SECRET_DIRECTORY,
+          ),
+        }
+      : {}),
     databaseUrl,
     adminToken,
     workerToken,

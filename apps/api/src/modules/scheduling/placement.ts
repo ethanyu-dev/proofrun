@@ -15,6 +15,8 @@ const QUEUE_MESSAGES: Record<QueueReason['code'], string> = {
     '显式登录节点与域名路由不一致，请调整执行配置或路由。',
   COMPARISON_NODE_CONFLICT:
     '本轮对照已固定初始登录快照节点，与当前路由或登录节点冲突；请恢复配置或新建对照。',
+  IDENTITY_BUSY: '符合条件的测试账号正在使用中，等待会话清理完成。',
+  IDENTITY_UNAVAILABLE: '没有满足当前路由和身份约束的测试账号。',
   RESOURCE_BUSY: '关联任务或清理尚未完成，正在等待当前任务上下文释放。',
   NO_ELIGIBLE_NODE:
     '当前没有满足路由、显式登录节点、快照归属及所需能力的在线节点。',
@@ -58,7 +60,9 @@ export async function authPlacement(
   const auth = sessionAuth(task);
   const placement: AuthPlacement = {
     auth,
-    requiredNode: task.environment.auth?.nodeId,
+    requiredNode: task.sessionPlan
+      ? task.sessionPlan.candidates[0]?.nodeId
+      : task.environment.auth?.nodeId,
   };
   if (
     routedNode &&
@@ -69,7 +73,7 @@ export async function authPlacement(
     return placement;
   }
   if (!auth) return placement;
-  if (!task.environment.auth) {
+  if (task.sessionPlan || !task.environment.auth) {
     // 同一自动槽位的短事务串行，保持偏好更新一致；不要求浏览器执行串行。
     const lock = await client.query(
       'SELECT pg_try_advisory_xact_lock(hashtextextended($1, 1)) AS locked',

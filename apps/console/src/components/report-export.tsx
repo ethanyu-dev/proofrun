@@ -13,7 +13,7 @@ export function ReportExport({
   /** 导出保留存档原文，并附上与 API 一致的状态和覆盖统计。 */
   assessment: Pick<
     TaskDetail,
-    'reportStatus' | 'criteriaCounts' | 'definition'
+    'reportStatus' | 'criteriaCounts' | 'definition' | 'identity'
   >;
   close: () => void;
 }) {
@@ -25,6 +25,7 @@ export function ReportExport({
         assessment.definition.executionMode,
       ),
       reportStatus: assessment.reportStatus,
+      ...(assessment.identity ? { identity: assessment.identity } : {}),
       criteriaCounts: assessment.criteriaCounts,
     },
     null,

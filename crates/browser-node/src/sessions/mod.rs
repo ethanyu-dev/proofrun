@@ -421,6 +421,7 @@ async fn start(
         config: EngineConfig {
             binary: config.agent_browser_bin.clone(),
             chrome: config.chrome_bin.clone(),
+            identity_library_file: config.identity_library_file.clone(),
             session: record.launch_id.clone(),
             directory,
             allow_unverified_writes: config.allow_unverified_writes,

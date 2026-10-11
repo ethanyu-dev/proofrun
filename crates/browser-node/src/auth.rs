@@ -186,7 +186,7 @@ pub fn private_write(path: &Path, bytes: &[u8]) -> Result<()> {
 }
 
 /// 只接受节点私有、有界的普通文件，避免把异常路径作为快照读取。
-fn check_private_file(path: &Path, limit: u64) -> Result<()> {
+pub(crate) fn check_private_file(path: &Path, limit: u64) -> Result<()> {
     let meta = fs::symlink_metadata(path)?;
     ensure!(
         meta.is_file() && meta.len() <= limit,
@@ -217,6 +217,19 @@ pub fn commit_if_current(
     }
     commit(temporary, destination)?;
     *version = current(destination)?.version;
+    Ok(true)
+}
+
+/// 已证明失效的快照只按当前版本删除，不撤销另一会话已更新的状态。
+pub fn invalidate_if_current(path: &Path, version: &mut Option<String>) -> Result<bool> {
+    let _guard = lock(path)?;
+    if current(path)?.version != *version {
+        return Ok(false);
+    }
+    if path.exists() {
+        fs::remove_file(path)?;
+    }
+    *version = None;
     Ok(true)
 }
 

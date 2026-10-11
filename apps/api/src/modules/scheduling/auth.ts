@@ -8,6 +8,19 @@ export type SessionAuth = NonNullable<
 
 /** 自动槽位按环境、资源池与站点隔离；显式槽位保留调用者指定的名称。 */
 export function sessionAuth(task: VerificationTask): SessionAuth | null {
+  if (task.sessionPlan) {
+    if (task.sessionPlan.mode === 'guest') return null;
+    const identity = task.sessionPlan.candidates[0];
+    // 未指定身份的人工登录只保存本次任务槽，不覆盖任何共享站点账号。
+    return {
+      stateId:
+        identity?.stateId ??
+        `identity-${digest(identity ? JSON.stringify([task.environment.id, identity.id, new URL(task.target.url).origin]) : task.taskId)}`,
+      restore: !!identity,
+      restoreIfPresent: true,
+      snapshotId: digest(task.comparison?.id ?? task.taskId),
+    };
+  }
   const auth = task.environment.auth;
   if (
     !auth &&

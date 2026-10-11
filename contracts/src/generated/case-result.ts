@@ -115,6 +115,8 @@ export interface QueueReason {
     | 'NO_ELIGIBLE_NODE'
     | 'NODE_CAPACITY'
     | 'NODE_ROTATING'
-    | 'SESSION_BUDGET_UNSUPPORTED';
+    | 'SESSION_BUDGET_UNSUPPORTED'
+    | 'IDENTITY_BUSY'
+    | 'IDENTITY_UNAVAILABLE';
   message: string;
 }
