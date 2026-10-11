@@ -27,7 +27,14 @@ const RESULT_POLL_MS = 150;
 
 export type BrowserOperation = Extract<
   NodeCommand['command'],
-  { type: 'browser.act' | 'browser.observe' | 'browser.wait' | 'browser.trace' }
+  {
+    type:
+      | 'browser.act'
+      | 'browser.observe'
+      | 'browser.wait'
+      | 'browser.trace'
+      | 'browser.identity.prepare';
+  }
 >;
 export type CommandResult = Extract<NodeEvent, { type: 'command.result' }>;
 /** 执行视图只用于生命周期控制；节点和会话身份始终来自领取响应。 */

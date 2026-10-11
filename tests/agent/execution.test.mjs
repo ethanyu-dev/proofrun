@@ -3271,3 +3271,62 @@ test('前置身份缺失不能由模型完成声明绕过，也不阻止独立�
   assert.equal(report.steps[1].status, 'COMPLETED');
   assert.equal(report.steps[2].status, 'COMPLETED');
 });
+
+// 范围：一次自动登录在逐步预算前派发、不给模型原始秘密；准备回执及浏览器为夹具。
+test('自动登录仅准备一次且不占业务动作额度', async () => {
+  const order = [];
+  const { report, client } = await run(
+    (context) => ({
+      ...finish(context),
+      evidenceRefs: context.observation.artifactRefs.map((a) => a.artifactId),
+    }),
+    (client, execution) => {
+      structuredGrant(execution, [{}, {}]);
+      execution.task.stepBudget = compileStepBudget(execution.task);
+      execution.task.sessionPlan = {
+        version: 1,
+        mode: 'identity',
+        preparationMs: 120000,
+        requirements: [],
+        candidates: [
+          {
+            id: 'fixture',
+            label: 'fixture',
+            accountKey: 'fixture',
+            origins: ['https://example.test'],
+            checks: [],
+            maxConcurrent: 1,
+            loginRef: 'private-ref',
+          },
+        ],
+      };
+      const command = client.command.bind(client);
+      client.command = async (...args) => {
+        order.push(args[2].type);
+        if (args[2].type === 'browser.identity.prepare') {
+          assert.equal(args[2].profileRef, 'private-ref');
+          assert.ok(args[3] > config.commandMs);
+          return {
+            operationStatus: 'SUCCEEDED',
+            effect: 'COMPLETED',
+            data: { status: 'NEEDS_HUMAN' },
+          };
+        }
+        return command(...args);
+      };
+      const record = client.recordSteps.bind(client);
+      client.recordSteps = async (...args) => {
+        order.push('steps');
+        return record(...args);
+      };
+    },
+  );
+  assert.equal(order[0], 'browser.identity.prepare');
+  assert.equal(order.filter((v) => v === 'browser.identity.prepare').length, 1);
+  assert.equal(report.executionDetails.actions, 2);
+  assert.deepEqual(
+    report.steps.map((s) => s.status),
+    ['COMPLETED', 'COMPLETED'],
+  );
+  assert.ok(!JSON.stringify(client.modelCalls).includes('private-ref'));
+});

@@ -1,3 +1,4 @@
+import { authorizePreparation } from '../identities/preparation.js';
 import { allocateIdentity } from '../identities/allocation.js';
 import { sessionBudgetMs } from '@proofrun/contracts';
 import { startStepBudget, consumeStepBudget } from './step-budget.js';
@@ -701,7 +702,10 @@ export class Coordinator {
             row.deadline_at = new Date(
               Date.now() +
                 task.budget.timeoutMs +
-                task.stepBudget.settleMs * task.stepBudget.steps.length,
+                task.stepBudget.settleMs * task.stepBudget.steps.length +
+                (task.sessionPlan?.candidates.length
+                  ? task.sessionPlan.preparationMs
+                  : 0),
             );
             await client.query(
               'UPDATE pr_tasks SET deadline_at=$2 WHERE id=$1',
@@ -800,6 +804,8 @@ export class Coordinator {
       (!task.environment.allowIntervention ||
         heartbeat.capabilities.renewableSessions === true) &&
       (!sessionAuth(task) || heartbeat.capabilities.authState === true) &&
+      (!task.sessionPlan?.candidates.length ||
+        heartbeat.capabilities.identityPreparation === true) &&
       (!task.acceptanceCriteria.some((c) =>
         c.evidenceKinds.includes('NETWORK'),
       ) ||
@@ -1004,11 +1010,16 @@ export class Coordinator {
           'SESSION_BUSY',
           'One browser operation at a time',
         );
+      const preparationMs =
+        operation.type === 'browser.identity.prepare'
+          ? await authorizePreparation(client, context, operation)
+          : null;
       // 人工操作仍经过权限、代次和串行检查，但不占用或受限于 Agent 动作预算。
       if (
         actor === 'AGENT' &&
         context.definition.stepBudget &&
-        operation.type !== 'browser.trace'
+        operation.type !== 'browser.trace' &&
+        preparationMs === null
       )
         await consumeStepBudget(
           client,
@@ -1032,7 +1043,11 @@ export class Coordinator {
       }
       const budget = Math.max(
         1,
-        Math.min(timeoutMs, executionDeadline(context) - Date.now()),
+        Math.min(
+          timeoutMs,
+          preparationMs ?? timeoutMs,
+          executionDeadline(context) - Date.now(),
+        ),
       );
       await insertCommand(
         client,

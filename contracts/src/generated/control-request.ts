@@ -55,7 +55,23 @@ export type BrowserCommand =
   | SaveAuthentication
   | BrowserInput
   | BrowserTrace
-  | SetBrowserCookie;
+  | SetBrowserCookie
+  | {
+      type: 'browser.identity.prepare';
+      url: string;
+      profileRef?: string;
+      /**
+       * @maxItems 32
+       */
+      checks: {
+        method: 'text' | 'absent';
+        value: string;
+      }[];
+      /**
+       * 仅全部身份条件可自动核验时保存快照；人工条件由 HITL 确认。
+       */
+      saveSnapshot: boolean;
+    };
 /**
  * 执行者按原验收标准提交的结果；控制面验证覆盖、聚合与证据归属。
  */

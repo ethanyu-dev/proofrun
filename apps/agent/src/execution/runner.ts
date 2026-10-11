@@ -79,6 +79,8 @@ class Execution {
   private readonly details: NonNullable<VerificationReport['executionDetails']>;
   /** 初始导航成功后不因人工切换重放，观察可单独作废。 */
   private navigated = false;
+  /** 自动登录最多执行一次，外部重入不会重置已提交登录。 */
+  private identityPrepared = false;
   /** 每次导航只执行一次有界外壳等待，不在普通决策轮反复等待。 */
   private settlePending = true;
   /** TRACE 由执行器按验收需求采集，模型不能指定路径或伪造文件身份。 */
@@ -223,7 +225,10 @@ class Execution {
     );
   }
   /** 所有动作都串行提交，命令身份只生成一次；未知效果直接结束。 */
-  private async command(operation: BrowserOperation) {
+  private async command(
+    operation: BrowserOperation,
+    timeoutMs = this.config.commandMs,
+  ) {
     this.guard.signal.throwIfAborted();
     if (operation.type !== 'browser.trace') this.allowance?.assertTime();
     if (operation.type === 'browser.act') {
@@ -246,10 +251,7 @@ class Execution {
         this.grant,
         id,
         operation,
-        Math.max(
-          1,
-          Math.floor(Math.min(this.config.commandMs, this.guard.remaining())),
-        ),
+        Math.max(1, Math.floor(Math.min(timeoutMs, this.guard.remaining()))),
         this.guard.signal,
         this.controlRevision,
       )
@@ -1279,12 +1281,53 @@ class Execution {
     );
   }
 
+  /** 身份准备占用独立额度，不扣业务动作或模型次数；失败仍由逐步门禁判断。 */
+  private async prepareIdentity(): Promise<void> {
+    const plan = this.grant.task.sessionPlan;
+    const identity = plan?.candidates[0];
+    if (!identity || this.identityPrepared) return;
+    for (;;) {
+      await this.checkpoint();
+      const view = await this.client.view(this.grant, this.guard.signal);
+      if (view.taskState !== 'RUNNING')
+        throw new AgentFault('EXECUTION_ENDED', '任务已结束');
+      if (view.state === 'RUNNING') break;
+      await pause(POLL_MS, this.guard.signal);
+    }
+    const checks = [...identity.checks, ...plan!.requirements];
+    const operation: BrowserOperation = {
+      type: 'browser.identity.prepare',
+      url: this.grant.task.target.url,
+      ...(identity.loginRef ? { profileRef: identity.loginRef } : {}),
+      checks: checks
+        .filter((c) => c.method !== 'manual')
+        .map((c) => ({
+          method: c.method as 'text' | 'absent',
+          value: c.value!,
+        })),
+      saveSnapshot: checks.every((c) => c.method !== 'manual'),
+    };
+    // 发送前固定已尝试标记；即使回执不明，也不能换一个命令 ID 再次提交。
+    this.identityPrepared = true;
+    try {
+      await this.command(operation, plan!.preparationMs);
+    } catch (error) {
+      if (
+        !(error instanceof AgentFault) ||
+        error.code !== 'BROWSER_COMMAND_FAILED'
+      )
+        throw error;
+      // 明确拒绝的配置故障可继续业务观察/人工处理，未知副作用仍遵循原有停止规则。
+    }
+  }
+
   /** 无论正常还是异常都提交一次不可变报告；提交失败交给调用者记录，租约负责最终回收。 */
   async run(): Promise<VerificationReport> {
     try {
       for (;;) {
         let report: VerificationReport;
         try {
+          await this.prepareIdentity();
           report = this.grant.task.steps
             ? await this.sequence()
             : await this.loop();

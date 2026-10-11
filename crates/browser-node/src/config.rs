@@ -33,6 +33,8 @@ pub struct NodeConfig {
     pub agent_browser_bin: PathBuf,
     /// 可选的 Chrome 可执行文件；未指定时由引擎选择。
     pub chrome_bin: Option<PathBuf>,
+    /// 节点私有身份库配置，仅传递路径，秘密不会进入控制面。
+    pub identity_library_file: Option<PathBuf>,
     /// 一次执行租约允许的最长时长，单位毫秒。
     pub max_lease_ms: u64,
     /// 单会话从创建到结束的硬上限，单位毫秒。
@@ -54,6 +56,7 @@ impl Default for NodeConfig {
             capacity: DEFAULT_CAPACITY,
             agent_browser_bin: PathBuf::from("agent-browser"),
             chrome_bin: None,
+            identity_library_file: None,
             max_lease_ms: DEFAULT_MAX_LEASE_MS,
             max_session_ms: DEFAULT_MAX_SESSION_MS,
             artifact_limit_bytes: DEFAULT_ARTIFACT_LIMIT_BYTES,
@@ -80,6 +83,9 @@ impl NodeConfig {
         if let Ok(chrome) = std::env::var("PROOFRUN_CHROME_BIN") {
             config.chrome_bin = Some(chrome.into());
         }
+        if let Ok(path) = std::env::var("PROOFRUN_IDENTITY_LIBRARY_FILE") {
+            config.identity_library_file = Some(path.into());
+        }
         ensure!(
             (1..=32).contains(&config.capacity),
             "capacity must be between 1 and 32"
@@ -100,6 +106,9 @@ impl NodeConfig {
         config.home = std::path::absolute(&config.home)?;
         if config.credential_file.is_relative() {
             config.credential_file = config.home.join(&config.credential_file);
+        }
+        if let Some(path) = &config.identity_library_file {
+            config.identity_library_file = Some(std::path::absolute(path)?);
         }
         Ok(config)
     }

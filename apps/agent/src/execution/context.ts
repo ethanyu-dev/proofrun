@@ -99,7 +99,10 @@ export function rememberObservation(
 export function decisionContext(input: ContextInput): DecisionInput {
   const current = input.current;
   const context = {
-    task: input.task,
+    // 模型只需业务定义；节点配方引用、账号池和登录槽不参与决策上下文。
+    task: (({ sessionPlan: _sessionPlan, ...business }) => business)(
+      input.task,
+    ),
     executionStep: input.executionStep,
     workflow: input.workflow,
     budgetRemaining: {

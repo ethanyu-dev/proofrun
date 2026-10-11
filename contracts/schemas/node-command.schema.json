@@ -331,6 +331,48 @@
           },
           "required": ["type", "url", "name", "value", "httpOnly"],
           "description": "仅人工接管时写入任务目标站点的 host-only、根路径、SameSite=Lax 会话 Cookie；不回传值，不自动刷新或保存共享登录槽。"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "browser.identity.prepare"
+            },
+            "url": {
+              "type": "string",
+              "format": "uri",
+              "maxLength": 2000
+            },
+            "profileRef": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,80}$"
+            },
+            "checks": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "method": {
+                    "enum": ["text", "absent"]
+                  },
+                  "value": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000
+                  }
+                },
+                "required": ["method", "value"]
+              }
+            },
+            "saveSnapshot": {
+              "type": "boolean",
+              "description": "仅全部身份条件可自动核验时保存快照；人工条件由 HITL 确认。"
+            }
+          },
+          "required": ["type", "url", "checks", "saveSnapshot"]
         }
       ]
     }
