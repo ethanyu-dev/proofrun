@@ -175,6 +175,18 @@
             "maxLength": 500
           },
           "description": "本次人工需要处理的事项，不替代原验收标准。"
+        },
+        "reasonCode": {
+          "enum": [
+            "GENERAL",
+            "LOGIN_REQUIRED",
+            "IDENTITY_CHECK_UNMET",
+            "LOGIN_RECIPE_MISSING",
+            "LOGIN_RECIPE_UNAVAILABLE",
+            "LOGIN_FORM_MISMATCH",
+            "LOGIN_CHALLENGE_OR_REJECTED"
+          ],
+          "description": "稳定的人工介入原因，不依赖自由文本聚合。"
         }
       },
       "required": ["type", "reason"]

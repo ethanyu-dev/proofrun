@@ -81,6 +81,8 @@ class Execution {
   private navigated = false;
   /** 自动登录最多执行一次，外部重入不会重置已提交登录。 */
   private identityPrepared = false;
+  /** 节点只返回固定诊断，供 HITL 分类使用，不记录原始凭据。 */
+  private preparationReason: string | undefined;
   /** 每次导航只执行一次有界外壳等待，不在普通决策轮反复等待。 */
   private settlePending = true;
   /** TRACE 由执行器按验收需求采集，模型不能指定路径或伪造文件身份。 */
@@ -600,6 +602,18 @@ class Execution {
     }
     return this.report('EXECUTED', decision.summary, decision.criteria, null);
   }
+  /** 显式条件统一驱动登录与角色交接，避免同一步先“登录”再“确认身份”重复 HITL。 */
+  private identityChecks() {
+    const original = this.grant.task;
+    const step = original.steps?.[this.stepIndex];
+    if (original.cleanupStepIds?.includes(step?.stepId ?? '')) return [];
+    return mergeChecks(
+      original.sessionPlan?.candidates[0]?.checks ?? [],
+      original.sessionPlan?.requirements ?? [],
+      step?.preconditions ?? [],
+    );
+  }
+
   /** 当前步骤只采信结构化条件和本会话的人工确认，不把账号显示名解释成角色。 */
   private async checkIdentity(
     allowIntervention: boolean,
@@ -608,11 +622,7 @@ class Execution {
     const step = original.steps?.[this.stepIndex];
     if (!this.current || original.cleanupStepIds?.includes(step?.stepId ?? ''))
       return null;
-    const checks = mergeChecks(
-      original.sessionPlan?.candidates[0]?.checks ?? [],
-      original.sessionPlan?.requirements ?? [],
-      step?.preconditions ?? [],
-    );
+    const checks = this.identityChecks();
     if (!checks.length) return null;
     const evaluate = () =>
       evaluateChecks(
@@ -732,6 +742,7 @@ class Execution {
         // 登录前置条件需要人工时先交接，不能先进入模型重复观察或长时间等待挑战。
         if (
           !this.loginInterventions.has(this.stepIndex) &&
+          !this.identityChecks().length &&
           needsLoginIntervention(this.grant.task, this.current!, this.stepIndex)
         ) {
           if (!this.grant.task.environment.allowIntervention)
@@ -1031,6 +1042,13 @@ class Execution {
       reason,
       this.guard.signal,
       items,
+      login
+        ? this.loginReason() !== 'LOGIN_REQUIRED'
+          ? this.loginReason()
+          : this.identityInterventions.has(this.stepIndex)
+            ? 'IDENTITY_CHECK_UNMET'
+            : 'LOGIN_REQUIRED'
+        : 'GENERAL',
     );
     // 请求成功即暂停本地时钟，不等待下一轮心跳；后台仍独立续租。
     this.guard.syncTiming({
@@ -1281,6 +1299,24 @@ class Execution {
     );
   }
 
+  /** 人工分类只接受封闭集合，节点任意错误字符串不能污染统计维度。 */
+  private loginReason():
+    | 'LOGIN_REQUIRED'
+    | 'LOGIN_RECIPE_MISSING'
+    | 'LOGIN_RECIPE_UNAVAILABLE'
+    | 'LOGIN_FORM_MISMATCH'
+    | 'LOGIN_CHALLENGE_OR_REJECTED' {
+    switch (this.preparationReason) {
+      case 'LOGIN_RECIPE_MISSING':
+      case 'LOGIN_RECIPE_UNAVAILABLE':
+      case 'LOGIN_FORM_MISMATCH':
+      case 'LOGIN_CHALLENGE_OR_REJECTED':
+        return this.preparationReason;
+      default:
+        return 'LOGIN_REQUIRED';
+    }
+  }
+
   /** 身份准备占用独立额度，不扣业务动作或模型次数；失败仍由逐步门禁判断。 */
   private async prepareIdentity(): Promise<void> {
     const plan = this.grant.task.sessionPlan;
@@ -1310,7 +1346,11 @@ class Execution {
     // 发送前固定已尝试标记；即使回执不明，也不能换一个命令 ID 再次提交。
     this.identityPrepared = true;
     try {
-      await this.command(operation, plan!.preparationMs);
+      const prepared = await this.command(operation, plan!.preparationMs);
+      this.preparationReason =
+        typeof prepared.data?.reasonCode === 'string'
+          ? prepared.data.reasonCode
+          : undefined;
     } catch (error) {
       if (
         !(error instanceof AgentFault) ||

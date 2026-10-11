@@ -1,4 +1,4 @@
-import type { IdentityCatalog } from '../identities/catalog.js';
+import type { CatalogSource } from '../identities/provider.js';
 import {
   summarizeReport,
   validateVerificationCaseV2,
@@ -29,8 +29,9 @@ export class CaseV2Service {
     private readonly profile: CaseProfile | undefined,
     /** 构造同源公开证据地址，不透传内部报告地址。 */
     private readonly publicUrl: string,
+    /** 提交前解析平台元数据，冻结后重提不访问外部库。 */
+    private readonly identities?: CatalogSource,
     /** 显式复现历史预算时才传入；默认重跑按当前策略编译。 */
-    private readonly identities?: IdentityCatalog,
     private readonly originalBudget?: Pick<
       VerificationTask,
       'budget' | 'stepBudget'
@@ -92,6 +93,8 @@ export class CaseV2Service {
     if (new Set(input.map((item) => item.caseId)).size !== input.length)
       throw new ApiError(422, 'INVALID_CASE', '批次内 caseId 不能重复');
     const definitions: VerificationTask[] = [];
+    let resolved =
+      typeof this.identities === 'function' ? undefined : this.identities;
     for (const item of input) {
       const existing = await this.stored(item.caseId).catch(
         (error: unknown) => {
@@ -111,10 +114,16 @@ export class CaseV2Service {
             'CASE_NOT_CONFIGURED',
             '平台未配置 case 执行环境',
           );
+        if (
+          !resolved &&
+          typeof this.identities === 'function' &&
+          ['identity', 'pool', 'auto'].includes(item.session?.mode ?? 'manual')
+        )
+          resolved = await this.identities();
         const compiled = compileCase(
           item,
           validateCaseProfile(this.profile),
-          this.identities,
+          resolved,
         );
         if (this.originalBudget) {
           compiled.budget = structuredClone(this.originalBudget.budget);

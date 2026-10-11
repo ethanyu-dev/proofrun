@@ -8,7 +8,12 @@ export function mergeChecks(...groups: IdentityCheck[][]): IdentityCheck[] {
   const checks = new Map<string, IdentityCheck>();
   for (const check of groups.flat()) {
     const previous = checks.get(check.id);
-    if (previous && JSON.stringify(previous) !== JSON.stringify(check))
+    if (
+      previous &&
+      (previous.method !== check.method ||
+        previous.description !== check.description ||
+        previous.value !== check.value)
+    )
       throw new Error('前置条件 ID 冲突');
     checks.set(check.id, check);
   }

@@ -1,3 +1,6 @@
+import identityCheck from '../../../contracts/schemas/identity-check.schema.json';
+import sessionRequest from '../../../contracts/schemas/session-request.schema.json';
+import sessionPlan from '../../../contracts/schemas/session-plan.schema.json';
 import Ajv from 'ajv';
 import addFormats from 'ajv-formats';
 import type { VerificationTask, VerificationCaseV2 } from '@proofrun/contracts';
@@ -10,6 +13,9 @@ import caseSchema from '../../../contracts/schemas/verification-case.schema.json
 const ajv = new Ajv({ allErrors: true });
 addFormats(ajv);
 // 任务的 caseDefinition 使用外部引用，浏览器校验器也须在编译任务前注册依赖。
+ajv.addSchema(identityCheck);
+ajv.addSchema(sessionRequest);
+ajv.addSchema(sessionPlan);
 ajv.addSchema(caseSchema);
 ajv.addSchema(stepSchema);
 ajv.addSchema(caseV2Schema);

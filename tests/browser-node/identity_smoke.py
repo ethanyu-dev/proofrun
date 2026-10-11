@@ -13,6 +13,8 @@ from auth_network_smoke import host
 class Page(BaseHTTPRequestHandler):
     accepted = 'fixture-cookie-secret'
     submissions = 0
+    provider_requests = 0
+    provider_profile = None
     def log_message(self, *_):
         pass
     def do_GET(self):
@@ -25,8 +27,20 @@ class Page(BaseHTTPRequestHandler):
           event.preventDefault(); const response = await fetch('/login', {method:'POST', body:document.querySelector('#user').value + ':' + document.querySelector('#pass').value});
           if (response.ok) document.body.innerHTML='<p id="ready">Fixture member</p>';
         });</script>'''
+        if self.path == '/foreign-form':
+            body=body.replace('action="/login"', 'action="https://foreign.invalid/login"')
         self.wfile.write(body.encode())
     def do_POST(self):
+        if self.path == '/identity-provider':
+            Page.provider_requests += 1
+            assert self.headers.get('Authorization') == 'Bearer fixture-provider-token'
+            payload=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+            assert payload['profileRef']=='external'
+            assert payload['origin']==Page.provider_profile['origin']
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(json.dumps(Page.provider_profile).encode())
+            return
         Page.submissions += 1
         body = self.rfile.read(int(self.headers.get('Content-Length', '0')))
         good = body == b'fixture-user:fixture-password-secret'
@@ -83,6 +97,26 @@ def run():
             assert Page.submissions==2,Page.submissions
             observed=json.dumps(command(type='browser.observe'))
             assert 'invalid-secret' not in observed
+            assert 'fixture-user' not in observed
+        # 范围：表单跨源提交在写入密码前拒绝；不代表第三方脚本的完整安全审计。
+        profiles['password']['login']['password']='fixture-password-secret'
+        profiles['password']['login']['url']=origin+'/foreign-form'
+        library.write_text(json.dumps({'profiles':profiles}))
+        with host(root,root/'auth'/'foreign.json',False,library=library) as command:
+            result=prepare(command,'password')
+            assert result['reasonCode']=='LOGIN_FORM_MISMATCH',result
+            assert Page.submissions==2
+            assert 'fixture-password-secret' not in json.dumps(command(type='browser.observe'))
+        # 范围：节点直接请求外部凭据接口，API/Agent 命令只含引用；真实供应商未接入。
+        Page.provider_profile={'origin':origin,'login':{'type':'cookies','cookies':[{'name':'session','value':Page.accepted,'httpOnly':True}]}}
+        token=root/'provider-token'
+        token.write_text('fixture-provider-token')
+        token.chmod(0o600)
+        library.write_text(json.dumps({'provider':{'url':origin+'/identity-provider','tokenFile':str(token)}}))
+        with host(root,root/'auth'/'external.json',False,library=library) as command:
+            result=prepare(command,'external')
+            assert result['status']=='READY' and result['source']=='cookies',result
+            assert Page.provider_requests==1
         print('identity smoke: cookie, snapshot, guest isolation, invalidation, password and HITL fallback passed')
     finally:
         server.shutdown()

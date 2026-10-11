@@ -74,3 +74,28 @@
 准备阶段单独两分钟、每执行最多一次，不能占用业务动作、模型次数或清理三分钟。先核验恢复状态；缺失/失效时清除该源的本地存储后尝试配方。至少一个正向 `text` 条件及所有自动条件满足才认为自动核验成功；有 `manual` 条件仍须人工确认。失败转逐步门禁/HITL，后续独立步骤继续。业务执行前重新观察并核验，准备成功不等于验收通过。
 
 快照仅在自动核验通过（无人工条件）或人工完成后更新；失效快照按版本删除，不覆盖其他会话的新状态。每次复用均重新核验。业务 cleanup 可执行退出，但本地状态删除不代表服务端登出；物理 profile 关闭后才释放账号。
+
+外部库分成两个独立接口，可以由同一个身份管理系统提供：
+
+| 位置       | 配置与调用                                                                                | 返回内容                                                  |
+| ---------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| API 元数据 | `PROOFRUN_IDENTITY_CATALOG_URL`、`PROOFRUN_IDENTITY_CATALOG_TOKEN_FILE`；带 Bearer 的 GET | 与本地目录相同的 `identities`、`pools`、`sites`，禁止凭据 |
+| Node 凭据  | 私有库配置 `provider.url`、`provider.tokenFile`；带 Bearer 的 POST                        | 与本地 profile 相同的 `origin`、`login` 配方              |
+
+节点 POST 正文只有 `{"profileRef":"member-login","origin":"https://example.test"}`。接口返回配方须限定同一 origin。私有库可配置 `{"profiles":{},"provider":{"url":"https://identities.example.test/login-profile","tokenFile":"/private/provider-token"}}`；本地 profile 优先，缺失时查询提供方。令牌文件要求 `0600`；每次请求读取以支持轮换。提供方只能使用 HTTPS（本机回环测试例外），不跟随重定向，五秒超时，一 MiB 响应上限，拒绝未知字段。节点不缓存原始密码。
+
+元数据缓存三十秒，到期获取失败时拒绝新的命名身份分配，不使用过期库；访客、普通人工会话及已冻结任务的幂等重提不依赖提供方。已领取任务沿用冻结身份，新 case／重跑按当前库解析。
+
+管理员接口（使用现有管理员 Bearer）：
+
+- `GET /v1/admin/identities`：元数据与来源。
+- `POST /v1/admin/identities/refresh`：刷新外部元数据，失败明确返回 `IDENTITY_PROVIDER_UNAVAILABLE`。
+- `GET /v1/admin/identities/metrics`：最近三十天各登录来源和准备结果、自动核验比例、人工原因分类、当前占用和等待数。比例分母为已有终态回执的准备命令；历史无结束时间的记录不伪造耗时。
+
+任务详情与报告展示实际选中的身份、登录方式、准备耗时、人工处理次数和账号释放情况，JSON 导出同步保留。准备成功与业务验收分开。账号池会跳过忙碌账号及能力不符的节点，只有真正分配节点才冻结身份。同一对照轮次固定相同账号；默认独占时两组依次运行，避免账号互踢污染对比。
+
+部署先更新 API 与 Agent，再升级 Browser Node，最后启用命名身份配置；未声明 `identityPreparation` 的旧节点不会领取命名身份任务。新协议需三端一起升级，普通历史任务保持原行为。首先为一个测试域名配置身份与角色条件，再用 `session.mode=identity` 验证，最后启用域名规则和账号池。
+
+验证命令：`pnpm test:api`（需独立 `PROOFRUN_TEST_DATABASE_URL`）、`pnpm test:agent`、`pnpm test:console`、`cargo test --locked -p proofrun-node`。真实浏览器夹具使用 `PROOFRUN_AGENT_BROWSER_BIN`（固定 0.38.1 原生二进制）、`PROOFRUN_CHROME_BIN` 后运行 `pnpm test:identity:browser`；只验证回环站点的 Cookie、密码、快照、访客隔离与外部提供方协议，不代表生产账号已配置或真实网站验收通过。
+
+身份配置的正向条件应包含能唯一识别账号的页面标记，再追加团队及角色条件；仅有“已登录”或通用团队名称不能证明实际账号与 `accountKey` 一致。不能通过可靠页面标记确认的条件使用 `manual`，不推测角色。

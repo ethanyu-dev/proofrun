@@ -1,3 +1,5 @@
+import { identityMetrics } from './modules/identities/metrics.js';
+import { HttpCatalogProvider } from './modules/identities/provider.js';
 import Fastify, { type FastifyRequest } from 'fastify';
 import websocket from '@fastify/websocket';
 import type { Readable } from 'node:stream';
@@ -67,11 +69,14 @@ export async function buildApp(
     config.caseProfile,
     config.publicUrl,
   );
+  const identityProvider = config.identityProvider
+    ? new HttpCatalogProvider(config.identityProvider)
+    : undefined;
   const casesV2 = new CaseV2Service(
     coordinator,
     config.caseProfile,
     config.publicUrl,
-    config.identityCatalog,
+    identityProvider ? () => identityProvider.get() : config.identityCatalog,
   );
   const control = new ExecutionControl(db, config.adminToken);
   const gateway = new NodeGateway(
@@ -94,6 +99,32 @@ export async function buildApp(
     reply.header('Cache-Control', 'no-store');
     reply.header('X-Content-Type-Options', 'nosniff');
   };
+  app.get('/v1/admin/identities/metrics', { preHandler: admin }, () =>
+    identityMetrics(db),
+  );
+  app.get('/v1/admin/identities', { preHandler: admin }, async () => {
+    const catalog = identityProvider
+      ? await identityProvider.get()
+      : config.identityCatalog;
+    return {
+      source: identityProvider ? 'http' : 'local',
+      catalog: catalog ?? { identities: [], pools: [], sites: [] },
+    };
+  });
+  app.post('/v1/admin/identities/refresh', { preHandler: admin }, async () => {
+    if (!identityProvider)
+      throw new ApiError(
+        409,
+        'IDENTITY_PROVIDER_LOCAL',
+        '本地元数据文件在服务启动时读取',
+      );
+    const catalog = await identityProvider.get(true);
+    return {
+      identities: catalog.identities.length,
+      pools: catalog.pools.length,
+      sites: catalog.sites.length,
+    };
+  });
   const worker = async (request: FastifyRequest) =>
     requireToken(request.headers.authorization, config.workerToken);
   const node = async (request: FastifyRequest) => {
@@ -529,6 +560,7 @@ export async function buildApp(
         body.controlRevision ?? 0,
         body.reason,
         body.items,
+        body.reasonCode,
       );
     },
   );
@@ -573,6 +605,7 @@ export async function buildApp(
       body.controlRevision ?? 0,
       body.reason,
       body.items,
+      body.reasonCode,
     );
   });
   app.post<{ Params: IdParams }>('/v1/executions/:id/control', (request) => {

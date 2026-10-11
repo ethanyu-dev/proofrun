@@ -444,6 +444,24 @@ export interface TaskDetail {
    * 最近一次领取检查发现的排队原因；成功领取后清空，取消或排队超时后保留。null 或缺失表示尚无诊断，不表示一定可执行。
    */
   queueReason?: null | QueueReason;
+  identity?: {
+    mode: 'guest' | 'manual' | 'identity' | 'pool';
+    identityRef: string | null;
+    label: string | null;
+    leaseState: 'NOT_REQUIRED' | 'WAITING' | 'OCCUPIED' | 'RELEASED';
+    preparation: {
+      status: 'NOT_REQUESTED' | 'PENDING' | 'READY' | 'NEEDS_HUMAN' | 'ERROR';
+      source: 'snapshot' | 'cookies' | 'password' | 'none';
+      reasonCode: string | null;
+      durationMs: number | null;
+    };
+    humanRequests: number;
+    humanCompleted: number;
+    humanReasons: {
+      reason: string;
+      count: number;
+    }[];
+  };
 }
 /**
  * case 入口保存的原始业务定义，用于幂等重提和隔离公开读取；普通内部任务省略。

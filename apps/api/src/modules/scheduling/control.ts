@@ -28,6 +28,7 @@ export class ExecutionControl {
     revision: number,
     reason?: string,
     items?: string[],
+    reasonCode = 'GENERAL',
   ) {
     return this.db.transaction(async (client) => {
       const context = await executionContext(client, id);
@@ -105,7 +106,7 @@ export class ExecutionControl {
       if (action === 'request') {
         const interventionId = randomUUID();
         await client.query(
-          'INSERT INTO pr_interventions(id,execution_id,revision,token_hash,items,expires_at) VALUES($1,$2,$3,$4,$5,$6)',
+          'INSERT INTO pr_interventions(id,execution_id,revision,token_hash,items,expires_at,reason_code) VALUES($1,$2,$3,$4,$5,$6,$7)',
           [
             interventionId,
             id,
@@ -113,6 +114,7 @@ export class ExecutionControl {
             digest(interventionToken(this.secret, interventionId)),
             JSON.stringify(items ?? [reason!]),
             new Date(Date.now() + HITL_LINK_MS),
+            reasonCode,
           ],
         );
       } else if (action === 'resume') {

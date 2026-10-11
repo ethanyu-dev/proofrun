@@ -1,3 +1,4 @@
+import type { IdentityCatalog } from '../src/modules/identities/catalog.js';
 import WebSocket from 'ws';
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -63,6 +64,11 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
   await new Promise<void>((resolve) => portHolder.close(() => resolve()));
   const base = `http://127.0.0.1:${port}`;
   const config = {
+    identityCatalog: {
+      identities: [],
+      pools: [],
+      sites: [],
+    } as IdentityCatalog,
     caseProfile: {
       environment: { id: 'private-case-environment', nodePool: 'case-fixture' },
       budget: { timeoutMs: 60000, maxActions: 20 },
@@ -157,7 +163,9 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
           type: 'worker.claim',
           workerId: randomUUID(),
           structuredSteps,
-          ...(structuredSteps ? { stepBudgetVersion: 1, identityVersion: 1 } : {}),
+          ...(structuredSteps
+            ? { stepBudgetVersion: 1, identityVersion: 1 }
+            : {}),
         },
         WORKER,
       )
@@ -216,6 +224,130 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         ),
     );
   try {
+    // 范围：真实 API/数据库/WebSocket 的准备授权、版本门禁、幂等及独立预算；登录回执为节点夹具。
+    await suite.test(
+      '身份登录准备单次授权、旧节点隔离及预算不挤占业务',
+      async (t) => {
+        const profile = config.caseProfile;
+        const saved = structuredClone(profile);
+        t.after(() => Object.assign(profile, saved));
+        profile.environment = {
+          id: 'identity-test',
+          nodePool: 'identity-test',
+        };
+        config.identityCatalog.identities.push({
+          id: 'member-fixture',
+          label: '测试团队',
+          accountKey: 'member-physical',
+          origins: ['https://identity.test'],
+          checks: [
+            {
+              id: 'member',
+              description: '团队成员',
+              method: 'text',
+              value: 'Fixture member',
+            },
+          ],
+          loginRef: 'private-fixture',
+          maxConcurrent: 1,
+        });
+        const node = await addNode('identity-test');
+        const submitted = await api('POST', '/v2/cases', [
+          {
+            caseId: 'identity-preparation',
+            platform: '身份测试',
+            entry: 'https://identity.test',
+            session: { mode: 'identity', identityRef: 'member-fixture' },
+            steps: [
+              {
+                url: 'https://identity.test',
+                type: 'verification',
+                exec_order: 1,
+                description: '检查',
+                policy: [],
+                expected: ['Fixture result'],
+              },
+            ],
+            cleanup: [],
+          },
+        ]);
+        assert.equal(submitted.status, 202, JSON.stringify(submitted));
+        assert.equal(await claim(true), null);
+        node.identityPreparation = true;
+        node.heartbeat();
+        await delay(30);
+        const execution = await claim(true);
+        assert.ok(execution);
+        await ready(execution);
+        assert.equal(execution.task.sessionPlan.candidates.length, 1);
+        const operation = {
+          type: 'browser.identity.prepare',
+          url: 'https://identity.test',
+          profileRef: 'private-fixture',
+          checks: [{ method: 'text', value: 'Fixture member' }],
+          saveSnapshot: true,
+        };
+        const path = `/v1/executions/${execution.id}/commands`;
+        const forged = await api(
+          'POST',
+          path,
+          {
+            type: 'execution.command',
+            commandId: randomUUID(),
+            timeoutMs: 10000,
+            command: { ...operation, profileRef: 'other' },
+          },
+          execution.leaseToken,
+        );
+        assert.equal(forged.status, 403);
+        const prepared = await command(execution, operation);
+        const repeated = await api(
+          'POST',
+          path,
+          prepared.request,
+          execution.leaseToken,
+        );
+        assert.equal(repeated.status, 202);
+        assert.equal(node.calls.get(prepared.request.commandId), 1);
+        const retry = await api(
+          'POST',
+          path,
+          { ...prepared.request, commandId: randomUUID() },
+          execution.leaseToken,
+        );
+        assert.equal(retry.data.code, 'IDENTITY_PREPARATION_EXHAUSTED');
+        const detail = (
+          await api('GET', '/v1/tasks/case-v2-identity-preparation')
+        ).data;
+        assert.equal(detail.identity.identityRef, 'member-fixture');
+        assert.equal(detail.identity.preparation.source, 'cookies');
+        assert.equal(detail.identity.preparation.status, 'READY');
+        assert.equal(detail.executions[0].action_count, 0);
+        const steps = execution.task.steps.map((step: { stepId: string }) => ({
+          stepId: step.stepId,
+          status: 'RUNNING',
+          summary: 'fixture',
+          evidenceRefs: [],
+          criteria: [],
+          startedAt: new Date().toISOString(),
+          finishedAt: null,
+        }));
+        const start = await api(
+          'POST',
+          `/v1/executions/${execution.id}/steps`,
+          steps,
+          execution.leaseToken,
+        );
+        assert.equal(start.status, 200, JSON.stringify(start));
+        assert.equal(start.data.stepBudget.actions, 0);
+        assert.ok(start.data.stepBudget.deadlineAt > Date.now() + 299000);
+        const metrics = await api('GET', '/v1/admin/identities/metrics');
+        assert.equal(metrics.status, 200);
+        assert.equal(metrics.data.automaticReady, 1);
+        await api('POST', '/v1/tasks/case-v2-identity-preparation/cancel');
+        await cleaned('case-v2-identity-preparation');
+      },
+    );
     // 范围：真实 HTTP 与数据库的默认预算、并发幂等、双组领取和清理；节点为协议夹具，不验证真实模型或业务副作用。
     await suite.test('v2 默认预算与双跑完整生命周期', async (t) => {
       const profile: CaseProfile = config.caseProfile;

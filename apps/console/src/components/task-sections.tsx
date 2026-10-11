@@ -1,3 +1,4 @@
+import { TaskIdentity } from './task-identity';
 import { useState } from 'react';
 import type { TaskDetail } from '@proofrun/contracts';
 import { ApiClient } from '../api';
@@ -17,7 +18,7 @@ type TaskSectionProps = { api: ApiClient; task: TaskDetail };
 export function TaskResources({ task }: { task: TaskDetail }) {
   return (
     <>
-      {' '}
+      <TaskIdentity task={task} />
       <section className="panel">
         <div className="section-heading">
           <h2>执行与资源清理</h2>

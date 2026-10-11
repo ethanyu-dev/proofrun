@@ -3330,3 +3330,109 @@ test('自动登录仅准备一次且不占业务动作额度', async () => {
   );
   assert.ok(!JSON.stringify(client.modelCalls).includes('private-ref'));
 });
+
+// 范围：结构化身份条件将登录和角色核验合并为一次 HITL；人工、网页与模型均为夹具。
+test('结构化登录和角色确认共用一次人工请求并保留配方失败分类', async () => {
+  const execution = grant();
+  structuredGrant(execution, [{ type: 'setup', expected: [] }]);
+  execution.task.steps[0].description = '使用已授权账号登录后确认角色';
+  execution.task.environment.allowIntervention = true;
+  execution.task.sessionPlan = {
+    version: 1,
+    mode: 'identity',
+    preparationMs: 120000,
+    requirements: [],
+    candidates: [
+      {
+        id: 'fixture',
+        label: 'fixture',
+        accountKey: 'fixture',
+        origins: ['https://example.com'],
+        checks: [
+          {
+            id: 'role',
+            description: '确认当前账号是非所有者团队成员',
+            method: 'manual',
+          },
+        ],
+        maxConcurrent: 1,
+        loginRef: 'private-ref',
+      },
+    ],
+  };
+  const client = new FakeControl();
+  let mode = 'AUTO',
+    revision = 0,
+    requests = 0,
+    resumed = false;
+  const view = client.view.bind(client),
+    command = client.command.bind(client);
+  client.view = async (...args) => ({
+    ...(await view(...args)),
+    controlMode: mode,
+    controlRevision: revision,
+  });
+  client.command = async (...args) => {
+    if (args[2].type === 'browser.identity.prepare')
+      return {
+        operationStatus: 'SUCCEEDED',
+        effect: 'COMPLETED',
+        data: { status: 'NEEDS_HUMAN', reasonCode: 'LOGIN_RECIPE_MISSING' },
+      };
+    const result = await command(...args);
+    if (args[2].type === 'browser.observe' && !resumed) {
+      result.data.url = 'https://example.com/login';
+      result.data.targets = [
+        { target: 'password', role: 'textbox', name: '密码' },
+        { target: 'login', role: 'button', name: '登录' },
+      ];
+    }
+    return result;
+  };
+  client.intervene = async (
+    _grant,
+    _rev,
+    _reason,
+    _signal,
+    items,
+    reasonCode,
+  ) => {
+    requests++;
+    assert.equal(reasonCode, 'LOGIN_RECIPE_MISSING');
+    assert.deepEqual(items, ['确认当前账号是非所有者团队成员']);
+    mode = 'REQUESTED';
+    revision++;
+  };
+  client.acknowledge = async () => {
+    mode = 'HUMAN';
+    setTimeout(() => {
+      resumed = true;
+      mode = 'AUTO';
+      revision++;
+    }, 10);
+  };
+  const report = await execute(
+    config,
+    client,
+    {
+      async decide(input) {
+        const context = JSON.parse(input.text);
+        return {
+          decision: {
+            ...finish(context),
+            evidenceRefs: context.observation.artifactRefs.map(
+              (a) => a.artifactId,
+            ),
+          },
+          promptTokens: 0,
+          completionTokens: 0,
+        };
+      },
+    },
+    execution,
+  );
+  assert.equal(requests, 1);
+  assert.equal(report.steps[0].status, 'COMPLETED');
+  assert.equal(report.steps[0].preconditions[0].source, 'human');
+  assert.equal(report.steps[0].preconditions[0].status, 'SATISFIED');
+});

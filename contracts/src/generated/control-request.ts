@@ -33,6 +33,17 @@ export type ControlRequest =
         | [string, string, string, string, string, string, string, string]
         | [string, string, string, string, string, string, string, string, string]
         | [string, string, string, string, string, string, string, string, string, string];
+      /**
+       * 稳定的人工介入原因，不依赖自由文本聚合。
+       */
+      reasonCode?:
+        | 'GENERAL'
+        | 'LOGIN_REQUIRED'
+        | 'IDENTITY_CHECK_UNMET'
+        | 'LOGIN_RECIPE_MISSING'
+        | 'LOGIN_RECIPE_UNAVAILABLE'
+        | 'LOGIN_FORM_MISMATCH'
+        | 'LOGIN_CHALLENGE_OR_REJECTED';
     }
   | {
       type: 'execution.control';

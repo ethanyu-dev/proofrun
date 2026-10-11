@@ -8,6 +8,7 @@ import {
   type VerificationReport,
   type ModelCallWrite,
   type StepResult,
+  type ControlRequest,
 } from '@proofrun/contracts';
 import type { AgentConfig } from './config.js';
 import {
@@ -270,6 +271,10 @@ export class ControlClient {
     reason: string,
     signal: AbortSignal,
     items?: string[],
+    reasonCode?: Extract<
+      ControlRequest,
+      { type: 'execution.intervene' }
+    >['reasonCode'],
   ): Promise<void> {
     await this.request(
       execution,
@@ -280,6 +285,7 @@ export class ControlClient {
         controlRevision,
         reason,
         ...(items ? { items } : {}),
+        ...(reasonCode ? { reasonCode } : {}),
       },
       signal,
     );

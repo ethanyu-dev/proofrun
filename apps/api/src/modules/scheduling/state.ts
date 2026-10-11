@@ -160,10 +160,10 @@ export async function stopExecution(
     [context.id],
   );
   for (const row of commands.rows) {
-    await client.query('UPDATE pr_commands SET result=$2 WHERE id=$1', [
-      row.id,
-      syntheticResult(row.envelope, Boolean(row.first_sent_at), code),
-    ]);
+    await client.query(
+      'UPDATE pr_commands SET result=$2,completed_at=clock_timestamp() WHERE id=$1',
+      [row.id, syntheticResult(row.envelope, Boolean(row.first_sent_at), code)],
+    );
   }
   // 完全未尝试发送创建命令时，可以证明没有创建浏览器；传输不确定时不能走此路径。
   const launched = await client.query(

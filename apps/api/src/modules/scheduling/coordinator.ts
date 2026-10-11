@@ -1,3 +1,4 @@
+import { identitySummary } from '../identities/metrics.js';
 import { authorizePreparation } from '../identities/preparation.js';
 import { allocateIdentity } from '../identities/allocation.js';
 import { sessionBudgetMs } from '@proofrun/contracts';
@@ -510,6 +511,15 @@ export class Coordinator {
         task.definition,
       ),
       executions,
+      ...(task.definition.sessionPlan
+        ? {
+            identity: await identitySummary(
+              this.db,
+              id,
+              task.definition.sessionPlan,
+            ),
+          }
+        : {}),
       ...(task.definition.caseV2Definition
         ? {
             businessCleanup: cleanup
@@ -569,9 +579,62 @@ export class Coordinator {
           targetHostname(task.target.url),
         );
         if (task.sessionPlan && identityVersion !== 1) continue;
-        const allocated = await allocateIdentity(client, task, routedNode);
+        const allocationTask = task;
+        // 把尚未出现在心跳中的会话预留也计入，池内其他账号可改用空闲节点。
+        const identityReservations = task.sessionPlan?.candidates.length
+          ? (
+              await client.query<{ node_id: string; ids: string[] }>(
+                'SELECT node_id,array_agg(id) AS ids FROM pr_sessions WHERE NOT closure_verified AND node_id=ANY($1::text[]) GROUP BY node_id',
+                [live.map((c) => c.nodeId)],
+              )
+            ).rows
+          : [];
+        const identityNodeFree = (c: (typeof live)[number]) =>
+          new Set([
+            ...(identityReservations.find((r) => r.node_id === c.nodeId)?.ids ??
+              []),
+            ...c.heartbeat!.occupied.map((s) => s.sessionId),
+          ]).size < c.heartbeat!.capacity;
+        const compatibleIdentity = (
+          identity: NonNullable<
+            VerificationTask['sessionPlan']
+          >['candidates'][number],
+          requireCapacity = false,
+        ) =>
+          live.some(
+            (c) =>
+              (!routedNode || c.nodeId === routedNode) &&
+              (!identity.nodeId || c.nodeId === identity.nodeId) &&
+              (!requireCapacity || identityNodeFree(c)) &&
+              this.eligible(c.heartbeat!, {
+                ...allocationTask,
+                sessionPlan: {
+                  ...allocationTask.sessionPlan!,
+                  candidates: [identity],
+                },
+              }),
+          );
+        const eligibleIdentity = (
+          identity: NonNullable<
+            VerificationTask['sessionPlan']
+          >['candidates'][number],
+        ) => compatibleIdentity(identity, true);
+        const allocated = await allocateIdentity(client, task, routedNode, {
+          reserve: false,
+          eligible: eligibleIdentity,
+        });
         if (!allocated) {
-          await recordQueueReason(client, task.taskId, 'IDENTITY_BUSY');
+          await recordQueueReason(
+            client,
+            task.taskId,
+            task.sessionPlan?.candidates.some(eligibleIdentity)
+              ? 'IDENTITY_BUSY'
+              : task.sessionPlan?.candidates.some((identity) =>
+                    compatibleIdentity(identity),
+                  )
+                ? 'NODE_CAPACITY'
+                : 'IDENTITY_UNAVAILABLE',
+          );
           continue;
         }
         task = allocated;
@@ -694,6 +757,17 @@ export class Coordinator {
               503,
               'FENCE_EXHAUSTED',
               'Node fence counter exhausted',
+            );
+          // 确认节点可分配后才冻结候选；排队失败不会将整个账号池钉死在第一个账号。
+          const selectedIdentity = task.sessionPlan?.candidates[0];
+          if (selectedIdentity)
+            await client.query(
+              'INSERT INTO pr_identity_assignments(task_id,account_key,identity) VALUES($1,$2,$3) ON CONFLICT(task_id) DO NOTHING',
+              [
+                task.taskId,
+                selectedIdentity.accountKey,
+                JSON.stringify(selectedIdentity),
+              ],
             );
           const executionId = randomUUID();
           const token = newToken();
@@ -933,6 +1007,12 @@ export class Coordinator {
         'Worker cannot manage node leases or sessions directly',
       );
     const actor = token === null ? 'HUMAN' : 'AGENT';
+    if (actor === 'HUMAN' && operation.type === 'browser.identity.prepare')
+      throw new ApiError(
+        403,
+        'IDENTITY_PREPARATION_FORBIDDEN',
+        '自动登录准备仅由执行器在业务步骤前发起',
+      );
     if (
       ['browser.auth.save', 'browser.input', 'browser.cookies.set'].includes(
         operation.type,
@@ -1422,7 +1502,7 @@ export class Coordinator {
       row.kind === 'browser.observe',
     );
     await client.query(
-      'UPDATE pr_commands SET result=$2 WHERE id=$1 AND result IS NULL',
+      'UPDATE pr_commands SET result=$2,completed_at=clock_timestamp() WHERE id=$1 AND result IS NULL',
       [event.commandId, result],
     );
     if (
@@ -1573,14 +1653,17 @@ export class Coordinator {
           )
         ).rows[0];
         if (!command) return;
-        await client.query('UPDATE pr_commands SET result=$2 WHERE id=$1', [
-          command.id,
-          syntheticResult(
-            command.envelope,
-            Boolean(command.first_sent_at),
-            'DEADLINE_EXCEEDED',
-          ),
-        ]);
+        await client.query(
+          'UPDATE pr_commands SET result=$2,completed_at=clock_timestamp() WHERE id=$1',
+          [
+            command.id,
+            syntheticResult(
+              command.envelope,
+              Boolean(command.first_sent_at),
+              'DEADLINE_EXCEEDED',
+            ),
+          ],
+        );
         if (
           command.kind !== 'session.close' &&
           context.task_state === 'RUNNING' &&

@@ -516,3 +516,40 @@ test('报告展示每步用量，业务与清理分别汇总', () => {
   assert.match(cleaning, /清理独立预算/);
   assert.match(cleaning, /模型 2\/20/);
 });
+
+// 范围：静态报告展示本次实际身份及 Cookie 来源，不把自动准备成功等同业务验收；不验证浏览器交互。
+test('报告保留登录方式、身份准备及账号释放状态', () => {
+  const task = fixture();
+  task.identity = {
+    mode: 'pool',
+    identityRef: 'chosen-member',
+    label: '团队成员夹具',
+    leaseState: 'RELEASED',
+    preparation: {
+      status: 'READY',
+      source: 'cookies',
+      reasonCode: 'IDENTITY_VERIFIED',
+      durationMs: 2500,
+    },
+    humanRequests: 1,
+    humanCompleted: 1,
+    humanReasons: [{ reason: 'IDENTITY_CHECK_UNMET', count: 1 }],
+  };
+  const html = renderToStaticMarkup(
+    createElement(ReportDetails, { api, task }),
+  );
+  assert.match(html, /团队成员夹具/);
+  assert.match(html, /Cookie 登录/);
+  assert.match(html, /身份自动核验通过/);
+  assert.match(html, /已释放/);
+  assert.match(html, /本次观察与预期不同/);
+  const exported = renderToStaticMarkup(
+    createElement(ReportExport, {
+      report: task.report,
+      assessment: task,
+      close: () => {},
+    }),
+  );
+  assert.match(exported, /chosen-member/);
+  assert.match(exported, /cookies/);
+});

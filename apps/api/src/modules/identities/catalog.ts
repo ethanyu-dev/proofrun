@@ -142,6 +142,16 @@ export function validateCatalog(value: unknown): IdentityCatalog {
       typeof rule.hostname !== 'string' ||
       !/^(\*\.)?[a-zA-Z0-9.-]+$/.test(rule.hostname) ||
       !domainToASCII(rule.hostname.replace(/^\*\./, '')) ||
+      rule.hostname
+        .replace(/^\*\./, '')
+        .split('.')
+        .some(
+          (label) =>
+            !label ||
+            label.length > 63 ||
+            label.startsWith('-') ||
+            label.endsWith('-'),
+        ) ||
       (rule.pathPrefix !== undefined &&
         (!rule.pathPrefix.startsWith('/') || /[?#]/.test(rule.pathPrefix))) ||
       Number(!!rule.identityRef) + Number(!!rule.poolRef) !== 1 ||

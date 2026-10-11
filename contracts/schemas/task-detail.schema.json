@@ -227,6 +227,84 @@
         }
       ],
       "description": "最近一次领取检查发现的排队原因；成功领取后清空，取消或排队超时后保留。null 或缺失表示尚无诊断，不表示一定可执行。"
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": ["guest", "manual", "identity", "pool"]
+        },
+        "identityRef": {
+          "type": ["string", "null"]
+        },
+        "label": {
+          "type": ["string", "null"]
+        },
+        "leaseState": {
+          "enum": ["NOT_REQUIRED", "WAITING", "OCCUPIED", "RELEASED"]
+        },
+        "preparation": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "status": {
+              "enum": [
+                "NOT_REQUESTED",
+                "PENDING",
+                "READY",
+                "NEEDS_HUMAN",
+                "ERROR"
+              ]
+            },
+            "source": {
+              "enum": ["snapshot", "cookies", "password", "none"]
+            },
+            "reasonCode": {
+              "type": ["string", "null"]
+            },
+            "durationMs": {
+              "type": ["integer", "null"],
+              "minimum": 0
+            }
+          },
+          "required": ["status", "source", "reasonCode", "durationMs"]
+        },
+        "humanRequests": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "humanCompleted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "humanReasons": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "reason": {
+                "type": "string"
+              },
+              "count": {
+                "type": "integer"
+              }
+            },
+            "required": ["reason", "count"]
+          }
+        }
+      },
+      "required": [
+        "mode",
+        "identityRef",
+        "label",
+        "leaseState",
+        "preparation",
+        "humanRequests",
+        "humanCompleted",
+        "humanReasons"
+      ]
     }
   }
 }
