@@ -8,6 +8,18 @@
 
 模式：`guest` 使用干净 profile 且不保存认证；`manual` 使用任务私有槽；`identity` 指定身份；`pool` 使用 `poolRef` 分配账号池；`auto` 通过站点规则选择。自动规则按环境、节点池、精确主机/子域通配、路径边界匹配；冲突不会猜测账号。
 
+Web Console 主导航的「测试身份」（`#/identities`）提供以下配置来源：
+
+- **外部身份库**：填写元数据接口 URL 与 Bearer 令牌，验证连接后保存。已保存令牌留空保留，更新地址须重新填写。目录、账号池、站点规则由外部提供方维护，页面只读展示并支持手动刷新。
+- **在页面维护**：以表单添加和编辑身份、页面核验条件、账号池及站点规则，一次保存完整目录。可复制已读取的外部目录；修改不回写外部库。
+- **使用部署配置**：恢复服务启动时的文件/环境变量配置，页面配置不再覆盖它。
+
+页面配置优先于部署默认值。元数据与版本保存在 PostgreSQL；保存即时影响新 case 与重跑，已提交的 case 仍沿用冻结计划。后台统计刷新不覆盖编辑草稿，多人保存通过版本校验防止互相覆盖。验证连接只检查元数据协议，不执行网站登录。任务仍需指定 `session.mode` 为 `identity`、`pool` 或 `auto` 才会使用目录。
+
+页面写入的外部库令牌放在 API 私有目录：默认 `PROOFRUN_ARTIFACT_DIRECTORY/.identity-secrets`，可用 `PROOFRUN_IDENTITY_SECRET_DIRECTORY` 指定持久目录；目录权限 `0700`、文件 `0600`。数据库只存随机文件引用，接口只回显是否配置，不回传令牌或文件路径。该目录不注册为证据，也不属于证据清理范围。备份和迁移需同时保留数据库与私有目录；API 主备应挂载同一持久卷。令牌轮换或切换来源成功后删除被替换的文件，结果未知时保留文件并先重新读取配置核查。
+
+Web 管理的是外部元数据连接与身份目录。网站密码、Cookie 及 Browser Node 凭据提供方仍在节点私有配置中维护，表单只填写 `loginRef`；不会把密码或 Cookie 写入身份目录、任务或模型上下文。
+
 `PROOFRUN_IDENTITY_CATALOG_FILE` 指定平台元数据 JSON：
 
 ```json
@@ -89,6 +101,9 @@
 管理员接口（使用现有管理员 Bearer）：
 
 - `GET /v1/admin/identities`：元数据与来源。
+- `GET /v1/admin/identities/settings`：读取配置版本、来源、地址、令牌是否存在；即使外部服务不可用也可读取。
+- `POST /v1/admin/identities/settings`：保存带 `revision` 的配置。`mode=local` 携带 `catalog`，`mode=http` 携带 `url` 和可选更新 `token`，`mode=environment` 恢复部署默认值。未知字段、失效引用及过期版本被拒绝；外部连接验证失败不覆盖当前配置。
+- `POST /v1/admin/identities/test`：使用相同正文验证草稿；不保存、不创建任务、不执行网站登录。
 - `POST /v1/admin/identities/refresh`：刷新外部元数据，失败明确返回 `IDENTITY_PROVIDER_UNAVAILABLE`。
 - `GET /v1/admin/identities/metrics`：最近三十天各登录来源和准备结果、自动核验比例、人工原因分类、当前占用和等待数。比例分母为已有终态回执的准备命令；历史无结束时间的记录不伪造耗时。
 

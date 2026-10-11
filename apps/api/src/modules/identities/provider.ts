@@ -36,7 +36,7 @@ export function providerUrl(value: string): string {
   return url.href;
 }
 /** 秘密文件按每次请求读取以支持轮换，异常不包含文件内容。 */
-function token(path: string): string {
+export function readProviderToken(path: string): string {
   const meta = lstatSync(path);
   if (!meta.isFile() || meta.size > 8192 || (meta.mode & 0o077) !== 0)
     throw new Error('invalid private token');
@@ -52,7 +52,10 @@ export class HttpCatalogProvider {
   private pending: Promise<IdentityCatalog> | undefined;
   /** 已验证的固定地址，重定向不会变更它。 */
   private readonly url: string;
-  constructor(private readonly config: CatalogProviderConfig) {
+  constructor(
+    private readonly config:
+      CatalogProviderConfig | { url: string; readToken: () => string },
+  ) {
     this.url = providerUrl(config.url);
   }
   /** 并发提交共用一个请求；缓存失效时不会悄悄退回旧库。 */
@@ -70,7 +73,7 @@ export class HttpCatalogProvider {
     try {
       const response = await fetch(this.url, {
         headers: {
-          Authorization: `Bearer ${token(this.config.tokenFile)}`,
+          Authorization: `Bearer ${'tokenFile' in this.config ? readProviderToken(this.config.tokenFile) : this.config.readToken()}`,
           Accept: 'application/json',
         },
         redirect: 'error',

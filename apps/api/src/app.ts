@@ -1,5 +1,5 @@
 import { identityMetrics } from './modules/identities/metrics.js';
-import { HttpCatalogProvider } from './modules/identities/provider.js';
+import { IdentitySettings } from './modules/identities/settings.js';
 import Fastify, { type FastifyRequest } from 'fastify';
 import websocket from '@fastify/websocket';
 import type { Readable } from 'node:stream';
@@ -69,14 +69,12 @@ export async function buildApp(
     config.caseProfile,
     config.publicUrl,
   );
-  const identityProvider = config.identityProvider
-    ? new HttpCatalogProvider(config.identityProvider)
-    : undefined;
+  const identities = new IdentitySettings(db, config);
   const casesV2 = new CaseV2Service(
     coordinator,
     config.caseProfile,
     config.publicUrl,
-    identityProvider ? () => identityProvider.get() : config.identityCatalog,
+    () => identities.catalog(),
   );
   const control = new ExecutionControl(db, config.adminToken);
   const gateway = new NodeGateway(
@@ -102,23 +100,20 @@ export async function buildApp(
   app.get('/v1/admin/identities/metrics', { preHandler: admin }, () =>
     identityMetrics(db),
   );
-  app.get('/v1/admin/identities', { preHandler: admin }, async () => {
-    const catalog = identityProvider
-      ? await identityProvider.get()
-      : config.identityCatalog;
-    return {
-      source: identityProvider ? 'http' : 'local',
-      catalog: catalog ?? { identities: [], pools: [], sites: [] },
-    };
-  });
+  app.get('/v1/admin/identities/settings', { preHandler: admin }, () =>
+    identities.view(),
+  );
+  app.post('/v1/admin/identities/settings', { preHandler: admin }, (request) =>
+    identities.save(request.body),
+  );
+  app.post('/v1/admin/identities/test', { preHandler: admin }, (request) =>
+    identities.test(request.body),
+  );
+  app.get('/v1/admin/identities', { preHandler: admin }, () =>
+    identities.snapshot(),
+  );
   app.post('/v1/admin/identities/refresh', { preHandler: admin }, async () => {
-    if (!identityProvider)
-      throw new ApiError(
-        409,
-        'IDENTITY_PROVIDER_LOCAL',
-        '本地元数据文件在服务启动时读取',
-      );
-    const catalog = await identityProvider.get(true);
+    const catalog = await identities.catalog(true);
     return {
       identities: catalog.identities.length,
       pools: catalog.pools.length,

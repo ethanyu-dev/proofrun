@@ -23,6 +23,8 @@ export interface ApiConfig {
   identityCatalog?: IdentityCatalog;
   /** 外部元数据接口；配置与本地库二选一。 */
   identityProvider?: CatalogProviderConfig;
+  /** Web 写入令牌的持久私有目录；默认位于证据卷内的隐藏子目录，不注册为证据。 */
+  identitySecretDirectory?: string;
   /** 平台预配置的 case 执行环境；省略时不接收新 case。 */
   caseProfile?: CaseProfile;
   /** 独立 PostgreSQL 数据库地址。 */
@@ -128,6 +130,13 @@ export function loadConfig(): ApiConfig {
     identityCatalog: loadIdentityCatalog(
       process.env.PROOFRUN_IDENTITY_CATALOG_FILE,
     ),
+    ...(process.env.PROOFRUN_IDENTITY_SECRET_DIRECTORY
+      ? {
+          identitySecretDirectory: resolve(
+            process.env.PROOFRUN_IDENTITY_SECRET_DIRECTORY,
+          ),
+        }
+      : {}),
     databaseUrl,
     adminToken,
     workerToken,
