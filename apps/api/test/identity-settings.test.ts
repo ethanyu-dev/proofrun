@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import pg from 'pg';
 import { buildApp } from '../src/app.js';
 import type { ApiConfig } from '../src/config.js';
+import { until } from './fixture.js';
 
 /** 只供独立库和回环提供方使用的假凭据，不对应任何真实账号。 */
 const ADMIN = 'fixture-identity-settings-admin-token';
@@ -54,7 +55,9 @@ test('页面身份配置鉴权、热生效、版本冲突、连接验证及重�
   await adminDb.query(`CREATE DATABASE ${name}`);
   const dbUrl = new URL(process.env.PROOFRUN_TEST_DATABASE_URL);
   dbUrl.pathname = `/${name}`;
-  const queryDb = new pg.Pool({ connectionString: dbUrl.toString() });
+  // 单连接的 end 会等待 socket 关闭，避免辅助查询连接尚未断开就进入删库。
+  const queryDb = new pg.Client({ connectionString: dbUrl.toString() });
+  await queryDb.connect();
   const directory = await mkdtemp(join(tmpdir(), 'identity-settings-'));
   let providerBad = false;
   let calls = 0;
@@ -339,7 +342,20 @@ test('页面身份配置鉴权、热生效、版本冲突、连接验证及重�
     provider.closeAllConnections();
     await new Promise<void>((resolve) => provider.close(() => resolve()));
     await queryDb.end();
-    await adminDb.query(`DROP DATABASE ${name} WITH (FORCE)`);
+    // Pool.end 返回不代表服务端已处理全部断连；等待归零，且不强制删库掩盖连接泄漏。
+    await until(
+      async () =>
+        Number(
+          (
+            await adminDb.query(
+              'SELECT count(*) AS count FROM pg_stat_activity WHERE datname=$1',
+              [name],
+            )
+          ).rows[0].count,
+        ),
+      (count) => count === 0,
+    );
+    await adminDb.query(`DROP DATABASE ${name}`);
     await adminDb.end();
     await rm(directory, { recursive: true, force: true });
   }

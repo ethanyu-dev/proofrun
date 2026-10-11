@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { Database } from '../src/db.js';
 import { allocateIdentity } from '../src/modules/identities/allocation.js';
-import { task } from './fixture.js';
+import { task, until } from './fixture.js';
 import type { VerificationTask } from '@proofrun/contracts';
 
 // 范围：真实 PostgreSQL 并发分配、账号别名互斥、终态但未关闭的保留；浏览器及登录为夹具。
@@ -180,7 +180,20 @@ test('底层测试账号在并发领取与未确认关闭期间保持独占', as
     assert.equal(metrics.accounts[0]!.occupied, 1);
   } finally {
     await db.close();
-    await admin.query(`DROP DATABASE ${name} WITH (FORCE)`);
+    // Pool.end 返回不代表服务端已处理全部断连；等待归零，且不强制删库掩盖连接泄漏。
+    await until(
+      async () =>
+        Number(
+          (
+            await admin.query(
+              'SELECT count(*) AS count FROM pg_stat_activity WHERE datname=$1',
+              [name],
+            )
+          ).rows[0].count,
+        ),
+      (count) => count === 0,
+    );
+    await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   }
 });
