@@ -41,8 +41,8 @@ const catalog: IdentityCatalog = {
 };
 const env = { id: 'test', nodePool: 'test' };
 
-// 范围：新身份模式隔离历史站点槽；不启动 Chromium 或真实人工登录。
-test('访客不恢复状态，未指定身份的人工会话不共享账号槽', () => {
+// 范围：访客与明确关闭复用的人工会话隔离历史站点槽；不启动 Chromium 或真实人工登录。
+test('访客不恢复状态，关闭复用的人工会话不共享账号槽', () => {
   const base = task('one') as VerificationTask;
   base.environment.reuseAuth = true;
   base.sessionPlan = resolveSession(
@@ -58,6 +58,7 @@ test('访客不恢复状态，未指定身份的人工会话不共享账号槽',
     'https://example.test',
     env,
   );
+  base.environment.reuseAuth = false;
   const first = sessionAuth(base)!;
   assert.equal(first.restore, false);
   assert.notEqual(

@@ -246,6 +246,10 @@ export interface BlockVerification {
    * 具体缺失的前提或定义，交由上层修正；不改写标准。
    */
   summary: string;
+  /**
+   * 登录缺失或失效用 LOGIN_REQUIRED；账号角色、绑定或资格待确认用 IDENTITY_UNCONFIRMED；其余用 OTHER。平台在授权范围内先尝试一次人工交接，兼容旧回复省略此字段。
+   */
+  reasonCode?: 'LOGIN_REQUIRED' | 'IDENTITY_UNCONFIRMED' | 'OTHER';
 }
 export interface RequestHumanAssistance {
   type: 'verification.intervene';

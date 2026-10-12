@@ -4063,6 +4063,181 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       await cleaned(secondId);
     });
 
+    // 范围：v2 真实提交、节点偏好、双跑初始快照及 HITL 保存后恢复；节点保存回执为夹具，不证明真实 Cookie 或业务登录。
+    await suite.test('v2 登录复用贯通分配、人工保存和后续任务', async () => {
+      const previousProfile = structuredClone(config.caseProfile);
+      const node = await addNode('v2-auth-handoff', 2);
+      const other = await addNode('v2-auth-handoff', 2);
+      const input = {
+        caseId: 'v2-auth-first',
+        platform: '登录夹具',
+        entry: 'https://auth.example.test/referral',
+        steps: [
+          {
+            type: 'verification',
+            url: 'https://auth.example.test/referral',
+            exec_order: 1,
+            description: '使用团队子账号登录后检查页面',
+            policy: ['非团队所有者'],
+            expected: ['显示结果'],
+          },
+        ],
+        cleanup: [],
+      };
+      Object.assign(config.caseProfile, {
+        environment: {
+          id: 'fixture',
+          nodePool: node.pool,
+          reuseAuth: true,
+          allowIntervention: true,
+        },
+        executionMode: 'parallel',
+      });
+      try {
+        const legacy = {
+          ...task(node.pool),
+          target: { url: input.entry },
+          environment: { id: 'fixture', nodePool: node.pool, reuseAuth: true },
+        } as VerificationTask;
+        const slot = sessionAuth(legacy)!;
+        await sql.query(
+          'INSERT INTO pr_auth_bindings(scope,node_id) VALUES($1,$2)',
+          [slot.stateId, node.id],
+        );
+        const result = await api('POST', '/v2/cases', [input]);
+        assert.equal(result.status, 202);
+        const first = await until(
+          () => claim(true),
+          (value) => value !== null,
+        );
+        const second = await until(
+          () => claim(true),
+          (value) => value !== null,
+        );
+        await ready(first);
+        await ready(second);
+        assert.equal(first.nodeId, node.id);
+        assert.equal(second.nodeId, node.id);
+        assert.notEqual(first.sessionId, second.sessionId);
+        assert.equal(other.sessions.size, 0);
+        const sessions = await sql.query(
+          'SELECT auth_state FROM pr_sessions WHERE execution_id=ANY($1::text[])',
+          [[first.id, second.id]],
+        );
+        assert.deepEqual(
+          sessions.rows[0].auth_state,
+          sessions.rows[1].auth_state,
+        );
+        assert.equal(sessions.rows[0].auth_state.stateId, slot.stateId);
+        assert.equal(sessions.rows[0].auth_state.restore, true);
+        const worker = new SimulatedWorker(base, first);
+        let ws: WebSocket | undefined;
+        try {
+          const adminPath = `/v1/admin/executions/${first.id}`;
+          assert.equal(
+            (
+              await api('POST', `${adminPath}/intervene`, {
+                type: 'execution.intervene',
+                controlRevision: 0,
+                reason: '恢复团队子账号登录',
+                items: ['登录并确认非团队所有者'],
+              })
+            ).status,
+            200,
+          );
+          // 模拟 worker 安全检查点确认暂停，续租夹具不会替执行器自动交出控制权。
+          assert.equal(
+            (
+              await api(
+                'POST',
+                `/v1/executions/${first.id}/control`,
+                {
+                  type: 'execution.control',
+                  action: 'acknowledge',
+                  controlRevision: 1,
+                },
+                first.leaseToken,
+              )
+            ).status,
+            200,
+          );
+          const link = (await api('GET', `${adminPath}/intervention`)).data
+            .intervention;
+          const messages: any[] = [];
+          ws = new WebSocket(`${base.replace(/^http/, 'ws')}/v1/hitl/connect`, {
+            origin: base,
+          });
+          ws.on('message', (data) =>
+            messages.push(JSON.parse(data.toString())),
+          );
+          await new Promise<void>((resolve) => ws!.once('open', resolve));
+          ws.send(
+            JSON.stringify({
+              type: 'authenticate',
+              id: link.id,
+              token: link.path.split('/').at(-1),
+            }),
+          );
+          await until(
+            async () => messages,
+            (rows) => rows.some((m) => m.type === 'frame'),
+          );
+          ws.send(JSON.stringify({ type: 'complete' }));
+          await until(
+            async () =>
+              (
+                await api(
+                  'GET',
+                  `/v1/executions/${first.id}`,
+                  undefined,
+                  first.leaseToken,
+                )
+              ).data,
+            (view) => view.controlMode === 'AUTO' && view.controlRevision === 2,
+          );
+          const saved = await sql.query(
+            "SELECT result FROM pr_commands WHERE execution_id=$1 AND kind='browser.auth.save'",
+            [first.id],
+          );
+          assert.equal(saved.rows.length, 1);
+          assert.equal(saved.rows[0].result.data.saved, true);
+        } finally {
+          ws?.close();
+          worker.close();
+        }
+        await api('POST', `/v2/cases/${input.caseId}/cancel`);
+        for (const execution of [first, second])
+          await cleaned(execution.task.taskId);
+        assert.equal(
+          (
+            await api('POST', '/v2/cases', [
+              { ...input, caseId: 'v2-auth-next' },
+            ])
+          ).status,
+          202,
+        );
+        const next = await until(
+          () => claim(true),
+          (value) => value !== null,
+        );
+        await ready(next);
+        assert.equal(next.nodeId, node.id);
+        const opened = node.sessions.get(next.sessionId)!.command;
+        assert.equal(opened.type, 'session.open');
+        if (opened.type === 'session.open') {
+          assert.equal(opened.authState?.stateId, slot.stateId);
+          assert.notEqual(
+            opened.authState?.snapshotId,
+            sessions.rows[0].auth_state.snapshotId,
+          );
+        }
+        await api('POST', '/v2/cases/v2-auth-next/cancel');
+        await cleaned(next.task.taskId);
+      } finally {
+        Object.assign(config.caseProfile, previousProfile);
+      }
+    });
+
     // 范围：真实调度和数据库绑定、同轮两组初始快照身份、重跑沿用可用节点偏好；节点文件和登录由独立引擎测试覆盖。
     await suite.test('自动登录快照允许并行且重跑沿用节点偏好', async () => {
       const node = await addNode('auth-pair', 2);

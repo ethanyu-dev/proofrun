@@ -11,15 +11,26 @@ export function sessionAuth(task: VerificationTask): SessionAuth | null {
   if (task.sessionPlan) {
     if (task.sessionPlan.mode === 'guest') return null;
     const identity = task.sessionPlan.candidates[0];
-    // 未指定身份的人工登录只保存本次任务槽，不覆盖任何共享站点账号。
-    return {
-      stateId:
-        identity?.stateId ??
-        `identity-${digest(identity ? JSON.stringify([task.environment.id, identity.id, new URL(task.target.url).origin]) : task.taskId)}`,
-      restore: !!identity,
-      restoreIfPresent: true,
-      snapshotId: digest(task.comparison?.id ?? task.taskId),
-    };
+    if (identity)
+      return {
+        stateId:
+          identity.stateId ??
+          `identity-${digest(JSON.stringify([task.environment.id, identity.id, new URL(task.target.url).origin]))}`,
+        restore: true,
+        restoreIfPresent: true,
+        snapshotId: digest(task.comparison?.id ?? task.taskId),
+      };
+    // 未指定身份的 v2 沿用本站复用规则；明确关闭复用时仅保存本轮人工登录，不读写共享账号。
+    if (
+      !task.environment.auth &&
+      !(task.environment.reuseAuth ?? task.environment.allowIntervention)
+    )
+      return {
+        stateId: `identity-${digest(task.comparison?.id ?? task.taskId)}`,
+        restore: false,
+        restoreIfPresent: true,
+        snapshotId: digest(task.comparison?.id ?? task.taskId),
+      };
   }
   const auth = task.environment.auth;
   if (

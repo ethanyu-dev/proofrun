@@ -60,9 +60,10 @@ export async function authPlacement(
   const auth = sessionAuth(task);
   const placement: AuthPlacement = {
     auth,
-    requiredNode: task.sessionPlan
-      ? task.sessionPlan.candidates[0]?.nodeId
-      : task.environment.auth?.nodeId,
+    requiredNode:
+      task.sessionPlan && task.sessionPlan.mode !== 'manual'
+        ? task.sessionPlan.candidates[0]?.nodeId
+        : task.environment.auth?.nodeId,
   };
   if (
     routedNode &&

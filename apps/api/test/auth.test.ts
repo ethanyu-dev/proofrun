@@ -3,6 +3,10 @@ import test from 'node:test';
 import type { VerificationTask } from '@proofrun/contracts';
 import { sessionAuth } from '../src/modules/scheduling/auth.js';
 import { task } from './fixture.js';
+import {
+  compileCase,
+  expandCaseTasks,
+} from '../src/modules/cases/structured.js';
 
 // 范围：自动槽位按环境与站点稳定隔离、重跑换初始快照；不验证节点文件或真实登录。
 test('自动登录复用在同站点重跑间稳定，显式退出不创建槽位', () => {
@@ -44,4 +48,99 @@ test('命名登录状态允许两组读取同一初始快照', () => {
   assert.deepEqual(sessionAuth(llm), sessionAuth(jev));
   assert.equal(sessionAuth(llm)?.restoreIfPresent, false);
   assert.equal(sessionAuth(llm)?.stateId, 'account');
+});
+
+/** v2 默认会话也经过真实编译入口，避免仅对手工拼出的内部任务验证开关。 */
+function v2Task(caseId = 'auth-v2') {
+  return compileCase(
+    {
+      caseId,
+      platform: '登录夹具',
+      entry: 'https://example.test/referral',
+      steps: [
+        {
+          type: 'verification',
+          url: 'https://example.test/referral',
+          exec_order: 1,
+          description: '登录后查看页面',
+          policy: [],
+          expected: ['显示结果'],
+        },
+      ],
+      cleanup: [],
+    },
+    {
+      environment: { id: 'fixture', nodePool: 'fixture' },
+      budget: { maxActions: 10 },
+      evidenceKinds: ['DOM'],
+    },
+  );
+}
+
+// 范围：v2 编译、跨任务/旧版槽位复用、双跑快照与环境隔离；不读取真实 Cookie 文件。
+test('v2 默认 manual 会话复用本站槽位，两组共享初始快照', () => {
+  const first = v2Task();
+  const auth = sessionAuth(first)!;
+  assert.equal(first.sessionPlan!.mode, 'manual');
+  assert.equal(auth.restore, true);
+  assert.equal(auth.restoreIfPresent, true);
+  const { sessionPlan: _plan, ...legacy } = first;
+  assert.equal(sessionAuth(legacy)!.stateId, auth.stateId);
+  const second = v2Task('next');
+  assert.equal(sessionAuth(second)!.stateId, auth.stateId);
+  assert.notEqual(sessionAuth(second)!.snapshotId, auth.snapshotId);
+  const arms = expandCaseTasks(first);
+  assert.equal(arms.length, 2);
+  assert.deepEqual(sessionAuth(arms[0]!), sessionAuth(arms[1]!));
+  for (const change of [
+    { target: { url: 'https://other.test' } },
+    { environment: { ...first.environment, id: 'other' } },
+    { environment: { ...first.environment, nodePool: 'other' } },
+  ])
+    assert.notEqual(
+      sessionAuth({ ...first, ...change })!.stateId,
+      auth.stateId,
+    );
+});
+
+// 范围：访客、显式身份、显式登录槽和关闭复用的优先级；不证明账号角色或实际登录有效。
+test('v2 访客不恢复，指定账号不混用本站登录，关闭复用使用隔离槽', () => {
+  const original = v2Task();
+  const shared = sessionAuth(original)!;
+  const isolated = structuredClone(original);
+  isolated.environment.reuseAuth = false;
+  assert.equal(sessionAuth(isolated)!.restore, false);
+  assert.notEqual(sessionAuth(isolated)!.stateId, shared.stateId);
+  assert.notEqual(
+    sessionAuth({ ...isolated, taskId: 'other' })!.stateId,
+    sessionAuth(isolated)!.stateId,
+  );
+  const arms = expandCaseTasks(isolated);
+  assert.deepEqual(sessionAuth(arms[0]!), sessionAuth(arms[1]!));
+  for (const mode of ['identity', 'pool'] as const) {
+    const selected = structuredClone(original);
+    selected.sessionPlan!.mode = mode;
+    selected.sessionPlan!.candidates = [
+      {
+        id: 'team',
+        label: '团队账号',
+        accountKey: 'team',
+        origins: ['https://example.test'],
+        checks: [],
+        maxConcurrent: 1,
+        stateId: 'team-state',
+      },
+    ];
+    assert.equal(sessionAuth(selected)!.stateId, 'team-state');
+    assert.equal(sessionAuth(selected)!.restore, true);
+  }
+  original.environment.auth = {
+    nodeId: 'node',
+    stateId: 'named',
+    restore: true,
+  };
+  assert.equal(sessionAuth(original)!.stateId, 'named');
+  assert.equal(sessionAuth(original)!.restoreIfPresent, false);
+  original.sessionPlan!.mode = 'guest';
+  assert.equal(sessionAuth(original), null);
 });
