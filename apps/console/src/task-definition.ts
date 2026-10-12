@@ -28,6 +28,7 @@ const validateCaseBatch = ajv.compile<VerificationCaseV2[]>({
   maxItems: 32,
   items: { $ref: caseV2Schema.$id },
 });
+/** 粘贴入口只补齐身份和空约束，不推测业务预期；调用方须保留返回值供失败重试。 */
 export function parseCaseBatch(text: string): VerificationCaseV2[] {
   let value: unknown;
   try {
@@ -35,6 +36,31 @@ export function parseCaseBatch(text: string): VerificationCaseV2[] {
   } catch {
     throw new Error('case 数组不是有效 JSON。');
   }
+  if (Array.isArray(value))
+    value = value.map((item: unknown) => {
+      if (!isRecord(item)) return item;
+      return {
+        ...item,
+        ...(item.caseId === undefined
+          ? { caseId: `case-${crypto.randomUUID()}` }
+          : {}),
+        ...(Array.isArray(item.steps)
+          ? {
+              steps: item.steps.map((step: unknown) =>
+                isRecord(step)
+                  ? {
+                      ...step,
+                      ...(step.policy === undefined ? { policy: [] } : {}),
+                      ...(step.type === 'setup' && step.expected === undefined
+                        ? { expected: [] }
+                        : {}),
+                    }
+                  : step,
+              ),
+            }
+          : {}),
+      };
+    });
   if (!validateCaseBatch(value))
     throw new Error(
       `case 定义格式不正确：${validateCaseBatch.errors
@@ -45,6 +71,11 @@ export function parseCaseBatch(text: string): VerificationCaseV2[] {
   if (new Set(value.map((item) => item.caseId)).size !== value.length)
     throw new Error('同一批次的 caseId 不能重复。');
   return value;
+}
+
+/** 只归一化 JSON 对象；空值和数组继续交给共享 schema 拒绝。 */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 /** 表单与 JSON 共用一个任务对象；高级可选字段切换时完整保留。 */

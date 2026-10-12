@@ -18,7 +18,7 @@ Schema 与 OpenAPI 通过 `pnpm contracts:generate` 同步，`pnpm contracts:che
 
 ## 结构化 case v2
 
-新版沿用同一平台配置，默认同时创建纯 LLM 和 JEV+LLM 两组，每组均获得完整总预算和独立会话。省略 executionMode 或设置 parallel 开启双跑；显式 llm/jev 保留单组执行。旧 `/v1/cases` 继续单组执行，parallel 或省略模式时使用 llm。已有任务幂等重提不受默认值或部署配置变更影响。
+新版沿用同一平台配置，默认同时创建纯 LLM 和 JEV+LLM 两组，每组均获得完整总预算和独立会话。省略 executionMode 或设置 parallel 开启双跑；显式 llm/jev 保留单组执行。新 v2 的 environment.reuseAuth 和 environment.allowIntervention 省略时均为 true，默认复用本站登录状态并允许人工辅助；部署方显式设置 false 时保留关闭。显式 `session.mode: "guest"` 仍按访客会话执行，不恢复登录。旧 `/v1/cases` 继续单组执行，parallel 或省略模式时使用 llm。已有任务幂等重提不受默认值或部署配置变更影响。
 
 新 v2 在接收时冻结 `stepBudget.version = 1`，API 与 Agent 使用相同额度：
 
