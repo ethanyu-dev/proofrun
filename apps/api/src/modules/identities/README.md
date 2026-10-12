@@ -1,12 +1,12 @@
 # 测试身份
 
-新建 v2 case 可提供 `session`；省略时创建不恢复历史站点登录态的人工会话。历史任务没有 `sessionPlan`，继续使用原冻结规则。
+新建 v2 case 可提供 `session`；省略时创建 `manual` 会话；平台开启 `reuseAuth` 时恢复按环境、节点池和站点隔离的登录状态。历史任务没有 `sessionPlan`，继续使用原冻结规则。
 
 ```json
 { "session": { "mode": "identity", "identityRef": "team-member" } }
 ```
 
-模式：`guest` 使用干净 profile 且不保存认证；`manual` 使用任务私有槽；`identity` 指定身份；`pool` 使用 `poolRef` 分配账号池；`auto` 通过站点规则选择。自动规则按环境、节点池、精确主机/子域通配、路径边界匹配；冲突不会猜测账号。
+模式：`guest` 使用干净 profile 且不保存认证；`manual` 在开启登录复用时使用本站槽，明确关闭复用时仅保存本轮人工登录的私有槽；`identity` 指定身份；`pool` 使用 `poolRef` 分配账号池；`auto` 通过站点规则选择。自动规则按环境、节点池、精确主机/子域通配、路径边界匹配；冲突不会猜测账号。
 
 Web Console 主导航的「测试身份」（`#/identities`）提供以下配置来源：
 
@@ -114,3 +114,5 @@ Web 管理的是外部元数据连接与身份目录。网站密码、Cookie 及
 验证命令：`pnpm test:api`（需独立 `PROOFRUN_TEST_DATABASE_URL`）、`pnpm test:agent`、`pnpm test:console`、`cargo test --locked -p proofrun-node`。真实浏览器夹具使用 `PROOFRUN_AGENT_BROWSER_BIN`（固定 0.38.1 原生二进制）、`PROOFRUN_CHROME_BIN` 后运行 `pnpm test:identity:browser`；只验证回环站点的 Cookie、密码、快照、访客隔离与外部提供方协议，不代表生产账号已配置或真实网站验收通过。
 
 身份配置的正向条件应包含能唯一识别账号的页面标记，再追加团队及角色条件；仅有“已登录”或通用团队名称不能证明实际账号与 `accountKey` 一致。不能通过可靠页面标记确认的条件使用 `manual`，不推测角色。
+
+未指定身份的 v2 与旧内部任务使用同一本站登录槽。双跑共享初始快照和所属节点，后续浏览器会话独立；新一轮任务使用新的初始快照。恢复登录不证明账号角色符合当前 case，仍需检查页面或人工确认。

@@ -23,7 +23,11 @@ import { waitForEvidence } from '../evidence/delivery.js';
 import { AgentFault, pause, transient } from '../http.js';
 import { LeaseGuard } from './lease.js';
 import { Workflow } from './workflow.js';
-import { needsLoginIntervention, requiresLogin } from './login-intervention.js';
+import {
+  blockedLoginIntervention,
+  needsLoginIntervention,
+  requiresLogin,
+} from './login-intervention.js';
 import {
   decisionContext,
   rememberObservation,
@@ -965,10 +969,16 @@ class Execution {
         if (decision.type === 'verification.intervene') {
           if (!this.grant.task.environment.allowIntervention)
             return this.blocked(decision.reason, 'INTERVENTION_DISABLED');
+          const login = requiresLogin(this.grant.task, this.stepIndex);
+          if (login && this.loginInterventions.has(this.stepIndex))
+            return this.blocked(
+              '人工处理后登录条件仍未满足：' + decision.reason,
+              'MODEL_BLOCKED',
+            );
           await this.requestIntervention(
             decision.reason,
             decision.items,
-            requiresLogin(this.grant.task, this.stepIndex),
+            login,
           );
           errors = 0;
           continue;
@@ -1039,8 +1049,37 @@ class Execution {
           await this.captureTrace();
           return this.finish(decision);
         }
-        if (decision.type === 'verification.block')
+        if (decision.type === 'verification.block') {
+          if (
+            blockedLoginIntervention(
+              this.grant.task,
+              this.current!,
+              this.stepIndex,
+              decision,
+            )
+          ) {
+            if (!this.grant.task.environment.allowIntervention)
+              return this.blocked(decision.summary, 'INTERVENTION_DISABLED');
+            if (!this.loginInterventions.has(this.stepIndex)) {
+              if (decision.reasonCode === 'IDENTITY_UNCONFIRMED')
+                this.identityInterventions.add(this.stepIndex);
+              const step = this.grant.task.steps?.[this.stepIndex];
+              await this.requestIntervention(
+                decision.summary.slice(0, 1000),
+                [
+                  step?.description ?? this.grant.task.objective,
+                  ...(step?.policy ?? []),
+                ]
+                  .slice(0, 8)
+                  .map((item) => item.slice(0, 500)),
+                true,
+              );
+              errors = 0;
+              continue;
+            }
+          }
           return this.blocked(decision.summary, 'MODEL_BLOCKED');
+        }
         let operation: BrowserOperation;
         if (decision.type === 'browser.act')
           operation = this.operation(decision);
