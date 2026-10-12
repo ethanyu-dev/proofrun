@@ -122,6 +122,7 @@ export function IdentityCatalogSummary({
 const REASONS: Record<string, string> = {
   GENERAL: '其他人工介入',
   LOGIN_REQUIRED: '需要登录',
+  ENVIRONMENT_NOT_READY: '不符合验证环境',
   IDENTITY_CHECK_UNMET: '身份条件未满足',
   LOGIN_RECIPE_MISSING: '缺少登录配方',
   LOGIN_RECIPE_UNAVAILABLE: '登录配方不可用',

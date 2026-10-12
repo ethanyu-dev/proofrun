@@ -5,6 +5,8 @@ import { AgentFault } from '../http.js';
 const STEP_LINE = /^\s*(?:\d{1,2}[.、)]|[（(]\d{1,2}[)）])\s+(.+)$/u;
 /** 控制计划元数据长度，不能挤掉原始任务或变成无限恢复预算。 */
 const MAX_STEPS = 32;
+/** setup 描述与最多 32 条 policy 各自需要一份完成声明。 */
+const MAX_ASSESSMENTS = MAX_STEPS + 1;
 const MAX_NOTE = 600;
 const MAX_RECOVERY_ACTIONS = 6;
 /** 每步证据和检索词分别限额，完整原始任务仍由执行器保留。 */
@@ -72,7 +74,7 @@ export const WORKFLOW_SCHEMA = {
   properties: {
     assessments: {
       type: 'array',
-      maxItems: MAX_STEPS,
+      maxItems: MAX_ASSESSMENTS,
       items: {
         type: 'object',
         additionalProperties: false,
@@ -123,7 +125,12 @@ export class Workflow {
   private state: WorkflowView;
   /** 同一步重新评估不反复清空全局循环计数。 */
   private credited = new Set<string>();
-  constructor(objective: string, structuredStepId?: string) {
+  constructor(
+    objective: string,
+    structuredStepId?: string,
+    /** setup 逐条保留描述与约束，禁止用关键词猜测或遗漏身份要求。 */
+    private readonly preparation?: string[],
+  ) {
     const lines = objective.split('\n');
     const starts = lines.flatMap((line, index) =>
       STEP_LINE.test(line) ? [index] : [],
@@ -139,13 +146,18 @@ export class Workflow {
     );
     // 过长或非编号任务仍完整保留，由模型按原文执行，不机械截掉尾部要求。
     const requirements =
-      !structuredStepId && numbered.length > 1 && numbered.length <= MAX_STEPS
+      preparation ??
+      (!structuredStepId && numbered.length > 1 && numbered.length <= MAX_STEPS
         ? numbered
-        : [objective];
+        : [objective]);
     this.state = {
       steps: requirements.map((requirement, i) => ({
         // 结构化执行已经由上层拆步，不能再次编号或解析说明中的编号列表。
-        id: structuredStepId ?? `step-${i + 1}`,
+        id: structuredStepId
+          ? i === 0
+            ? structuredStepId
+            : `${structuredStepId}-policy-${i}`
+          : `step-${i + 1}`,
         requirement,
         status: 'pending',
         evidenceRefs: [],
@@ -183,7 +195,7 @@ export class Workflow {
     if (update.assessments !== undefined) {
       if (
         !Array.isArray(update.assessments) ||
-        update.assessments.length > MAX_STEPS
+        update.assessments.length > MAX_ASSESSMENTS
       )
         throw bad();
       const seen = new Set<string>();
@@ -309,18 +321,31 @@ export class Workflow {
   invalidateRecovery() {
     this.state.recovery = null;
   }
-  /** 单一自由文本任务沿用最终报告；明确多步骤任务必须分别留下执行证据。 */
+  /** 人工可能切换账号或环境；原完成声明失效，历史进展额度不重复发放。 */
+  invalidateAssessments() {
+    for (const step of this.state.steps) {
+      step.status = 'pending';
+      step.evidenceRefs = [];
+      delete step.summary;
+    }
+    this.state.activeStep = this.state.steps[0]?.id ?? null;
+    this.invalidateRecovery();
+  }
+  /** setup 必须逐条留证；任何单步显式未完成都不能被 finish 覆盖。 */
   assertFinish(decision: AgentDecision) {
     if (
       decision.type === 'verification.finish' &&
-      this.state.steps.length > 1 &&
-      this.state.steps.some((s) => s.status !== 'recorded')
+      this.state.steps.some((s) =>
+        this.preparation || this.state.steps.length > 1
+          ? s.status !== 'recorded'
+          : s.status === 'incomplete' || s.status === 'blocked',
+      )
     )
       throw new AgentFault(
         'WORKFLOW_INCOMPLETE',
         `原始任务仍有未完成步骤：${this.state.steps
           .filter((s) => s.status !== 'recorded')
-          .map((s) => s.id + '(' + s.status + ')')
+          .map((s) => `${s.id}(${s.status})：${s.summary ?? s.requirement}`)
           .join(
             '、',
           )}；请继续执行、重新进入已访问步骤补证据，或 verification_block，不能只按部分 criterionId 提前结束`,

@@ -79,3 +79,14 @@ test('终态与未分配会话不会误报人工等待', () => {
   queued.executions = [];
   assert.ok(!render(queued).includes('comparison-screen'));
 });
+
+// 范围：环境不符合独立展示，不冒充产品失败或残留人工等待；不覆盖真实浏览器和网络。
+test('准备不符合要求时展示不符合验证环境', () => {
+  const value = task('AUTO', 'COMPLETED');
+  value.report = {
+    executionDetails: { reasonCode: 'ENVIRONMENT_NOT_READY' },
+  } as TaskDetail['report'];
+  const html = render(value);
+  assert.ok(html.includes('不符合验证环境'));
+  assert.ok(!html.includes('等待人工处理'));
+});

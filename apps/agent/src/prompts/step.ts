@@ -24,7 +24,7 @@ export function stepObjective(
         (item) =>
           `前序异常：${item.stepId}（${item.status}）${item.summary.slice(0, 200)}`,
       ),
-    '前序步骤异常不代表当前步骤已失败或前置条件已满足。先根据当前页面核实本步必要条件；可独立执行则继续，必要条件缺失则只将本步标记 verification.block，不虚构执行或验收通过。',
+    '平台仅在 setup 准备通过后执行后续业务；前序业务验收异常不代表当前步骤失败。仍须核实本步必要条件，缺失则 verification.block，不虚构执行或验收通过。',
     ...(task.cleanupStepIds?.includes(step.stepId!)
       ? [
           '当前为业务清理阶段。只清理指定对象，不推测未提供的原值；前置操作可能未执行或部分完成，先确认对象现状。',

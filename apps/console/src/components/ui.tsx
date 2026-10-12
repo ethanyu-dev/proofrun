@@ -11,6 +11,7 @@ const LABELS: Record<string, string> = {
   ERROR: '执行错误',
   EXECUTED: '已执行验收',
   BLOCKED: '执行受阻',
+  ENVIRONMENT_NOT_READY: '不符合验证环境',
   PASSED: '验收通过',
   FAILED: '验收失败',
   INCONCLUSIVE: '证据不足',
@@ -34,9 +35,13 @@ export function Status({ value }: { value: string | null | undefined }) {
           ? 'success'
           : value === 'FAILED' || value === 'ERROR'
             ? 'danger'
-            : ['BLOCKED', 'QUARANTINED', 'TIMED_OUT', 'INCONCLUSIVE'].includes(
-                  value ?? '',
-                )
+            : [
+                  'BLOCKED',
+                  'ENVIRONMENT_NOT_READY',
+                  'QUARANTINED',
+                  'TIMED_OUT',
+                  'INCONCLUSIVE',
+                ].includes(value ?? '')
               ? 'warning'
               : 'neutral'
       }

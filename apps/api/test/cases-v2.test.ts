@@ -596,7 +596,7 @@ test('v2 重跑校验身份并沿用提交的冲突语义', async () => {
   assert.equal((await service.rerun(INPUT.caseId, 'fresh')).caseId, 'fresh');
 });
 
-// 范围：模式倍率、纯等待、平台硬上限及显式历史预算复现；不验证模型质量或节点能力。
+// 范围：模式倍率、等待后准备检查额度、平台硬上限及显式历史预算复现；不验证模型质量或节点能力。
 test('v2 新预算按步骤冻结，混合组请求加倍，超过上限直接拒绝', async () => {
   const arms = expandCaseTasks(
     compileCase(INPUT, { ...PROFILE, executionMode: 'parallel' }),
@@ -615,9 +615,9 @@ test('v2 新预算按步骤冻结，混合组请求加倍，超过上限直接�
   );
   assert.deepEqual(pureWait.stepBudget!.steps[0], {
     stepId: 'step-1',
-    timeoutMs: 120_000,
-    maxActions: 0,
-    maxModelCalls: 0,
+    timeoutMs: 390_000,
+    maxActions: 10,
+    maxModelCalls: 20,
   });
   assert.throws(
     () =>

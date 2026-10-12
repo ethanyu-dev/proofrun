@@ -67,6 +67,10 @@
             "type": ["string", "null"],
             "format": "date-time"
           },
+          "execution_reason_code": {
+            "type": ["string", "null"],
+            "description": "执行终态的稳定原因，用于区分环境不符合、执行故障与业务结论。"
+          },
           "execution_disposition": {
             "enum": ["EXECUTED", "BLOCKED", "ERROR", null]
           },

@@ -146,6 +146,23 @@ export class FakeControl {
 export function finish(context) {
   return {
     type: 'verification.finish',
+    ...(context.executionStep?.type === 'setup' && !context.cleanup
+      ? {
+          evidenceRefs: context.observation.artifactRefs.map(
+            (a) => a.artifactId,
+          ),
+          workflow: {
+            assessments: context.workflow.steps.map((step) => ({
+              stepId: step.id,
+              outcome: 'complete',
+              summary: '夹具声明准备条件已核实，不代表真实账号验证',
+              evidenceRefs: context.observation.artifactRefs.map(
+                (a) => a.artifactId,
+              ),
+            })),
+          },
+        }
+      : {}),
     summary: '夹具完成协议验证',
     criteria: context.task.acceptanceCriteria.map((c) => ({
       criterionId: c.id,

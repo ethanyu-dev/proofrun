@@ -10,7 +10,7 @@ export const STEP_LIMIT = {
 export const CLEANUP_LIMIT = { ...STEP_LIMIT, timeoutMs: 180_000 };
 /** 只供在途命令、证据交付和结果落库收尾，不能用于发起新的业务操作。 */
 export const STEP_SETTLE_MS = 120_000;
-/** 纯等待步骤只额外保留三十秒取证；无需模型判断。 */
+/** 非 setup 的纯等待只额外保留三十秒取证；setup 等待后仍须复核环境。 */
 export const WAIT_EVIDENCE_MS = 30_000;
 /** 硬上限约束整个会话；超过时应在提交阶段拒绝，不能截掉后续步骤额度。 */
 export const CASE_MAX_MS = 86_400_000;
@@ -34,13 +34,15 @@ export function compileStepBudget(
         stepId: step.stepId!,
         timeoutMs:
           (step.wait?.durationMs ?? 0) +
-          (step.wait && !step.expected.length
+          (step.wait && !step.expected.length && step.type !== 'setup'
             ? WAIT_EVIDENCE_MS
             : STEP_LIMIT.timeoutMs),
         maxActions:
-          step.wait && !step.expected.length ? 0 : STEP_LIMIT.maxActions,
+          step.wait && !step.expected.length && step.type !== 'setup'
+            ? 0
+            : STEP_LIMIT.maxActions,
         maxModelCalls:
-          step.wait && !step.expected.length
+          step.wait && !step.expected.length && step.type !== 'setup'
             ? 0
             : STEP_LIMIT.maxModelCalls * factor,
       })) as StepBudgetPlan['steps'],

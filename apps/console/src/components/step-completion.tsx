@@ -119,7 +119,14 @@ export function StepCompletion({
                           </td>
                           <td rowSpan={rows.length}>
                             <Status
-                              value={status === 'SKIPPED' ? '未执行' : status}
+                              value={
+                                status === 'SKIPPED'
+                                  ? '未执行'
+                                  : result?.reasonCode ===
+                                      'ENVIRONMENT_NOT_READY'
+                                    ? 'ENVIRONMENT_NOT_READY'
+                                    : status
+                              }
                             />
                             <BudgetUsage usage={result?.budgetUsage} />
                           </td>
