@@ -131,6 +131,9 @@ export class SimulatedNode {
   unknownWrite = false;
   /** 注入旧节点的只读 DOM 故障，验证控制面与 Agent 恢复，不模拟真实 CDP。 */
   domObservationFailures = 0;
+  /** 分别注入输入前拒绝与点击后未知效果，核实控制面不会混用两类恢复边界。 */
+  domActionPreparationFailures = 0;
+  domUnknownClick = false;
   /** 供 Agent 动作定位回归使用的可见目标，仅是协议夹具。 */
   observationTargets: { target: string; role: string; name: string }[] = [];
   /** 模拟节点临时调整可用容量，只影响协议心跳，不代表真实浏览器占用。 */
@@ -328,7 +331,13 @@ export class SimulatedNode {
         },
       ];
     const saveFailed = this.authSaveFailure && kind === 'browser.auth.save';
-    const unknown = this.unknownWrite && kind === 'browser.act';
+    const click =
+      operation.type === 'browser.act' && operation.action === 'click';
+    const preparationFailed = click && this.domActionPreparationFailures > 0;
+    if (preparationFailed) this.domActionPreparationFailures--;
+    const unknown =
+      (this.unknownWrite && kind === 'browser.act') ||
+      (click && this.domUnknownClick);
     const domFailed =
       kind === 'browser.observe' && this.domObservationFailures > 0;
     if (domFailed) this.domObservationFailures--;
@@ -336,25 +345,29 @@ export class SimulatedNode {
       ...identity,
       type: 'command.result',
       messageId: command.commandId,
-      operationStatus: saveFailed
-        ? 'FAILED'
-        : unknown || domFailed
-          ? 'UNKNOWN'
-          : 'SUCCEEDED',
-      effect: saveFailed
-        ? 'NOT_STARTED'
-        : unknown || domFailed
-          ? 'MAY_HAVE_HAPPENED'
-          : 'COMPLETED',
-      ...(domFailed
+      operationStatus:
+        saveFailed || preparationFailed
+          ? 'FAILED'
+          : unknown || domFailed
+            ? 'UNKNOWN'
+            : 'SUCCEEDED',
+      effect:
+        saveFailed || preparationFailed
+          ? 'NOT_STARTED'
+          : unknown || domFailed
+            ? 'MAY_HAVE_HAPPENED'
+            : 'COMPLETED',
+      ...(domFailed || preparationFailed || (click && this.domUnknownClick)
         ? {
             error: {
-              code: 'DOM_ENGINE_FAILED',
+              code: preparationFailed
+                ? 'DOM_ACTION_PRECONDITION_FAILED'
+                : 'DOM_ENGINE_FAILED',
               message: 'native DOM command failed',
             },
           }
         : {}),
-      data: domFailed ? {} : data,
+      data: domFailed || preparationFailed ? {} : data,
     };
     this.results.set(command.commandId, result);
     this.send(result);

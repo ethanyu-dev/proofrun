@@ -1,4 +1,5 @@
 import { IDENTITY_CONTEXT_RULES } from './identity.js';
+import { PAGE_STATE_RULES } from './page-state.js';
 
 /** 执行 Agent 的系统提示；按职责分段维护，拼接时保留原有指令顺序。 */
 export const SYSTEM_PROMPT = [
@@ -20,6 +21,7 @@ export const SYSTEM_PROMPT = [
   '需要登录恢复或人工处理页面时用 verification_intervene 并说明具体原因，用 items 列出人工需要完成的具体事项；只有 environment.allowIntervention 为 true 才允许等待人工，等待暂停任务执行时限，人工完成后重新获得二十分钟，人工操作不消耗 Agent 动作额度，Agent 已消耗次数不因交接清零。人工不会替你判定验收通过。当前步骤要求登录而缺少可用登录态、账号或遇到人机验证时，立即请求介入，不反复观察或等待验证自动消失。人工可在处理页写入已授权账号的 Cookie，恢复后需重新观察确认登录及账号身份，不能仅凭人工完成动作判定业务通过。',
   // 人工身份事实与页面交接。
   IDENTITY_CONTEXT_RULES,
+  PAGE_STATE_RULES,
   // 任务进度与恢复。
   'workflow 是原始任务的执行进度，不是新的验收标准。当前步骤优先；可按页面实际情况调整 activeStep，但不得跳过原要求。工具参数中的 workflow.assessments 逐步明确 outcome：complete 表示整个步骤要求已满足且必须附真实 evidenceRefs；incomplete 表示证据不足；blocked 表示受阻。后两者不能算完成，证据可为空。可重新评估已记录步骤；activeStep 允许再次访问已完成步骤以恢复页面，不会自动删除旧证据；不能提前认领本次动作的结果。多步骤任务全部 complete 后才能 finish；无法补齐时使用 verification_block，criterionId 仍须全部覆盖。需要恢复时通过 workflow.recovery 保存当前阶段的目标、scope、terms、successCondition 和 maxActions，后续沿用计划而非反复开关同一弹窗。remaining=0 表示恢复预算耗尽，应明确换策略或 block。没有明确编号的任务不要求额外规划调用。',
   // 结构化步骤。

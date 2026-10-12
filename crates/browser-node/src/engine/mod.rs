@@ -397,6 +397,7 @@ impl Engine {
                 let reference_snapshot = json!({"source":"agent-browser","text":reference_text.chars().take(REFERENCE_SNAPSHOT_CHARS).collect::<String>(),
                     "truncated":reference_text.chars().count()>REFERENCE_SNAPSHOT_CHARS,"refCount":snapshot["refs"].as_object().map_or(0, |refs|refs.len())});
                 let mut tabs = json!([]);
+                let mut documents = None;
                 if let Some(endpoint) = endpoint["cdpUrl"].as_str() {
                     let listed = self
                         .cli(vec!["tab".into(), "list".into()], remaining())
@@ -415,6 +416,7 @@ impl Engine {
                     targets = native["targets"].as_array().cloned().unwrap_or_default();
                     dom_truncated = native["truncated"] == true;
                     coverage = native["coverage"].clone();
+                    documents = Some(native["documents"].clone());
                     coverage["referenceSnapshot"] = json!({"source":"agent-browser","refCount":reference_snapshot["refCount"],"scope":"semantic snapshot; not filtered to viewport; diagnostic only"});
                     self.dom = Some(dom);
                     self.targets.clear();
@@ -427,6 +429,9 @@ impl Engine {
                     .collect();
                 self.observation = Some(id.clone());
                 let mut result = json!({"observationId":id,"url":url.get("url"),"title":title.get("title"),"text":text,"targets":targets,"atomic":false,"truncated":dom_truncated,"coverage":coverage,"tabs":tabs});
+                if let Some(documents) = documents {
+                    result["documents"] = documents;
+                }
                 result["referenceSnapshot"] = reference_snapshot;
                 if self.config.network_evidence {
                     let network = self

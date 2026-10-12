@@ -10,6 +10,7 @@
 - SQLite 命令去重、结果 outbox、重启恢复。未提交结果恢复为 UNKNOWN，不自动重放动作。
 - 固定 agent-browser 0.38.1 原生 CLI，观察、导航、点击、填写、按键、滚动和条件等待。
 - 对外返回绑定 observationId 的元素目标，CLI refs 留在适配层；支持在 open Shadow DOM 中查找文本条件。
+- 原生 DOM 观察同时返回各 frame 的 URL 和 HTML `lang`，与正文来自同一份快照。动作准备失败返回 `DOM_ACTION_PRECONDITION_FAILED / NOT_STARTED`；从焦点、选择事件或鼠标输入派发开始，未知结果保持关闭会话保护。CDP 诊断仅保留内部方法、阶段与数字错误码，不记录参数或浏览器错误原文。
 - PNG 截图落盘、SHA-256、额度限制、HTTP 上传重试；验证存储回执后才释放本地文件。
 
 API 已提供一次性配对、凭据签发、主动连接网关与证据存储。节点首次连接上报身份、节点池、容量和租约上限；控制面结合持久占用进行调度，接入步骤见 [API 说明](../../apps/api/README.md)。

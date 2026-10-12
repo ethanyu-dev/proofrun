@@ -6,7 +6,7 @@ import { canonical, digest, type CommandResult } from '../src/domain.js';
 import type { Database } from '../src/db.js';
 import type { ExecutionContext } from '../src/modules/scheduling/state.js';
 
-// 范围：以数据库端口夹具验证观察证据内容与摘要包含诊断信息；不证明真实 PostgreSQL 事务或文件上传。
+// 范围：以数据库端口夹具验证文档声明、观察诊断与摘要归档；不证明真实 PostgreSQL 事务或文件上传。
 test('DOM 证据保留采集缺口和原始语义快照，并参与摘要计算', async () => {
   let stored: unknown[] = [];
   const client = {
@@ -27,6 +27,14 @@ test('DOM 证据保留采集缺口和原始语义快照，并参与摘要计算'
       observationId: 'fixture-observation',
       text: '当前 DOM',
       targets: [],
+      documents: [
+        {
+          frameId: 'main',
+          url: 'https://fixture.invalid/',
+          lang: 'zh-CN',
+          isMainFrame: true,
+        },
+      ],
       coverage: {
         controls: {
           inspectionErrors: 1,
@@ -49,6 +57,7 @@ test('DOM 证据保留采集缺口和原始语义快照，并参与摘要计算'
   const output = await store.register(client, context, result, true);
   const content = stored[7] as Record<string, unknown>;
   assert.deepEqual(content.coverage, result.data!.coverage);
+  assert.deepEqual(content.documents, result.data!.documents);
   assert.deepEqual(content.referenceSnapshot, result.data!.referenceSnapshot);
   assert.equal(stored[5], digest(canonical(content)));
   assert.equal(
