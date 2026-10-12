@@ -6,7 +6,7 @@ use std::{path::PathBuf, time::Duration};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Parser)]
-#[command(version, about = "ProofRun remote browser node")]
+#[command(version = proofrun_node::version::VERSION, about = "ProofRun remote browser node")]
 /// 节点二进制的外部命令行入口。
 struct Cli {
     /// 可选 TOML 配置；未指定时使用 NodeConfig 默认值。
@@ -18,6 +18,8 @@ struct Cli {
 #[derive(Subcommand)]
 /// serve 与 doctor 为外部入口；session-host 仅由主服务内部启动。
 enum Action {
+    /// 输出当前二进制的编译身份，不读取配置、启动服务或探测浏览器。
+    BuildInfo,
     /// 使用一次性配对码文件注册机器身份，不将密钥放进命令行参数。
     Pair {
         #[arg(long)]
@@ -70,6 +72,13 @@ async fn main() -> Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
     let cli = Cli::parse();
+    if let Action::BuildInfo = cli.command {
+        println!(
+            "{}",
+            serde_json::to_string(&proofrun_node::version::current())?
+        );
+        return Ok(());
+    }
     if let Action::SessionHost { directory } = cli.command {
         return sessions::host::run(directory).await;
     }
@@ -154,7 +163,7 @@ async fn main() -> Result<()> {
         println!(
             "{}",
             serde_json::to_string_pretty(
-                &json!({"service":"proofrun-node","version":env!("CARGO_PKG_VERSION"),"dependencyChecksPassed":errors.is_empty(),"productionReady":false,"engineWritesVerified":false,"systemdLifecycleTested":false,"engineVersion":version,"errors":errors})
+                &json!({"service":"proofrun-node","version":proofrun_node::version::VERSION,"sourceCommit":proofrun_node::version::SOURCE_COMMIT,"dependencyChecksPassed":errors.is_empty(),"productionReady":false,"engineWritesVerified":false,"systemdLifecycleTested":false,"engineVersion":version,"errors":errors})
             )?
         );
         return Ok(());

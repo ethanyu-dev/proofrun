@@ -401,6 +401,10 @@ export interface TaskDetail {
      */
     control_revision: number;
     control_reason: string | null;
+    /**
+     * 分配会话时冻结的节点版本，升级后保留原值；历史记录未知时为 null。
+     */
+    node_runtime?: NodeRuntime | null;
   }[];
   /**
    * 证据内容已按保留策略清理；报告结论和身份仍保留。
@@ -765,6 +769,23 @@ export interface StepResult {
     evidenceRefs: string[];
     controlRevision?: number;
   }[];
+}
+/**
+ * 节点进程上报的编译身份；用于排查部署版本，不作为授权或能力判断依据。
+ */
+export interface NodeRuntime {
+  /**
+   * 完整 release 标签；开发构建带 dev 后缀，不冒充正式安装版本。
+   */
+  version: string;
+  /**
+   * 发布源码的完整提交 SHA；本地未注入时为 null。
+   */
+  sourceCommit: string | null;
+  /**
+   * 节点启动时核实的 agent-browser 固定版本。
+   */
+  engineVersion: string;
 }
 /**
  * 最近一次领取检查发现的排队原因；不包含节点身份或登录凭据，也不是业务验收结论。

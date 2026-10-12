@@ -948,6 +948,27 @@ summary {
   margin-top: 12px;
   font-size: 11px;
 }
+.node-runtime {
+  margin: 0 0 20px;
+}
+.node-runtime dt {
+  color: var(--color-muted);
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+.node-runtime dd {
+  margin: 0;
+}
+.node-version {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.node-version small {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
 .node-id > span {
   margin-right: 8px;
 }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { NodeEnrollment } from '../components/node-enrollment';
+import { NodeVersion } from '../components/node-version';
 import {
   NodeRoutingEditor,
   NodeRoutingSummary,
@@ -161,6 +162,16 @@ export function NodesPage({ api }: { api: ApiClient }) {
                   <span> ID </span>
                   {node.id}
                 </p>
+                <dl className="node-runtime">
+                  <dt>
+                    {node.online && !node.revoked_at
+                      ? '运行版本'
+                      : '最后上报版本'}
+                  </dt>
+                  <dd>
+                    <NodeVersion runtime={node.runtime} />
+                  </dd>
+                </dl>
                 <section className="node-capacity" aria-label="浏览器容量">
                   <dl className="node-capacity-facts">
                     <div>

@@ -142,6 +142,8 @@ function Arm({
           <p className="muted mono comparison-session">
             会话 {execution.session_id.slice(0, 8)} · 节点{' '}
             {execution.node_id.slice(0, 8)}
+            {' · '}
+            {execution.node_runtime?.version ?? '版本未上报'}
           </p>
           <RecentActions api={api} id={execution.id} />
         </>

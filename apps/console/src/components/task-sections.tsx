@@ -1,4 +1,5 @@
 import { TaskIdentity } from './task-identity';
+import { NodeVersion } from './node-version';
 import { useState } from 'react';
 import type { TaskDetail } from '@proofrun/contracts';
 import { ApiClient } from '../api';
@@ -97,6 +98,12 @@ export function TaskResources({ task }: { task: TaskDetail }) {
                 <div>
                   <dt>节点</dt>
                   <dd className="mono wrap">{execution.node_id}</dd>
+                </div>
+                <div>
+                  <dt>执行时节点版本</dt>
+                  <dd>
+                    <NodeVersion runtime={execution.node_runtime} />
+                  </dd>
                 </div>
                 <div>
                   <dt>执行进度</dt>

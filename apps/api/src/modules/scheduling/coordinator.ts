@@ -495,7 +495,7 @@ export class Coordinator {
     if (!task) throw new ApiError(404, 'TASK_MISSING', 'Task not found');
     const executions = (
       await this.db.query(
-        `SELECT e.id,e.worker_id,e.state,e.lease_expires_at,s.id AS session_id,s.node_id,
+        `SELECT e.id,e.worker_id,e.state,e.lease_expires_at,s.id AS session_id,s.node_id,s.node_runtime,
       s.state AS session_state,s.closure_verified,e.action_count,e.control_mode,e.control_revision,e.control_reason FROM pr_executions e JOIN pr_sessions s ON s.execution_id=e.id WHERE e.task_id=$1`,
         [id],
       )
@@ -806,8 +806,8 @@ export class Coordinator {
             [executionId, task.taskId, workerId, digest(token), leaseEnd],
           );
           await client.query(
-            `INSERT INTO pr_sessions(id,execution_id,node_id,node_epoch,lease_id,fence,state,last_renew_request,auth_state)
-            VALUES($1,$2,$3,$4,$5,$6,'OPENING',$7,$8)`,
+            `INSERT INTO pr_sessions(id,execution_id,node_id,node_epoch,lease_id,fence,state,last_renew_request,auth_state,node_runtime)
+            VALUES($1,$2,$3,$4,$5,$6,'OPENING',$7,$8,$9)`,
             [
               randomUUID(),
               executionId,
@@ -817,6 +817,8 @@ export class Coordinator {
               fence,
               heartbeat.leaseRequestId,
               auth,
+              // 冻结分配时的进程版本，后续升级或回退不改写该执行的诊断事实。
+              heartbeat.runtime ?? null,
             ],
           );
           const context = await executionContext(client, executionId);
@@ -1416,13 +1418,15 @@ export class Coordinator {
         );
     }
     await client.query(
-      'UPDATE pr_nodes SET node_epoch=$2,capacity=$3,capabilities=$4,inventory=$5,last_seen_at=clock_timestamp() WHERE id=$1',
+      'UPDATE pr_nodes SET node_epoch=$2,capacity=$3,capabilities=$4,inventory=$5,runtime=$6,last_seen_at=clock_timestamp() WHERE id=$1',
       [
         connection.nodeId,
         heartbeat.nodeEpoch,
         heartbeat.capacity,
         heartbeat.capabilities,
         JSON.stringify(heartbeat.occupied),
+        // 旧版进程不报版本时清空，避免降级后沿用上个进程的版本号。
+        heartbeat.runtime ?? null,
       ],
     );
     const sessions = await client.query(

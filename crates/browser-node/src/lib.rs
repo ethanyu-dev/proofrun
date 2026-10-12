@@ -11,6 +11,7 @@ pub mod process;
 pub mod protocol;
 pub mod sessions;
 pub mod store;
+pub mod version;
 
 pub mod live;
 pub mod maintenance;
