@@ -113,6 +113,7 @@ export class ObservationTracker {
     const fingerprint = JSON.stringify([
       page.url,
       normalize(page.text),
+      page.documents?.map(({ url, lang }) => [url, lang]),
       page.targets.map(targetState).sort(),
     ]);
     if (countProgress) {

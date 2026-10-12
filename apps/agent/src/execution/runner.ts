@@ -302,7 +302,15 @@ class Execution {
     )
       throw new AgentFault(
         'BROWSER_EFFECT_UNKNOWN',
-        '浏览器操作的效果不确定，未自动重放',
+        `浏览器操作的效果不确定，未自动重放${result.error?.code === 'DOM_ENGINE_FAILED' ? '（DOM_ENGINE_FAILED）' : ''}`,
+      );
+    if (
+      result.effect === 'NOT_STARTED' &&
+      result.error?.code === 'DOM_ACTION_PRECONDITION_FAILED'
+    )
+      throw new AgentFault(
+        'BROWSER_ACTION_PRECONDITION_FAILED',
+        '目标输入尚未派发，DOM 定位或命中检查失败；请重新观察并选择与当前步骤相关的目标',
       );
     if (result.operationStatus !== 'SUCCEEDED')
       throw new AgentFault(
@@ -1020,9 +1028,11 @@ class Execution {
         }
         if (
           error instanceof AgentFault &&
-          ['BROWSER_TARGET_OBSCURED', 'BROWSER_STALE_OBSERVATION'].includes(
-            error.code,
-          )
+          [
+            'BROWSER_TARGET_OBSCURED',
+            'BROWSER_STALE_OBSERVATION',
+            'BROWSER_ACTION_PRECONDITION_FAILED',
+          ].includes(error.code)
         ) {
           if (++obscured >= MAX_DECISION_ERRORS)
             return this.blocked(error.message, error.code);
@@ -1269,9 +1279,7 @@ class Execution {
           (!stopped || report.executionDisposition === 'ERROR')
         )
           stopped = report;
-        if (!this.guard.signal.aborted)
-          await this.client.recordSteps(this.grant, this.stepResults);
-        // 清理自身失败后不继续可能依赖它的清理，也不自动重放写入。
+        // 未知效果已使控制面撤权，先保留原始故障；最终报告阶段再尽力保存步骤，避免 409 覆盖根因。
         if (
           cleanupIds.has(step.stepId!) ||
           this.guard.signal.aborted ||
@@ -1283,6 +1291,8 @@ class Execution {
           ].includes(report.executionDetails?.reasonCode ?? '')
         )
           break;
+        if (!this.guard.signal.aborted)
+          await this.client.recordSteps(this.grant, this.stepResults);
         continue;
       }
       state.status = 'COMPLETED';

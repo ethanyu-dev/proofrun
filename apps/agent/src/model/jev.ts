@@ -156,7 +156,7 @@ export class JevModel implements DecisionModel {
     };
     const reason =
       typeof context.feedback === 'string' &&
-      /^(WORKFLOW_|BROWSER_TARGET_OBSCURED:|BROWSER_STALE_OBSERVATION:)/u.test(
+      /^(WORKFLOW_|BROWSER_TARGET_OBSCURED:|BROWSER_STALE_OBSERVATION:|BROWSER_ACTION_PRECONDITION_FAILED:)/u.test(
         context.feedback,
       )
         ? '执行器反馈步骤缺口、预算耗尽或动作目标失效；请核对当前状态并改变恢复策略，无法继续时 verification.block'

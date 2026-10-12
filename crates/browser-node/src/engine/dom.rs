@@ -7,6 +7,10 @@ use std::collections::{HashMap, HashSet};
 use tokio::net::TcpStream;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, tungstenite::Message};
 
+#[cfg(test)]
+#[path = "dom_tests.rs"]
+mod regression_tests;
+
 /// 一次观察的正文和元素上限；裁剪必须显式返回，不能据缺失内容判失败。
 const TEXT_LIMIT: usize = 200_000;
 const TARGET_LIMIT: usize = 2000;
@@ -46,6 +50,8 @@ const CONTROL_ROLES: &[&str] = &[
 ];
 /// 原生选项与字符串限制单独报告，不能静默宣称选项已读完。
 const OPTION_LIMIT: usize = 200;
+/// lang 仅是页面声明，不推断正文语言；异常长的声明按未知处理。
+const LANGUAGE_CHARS: usize = 128;
 
 /// 原生节点引用包含渲染进程会话；跨域 iframe 的 backend ID 不与主文档混用。
 #[derive(Clone)]
@@ -107,23 +113,28 @@ impl Dom {
         self.socket
             .send(Message::Text(command.to_string().into()))
             .await
-            .map_err(|_| fault())?;
+            .map_err(|_| cdp_fault(method, "send", None))?;
         while let Some(message) = self.socket.next().await {
-            let message = message.map_err(|_| fault())?;
+            let message = message.map_err(|_| cdp_fault(method, "receive", None))?;
             if let Message::Text(text) = message {
-                let value: Value = serde_json::from_str(&text).map_err(|_| fault())?;
+                let value: Value =
+                    serde_json::from_str(&text).map_err(|_| cdp_fault(method, "decode", None))?;
                 if value["method"] == "Tracing.tracingComplete" {
                     self.trace_complete = Some(value["params"].clone());
                 }
                 if value["id"] == id {
                     if value.get("error").is_some() {
-                        return Err(fault());
+                        return Err(cdp_fault(
+                            method,
+                            "protocol",
+                            value["error"]["code"].as_i64(),
+                        ));
                     }
                     return Ok(value["result"].clone());
                 }
             }
         }
-        Err(fault())
+        Err(cdp_fault(method, "closed", None))
     }
     /// 登录相关脚本固定在节点代码中，敏感参数只走 CDP arguments，不进入 CLI。
     async fn identity_call(
@@ -331,6 +342,10 @@ impl Dom {
         let tree = self
             .call(Some(&main), "Page.getFrameTree", json!({}))
             .await?;
+        let main_frame = tree["frameTree"]["frame"]["id"]
+            .as_str()
+            .ok_or_else(fault)?
+            .to_owned();
         let mut frames = HashSet::new();
         collect_frames(&tree["frameTree"], &mut frames);
         let targets = self.call(None, "Target.getTargets", json!({})).await?;
@@ -370,6 +385,7 @@ impl Dom {
             }
         }
         let mut text = String::new();
+        let mut documents = Vec::new();
         let mut descriptors = Vec::new();
         let mut descriptor_bytes = 0;
         let mut truncated = false;
@@ -402,6 +418,10 @@ impl Dom {
                 if selected_frame.is_some_and(|frame| string(&doc["frameId"]) != frame) {
                     continue;
                 }
+                // 与正文使用同一份原生快照，区分不同 frame 的声明，避免从翻译后的文字猜测 lang。
+                documents.push(json!({"frameId":string(&doc["frameId"]),
+                    "isMainFrame":string(&doc["frameId"]) == main_frame,
+                    "url":string(&doc["documentURL"]),"lang":document_language(doc, strings)}));
                 push_bounded(
                     &mut text,
                     &format!("\n[document {}]\n", string(&doc["documentURL"])),
@@ -730,7 +750,7 @@ impl Dom {
             }
         }
         Ok(
-            json!({"text":text,"targets":descriptors,"truncated":truncated || omitted_controls > 0 || options_omitted > 0 || inspection_errors > 0,"source":"native-dom",
+            json!({"text":text,"targets":descriptors,"documents":documents,"truncated":truncated || omitted_controls > 0 || options_omitted > 0 || inspection_errors > 0,"source":"native-dom",
             "coverage":{"text":{"scope":"rendered DOM","truncated":truncated},
                 "controls":{"scope":"frame viewport","total":controls_total,"returned":descriptors.len(),"omitted":omitted_controls,"outsideViewportOrHidden":offscreen,"excludedReasons":excluded_reasons,"inspectionErrors":inspection_errors,"inspectionErrorSamples":inspection_error_samples,"delegatedContainers":delegated_containers,"inspectionWorld":"isolated","parentFrameClipping":"same-origin verified; cross-origin unknown"},
                 "options":{"omitted":options_omitted},"unrendered":"未知；未展开或虚拟列表未加载内容不在本次 DOM 中"}}),
@@ -893,6 +913,26 @@ impl Dom {
     }
     /// 每次操作再次核实真实节点仍连接；不能按同名、相同位置或新 DOM 节点自动替换。
     pub async fn act(&mut self, target: &str, action: &str, value: Option<&str>) -> Result<()> {
+        let mut input_started = false;
+        self.act_inner(target, action, value, &mut input_started)
+            .await
+            .map_err(|error| {
+                if !input_started && error.code == "DOM_ENGINE_FAILED" {
+                    // 定位/命中检查失败时尚未派发目标输入，允许重取观察；不复用本次元素身份。
+                    Fault::rejected("DOM_ACTION_PRECONDITION_FAILED", error.message)
+                } else {
+                    error
+                }
+            })
+    }
+    /// 在可能触发页面监听器的首个请求之前标记输入开始，回复丢失也不能降级成可重试。
+    async fn act_inner(
+        &mut self,
+        target: &str,
+        action: &str,
+        value: Option<&str>,
+        input_started: &mut bool,
+    ) -> Result<()> {
         let target = self
             .targets
             .get(target)
@@ -934,7 +974,11 @@ impl Dom {
                     "select requires a native select; click a custom dropdown and observe its options",
                 ));
             }
+            *input_started = true;
             let result=self.call(Some(&target.session),"Runtime.callFunctionOn",json!({"objectId":object_id,"functionDeclaration":"function(value){const option=Array.from(this.options).find(o=>o.value===value||o.label===value);if(!option)return false;this.value=option.value;this.dispatchEvent(new Event('input',{bubbles:true}));this.dispatchEvent(new Event('change',{bubbles:true}));return true}","arguments":[{"value":value.unwrap_or("")}],"returnByValue":true})).await?;
+            if result.get("exceptionDetails").is_some() {
+                return Err(cdp_fault("Runtime.callFunctionOn", "exception", None));
+            }
             if result["result"]["value"] != true {
                 return Err(Fault::rejected(
                     "INVALID_TARGET",
@@ -943,14 +987,15 @@ impl Dom {
             }
             return Ok(());
         }
-        self.call(
-            Some(&target.session),
-            "DOM.scrollIntoViewIfNeeded",
-            json!({"objectId":object_id}),
-        )
-        .await?;
+        // 目标已经通过视口可见检查，不在准备阶段隐式滚动页面；滚动监听器也可能改变业务状态。
+        // 部分可见目标使用探针的可见区域，离屏目标由 Agent 显式滚动并重新观察。
         if ["fill", "type"].contains(&action) {
+            // focus 本身会触发监听器，因此不能等到 insertText 才标记副作用边界。
+            *input_started = true;
             let ready = self.call(Some(&target.session),"Runtime.callFunctionOn",json!({"objectId":object_id,"functionDeclaration":"function(){if(this.readOnly||(!this.isContentEditable&&!['input','textarea'].includes(this.localName)))return false;this.focus();return true}","returnByValue":true})).await?;
+            if ready.get("exceptionDetails").is_some() {
+                return Err(cdp_fault("Runtime.callFunctionOn", "exception", None));
+            }
             if ready["result"]["value"] != true {
                 return Err(Fault::rejected("INVALID_TARGET", "target is not editable"));
             }
@@ -983,10 +1028,11 @@ impl Dom {
                 .ok_or_else(|| {
                     Fault::rejected("TARGET_OBSCURED", "target has no visible bounds")
                 })?;
-            let x =
-                (quad[0].as_f64().ok_or_else(fault)? + quad[4].as_f64().ok_or_else(fault)?) / 2.0;
-            let y =
-                (quad[1].as_f64().ok_or_else(fault)? + quad[5].as_f64().ok_or_else(fault)?) / 2.0;
+            let px = state["point"]["x"].as_f64().ok_or_else(fault)?;
+            let py = state["point"]["y"].as_f64().ok_or_else(fault)?;
+            let q = |index: usize| quad[index].as_f64().ok_or_else(fault);
+            let x = q(0)? + px * (q(2)? - q(0)?) + py * (q(6)? - q(0)?);
+            let y = q(1)? + px * (q(3)? - q(1)?) + py * (q(7)? - q(1)?);
             // 在输入派发前核实遮挡；跨 shadow host 以 composed ancestors 判断目标关系。
             let hit = self
                 .call(
@@ -1009,6 +1055,7 @@ impl Dom {
                     "DOM target is covered; observe before choosing another action",
                 ));
             }
+            *input_started = true;
             self.call(
                 Some(&target.session),
                 "Input.dispatchMouseEvent",
@@ -1062,6 +1109,38 @@ fn collect_frames(tree: &Value, frames: &mut HashSet<String>) {
 /// CDP 传输失败可能发生于输入派发之后，默认保留未知效果，绝不重试输入。
 fn fault() -> Fault {
     Fault::unknown("DOM_ENGINE_FAILED", "native DOM command failed")
+}
+
+/// 只保留内部方法名、传输阶段和数字错误码，不透传可能夹带页面内容或凭据的 CDP 原文。
+fn cdp_fault(method: &str, stage: &str, code: Option<i64>) -> Fault {
+    Fault::unknown(
+        "DOM_ENGINE_FAILED",
+        format!(
+            "CDP {method} {stage}{}",
+            code.map(|c| format!(" ({c})")).unwrap_or_default()
+        ),
+    )
+}
+
+/// 空字符串表示 HTML 未声明 lang；缺少 HTML 节点或属性格式损坏时返回未知。
+fn document_language(doc: &Value, strings: &[Value]) -> Option<String> {
+    let string = |value: &Value| strings.get(value.as_u64()? as usize)?.as_str();
+    let nodes = &doc["nodes"];
+    let index = nodes["nodeName"]
+        .as_array()?
+        .iter()
+        .position(|name| string(name) == Some("HTML"))?;
+    let attributes = nodes["attributes"][index].as_array()?;
+    if attributes.len() % 2 != 0 {
+        return None;
+    }
+    for pair in attributes.as_chunks::<2>().0 {
+        if string(&pair[0])? == "lang" {
+            let value = string(&pair[1])?;
+            return (value.chars().count() <= LANGUAGE_CHARS).then(|| value.to_owned());
+        }
+    }
+    Some(String::new())
 }
 
 /// 保留每个 document/shadow root 的真实 backend 身份，并按所属 frame 过滤。

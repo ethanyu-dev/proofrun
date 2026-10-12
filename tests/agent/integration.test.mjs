@@ -17,6 +17,7 @@ import {
 import { ControlClient } from '../../apps/agent/dist/client.js';
 import { ChatModel } from '../../apps/agent/dist/model/chat.js';
 import { execute } from '../../apps/agent/dist/execution/runner.js';
+import { compileStepBudget } from '../../contracts/dist/index.js';
 import { pause } from '../../apps/agent/dist/http.js';
 import { config as agentConfig, finish, modelServer } from './fixture.mjs';
 
@@ -48,14 +49,15 @@ test(
     const port = holder.address().port;
     await new Promise((resolve) => holder.close(resolve));
     const base = `http://127.0.0.1:${port}`;
+    const caseProfile = {
+      environment: { id: 'v2-fixture', nodePool: 'v2-agent' },
+      budget: { timeoutMs: 15000, maxActions: 20 },
+      executionMode: 'llm',
+      evidenceKinds: ['DOM'],
+    };
     const app = await buildApp(
       {
-        caseProfile: {
-          environment: { id: 'v2-fixture', nodePool: 'v2-agent' },
-          budget: { timeoutMs: 15000, maxActions: 20 },
-          executionMode: 'llm',
-          evidenceKinds: ['DOM'],
-        },
+        caseProfile,
         databaseUrl: url.toString(),
         adminToken: ADMIN,
         workerToken: WORKER,
@@ -117,12 +119,16 @@ test(
         thinking,
         beforeComplete,
         observeFailuresAfterClick = 0,
+        preparationFailures = 0,
+        unknownClick = false,
       } = {},
     ) => {
       const node = new SimulatedNode(base, definition.environment.nodePool);
       nodes.push(node);
       node.unknownWrite = unknown;
-      if (observeFailuresAfterClick)
+      node.domActionPreparationFailures = preparationFailures;
+      node.domUnknownClick = unknownClick;
+      if (observeFailuresAfterClick || preparationFailures || unknownClick)
         node.observationTargets = [
           { target: 'element-1', role: 'button', name: '提交' },
         ];
@@ -168,7 +174,28 @@ test(
         async () => (await api('GET', '/v1/nodes')).nodes,
         (rows) => rows.some((n) => n.id === node.id && n.online),
       );
-      await api('POST', '/v1/tasks', definition);
+      if (definition.steps) {
+        // 用公开 case 入口冻结定义；仅在串行夹具提交期间选择独立节点池，避免其他用例节点接走故障任务。
+        const previousPool = caseProfile.environment.nodePool;
+        try {
+          caseProfile.environment.nodePool = definition.environment.nodePool;
+          await api('POST', '/v2/cases', [
+            {
+              caseId: definition.taskId.replace(/^case-v2-/, ''),
+              platform: 'DOM 恢复协议夹具',
+              entry: definition.target.url,
+              steps: definition.steps.filter(
+                (s) => !definition.cleanupStepIds.includes(s.stepId),
+              ),
+              cleanup: definition.steps
+                .filter((s) => definition.cleanupStepIds.includes(s.stepId))
+                .map(({ type: _type, ...step }) => step),
+            },
+          ]);
+        } finally {
+          caseProfile.environment.nodePool = previousPool;
+        }
+      } else await api('POST', '/v1/tasks', definition);
       const server = await modelServer((...args) =>
         decide(...args, { execution, client }),
       );
@@ -212,6 +239,93 @@ test(
       }
     };
     try {
+      /** 故障步骤之后保留独立业务与清理，验证真实步骤持久化和终态归档。 */
+      const structured = (pool) => {
+        const definition = task(pool);
+        definition.taskId = `case-v2-${pool}`;
+        definition.steps = [1, 2, 3].map((index) => ({
+          stepId: `step-${index}`,
+          type: index === 3 ? 'setup' : 'verification',
+          url: definition.target.url,
+          exec_order: index,
+          description: `夹具步骤 ${index}`,
+          policy: [],
+          expected: index === 3 ? [] : ['页面可观察'],
+        }));
+        definition.cleanupStepIds = ['step-3'];
+        definition.acceptanceCriteria = definition.steps.flatMap((step) =>
+          step.expected.map((expectedResult) => ({
+            id: `${step.stepId}-expected-1`,
+            stepId: step.stepId,
+            description: step.description,
+            expectedResult,
+            evidenceKinds: ['DOM'],
+          })),
+        );
+        definition.stepBudget = compileStepBudget(definition);
+        return definition;
+      };
+      // 范围：真实控制面、数据库与 Agent 保留 NOT_STARTED 会话并推进后续步骤；浏览器与模型仍为协议夹具。
+      await suite.test('点击准备故障耗尽后仍完成后续业务和清理', async () => {
+        const { report, stored, node } = await run(
+          structured('dom-preparation'),
+          (context) =>
+            context.executionStep.stepId === 'step-1'
+              ? { type: 'browser.act', action: 'click', target: 'element-1' }
+              : {
+                  ...finish(context),
+                  evidenceRefs: context.observation.artifactRefs.map(
+                    (a) => a.artifactId,
+                  ),
+                },
+          { preparationFailures: 3 },
+        );
+        assert.equal(stored.state, 'COMPLETED');
+        assert.deepEqual(
+          report.steps.map((s) => s.status),
+          ['BLOCKED', 'COMPLETED', 'COMPLETED'],
+        );
+        assert.equal(
+          report.executionDetails.reasonCode,
+          'BROWSER_ACTION_PRECONDITION_FAILED',
+        );
+        assert.equal(
+          [...node.results.values()].filter(
+            (r) => r.error?.code === 'DOM_ACTION_PRECONDITION_FAILED',
+          ).length,
+          3,
+        );
+      });
+      // 范围：真实撤权与步骤保存竞争不抹掉 DOM 根因或已验收项目；不证明生产浏览器具体故障已复现。
+      await suite.test(
+        '结构化任务未知点击后的 409 不覆盖原始错误',
+        async () => {
+          const { report, stored } = await run(
+            structured('dom-unknown-step'),
+            (context) =>
+              context.executionStep.stepId === 'step-2'
+                ? { type: 'browser.act', action: 'click', target: 'element-1' }
+                : finish(context),
+            { unknownClick: true },
+          );
+          assert.equal(stored.state, 'ERROR');
+          assert.equal(stored.error.code, 'DOM_ENGINE_FAILED');
+          assert.equal(
+            report.executionDetails.reasonCode,
+            'BROWSER_EFFECT_UNKNOWN',
+          );
+          assert.match(report.summary, /DOM_ENGINE_FAILED/);
+          assert.doesNotMatch(report.summary, /HTTP 409/);
+          assert.deepEqual(
+            report.steps.map((s) => s.status),
+            ['COMPLETED', 'ERROR', 'SKIPPED'],
+          );
+          assert.deepEqual(
+            stored.report.criteria.map((c) => c.verdict),
+            ['PASSED', 'SKIPPED'],
+          );
+        },
+      );
       // 范围：真实 Agent/API/PostgreSQL 贯通 DOM 故障恢复；节点与模型为夹具，不代表真实站点通过。
       await suite.test(
         '点击后 DOM 故障可补采，控制面保留执行直到报告交付',

@@ -48,6 +48,13 @@ export interface Observation {
   url: string;
   title: string;
   text: string;
+  /** 与正文同批采集的各 frame 文档；lang 为空表示未声明，null 表示读取未知，旧节点可缺省。 */
+  documents?: Array<{
+    frameId: string;
+    url: string;
+    lang: string | null;
+    isMainFrame?: boolean;
+  }>;
   /** 目标只在该次观察范围内有效。 */
   targets: ObservedTarget[];
   /** DOM 和图片不是同一原子快照，模型必须知道采集限制。 */
@@ -76,6 +83,17 @@ export function observation(result: CommandResult): Observation {
     typeof data.text !== 'string' ||
     typeof data.url !== 'string' ||
     typeof data.title !== 'string' ||
+    (data.documents !== undefined &&
+      (!Array.isArray(data.documents) ||
+        data.documents.some(
+          (document) =>
+            !document ||
+            typeof document.frameId !== 'string' ||
+            typeof document.url !== 'string' ||
+            (document.isMainFrame !== undefined &&
+              typeof document.isMainFrame !== 'boolean') ||
+            (document.lang !== null && typeof document.lang !== 'string'),
+        ))) ||
     !Array.isArray(data.targets) ||
     data.targets.some(
       (t) =>
@@ -120,6 +138,7 @@ export function observation(result: CommandResult): Observation {
     url: data.url,
     title: data.title,
     text: data.text,
+    ...(data.documents !== undefined ? { documents: data.documents } : {}),
     targets: data.targets,
     atomic: false,
     tabs: data.tabs,

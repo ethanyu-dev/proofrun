@@ -113,6 +113,8 @@ export class ArtifactStore {
         truncated: result.data.truncated ?? false,
         // 采集缺口与原始语义快照属于同一份证据，不能只存在于临时模型上下文中。
         coverage: result.data.coverage ?? null,
+        // 文档语言声明与正文一起归档，模型引用的 DOM 证据必须能复核同一份事实。
+        documents: result.data.documents ?? null,
         referenceSnapshot: result.data.referenceSnapshot ?? null,
       };
       const bytes = canonical(content);
