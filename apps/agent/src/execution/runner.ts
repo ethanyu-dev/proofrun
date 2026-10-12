@@ -77,8 +77,8 @@ class Execution {
   /** 已执行操作的有界摘要，供上下文读取。 */
   private readonly history: RecentOperation[] = [];
   private readonly details: NonNullable<VerificationReport['executionDetails']>;
-  /** 初始导航成功后不因人工切换重放，观察可单独作废。 */
-  private navigated = false;
+  /** 仅初次进入或步骤明确更换网址时安排导航；人工交还页面后取消待导航。 */
+  private pendingNavigation: string | undefined;
   /** 自动登录最多执行一次，外部重入不会重置已提交登录。 */
   private identityPrepared = false;
   /** 节点只返回固定诊断，供 HITL 分类使用，不记录原始凭据。 */
@@ -135,6 +135,8 @@ class Execution {
     private readonly grant: ExecutionGrant,
     stop: AbortSignal,
   ) {
+    this.pendingNavigation =
+      grant.task.steps?.[0]?.url ?? grant.task.target.url;
     this.guard = new LeaseGuard(client, grant, stop, (view) =>
       this.allowance?.sync(view),
     );
@@ -404,6 +406,13 @@ class Execution {
         if (!view.stepBudget) this.allowance?.resume();
         const changed = this.controlRevision !== (view.controlRevision ?? 0);
         this.controlRevision = view.controlRevision ?? 0;
+        if (changed) {
+          // 人工交还的是同一会话的当前页面；旧观察失效，但不能用导航覆盖处理结果。
+          this.pendingNavigation = undefined;
+          this.current = undefined;
+          this.image = undefined;
+          this.settlePending = false;
+        }
         return changed;
       }
       this.allowance?.pause();
@@ -421,6 +430,12 @@ class Execution {
     return decisionContext({
       task: this.task,
       executionStep: this.grant.task.steps?.[this.stepIndex],
+      preconditions: evaluateChecks(
+        this.identityChecks(),
+        this.current!,
+        this.confirmedChecks,
+        this.controlRevision,
+      ),
       workflow: this.workflow.view(),
       budgetRemaining: this.allowance?.available(
         this.details.actions,
@@ -710,14 +725,23 @@ class Execution {
           await this.command({ type: 'browser.trace', action: 'start' });
           this.traceStarted = true;
         }
-        if (!this.navigated) {
-          // 业务环境只从指定远端浏览器验证；worker 主机不需要访问业务内网。
-          await this.command({
-            type: 'browser.act',
-            action: 'navigate',
-            target: this.task.target.url,
-          });
-          this.navigated = true;
+        if (this.pendingNavigation) {
+          // 新步骤可能已由上一步到达目标；先读当前页面，避免再次加载破坏页面状态。
+          if (this.stepIndex > 0 && !this.current) await this.observe();
+          if (
+            this.pendingNavigation &&
+            this.current?.url !== this.pendingNavigation
+          ) {
+            await this.command({
+              type: 'browser.act',
+              action: 'navigate',
+              target: this.pendingNavigation,
+            });
+            this.current = undefined;
+            this.image = undefined;
+            this.settlePending = true;
+          }
+          this.pendingNavigation = undefined;
         }
         if (!this.current) await this.observe();
         if (this.settlePending) {
@@ -1029,7 +1053,7 @@ class Execution {
     }
     throw new AgentFault('MODEL_TURN_BUDGET_EXCEEDED', '模型决策轮数已耗尽');
   }
-  /** 接管保留原租约和动作预算，执行时钟由控制面重置；登录恢复后重新访问目标使 Cookie 生效。 */
+  /** 接管保留原会话和动作预算，直接读取人工处理后的页面，不重放导航或刷新。 */
   private async requestIntervention(
     reason: string,
     items: string[] | undefined,
@@ -1060,14 +1084,6 @@ class Execution {
     this.workflow.invalidateRecovery();
     this.tracker.reset();
     this.feedback = null;
-    if (login) {
-      await this.command({
-        type: 'browser.act',
-        action: 'navigate',
-        target: this.task.target.url,
-      });
-      this.settlePending = true;
-    }
     await this.observe();
   }
 
@@ -1146,6 +1162,9 @@ class Execution {
       const step = steps[this.stepIndex]!;
       const state = this.stepResults[this.stepIndex]!;
       this.guard.signal.throwIfAborted();
+      // 相同入口的连续步骤继承当前页面，包括站点重定向、语言及团队选择。
+      if (this.stepIndex > 0 && steps[this.stepIndex - 1]!.url !== step.url)
+        this.pendingNavigation = step.url;
       await this.checkpoint();
       this.currentTask = {
         ...this.grant.task,
@@ -1166,11 +1185,10 @@ class Execution {
       this.workflow = new Workflow(this.currentTask.objective, step.stepId);
       this.stepEvidence = new Set(this.evidence.keys());
       this.completionEvidence = [];
-      this.navigated = false;
       this.current = undefined;
       this.image = undefined;
       this.feedback = null;
-      this.settlePending = true;
+      this.settlePending = false;
       this.tracker.reset();
       this.changes = undefined;
       const limit = stepLimit(this.grant.task, step.stepId!);

@@ -6,6 +6,7 @@ import type { DecisionInput } from '../model/chat.js';
 import { evidenceExcerpt } from '../model/jev-progress.js';
 import { AgentFault } from '../http.js';
 import type { WorkflowView } from './workflow.js';
+import type { CheckResult } from './identity.js';
 
 /** 只发送近期证据摘要，完整证据仍由执行器和控制面保存。 */
 const EVIDENCE_LIMIT = 24;
@@ -55,6 +56,8 @@ export interface ContextInput {
   task: VerificationTask;
   /** 结构化任务中当前获准执行的步骤。 */
   executionStep: NonNullable<VerificationTask['steps']>[number] | undefined;
+  /** 当前观察和控制代次下的前置结果；只含业务条件与来源，不含身份配方或凭据。 */
+  preconditions: CheckResult[];
   /** 公共工作流的只读视图。 */
   workflow: WorkflowView | undefined;
   /** 剩余原任务动作、模型请求与时间预算。 */
@@ -104,6 +107,7 @@ export function decisionContext(input: ContextInput): DecisionInput {
       input.task,
     ),
     executionStep: input.executionStep,
+    preconditions: structuredClone(input.preconditions),
     workflow: input.workflow,
     budgetRemaining: {
       actions: input.budgetRemaining.actions,
