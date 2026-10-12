@@ -1,5 +1,6 @@
 import { CriteriaLedger } from './criteria.js';
 import { evaluateChecks, mergeChecks } from './identity.js';
+import { legacyIdentityChecks } from './legacy-identity.js';
 import { stepLimit } from '@proofrun/contracts';
 import { StepAllowance } from './step-budget.js';
 import { stepObjective } from '../prompts/step.js';
@@ -56,6 +57,8 @@ const OBSERVATION_RETRIES = 2;
 const OBSERVATION_RETRY_MS = 300;
 /** 只将近期操作和证据摘要放入上下文，完整事实保留在控制面。 */
 const HISTORY_LIMIT = 8;
+/** 人工交接协议最多十项；超长前置清单必须明确受阻，不能截断后把遗漏条件一起确认。 */
+const MAX_INTERVENTION_ITEMS = 10;
 
 /** 用显式端口测试编排规则，不将模型供应商或传输细节混入执行状态。 */
 export type ExecutionClient = Pick<
@@ -111,6 +114,8 @@ class Execution {
   private decisionIndex = 0;
   /** 每一步最多自动请求一次登录辅助，人工未解决问题时不能无限暂停。 */
   private readonly loginInterventions = new Set<number>();
+  /** 通用无进展恢复每步最多交接一次，清理与访客也只处理原步骤，不扩大登录权限。 */
+  private readonly recoveryInterventions = new Set<number>();
   /** 原任务阶段和恢复计划由所有决策模式共享。 */
   private workflow: Workflow;
   /** 新版业务逐步独立计数，整段清理共享另一份额度；旧任务沿用冻结语义。 */
@@ -649,6 +654,7 @@ class Execution {
       original.sessionPlan?.candidates[0]?.checks ?? [],
       original.sessionPlan?.requirements ?? [],
       step?.preconditions ?? [],
+      legacyIdentityChecks(original, this.stepIndex),
     );
   }
 
@@ -670,6 +676,17 @@ class Execution {
         this.controlRevision,
       );
     let results = evaluate();
+    if (
+      results.filter((r) => r.status !== 'SATISFIED').length >
+      MAX_INTERVENTION_ITEMS
+    ) {
+      if (this.stepResults[this.stepIndex])
+        this.stepResults[this.stepIndex]!.preconditions = results;
+      return this.blocked(
+        '待确认账号条件超过单次人工交接上限，请合并确认事项或配置精确身份条件',
+        'PRECONDITION_UNMET',
+      );
+    }
     if (
       results.some((r) => r.status !== 'SATISFIED') &&
       allowIntervention &&
@@ -789,6 +806,7 @@ class Execution {
         // 登录前置条件需要人工时先交接，不能先进入模型重复观察或长时间等待挑战。
         if (
           !this.loginInterventions.has(this.stepIndex) &&
+          !this.recoveryInterventions.has(this.stepIndex) &&
           !this.identityChecks().length &&
           needsLoginIntervention(this.grant.task, this.current!, this.stepIndex)
         ) {
@@ -818,19 +836,29 @@ class Execution {
         }
         const identityBlock = await this.checkIdentity(true);
         if (identityBlock) return identityBlock;
-        if ((this.changes?.unchangedRounds ?? 0) >= STALLED_ROUNDS)
+        if ((this.changes?.unchangedRounds ?? 0) >= STALLED_ROUNDS) {
+          if (await this.recoverProgress('连续操作和观察未获得新事实')) {
+            errors = 0;
+            continue;
+          }
           return this.blocked(
             '连续多轮操作和观察未获得新事实，停止重复执行；请检查页面覆盖或人工处理。',
             'NO_PROGRESS',
           );
+        }
         if (
           (this.changes?.repeatedStateVisits ?? 0) >= CYCLIC_VISITS &&
           this.changes?.unchangedRounds === 0
-        )
+        ) {
+          if (await this.recoverProgress('反复返回相同页面状态')) {
+            errors = 0;
+            continue;
+          }
           return this.blocked(
             '反复返回相同页面状态，且未记录新的阶段完成证据，停止循环。',
             'NO_PROGRESS',
           );
+        }
         const input = this.context();
         const decisionIndex = ++this.decisionIndex;
         input.traceRequest = async (request) => {
@@ -970,6 +998,11 @@ class Execution {
           if (!this.grant.task.environment.allowIntervention)
             return this.blocked(decision.reason, 'INTERVENTION_DISABLED');
           const login = requiresLogin(this.grant.task, this.stepIndex);
+          if (this.recoveryInterventions.has(this.stepIndex))
+            return this.blocked(
+              '人工处理后仍无法推进：' + decision.reason,
+              'NO_PROGRESS',
+            );
           if (login && this.loginInterventions.has(this.stepIndex))
             return this.blocked(
               '人工处理后登录条件仍未满足：' + decision.reason,
@@ -994,6 +1027,8 @@ class Execution {
             );
           const identityBlock = await this.checkIdentity(false);
           if (identityBlock) return identityBlock;
+          // 未完成声明不能先把验收结论落库，再在完成检查中被拒绝。
+          this.workflow.assertFinish(decision);
           // TRACE 先落地再校验引用；逐项提交也必须有真实交付的证据。
           if (
             decision.criteria.some((c) =>
@@ -1045,7 +1080,6 @@ class Execution {
               '逐项验收已保存，请继续未完成部分；finish 只需补交尚未保存的项目。';
             continue;
           }
-          this.workflow.assertFinish(decision);
           await this.captureTrace();
           return this.finish(decision);
         }
@@ -1060,7 +1094,10 @@ class Execution {
           ) {
             if (!this.grant.task.environment.allowIntervention)
               return this.blocked(decision.summary, 'INTERVENTION_DISABLED');
-            if (!this.loginInterventions.has(this.stepIndex)) {
+            if (
+              !this.loginInterventions.has(this.stepIndex) &&
+              !this.recoveryInterventions.has(this.stepIndex)
+            ) {
               if (decision.reasonCode === 'IDENTITY_UNCONFIRMED')
                 this.identityInterventions.add(this.stepIndex);
               const step = this.grant.task.steps?.[this.stepIndex];
@@ -1136,8 +1173,13 @@ class Execution {
             error.code,
           )
         ) {
-          if (++workflowRecoveries >= MAX_WORKFLOW_RECOVERIES)
+          if (++workflowRecoveries >= MAX_WORKFLOW_RECOVERIES) {
+            if (await this.recoverProgress(error.message)) {
+              errors = 0;
+              continue;
+            }
             return this.blocked(error.message, error.code);
+          }
           this.feedback = `${error.code}: ${error.message}`;
           continue;
         }
@@ -1173,8 +1215,13 @@ class Execution {
         )
           throw error;
         if (++errors >= MAX_DECISION_ERRORS) {
-          if (error.code === 'OBSERVATION_STALLED')
+          if (error.code === 'OBSERVATION_STALLED') {
+            if (await this.recoverProgress(error.message)) {
+              errors = 0;
+              continue;
+            }
             return this.blocked(error.message, 'NO_PROGRESS');
+          }
           throw error;
         }
         this.feedback =
@@ -1187,6 +1234,29 @@ class Execution {
     }
     throw new AgentFault('MODEL_TURN_BUDGET_EXCEEDED', '模型决策轮数已耗尽');
   }
+  /** 仅为可交还的页面无进展提供一次辅助；取消、未知副作用和预算故障不走此入口。 */
+  private async recoverProgress(reason: string): Promise<boolean> {
+    if (
+      !this.grant.task.environment.allowIntervention ||
+      this.loginInterventions.has(this.stepIndex) ||
+      this.recoveryInterventions.has(this.stepIndex)
+    )
+      return false;
+    const step = this.grant.task.steps?.[this.stepIndex];
+    await this.requestIntervention(
+      `当前步骤无法继续：${reason}`.slice(0, 1000),
+      [
+        step?.description ?? this.grant.task.objective,
+        ...(step?.policy ?? []),
+        '仅处理当前步骤允许的页面操作，保留指定账号及访客约束；无法满足时不要用其他账号替代。',
+        '交还后由 Agent 重新观察并核实；人工完成不等于验收通过。',
+      ]
+        .slice(0, 8)
+        .map((item) => item.slice(0, 500)),
+      false,
+    );
+    return true;
+  }
   /** 接管保留原会话和动作预算，直接读取人工处理后的页面，不重放导航或刷新。 */
   private async requestIntervention(
     reason: string,
@@ -1194,6 +1264,7 @@ class Execution {
     login: boolean,
   ) {
     if (login) this.loginInterventions.add(this.stepIndex);
+    else this.recoveryInterventions.add(this.stepIndex);
     await this.client.intervene(
       this.grant,
       this.controlRevision,

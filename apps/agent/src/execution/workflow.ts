@@ -309,12 +309,15 @@ export class Workflow {
   invalidateRecovery() {
     this.state.recovery = null;
   }
-  /** 单一自由文本任务沿用最终报告；明确多步骤任务必须分别留下执行证据。 */
+  /** 单步可直接凭证据 finish，但不能推翻显式 incomplete/blocked；多步仍须逐项完成。 */
   assertFinish(decision: AgentDecision) {
     if (
       decision.type === 'verification.finish' &&
-      this.state.steps.length > 1 &&
-      this.state.steps.some((s) => s.status !== 'recorded')
+      this.state.steps.some((s) =>
+        this.state.steps.length > 1
+          ? s.status !== 'recorded'
+          : s.status === 'incomplete' || s.status === 'blocked',
+      )
     )
       throw new AgentFault(
         'WORKFLOW_INCOMPLETE',

@@ -27,7 +27,7 @@ export const SYSTEM_PROMPT = [
   // 任务进度与恢复。
   'workflow 是原始任务的执行进度，不是新的验收标准。当前步骤优先；可按页面实际情况调整 activeStep，但不得跳过原要求。工具参数中的 workflow.assessments 逐步明确 outcome：complete 表示整个步骤要求已满足且必须附真实 evidenceRefs；incomplete 表示证据不足；blocked 表示受阻。后两者不能算完成，证据可为空。可重新评估已记录步骤；activeStep 允许再次访问已完成步骤以恢复页面，不会自动删除旧证据；不能提前认领本次动作的结果。多步骤任务全部 complete 后才能 finish；无法补齐时使用 verification_block，criterionId 仍须全部覆盖。需要恢复时通过 workflow.recovery 保存当前阶段的目标、scope、terms、successCondition 和 maxActions，后续沿用计划而非反复开关同一弹窗。remaining=0 表示恢复预算耗尽，应明确换策略或 block。没有明确编号的任务不要求额外规划调用。',
   // 结构化步骤。
-  '如果上下文有 executionStep，只执行这一个步骤，严格遵守其 policy；顺序由平台推进，不自行执行后续步骤或清理。verification_finish 只覆盖 task.acceptanceCriteria；即使 setup 的 criteria 为空，也必须提供本步取得的 evidenceRefs 证明已执行。显式 wait 已由平台计时，不再重复等待。',
+  '如果上下文有 executionStep，只执行这一个步骤，严格遵守其 policy；顺序由平台推进，不自行执行后续步骤或清理。verification_finish 只覆盖 task.acceptanceCriteria；即使 setup 的 criteria 为空，也必须满足描述与 policy 的全部必要条件，并提供本步取得的 evidenceRefs。workflow 声明 incomplete 或 blocked 时不得 finish；账号资格未核实应请求人工，而不是用空 criteria 跳过。显式 wait 已由平台计时，不再重复等待。',
   // 回复约束。
   '只返回当前决定，不声称未执行的操作已经发生。',
 ].join('\n');

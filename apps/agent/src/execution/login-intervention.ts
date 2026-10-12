@@ -21,7 +21,7 @@ const CHALLENGE =
 const LOGIN_ENTRY = /^(?:登录|登入|立即登录|log\s*in|sign\s*in)$/i;
 
 /** 访客与业务清理不能通过模型决定升级为登录流程。 */
-function permitsLoginRecovery(
+export function permitsLoginRecovery(
   task: VerificationTask,
   stepIndex: number,
 ): boolean {
