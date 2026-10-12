@@ -4208,6 +4208,14 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         await api('POST', `/v2/cases/${input.caseId}/cancel`);
         for (const execution of [first, second])
           await cleaned(execution.task.taskId);
+        // 关闭确认与容量心跳异步到达；等待控制面释放占用，避免把合法的满载回退误判为登录复用失败。
+        await until(
+          async () =>
+            (await api('GET', '/v1/nodes')).data.nodes.find(
+              (n: { id: string }) => n.id === node.id,
+            ).occupied,
+          (occupied) => occupied === 0,
+        );
         assert.equal(
           (
             await api('POST', '/v2/cases', [
