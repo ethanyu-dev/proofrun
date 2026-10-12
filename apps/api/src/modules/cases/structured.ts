@@ -146,7 +146,12 @@ export function compileCase(
     objective:
       input.description ?? `${input.platform}：按定义步骤执行并逐项验收`,
     target: { url: input.entry },
-    environment: structuredClone(profile.environment),
+    // 新 v2 缺省开启登录复用和人工辅助；显式关闭与历史冻结快照仍保持原意。
+    environment: {
+      ...structuredClone(profile.environment),
+      reuseAuth: profile.environment.reuseAuth ?? true,
+      allowIntervention: profile.environment.allowIntervention ?? true,
+    },
     sessionPlan,
     budget,
     stepBudget,

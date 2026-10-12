@@ -64,6 +64,38 @@ const INPUT: VerificationCaseV2 = {
   ],
 };
 
+// 范围：新 v2 缺省配置与显式关闭映射到两组任务；不验证真实登录恢复、人工处理或节点并发。
+test('v2 默认双跑、复用登录并允许人工辅助，保留平台显式配置', () => {
+  const { executionMode: _, ...defaults } = PROFILE;
+  const task = compileCase(INPUT, defaults);
+  const arms = expandCaseTasks(task);
+  assert.equal(task.executionMode, 'parallel');
+  assert.equal(arms.length, 2);
+  for (const arm of arms) {
+    assert.equal(arm.environment.reuseAuth, true);
+    assert.equal(arm.environment.allowIntervention, true);
+    assert(validateVerificationTask(arm));
+  }
+  assert.deepEqual(defaults.environment, {
+    id: 'fixture',
+    nodePool: 'fixture',
+  });
+  const explicit = compileCase(INPUT, {
+    ...PROFILE,
+    environment: {
+      ...PROFILE.environment,
+      reuseAuth: false,
+      allowIntervention: false,
+    },
+  });
+  assert.equal(explicit.executionMode, 'llm');
+  assert.equal(explicit.environment.reuseAuth, false);
+  assert.equal(explicit.environment.allowIntervention, false);
+  assert.equal(expandCaseTasks(explicit).length, 1);
+  const guest = compileCase({ ...INPUT, session: { mode: 'guest' } }, defaults);
+  assert.equal(guest.sessionPlan!.mode, 'guest');
+});
+
 /** 只模拟原子任务端口，事务隔离和并发由 PostgreSQL 集成测试检查。 */
 function fixture(profile: CaseProfile = PROFILE) {
   const records = new Map<string, Awaited<ReturnType<Coordinator['task']>>>();
@@ -463,6 +495,20 @@ test('同任务清理投影复用任务身份并保留独立状态', async () =>
   );
 });
 
+// 范围：模拟升级前省略开关的冻结快照，重跑仍保留旧语义；不执行数据库迁移或真实浏览器。
+test('历史 v2 重跑不被新默认值开启登录复用或人工辅助', async () => {
+  const f = fixture();
+  await f.service.submit([INPUT]);
+  const original = f.records.get(`case-v2-${INPUT.caseId}`)!;
+  delete original.definition.environment.reuseAuth;
+  delete original.definition.environment.allowIntervention;
+  await f.service.rerun(INPUT.caseId, 'historical-rerun');
+  const fresh = f.records.get('case-v2-historical-rerun')!;
+  assert.equal(fresh.definition.environment.reuseAuth, false);
+  assert.equal(fresh.definition.environment.allowIntervention, false);
+  assert.deepEqual(original.definition.environment, PROFILE.environment);
+});
+
 // 范围：三种模式重跑保留冻结配置、完整步骤和末尾清理；不连接数据库、模型或浏览器。
 test('v2 重跑保留原配置及整个 case，重试不重复创建', async () => {
   for (const executionMode of ['llm', 'jev', 'parallel'] as const) {
@@ -488,7 +534,10 @@ test('v2 重跑保留原配置及整个 case，重试不重复创建', async () 
       timeoutMs: 900_000,
       maxActions: 30,
     });
-    assert.deepEqual(fresh.definition.environment, PROFILE.environment);
+    assert.deepEqual(
+      fresh.definition.environment,
+      before[0]![1].definition.environment,
+    );
     assert.deepEqual(fresh.definition.caseV2Definition, {
       ...INPUT,
       caseId: 'new-case',

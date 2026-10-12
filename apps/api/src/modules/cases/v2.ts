@@ -154,7 +154,15 @@ export class CaseV2Service {
       throw new ApiError(400, 'INVALID_RERUN', '重跑需要一个新的有效 caseId');
     const { definition } = await this.stored(id);
     const profile: CaseProfile = {
-      environment: structuredClone(definition.environment),
+      // 历史快照省略开关时沿用旧语义，避免新建默认值改变重跑的登录与人工权限。
+      environment: {
+        ...structuredClone(definition.environment),
+        reuseAuth:
+          definition.environment.reuseAuth ??
+          definition.environment.allowIntervention ??
+          false,
+        allowIntervention: definition.environment.allowIntervention ?? false,
+      },
       budget: structuredClone(definition.budget),
       executionMode: definition.comparison
         ? 'parallel'
