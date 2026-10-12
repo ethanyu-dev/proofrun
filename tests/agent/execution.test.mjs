@@ -2156,7 +2156,7 @@ test('结构化步骤逐个执行并独立保存结果，不向模型暴露后�
     ['COMPLETED', 'COMPLETED', 'COMPLETED'],
   );
   assert.equal(report.criteria.length, 2);
-  assert.equal(report.executionDetails.actions, 3);
+  assert.equal(report.executionDetails.actions, 1);
   assert.equal(report.executionDetails.modelCalls, 3);
   assert.equal(client.reports.length, 1);
   assert(
@@ -2190,7 +2190,7 @@ test('setup 失败后继续后续步骤，保留该步验收证据', async () =>
   );
   assert.equal(
     client.calls.filter((c) => c.operation.action === 'navigate').length,
-    2,
+    1,
   );
 });
 
@@ -2225,7 +2225,7 @@ test('显式等待由执行器计时，不调用模型空转', async () => {
   );
   assert.equal(report.verdict, 'PASSED');
   assert.equal(report.executionDetails.modelCalls, 1);
-  assert.equal(report.executionDetails.actions, 1);
+  assert.equal(report.executionDetails.actions, 0);
   assert(performance.now() - start >= 30);
   assert.equal(report.steps[0].evidenceRefs.length, 1);
 });
@@ -2497,7 +2497,7 @@ test('登录兜底只匹配当前步骤的登录阻塞', async () => {
   assert.equal(needsLoginIntervention(task, page, 0), false);
 });
 
-// 范围：登录表单自动介入和邀请页模型介入均在恢复后重新导航；人工、Cookie 生效和浏览器由夹具模拟。
+// 范围：自动及模型请求的登录介入均直接接管人工页面；人工、Cookie 生效和浏览器由夹具模拟。
 for (const modelRequested of [false, true])
   test(`登录前置受阻主动 HITL，恢复后继续原任务 ${modelRequested ? 'model' : 'automatic'}`, async () => {
     const execution = grant();
@@ -2571,7 +2571,7 @@ for (const modelRequested of [false, true])
     assert.equal(turns, modelRequested ? 2 : 1);
     assert.equal(
       client.calls.filter((c) => c.operation.action === 'navigate').length,
-      2,
+      1,
     );
   });
 
@@ -2676,7 +2676,7 @@ test('cleanup 在原任务末尾串行执行，只提交一次报告', async () 
     report.steps.map((step) => step.status),
     ['COMPLETED', 'COMPLETED', 'COMPLETED'],
   );
-  assert.equal(report.executionDetails.actions, 3);
+  assert.equal(report.executionDetails.actions, 1);
   assert.equal(client.reports.length, 1);
 });
 
@@ -3046,7 +3046,7 @@ for (const kind of ['model', 'action', 'time']) {
           };
         }
         assert.equal(context.budgetRemaining.modelCalls, 20);
-        assert.equal(context.budgetRemaining.actions, 9);
+        assert.equal(context.budgetRemaining.actions, 10);
         return {
           ...finish(context),
           evidenceRefs: context.observation.artifactRefs.map(
@@ -3077,7 +3077,7 @@ for (const kind of ['model', 'action', 'time']) {
     );
     assert.equal(report.steps[0].budgetUsage.modelCalls, 1);
     assert.equal(report.steps[1].budgetUsage.modelCalls, 1);
-    assert.equal(report.steps[2].budgetUsage.actions, 1);
+    assert.equal(report.steps[2].budgetUsage.actions, 0);
     assert.deepEqual(seen, ['step-1', 'step-2', 'step-3']);
     assert.equal(client.reports.length, 1);
     assert.equal(report.criteria[0].verdict, 'SKIPPED');
@@ -3323,7 +3323,7 @@ test('自动登录仅准备一次且不占业务动作额度', async () => {
   );
   assert.equal(order[0], 'browser.identity.prepare');
   assert.equal(order.filter((v) => v === 'browser.identity.prepare').length, 1);
-  assert.equal(report.executionDetails.actions, 2);
+  assert.equal(report.executionDetails.actions, 1);
   assert.deepEqual(
     report.steps.map((s) => s.status),
     ['COMPLETED', 'COMPLETED'],
