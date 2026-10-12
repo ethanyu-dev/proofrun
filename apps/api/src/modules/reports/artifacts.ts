@@ -375,6 +375,18 @@ export class ArtifactStore {
       const old = previous?.[i];
       if (old?.status === 'COMPLETED' && canonical(old) !== canonical(step))
         throw invalid();
+      // RUNNING 阶段已保存的逐项结论同样不可丢失或改写。
+      if (
+        old?.criteria.some(
+          (criterion) =>
+            canonical(
+              step.criteria.find(
+                (c) => c.criterionId === criterion.criterionId,
+              ),
+            ) !== canonical(criterion),
+        )
+      )
+        throw invalid();
       if (old?.startedAt && old.startedAt !== step.startedAt) throw invalid();
       const expected = context.definition.acceptanceCriteria.filter(
         (c) => c.stepId === step.stepId,
@@ -445,12 +457,16 @@ export class ArtifactStore {
       await this.validateSteps(client, context, report.steps);
       if (
         report.executionDisposition === 'EXECUTED' &&
-        report.steps.some((step) => step.status !== 'COMPLETED')
+        report.steps.some(
+          (step) =>
+            !context.definition.cleanupStepIds?.includes(step.stepId) &&
+            step.status !== 'COMPLETED',
+        )
       )
         throw new ApiError(
           422,
           'INVALID_REPORT',
-          '未完成所有步骤不能交付正常完成报告',
+          '未完成所有业务步骤不能交付正常完成报告',
         );
       for (const step of report.steps) {
         for (const criterion of step.criteria) {

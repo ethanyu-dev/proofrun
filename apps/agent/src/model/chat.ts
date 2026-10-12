@@ -1,3 +1,4 @@
+import { decisionTools, type DecisionTool } from './tools.js';
 import { SYSTEM_PROMPT } from '../prompts/decision.js';
 import {
   agentDecisionSchema,
@@ -21,7 +22,7 @@ const MODEL_TOOLS = agentDecisionSchema.oneOf.map(
     const { type, ...properties } = schema.properties;
     return {
       type: type.const,
-      name: type.const.replace('.', '_'),
+      name: type.const.replaceAll('.', '_'),
       description: schema.description ?? type.const,
       parameters: {
         type: 'object',
@@ -31,12 +32,7 @@ const MODEL_TOOLS = agentDecisionSchema.oneOf.map(
       },
     };
   },
-) as Array<{
-  type: AgentDecision['type'];
-  name: string;
-  description: string;
-  parameters: object;
-}>;
+) as DecisionTool[];
 
 /** 模型上下文由执行器根据事实重建，不保存不断增长的聊天历史。 */
 export interface DecisionInput {
@@ -80,6 +76,7 @@ export class ChatModel implements DecisionModel {
     input: DecisionInput,
     signal: AbortSignal,
   ): Promise<DecisionOutput> {
+    const availableTools = decisionTools(input.text, MODEL_TOOLS);
     const hasWorkflow = !!JSON.parse(input.text).workflow;
     const content = input.image
       ? [
@@ -100,7 +97,7 @@ export class ChatModel implements DecisionModel {
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content },
       ],
-      tools: MODEL_TOOLS.map(({ name, parameters, description }) => ({
+      tools: availableTools.map(({ name, parameters, description }) => ({
         type: 'function',
         function: {
           name,
@@ -154,11 +151,20 @@ export class ChatModel implements DecisionModel {
     const choice = raw?.choices?.[0];
     const calls = choice?.message?.tool_calls;
     if (
+      calls?.length === 1 &&
+      calls[0]?.function?.name === 'browser_observe' &&
+      !availableTools.some((tool) => tool.type === 'browser.observe')
+    )
+      throw new AgentFault(
+        'OBSERVATION_STALLED',
+        '页面连续观察没有新增事实，当前应登记已有验收结果、执行实际动作或明确受阻，不能继续重复 observe。',
+      );
+    if (
       choice?.message?.role !== 'assistant' ||
       !calls ||
       calls.length !== 1 ||
       calls[0]?.type !== 'function' ||
-      !MODEL_TOOLS.some((tool) => tool.name === calls[0]?.function?.name) ||
+      !availableTools.some((tool) => tool.name === calls[0]?.function?.name) ||
       choice.finish_reason === 'length'
     )
       throw new AgentFault(
@@ -176,7 +182,7 @@ export class ChatModel implements DecisionModel {
         'INVALID_MODEL_DECISION',
         '工具参数必须是 JSON 对象',
       );
-    const tool = MODEL_TOOLS.find(
+    const tool = availableTools.find(
       (tool) => tool.name === calls[0]?.function?.name,
     )!;
     // 动作类型由已声明的工具名决定，参数中的同名字段也不能覆盖它。
@@ -191,6 +197,17 @@ export class ChatModel implements DecisionModel {
       throw new AgentFault(
         'INVALID_MODEL_DECISION',
         '当前执行未启用 workflow 元数据',
+      );
+    // setup 误填 stepId 时优先给出任务语义反馈，避免模型反复修补无关证据字段。
+    if (
+      decision.type === 'verification.finish' &&
+      JSON.parse(input.text).task?.acceptanceCriteria?.length === 0 &&
+      Array.isArray(args.criteria) &&
+      args.criteria.length
+    )
+      throw new AgentFault(
+        'INVALID_MODEL_DECISION',
+        '当前 setup 没有独立验收项，criteria 必须是 []；stepId 不是 criterionId。用 summary 和本步 evidenceRefs 提交执行结果。',
       );
     if (!validateAgentDecision(decision)) {
       // 只反馈匹配分支的静态约束，不回显模型内容、未知字段名或整份原始回复。

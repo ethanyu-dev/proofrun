@@ -1,3 +1,4 @@
+import { authorizeCookieCleanup } from './cookie-cleanup.js';
 import { identitySummary } from '../identities/metrics.js';
 import { authorizePreparation } from '../identities/preparation.js';
 import { allocateIdentity } from '../identities/allocation.js';
@@ -1073,6 +1074,8 @@ export class Coordinator {
             'Cookie 只能写入本任务目标站点',
           );
       }
+      if (operation.type === 'browser.cookies.clear')
+        await authorizeCookieCleanup(client, context, operation, actor);
       if (context.session_state !== 'ACTIVE')
         throw new ApiError(
           409,
@@ -1106,9 +1109,14 @@ export class Coordinator {
         await consumeStepBudget(
           client,
           context,
-          operation.type === 'browser.act' ? 'actions' : 'observe',
+          ['browser.act', 'browser.cookies.clear'].includes(operation.type)
+            ? 'actions'
+            : 'observe',
         );
-      if (actor === 'AGENT' && operation.type === 'browser.act') {
+      if (
+        actor === 'AGENT' &&
+        ['browser.act', 'browser.cookies.clear'].includes(operation.type)
+      ) {
         if (
           !context.definition.stepBudget &&
           context.action_count >= context.definition.budget.maxActions

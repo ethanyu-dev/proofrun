@@ -29,6 +29,161 @@ export type BrowserCommand =
        * 仅全部身份条件可自动核验时保存快照；人工条件由 HITL 确认。
        */
       saveSnapshot: boolean;
+    }
+  | {
+      type: 'browser.cookies.clear';
+      url: string;
+      /**
+       * @minItems 1
+       * @maxItems 20
+       */
+      names:
+        | [string]
+        | [string, string]
+        | [string, string, string]
+        | [string, string, string, string]
+        | [string, string, string, string, string]
+        | [string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+        | [
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+          ]
+        | [
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+          ]
+        | [
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+          ]
+        | [
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+          ]
+        | [
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+          ]
+        | [
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+          ]
+        | [
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+          ];
     };
 
 /**

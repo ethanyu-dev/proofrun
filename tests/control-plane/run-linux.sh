@@ -75,6 +75,9 @@ docker exec "$node_name" runuser -u proofrun -- \
   python3 "$driver"
 
 if [[ "$real_agent" == true ]]; then
+  # DOM 坐标与 Cookie 清理采用真实 Chromium，独立 profile；不接触生产站点。
+  dom_test_bin=$(docker exec "$node_name" cargo ${toolchain[@]+"${toolchain[@]}"} test --locked ${offline[@]+"${offline[@]}"} -p proofrun-node --lib --no-run --message-format=json | python3 -c 'import json,sys; artifacts=[json.loads(line) for line in sys.stdin]; print(next(item["executable"] for item in artifacts if item.get("reason")=="compiler-artifact" and item.get("profile",{}).get("test") and item.get("executable") and "lib" in item["target"]["kind"]))')
+  docker exec "$node_name" runuser -u proofrun -- env PROOFRUN_TEST_CHROME=/usr/bin/chromium "$dom_test_bin" native_dom_preserves_language_and_clicks_visible_portion --ignored
   # 真实 Chromium 的独立 profile 登录恢复与网络元数据验证，不使用模型夹具结论代替业务验收。
   docker exec "$node_name" runuser -u proofrun -- \
     env "${engine_env[@]}" PROOFRUN_TEST_BINARY=/target/debug/proofrun-node \

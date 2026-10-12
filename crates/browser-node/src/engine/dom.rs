@@ -1,4 +1,6 @@
 //! 通过会话私有 CDP 连接读取原生 DOM；元素身份绑定实际 backend node，不按名称重找替代节点。
+#[path = "dom_cookies.rs"]
+mod cookie_cleanup;
 use crate::error::{Fault, Result};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
@@ -216,6 +218,18 @@ impl Dom {
             ));
         }
         Ok(())
+    }
+    /// 命中查询接受文档坐标，鼠标输入接受视口坐标；只在查询时补上当前渲染会话的滚动偏移。
+    async fn hit_at(&mut self, session: &str, x: f64, y: f64) -> Result<Value> {
+        let metrics = self
+            .call(Some(session), "Page.getLayoutMetrics", json!({}))
+            .await?;
+        let viewport = &metrics["cssLayoutViewport"];
+        let left = viewport["pageX"].as_f64().ok_or_else(fault)?;
+        let top = viewport["pageY"].as_f64().ok_or_else(fault)?;
+        self.call(Some(session), "DOM.getNodeForLocation", json!({
+            "x":(x+left).round() as i64,"y":(y+top).round() as i64,"includeUserAgentShadowDOM":true
+        })).await
     }
     /// 采集完整时间窗口的 timeline、用户标记、加载和截图；缓冲满时停止而非静默覆盖开头。
     pub async fn trace_start(&mut self) -> Result<()> {
@@ -862,13 +876,7 @@ impl Dom {
         let x = q(0)? + px * (q(2)? - q(0)?) + py * (q(6)? - q(0)?);
         let y = q(1)? + px * (q(3)? - q(1)?) + py * (q(7)? - q(1)?);
         // 只使用探针实际可见区域内的点；shadow 内部命中沿组合树核实归属。
-        let hit = self
-            .call(
-                Some(&target.session),
-                "DOM.getNodeForLocation",
-                json!({"x":x.round(),"y":y.round(),"includeUserAgentShadowDOM":true}),
-            )
-            .await?;
+        let hit = self.hit_at(&target.session, x, y).await?;
         let hit = self
             .call(
                 Some(&target.session),
@@ -1034,13 +1042,7 @@ impl Dom {
             let x = q(0)? + px * (q(2)? - q(0)?) + py * (q(6)? - q(0)?);
             let y = q(1)? + px * (q(3)? - q(1)?) + py * (q(7)? - q(1)?);
             // 在输入派发前核实遮挡；跨 shadow host 以 composed ancestors 判断目标关系。
-            let hit = self
-                .call(
-                    Some(&target.session),
-                    "DOM.getNodeForLocation",
-                    json!({"x":x.round(),"y":y.round(),"includeUserAgentShadowDOM":true}),
-                )
-                .await?;
+            let hit = self.hit_at(&target.session, x, y).await?;
             let hit_object = self
                 .call(
                     Some(&target.session),

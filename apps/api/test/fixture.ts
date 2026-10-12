@@ -120,6 +120,8 @@ export class SimulatedNode {
   renewableSessions = true;
   /** 默认模拟旧节点，身份测试显式启用新准备协议。 */
   identityPreparation = false;
+  /** 清理能力默认关闭，相关回归显式模拟升级后的节点。 */
+  cookieCleanup = false;
   readonly id = randomUUID();
   readonly epoch = randomUUID();
   token = '';
@@ -263,6 +265,7 @@ export class SimulatedNode {
         renewableSessions: this.renewableSessions,
         trace: this.trace,
         identityPreparation: this.identityPreparation,
+        cookieCleanup: this.cookieCleanup,
       },
     });
   }

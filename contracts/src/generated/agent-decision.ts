@@ -66,7 +66,162 @@ export type AgentDecision =
     }
   | FinishVerification
   | BlockVerification
-  | RequestHumanAssistance;
+  | RequestHumanAssistance
+  | RecordVerification
+  | {
+      type: 'browser.cookies.clear';
+      /**
+       * @minItems 1
+       * @maxItems 20
+       */
+      names:
+        | [string]
+        | [string, string]
+        | [string, string, string]
+        | [string, string, string, string]
+        | [string, string, string, string, string]
+        | [string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+        | [
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+          ]
+        | [
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+          ]
+        | [
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+          ]
+        | [
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+          ]
+        | [
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+          ]
+        | [
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+          ]
+        | [
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+          ];
+    };
 
 export interface FinishVerification {
   type: 'verification.finish';
@@ -112,4 +267,41 @@ export interface RequestHumanAssistance {
     | [string, string, string, string, string, string, string, string]
     | [string, string, string, string, string, string, string, string, string]
     | [string, string, string, string, string, string, string, string, string, string];
+}
+/**
+ * 立即保存当前步骤已取得证据的部分验收结论，不结束步骤；已保存结论不会被后续故障覆盖。
+ */
+export interface RecordVerification {
+  type: 'verification.record';
+  /**
+   * 基于已取得证据解释本次验收结论。
+   */
+  summary: string;
+  /**
+   * @minItems 1
+   */
+  criteria: [
+    {
+      criterionId: string;
+      verdict: 'PASSED' | 'FAILED' | 'INCONCLUSIVE' | 'SKIPPED';
+      summary: string;
+      evidenceRefs: string[];
+    } & {
+      criterionId: string;
+      verdict: 'PASSED' | 'FAILED' | 'INCONCLUSIVE' | 'SKIPPED';
+      summary: string;
+      evidenceRefs: string[];
+    },
+    ...({
+      criterionId: string;
+      verdict: 'PASSED' | 'FAILED' | 'INCONCLUSIVE' | 'SKIPPED';
+      summary: string;
+      evidenceRefs: string[];
+    } & {
+      criterionId: string;
+      verdict: 'PASSED' | 'FAILED' | 'INCONCLUSIVE' | 'SKIPPED';
+      summary: string;
+      evidenceRefs: string[];
+    })[],
+  ];
 }

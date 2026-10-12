@@ -274,3 +274,40 @@ test('Cookie 写入只接受明确键值且不开放 domain 或脚本', async ()
   ])
     assert.equal(valid({ ...command, ...change }), false);
 });
+
+// 范围：逐项保存及清理工具的封闭协议，不验证模型结论或真实 Cookie 删除。
+test('逐项保存需明确标准及证据，Cookie 清理不允许模型指定 URL 或值', async () => {
+  const { validateAgentDecision } =
+    await import('../../contracts/dist/index.js');
+  const record = {
+    type: 'verification.record',
+    summary: '部分已完成',
+    criteria: [
+      {
+        criterionId: 'c1',
+        verdict: 'PASSED',
+        summary: '已观察',
+        evidenceRefs: ['a1'],
+      },
+    ],
+  };
+  assert(validateAgentDecision(record));
+  assert(!validateAgentDecision({ ...record, criteria: [] }));
+  assert(
+    !validateAgentDecision({
+      ...record,
+      criteria: [{ ...record.criteria[0], evidenceRefs: [] }],
+    }),
+  );
+  const clear = { type: 'browser.cookies.clear', names: ['NEXT_LOCALE'] };
+  assert(validateAgentDecision(clear));
+  for (const patch of [
+    { names: [] },
+    { names: ['a;b'] },
+    { names: ['x', 'x'] },
+    { names: Array.from({ length: 21 }, (_, i) => `c${i}`) },
+    { url: 'https://other.test' },
+    { value: 'secret' },
+  ])
+    assert(!validateAgentDecision({ ...clear, ...patch }));
+});

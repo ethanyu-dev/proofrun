@@ -673,8 +673,14 @@ impl Engine {
                     Ok(json!({"localTrace":path}))
                 }
             }
-            BrowserCommand::BrowserCookiesSet { .. } => {
-                let params = cookies::parameters(&raw)?;
+            BrowserCommand::BrowserCookiesSet { .. }
+            | BrowserCommand::BrowserCookiesClear { .. } => {
+                let clear = matches!(operation, BrowserCommand::BrowserCookiesClear { .. });
+                let params = if clear {
+                    cookies::clear_parameters(&raw)?
+                } else {
+                    cookies::parameters(&raw)?
+                };
                 let endpoint = self
                     .cli(vec!["get".into(), "cdp-url".into()], remaining())
                     .await?;
@@ -697,8 +703,13 @@ impl Engine {
                 self.dom = None;
                 self.visual = None;
                 let mut dom = dom::Dom::connect(endpoint).await?;
-                dom.set_cookie(target, params).await?;
-                Ok(json!({"written":true}))
+                if clear {
+                    dom.clear_cookies(target, &params).await?;
+                    Ok(json!({"cleared":true,"names":params["names"]}))
+                } else {
+                    dom.set_cookie(target, params).await?;
+                    Ok(json!({"written":true}))
+                }
             }
             BrowserCommand::BrowserAuthSave => self.save_auth(remaining()).await,
             BrowserCommand::BrowserWait { selector, text } => {
@@ -805,14 +816,19 @@ pub fn validate(command: &BrowserCommand, writes: bool) -> Result<()> {
                 ));
             }
         }
-        BrowserCommand::BrowserCookiesSet { .. } => {
+        BrowserCommand::BrowserCookiesSet { .. } | BrowserCommand::BrowserCookiesClear { .. } => {
             if !writes {
                 return Err(Fault::rejected(
                     "ENGINE_WRITES_UNVERIFIED",
                     "cookie writes require write opt-in",
                 ));
             }
-            cookies::parameters(&serde_json::to_value(command).unwrap())?;
+            let raw = serde_json::to_value(command).unwrap();
+            if matches!(command, BrowserCommand::BrowserCookiesClear { .. }) {
+                cookies::clear_parameters(&raw)?;
+            } else {
+                cookies::parameters(&raw)?;
+            }
         }
         BrowserCommand::BrowserInput { .. } => {
             if !writes {

@@ -33,6 +33,7 @@ export type BrowserOperation = Extract<
       | 'browser.act'
       | 'browser.observe'
       | 'browser.wait'
+      | 'browser.cookies.clear'
       | 'browser.trace'
       | 'browser.identity.prepare';
   }

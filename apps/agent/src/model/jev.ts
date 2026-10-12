@@ -100,6 +100,7 @@ export class JevModel implements DecisionModel {
       feedback: unknown;
       workflow?: WorkflowView;
       executionStep?: { stepId: string };
+      cleanup?: boolean;
     };
     if (
       context.executionStep &&
@@ -154,11 +155,12 @@ export class JevModel implements DecisionModel {
       this.progress.reviewed();
       return output;
     };
-    const reason =
-      typeof context.feedback === 'string' &&
-      /^(WORKFLOW_|BROWSER_TARGET_OBSCURED:|BROWSER_STALE_OBSERVATION:|BROWSER_ACTION_PRECONDITION_FAILED:)/u.test(
-        context.feedback,
-      )
+    const reason = context.cleanup
+      ? '后续清理由文本模型核对明确的恢复条件及 Cookie 清理回执，满足后及时结束'
+      : typeof context.feedback === 'string' &&
+          /^(WORKFLOW_|OBSERVATION_STALLED:|BROWSER_TARGET_OBSCURED:|BROWSER_STALE_OBSERVATION:|BROWSER_ACTION_PRECONDITION_FAILED:)/u.test(
+            context.feedback,
+          )
         ? '执行器反馈步骤缺口、预算耗尽或动作目标失效；请核对当前状态并改变恢复策略，无法继续时 verification.block'
         : context.workflow?.activeStep === null
           ? '全部原始步骤已登记证据，请按原 criterionId 整理最终结论，避免继续浏览'

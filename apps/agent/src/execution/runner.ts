@@ -1,3 +1,4 @@
+import { CriteriaLedger } from './criteria.js';
 import { evaluateChecks, mergeChecks } from './identity.js';
 import { stepLimit } from '@proofrun/contracts';
 import { StepAllowance } from './step-budget.js';
@@ -32,6 +33,7 @@ import {
 import {
   ObservationTracker,
   STALLED_ROUNDS,
+  OBSERVATION_REVIEW_ROUNDS,
   CYCLIC_VISITS,
   type ObservationChanges,
 } from '../evidence/changes.js';
@@ -118,6 +120,8 @@ class Execution {
   private stepEvidence = new Set<string>();
   /** 当前完成决定明确引用的本步证据。 */
   private completionEvidence: string[] = [];
+  /** 已校验的逐项结论独立于本步骤的执行状态。 */
+  private criteria: CriteriaLedger;
   /** 面向模型的局部定义，原始任务快照始终保持不变。 */
   private currentTask: VerificationTask | undefined;
   /** 最终交付与人工交接冲突时只重交报告，不重复执行已完成操作。 */
@@ -141,6 +145,7 @@ class Execution {
       this.allowance?.sync(view),
     );
     this.workflow = new Workflow(grant.task.objective);
+    this.criteria = new CriteriaLedger(grant.task.acceptanceCriteria);
     this.stepResults = (grant.task.steps ?? []).map((step) => ({
       stepId: step.stepId!,
       status: 'PENDING',
@@ -173,12 +178,7 @@ class Execution {
         ? 'BLOCKED'
         : 'ERROR',
       fault.message,
-      this.task.acceptanceCriteria.map((c) => ({
-        criterionId: c.id,
-        verdict: 'SKIPPED',
-        summary: '执行未能完成验收',
-        evidenceRefs: [],
-      })),
+      this.faultCriteria('执行未能完成验收'),
       fault.code,
     );
   }
@@ -216,17 +216,15 @@ class Execution {
   }
   /** 定义或能力不足交还上层，未验收的标准仍逐项列出。 */
   private blocked(summary: string, code: string): VerificationReport {
-    return this.report(
-      'BLOCKED',
-      summary,
-      this.task.acceptanceCriteria.map((c) => ({
-        criterionId: c.id,
-        verdict: 'SKIPPED',
-        summary,
-        evidenceRefs: [],
-      })),
-      code,
-    );
+    return this.report('BLOCKED', summary, this.faultCriteria(summary), code);
+  }
+  /** 结构化步骤保留部分结论；旧任务沿用一次性交付语义。 */
+  private faultCriteria(summary: string) {
+    return (
+      this.grant.task.steps
+        ? this.criteria
+        : new CriteriaLedger(this.task.acceptanceCriteria)
+    ).complete(summary);
   }
   /** 所有动作都串行提交，命令身份只生成一次；未知效果直接结束。 */
   private async command(
@@ -235,7 +233,10 @@ class Execution {
   ) {
     this.guard.signal.throwIfAborted();
     if (operation.type !== 'browser.trace') this.allowance?.assertTime();
-    if (operation.type === 'browser.act') {
+    if (
+      operation.type === 'browser.act' ||
+      operation.type === 'browser.cookies.clear'
+    ) {
       this.allowance?.assert(
         'actions',
         this.details.actions,
@@ -267,8 +268,11 @@ class Execution {
             'STEP_ACTION_BUDGET_EXCEEDED',
             'STEP_TIME_BUDGET_EXCEEDED',
             'STEP_NOT_STARTED',
+            'COOKIE_CLEANUP_FORBIDDEN',
+            'COOKIE_CLEANUP_UNSUPPORTED',
           ].includes(error.code) &&
-          operation.type === 'browser.act'
+          (operation.type === 'browser.act' ||
+            operation.type === 'browser.cookies.clear')
         )
           this.details.actions--;
         throw error;
@@ -285,6 +289,14 @@ class Execution {
             ...(operation.value === undefined
               ? {}
               : { value: operation.value }),
+          }
+        : {}),
+      ...(operation.type === 'browser.cookies.clear'
+        ? {
+            cookieCleanup: {
+              names: operation.names,
+              verified: result.data?.cleared === true,
+            },
           }
         : {}),
       operationStatus: result.operationStatus,
@@ -325,6 +337,14 @@ class Execution {
           result.error?.code === 'TARGET_OBSCURED'
           ? '点击目标被遮挡，未派发点击。请基于新观察处理遮挡或调整滚动位置，不要直接重复同一个点击。'
           : `浏览器命令未成功（${result.operationStatus}），未判定业务失败`,
+      );
+    if (
+      operation.type === 'browser.cookies.clear' &&
+      result.data?.cleared !== true
+    )
+      throw new AgentFault(
+        'COOKIE_CLEANUP_UNVERIFIED',
+        '节点未确认指定 Cookie 已清除，不能声称清理完成',
       );
     return result;
   }
@@ -438,6 +458,8 @@ class Execution {
     return decisionContext({
       task: this.task,
       executionStep: this.grant.task.steps?.[this.stepIndex],
+      recordedCriteria: this.criteria.values(),
+      cleanup: this.isCleanup(),
       preconditions: evaluateChecks(
         this.identityChecks(),
         this.current!,
@@ -536,10 +558,10 @@ class Execution {
         (t) => t.target === decision.target,
       );
       if (!target) throw invalid();
-      if (target.operations && !target.operations.includes('scroll'))
+      if (!target.operations?.includes('scroll'))
         throw new AgentFault(
           'INVALID_MODEL_DECISION',
-          `目标 ${decision.target}（${target.role}）不支持 scroll，可用操作：${target.operations.join('、')}。请滚动页面（不指定 target）或选择当前观察中的可滚动容器。`,
+          `目标 ${decision.target}（${target.role}）不支持 scroll，可用操作：${target.operations?.join('、') ?? '未知'}。请滚动页面（不指定 target）或选择当前观察中的可滚动容器。`,
         );
       if (!['up', 'down', 'left', 'right'].includes(decision.value ?? ''))
         throw invalid();
@@ -580,40 +602,16 @@ class Execution {
   private finish(
     decision: Extract<AgentDecision, { type: 'verification.finish' }>,
   ): VerificationReport {
-    const expected = this.task.acceptanceCriteria;
-    const ids = new Set(decision.criteria.map((c) => c.criterionId));
     const invalid = () =>
-      new AgentFault(
-        'INVALID_MODEL_DECISION',
-        '验收项必须完整且唯一，并引用已取得的所需类型证据',
-      );
-    if (
-      decision.criteria.length !== expected.length ||
-      ids.size !== expected.length
-    )
-      throw invalid();
-    for (const criterion of expected) {
-      const actual = decision.criteria.find(
-        (c) => c.criterionId === criterion.id,
-      );
-      if (!actual || actual.evidenceRefs.some((id) => !this.evidence.has(id)))
-        throw invalid();
-      if (
-        ['PASSED', 'FAILED'].includes(actual.verdict) &&
-        criterion.evidenceKinds.some(
-          (kind) =>
-            !actual.evidenceRefs.some(
-              (id) => this.evidence.get(id)?.kind === kind,
-            ),
-        )
-      )
-        throw invalid();
-    }
+      this.criteria.invalid('完成结果缺少本步骤新取得的执行证据');
+    const pending = this.criteria.pending();
+    if (pending.length)
+      throw this.criteria.invalid(`尚未登记：${pending.join('、')}`);
     if (this.grant.task.steps) {
       const refs = [
         ...new Set([
           ...(decision.evidenceRefs ?? []),
-          ...decision.criteria.flatMap((c) => c.evidenceRefs),
+          ...this.criteria.values().flatMap((c) => c.evidenceRefs),
         ]),
       ];
       if (
@@ -623,7 +621,20 @@ class Execution {
         throw invalid();
       this.completionEvidence = refs;
     }
-    return this.report('EXECUTED', decision.summary, decision.criteria, null);
+    return this.report(
+      'EXECUTED',
+      decision.summary,
+      this.criteria.complete('该项尚未验收'),
+      null,
+    );
+  }
+  /** 清理权限由不可变任务定义决定，模型不能自行切换阶段。 */
+  private isCleanup(): boolean {
+    return (
+      this.grant.task.cleanupStepIds?.includes(
+        this.grant.task.steps?.[this.stepIndex]?.stepId ?? '',
+      ) === true
+    );
   }
   /** 显式条件统一驱动登录与角色交接，避免同一步先“登录”再“确认身份”重复 HITL。 */
   private identityChecks() {
@@ -934,6 +945,14 @@ class Execution {
         const decision = output.decision;
         if (!validateAgentDecision(decision))
           throw new AgentFault('INVALID_MODEL_DECISION', '决定不满足工具协议');
+        if (
+          decision.type === 'browser.observe' &&
+          (this.changes?.unchangedRounds ?? 0) >= OBSERVATION_REVIEW_ROUNDS
+        )
+          throw new AgentFault(
+            'OBSERVATION_STALLED',
+            '页面连续观察没有新增事实，请保存已验收项目后执行实际动作或明确受阻，不再重复 observe。',
+          );
         if (decision.type === 'browser.act') this.operation(decision);
         const revision = this.workflow.view().revision;
         this.workflow.apply(output.workflow, new Set(this.evidence.keys()));
@@ -941,7 +960,7 @@ class Execution {
           this.tracker.reset();
           workflowRecoveries = 0;
         }
-        this.workflow.assertFinish(decision);
+
         this.workflow.assertAction(decision);
         if (decision.type === 'verification.intervene') {
           if (!this.grant.task.environment.allowIntervention)
@@ -954,20 +973,70 @@ class Execution {
           errors = 0;
           continue;
         }
-        if (decision.type === 'verification.finish') {
+        if (
+          decision.type === 'verification.record' ||
+          decision.type === 'verification.finish'
+        ) {
+          if (decision.type === 'verification.record' && !this.grant.task.steps)
+            throw new AgentFault(
+              'INVALID_MODEL_DECISION',
+              '逐项保存需要结构化步骤',
+            );
           const identityBlock = await this.checkIdentity(false);
           if (identityBlock) return identityBlock;
-          const traces = await this.captureTrace();
-          for (const criterion of decision.criteria) {
-            if (
+          // TRACE 先落地再校验引用；逐项提交也必须有真实交付的证据。
+          if (
+            decision.criteria.some((c) =>
               this.task.acceptanceCriteria
-                .find((c) => c.id === criterion.criterionId)
-                ?.evidenceKinds.includes('TRACE')
+                .find((expected) => expected.id === c.criterionId)
+                ?.evidenceKinds.includes('TRACE'),
             )
-              criterion.evidenceRefs = [
-                ...new Set([...criterion.evidenceRefs, ...traces]),
-              ];
+          ) {
+            const traces = await this.captureTrace();
+            for (const criterion of decision.criteria) {
+              if (
+                this.task.acceptanceCriteria
+                  .find((c) => c.id === criterion.criterionId)
+                  ?.evidenceKinds.includes('TRACE')
+              )
+                criterion.evidenceRefs = [
+                  ...new Set([...criterion.evidenceRefs, ...traces]),
+                ];
+            }
           }
+          const changed = this.criteria.record(
+            decision.criteria,
+            this.grant.task.steps
+              ? new Map(
+                  [...this.evidence].filter(
+                    ([id]) => !this.stepEvidence.has(id),
+                  ),
+                )
+              : this.evidence,
+          );
+          // 即使完成声明还缺其他项，也先保存本批合法结论；持久化失败则不继续业务动作。
+          const state = this.stepResults[this.stepIndex];
+          if (state && this.criteria.values().length) {
+            state.criteria = this.criteria.values();
+            state.evidenceRefs = [
+              ...new Set(state.criteria.flatMap((c) => c.evidenceRefs)),
+            ];
+            state.summary = decision.summary;
+            await this.client.recordSteps(this.grant, this.stepResults);
+          }
+          if (changed) {
+            this.tracker.reset();
+            this.changes = undefined;
+          }
+          if (decision.type === 'verification.record') {
+            if (!changed) throw this.criteria.invalid('重复登记不是新进展');
+            errors = 0;
+            this.feedback =
+              '逐项验收已保存，请继续未完成部分；finish 只需补交尚未保存的项目。';
+            continue;
+          }
+          this.workflow.assertFinish(decision);
+          await this.captureTrace();
           return this.finish(decision);
         }
         if (decision.type === 'verification.block')
@@ -975,7 +1044,14 @@ class Execution {
         let operation: BrowserOperation;
         if (decision.type === 'browser.act')
           operation = this.operation(decision);
-        else if (decision.type === 'browser.observe') {
+        else if (decision.type === 'browser.cookies.clear') {
+          if (!this.isCleanup())
+            throw new AgentFault(
+              'INVALID_MODEL_DECISION',
+              'Cookie 清理仅用于后续清理步骤',
+            );
+          operation = { ...decision, url: this.task.target.url };
+        } else if (decision.type === 'browser.observe') {
           if (decision.screenshot && !this.config.vision)
             throw new AgentFault(
               'INVALID_MODEL_DECISION',
@@ -1050,13 +1126,22 @@ class Execution {
         // 除上面的确定未点击分支，其他浏览器故障仍直接生成故障报告。
         if (
           !(error instanceof AgentFault) ||
-          !['INVALID_MODEL_DECISION', 'RETRYABLE_MODEL_ERROR'].includes(
-            error.code,
-          )
+          ![
+            'INVALID_MODEL_DECISION',
+            'RETRYABLE_MODEL_ERROR',
+            'OBSERVATION_STALLED',
+          ].includes(error.code)
         )
           throw error;
-        if (++errors >= MAX_DECISION_ERRORS) throw error;
-        this.feedback = error.message;
+        if (++errors >= MAX_DECISION_ERRORS) {
+          if (error.code === 'OBSERVATION_STALLED')
+            return this.blocked(error.message, 'NO_PROGRESS');
+          throw error;
+        }
+        this.feedback =
+          error.code === 'OBSERVATION_STALLED'
+            ? `${error.code}: ${error.message}`
+            : error.message;
         if (error.code === 'RETRYABLE_MODEL_ERROR')
           await pause(200 * errors, this.guard.signal);
       }
@@ -1193,6 +1278,7 @@ class Execution {
       delete this.currentTask.stepBudget;
       delete this.currentTask.cleanupStepIds;
       this.workflow = new Workflow(this.currentTask.objective, step.stepId);
+      this.criteria = new CriteriaLedger(this.currentTask.acceptanceCriteria);
       this.stepEvidence = new Set(this.evidence.keys());
       this.completionEvidence = [];
       this.current = undefined;
@@ -1265,6 +1351,7 @@ class Execution {
           elapsedMs: Math.max(0, usage.elapsedMs - startUsage.elapsedMs),
         };
       }
+      state.criteria = this.criteria.values();
       state.reasonCode = report.executionDetails?.reasonCode ?? null;
       if (report.executionDisposition !== 'EXECUTED') {
         state.status =
@@ -1281,7 +1368,6 @@ class Execution {
           stopped = report;
         // 未知效果已使控制面撤权，先保留原始故障；最终报告阶段再尽力保存步骤，避免 409 覆盖根因。
         if (
-          cleanupIds.has(step.stepId!) ||
           this.guard.signal.aborted ||
           [
             'BROWSER_EFFECT_UNKNOWN',
@@ -1301,18 +1387,6 @@ class Execution {
       state.evidenceRefs = [...this.completionEvidence];
       state.finishedAt = new Date().toISOString();
       await this.client.recordSteps(this.grant, this.stepResults);
-      if (
-        step.type === 'setup' &&
-        report.criteria.some((c) => c.verdict !== 'PASSED')
-      ) {
-        if (cleanupIds.has(step.stepId!)) {
-          stopped ??= this.blocked(
-            `清理步骤 ${step.stepId} 未通过验收，后续清理未执行`,
-            'SETUP_NOT_PASSED',
-          );
-          break;
-        }
-      }
     }
     if (stopped)
       return this.sequenceReport(

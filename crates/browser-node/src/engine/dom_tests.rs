@@ -42,6 +42,7 @@ async fn failed_action(action: &str, failure: &str, disconnect: bool) -> (Fault,
                 "Runtime.callFunctionOn" => json!({"result":{"value":true}}),
                 "DOM.getContentQuads" => json!({"quads":[[0,0,100,0,100,100,0,100]]}),
                 "DOM.getNodeForLocation" => json!({"backendNodeId":1}),
+                "Page.getLayoutMetrics" => json!({"cssLayoutViewport":{"pageX":0,"pageY":0}}),
                 _ => json!({}),
             };
             socket
@@ -79,6 +80,7 @@ async fn preparation_failure_keeps_session_without_dispatching_input() {
         "Runtime.callFunctionOn",
         "DOM.getContentQuads",
         "DOM.getNodeForLocation",
+        "Page.getLayoutMetrics",
     ] {
         for disconnect in [false, true] {
             let (error, calls) = failed_action("click", method, disconnect).await;
@@ -138,6 +140,8 @@ async fn native_dom_preserves_language_and_clicks_visible_portion() {
     let mut chrome = tokio::process::Command::new(std::env::var("PROOFRUN_TEST_CHROME").unwrap())
         .args([
             "--headless=new",
+            // 仅此隔离 data 页面测试不依赖 Docker 宿主机的用户命名空间沙箱。
+            "--no-sandbox",
             "--no-first-run",
             "--no-default-browser-check",
             "--remote-debugging-port=0",
@@ -239,6 +243,91 @@ async fn native_dom_preserves_language_and_clicks_visible_portion() {
         dom.snapshot(target, None).await.unwrap()["documents"][0]["lang"],
         ""
     );
+    // 范围：长页面滚动后的 FAQ 点击必须命中当前视口；不依赖生产页面或远端模型。
+    dom.call(Some(&session), "Page.navigate", json!({"url":"data:text/html,<html><body style='margin:0;width:2000px'><div style='height:2200px'></div><div style='margin-left:1200px;width:200px;padding:24px;border:10px solid black' onclick='this.textContent=\"FAQ opened\"'>FAQ closed</div><div style='height:1000px'></div></body></html>"})).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    dom.call(
+        Some(&session),
+        "Runtime.evaluate",
+        json!({"expression":"scrollTo(1000,2000)"}),
+    )
+    .await
+    .unwrap();
+    let snapshot = dom.snapshot(target, None).await.unwrap();
+    let faq = snapshot["targets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "FAQ closed")
+        .unwrap()["target"]
+        .as_str()
+        .unwrap();
+    dom.act(faq, "click", None).await.unwrap();
+    assert!(
+        dom.snapshot(target, None).await.unwrap()["text"]
+            .as_str()
+            .unwrap()
+            .contains("FAQ opened")
+    );
+    // 范围：滚动后固定元素命中与遮挡保护；不能把前置失败误判成已执行输入。
+    dom.call(Some(&session), "Runtime.evaluate", json!({"expression":"document.body.insertAdjacentHTML('beforeend', `<button id='fixed' style='position:fixed;left:10px;top:10px' onclick='window.fixedClicks=(window.fixedClicks||0)+1'>fixed button</button>`);"})).await.unwrap();
+    let snapshot = dom.snapshot(target, None).await.unwrap();
+    let fixed = snapshot["targets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "fixed button")
+        .unwrap()["target"]
+        .as_str()
+        .unwrap();
+    dom.act(fixed, "click", None).await.unwrap();
+    dom.call(Some(&session), "Runtime.evaluate", json!({"expression":"document.body.insertAdjacentHTML('beforeend', `<div style='position:fixed;inset:0;z-index:999;background:white'>cover</div>`);"})).await.unwrap();
+    assert_eq!(
+        dom.act(fixed, "click", None).await.unwrap_err().code,
+        "TARGET_OBSCURED"
+    );
+    let clicks = dom
+        .call(
+            Some(&session),
+            "Runtime.evaluate",
+            json!({"expression":"window.fixedClicks","returnByValue":true}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(clicks["result"]["value"], 1);
+    // 范围：真实 Cookie 存储只清除精确站点和名字的全部路径，保留其他名字和子域；不证明生产注销效果。
+    for (name, domain, path) in [
+        ("locale", ".fixture.test", "/"),
+        ("locale", "fixture.test", "/nested"),
+        ("session", "fixture.test", "/"),
+        ("locale", "child.fixture.test", "/"),
+    ] {
+        dom.set_cookie(
+            target,
+            json!({"name":name,"value":"private-fixture-value","domain":domain,"path":path}),
+        )
+        .await
+        .unwrap();
+    }
+    dom.clear_cookies(target, &json!({"host":"fixture.test","names":["locale"]}))
+        .await
+        .unwrap();
+    let remaining = dom
+        .call(Some(&session), "Storage.getCookies", json!({}))
+        .await
+        .unwrap();
+    let retained: Vec<_> = remaining["cookies"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| (c["name"].as_str().unwrap(), c["domain"].as_str().unwrap()))
+        .collect();
+    assert_eq!(retained.len(), 2);
+    assert!(retained.contains(&("session", "fixture.test")));
+    assert!(retained.contains(&("locale", "child.fixture.test")));
+    dom.clear_cookies(target, &json!({"host":"fixture.test","names":["locale"]}))
+        .await
+        .unwrap();
     chrome.kill().await.unwrap();
     chrome.wait().await.unwrap();
 }
