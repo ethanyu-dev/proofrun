@@ -122,6 +122,17 @@
           },
           "control_reason": {
             "type": ["string", "null"]
+          },
+          "node_runtime": {
+            "anyOf": [
+              {
+                "$ref": "node-runtime.schema.json"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "分配会话时冻结的节点版本，升级后保留原值；历史记录未知时为 null。"
           }
         }
       }

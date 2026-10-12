@@ -1,7 +1,7 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import WebSocket from 'ws';
-import type { NodeCommand } from '@proofrun/contracts';
+import type { NodeCommand, NodeRuntime } from '@proofrun/contracts';
 
 /** 故障测试的轮询间隔；不代表生产调度周期。 */
 const POLL_MS = 25;
@@ -114,6 +114,8 @@ export function task(pool: string, screenshot = false) {
 
 /** WebSocket 协议夹具；模拟节点结果和故障，不运行浏览器或 systemd。 */
 export class SimulatedNode {
+  /** 默认省略以覆盖旧节点兼容；版本测试显式指定编译身份。 */
+  runtime?: NodeRuntime;
   /** 允许单独验证旧节点不能领取暂停时钟的任务。 */
   renewableSessions = true;
   /** 默认模拟旧节点，身份测试显式启用新准备协议。 */
@@ -239,6 +241,7 @@ export class SimulatedNode {
       nodeId: this.id,
       nodeEpoch: this.epoch,
       pool: this.pool,
+      ...(this.runtime ? { runtime: this.runtime } : {}),
       leaseRequestId: randomUUID(),
       capacity: this.capacityOverride ?? this.capacity,
       limits: { maxLeaseMs: 60_000, maxSessionMs: 3_600_000 },

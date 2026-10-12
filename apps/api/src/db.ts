@@ -26,6 +26,7 @@ const MIGRATIONS = [
   '014-test-identities.sql',
   '015-identity-observability.sql',
   '016-identity-settings.sql',
+  '017-node-runtime.sql',
 ];
 
 /** 所有业务事务使用同一连接；独占连接单独维护控制面实例锁。 */

@@ -20,6 +20,18 @@ ARCHES = {"x86_64": ("x64", 62), "aarch64": ("arm64", 183), "arm64": ("arm64", 1
 ENGINE_VERSION = "0.38.1"
 
 
+def verify_build(binary, version, commit):
+    """读取真实二进制的编译身份，拒绝给旧产物贴新标签或错误源码标签。"""
+    info = json.loads(subprocess.check_output(
+        [str(binary.resolve()), "build-info"], text=True, timeout=10
+    ))
+    expected = {
+        "version": version, "sourceCommit": commit, "engineVersion": ENGINE_VERSION
+    }
+    if info != expected:
+        raise ValueError("二进制编译身份与 release 标签、源码或引擎版本不一致")
+
+
 def main():
     """版本绑定 Cargo 主版本，预发布后缀由 release 标签表达。"""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -41,6 +53,10 @@ def main():
         or struct.unpack("<H", header[18:20])[0] != machine
     ):
         raise ValueError("节点二进制必须是当前架构的 Linux ELF")
+    commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+    ).strip()
+    verify_build(args.binary, args.version, commit)
     args.output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="proofrun-pack-") as temporary:
         stage = Path(temporary)
@@ -79,9 +95,7 @@ def main():
             "os": "linux",
             "minimumGlibc": "2.36",
             "engineVersion": ENGINE_VERSION,
-            "sourceCommit": subprocess.check_output(
-                ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
-            ).strip(),
+            "sourceCommit": commit,
         }
         (stage / "release.json").write_text(json.dumps(manifest, indent=2) + "\n")
         package = args.output / f"proofrun-node-linux-{arch}.tar.gz"

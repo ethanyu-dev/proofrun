@@ -173,7 +173,7 @@ export class NodeRegistry {
   async list() {
     return (
       await this.db.query(
-        `SELECT n.id,name,pool,node_epoch,capacity,capabilities,inventory,last_seen_at,revoked_at,routing_revision,
+        `SELECT n.id,name,pool,node_epoch,runtime,capacity,capabilities,inventory,last_seen_at,revoked_at,routing_revision,
           ARRAY(SELECT hostname FROM pr_node_routes WHERE node_id=n.id ORDER BY hostname) AS routing_domains,
           (SELECT count(*)::integer FROM (
             SELECT item->>'sessionId' AS id FROM jsonb_array_elements(n.inventory) item

@@ -13,6 +13,10 @@
 
 检查两种架构构建与资产后，在 GitHub Release 页面发布草稿。同版本已有 release 时工作流拒绝覆盖；升级应提高 Cargo 版本或预发布后缀。API / Web / Agent 的 Railway 发布不依赖节点 tag。
 
+发布工作流将完整 release 标签及源码 SHA 编译进程序，打包前运行 `proofrun-node build-info` 与 `release.json` 核对，防止旧二进制被贴上新标签。`--version` 显示完整 release 标签；未注入构建身份的本地程序显示 `0.1.0-dev`，提交为未知，不读取安装目录推断版本。
+
+从 alpha.6 起，节点心跳携带运行版本、源码提交和固定引擎版本。**先部署支持 `node.heartbeat.runtime` 的 API 与 Console，再升级节点**；旧 API 会拒绝新增心跳字段。节点页显示最近上报版本，任务详情冻结分配会话时的节点版本，旧节点及历史任务显示“未上报”。节点离线时保留最后上报值；更新安装目录后必须重启进程，上报版本才会变化。
+
 预发布版本需显式指定下载 URL 和 `--version`；GitHub `latest` 不包含预发布。[node-v0.1.0-alpha.1](https://github.com/ethanyu-dev/proofrun/releases/tag/node-v0.1.0-alpha.1) 已于 2026-09-29 发布，下方固定版本的下载命令可用。摘要校验保证资产完整性，不等于独立签名或 VM 验收。
 
 ## 节点机一次性准备

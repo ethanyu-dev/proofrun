@@ -224,6 +224,74 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         ),
     );
   try {
+    // 范围：真实心跳、数据库与 HTTP 的版本更新/持久化及执行快照；不验证真实节点构建或浏览器。
+    await suite.test(
+      '节点上报版本并冻结执行快照，旧节点回退不沿用旧版本',
+      async () => {
+        const node = await addNode('runtime-version');
+        const readNode = async () =>
+          (await api('GET', '/v1/nodes')).data.nodes.find(
+            (n: { id: string }) => n.id === node.id,
+          );
+        assert.equal((await readNode()).runtime, null);
+        const first = {
+          version: 'node-v0.1.0-alpha.6',
+          sourceCommit: 'a'.repeat(40),
+          engineVersion: '0.38.1',
+        };
+        node.runtime = first;
+        node.heartbeat();
+        await until(readNode, (n) => n.runtime?.version === first.version);
+        const definition = task('runtime-version');
+        await submit(definition);
+        const execution = await claim();
+        assert.ok(execution);
+        await ready(execution);
+        await api('POST', `/v1/tasks/${definition.taskId}/cancel`, {});
+        const detail = await cleaned(definition.taskId);
+        assert.deepEqual(detail.executions[0].node_runtime, first);
+        const second = {
+          ...first,
+          version: 'node-v0.1.0-alpha.7',
+          sourceCommit: 'b'.repeat(40),
+        };
+        node.runtime = second;
+        node.heartbeat();
+        await until(readNode, (n) => n.runtime?.version === second.version);
+        // 读取持久库确认不是仅存于 WebSocket 连接；历史任务仍保留原版本。
+        assert.deepEqual(
+          (
+            await sql.query('SELECT runtime FROM pr_nodes WHERE id=$1', [
+              node.id,
+            ])
+          ).rows[0].runtime,
+          second,
+        );
+        assert.deepEqual(
+          (await api('GET', `/v1/tasks/${definition.taskId}`)).data
+            .executions[0].node_runtime,
+          first,
+        );
+        delete node.runtime;
+        node.heartbeat();
+        await until(readNode, (n) => n.runtime === null);
+        const legacy = task('runtime-version');
+        await submit(legacy);
+        const oldExecution = await claim();
+        assert.ok(oldExecution);
+        await ready(oldExecution);
+        await api('POST', `/v1/tasks/${legacy.taskId}/cancel`, {});
+        assert.equal(
+          (await cleaned(legacy.taskId)).executions[0].node_runtime,
+          null,
+        );
+        assert.deepEqual(
+          (await api('GET', `/v1/tasks/${definition.taskId}`)).data
+            .executions[0].node_runtime,
+          first,
+        );
+      },
+    );
     // 范围：真实 API/数据库/WebSocket 的准备授权、版本门禁、幂等及独立预算；登录回执为节点夹具。
     await suite.test(
       '身份登录准备单次授权、旧节点隔离及预算不挤占业务',

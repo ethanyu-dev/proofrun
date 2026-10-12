@@ -28,7 +28,13 @@ const readSchema = (name: string) =>
 
 // 这里只做结构校验；租约归属、验收项覆盖和证据真实性由控制面领域层校验。
 export type { QueueReason } from './generated/queue-reason.js';
-for (const name of ['identity-check', 'session-request', 'session-plan'])
+export type { NodeRuntime } from './generated/node-runtime.js';
+for (const name of [
+  'node-runtime',
+  'identity-check',
+  'session-request',
+  'session-plan',
+])
   ajv.addSchema(readSchema(name), `${name}.schema.json`);
 ajv.addSchema(readSchema('queue-reason'), 'queue-reason.schema.json');
 export type { VerificationCase } from './generated/verification-case.js';

@@ -176,6 +176,30 @@ test('node heartbeat exposes bounded lease limits', async () => {
     limits: { maxLeaseMs: 60000, maxSessionMs: 3600000 },
   };
   assert.equal(validateNodeEvent(heartbeat), true);
+  // 范围：旧心跳仍兼容，新身份必须完整有界；不验证节点自报身份的真实性。
+  const runtime = {
+    version: 'node-v0.1.0-alpha.6',
+    sourceCommit: 'a'.repeat(40),
+    engineVersion: '0.38.1',
+  };
+  assert.equal(validateNodeEvent({ ...heartbeat, runtime }), true);
+  assert.equal(
+    validateNodeEvent({
+      ...heartbeat,
+      runtime: { ...runtime, sourceCommit: null, version: '0.1.0-dev' },
+    }),
+    true,
+  );
+  for (const invalid of [
+    null,
+    {},
+    { ...runtime, version: '' },
+    { ...runtime, version: 'v'.repeat(129) },
+    { ...runtime, sourceCommit: 'wrong-sha' },
+    { ...runtime, token: 'not-allowed' },
+  ]) {
+    assert.equal(validateNodeEvent({ ...heartbeat, runtime: invalid }), false);
+  }
   const { limits: _, ...missing } = heartbeat;
   assert.equal(validateNodeEvent(missing), false);
   assert.equal(

@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://proofrun.invalid/contracts/0.1/node-runtime.schema.json",
+  "title": "NodeRuntime",
+  "description": "节点进程上报的编译身份；用于排查部署版本，不作为授权或能力判断依据。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "sourceCommit", "engineVersion"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.+-]*$",
+      "description": "完整 release 标签；开发构建带 dev 后缀，不冒充正式安装版本。"
+    },
+    "sourceCommit": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{40}$",
+      "description": "发布源码的完整提交 SHA；本地未注入时为 null。"
+    },
+    "engineVersion": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.+-]*$",
+      "description": "节点启动时核实的 agent-browser 固定版本。"
+    }
+  }
+}

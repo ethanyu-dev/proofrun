@@ -80,6 +80,17 @@
             "type": "integer",
             "minimum": 0,
             "description": "域名配置编辑版本。"
+          },
+          "runtime": {
+            "anyOf": [
+              {
+                "$ref": "node-runtime.schema.json"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "最近心跳上报的进程版本；未上报时为 null，离线节点仅代表最后一次上报。"
           }
         },
         "title": "NodeSummary"

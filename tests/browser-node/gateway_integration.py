@@ -126,6 +126,9 @@ class NetworkClient(Client):
         self.log = (self.root / 'stderr.log').open('a')
         self.process = subprocess.Popen([str(BINARY), '--config', str(self.config), 'serve'], stderr=self.log)
         self.heartbeat = self.next(lambda x: x['type'] == 'node.heartbeat')
+        # 范围：真实 Linux 节点进程经 WebSocket 上报其编译身份；引擎为夹具，不代表目标站点验收。
+        build_info = json.loads(subprocess.check_output([str(BINARY), 'build-info'], text=True))
+        assert self.heartbeat['runtime'] == build_info
 
     def send(self, command):
         self.gateway.send(command)

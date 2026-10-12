@@ -242,6 +242,9 @@
               "maximum": 86400000
             }
           }
+        },
+        "runtime": {
+          "$ref": "node-runtime.schema.json"
         }
       },
       "required": [
