@@ -1003,9 +1003,9 @@ class Execution {
               '人工处理后仍无法推进：' + decision.reason,
               'NO_PROGRESS',
             );
-          if (login && this.loginInterventions.has(this.stepIndex))
+          if (this.loginInterventions.has(this.stepIndex))
             return this.blocked(
-              '人工处理后登录条件仍未满足：' + decision.reason,
+              '人工处理后当前步骤条件仍未满足：' + decision.reason,
               'MODEL_BLOCKED',
             );
           await this.requestIntervention(

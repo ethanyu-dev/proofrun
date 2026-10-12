@@ -581,6 +581,25 @@ for (const again of ['verification.block', 'verification.intervene']) {
   });
 }
 
+// 范围：身份交接后不能通过不含登录措辞的通用请求再交接；不验证真实身份。
+test('身份辅助不能通过通用请求重复交接', async () => {
+  const { report, client } = await runHandoff(
+    (_context, turn) =>
+      turn === 1
+        ? {
+            type: 'verification.block',
+            reasonCode: 'IDENTITY_UNCONFIRMED',
+            summary: '角色尚未确认',
+          }
+        : { type: 'verification.intervene', reason: '还需处理页面' },
+    (execution) => {
+      execution.task.steps[0].description = '核实团队账户状态';
+    },
+  );
+  assert.equal(client.requests.length, 1);
+  assert.equal(report.executionDisposition, 'BLOCKED');
+});
+
 // 范围：未授权辅助、显式访客、自然语言访客、清理及其他原因不能扩大为登录；模型与页面均为夹具。
 for (const mode of ['disabled', 'guest', 'guest-text', 'cleanup', 'other']) {
   test(`交接保留权限与业务边界：${mode}`, async () => {
