@@ -183,7 +183,7 @@ export async function modelServer(decide) {
                     {
                       type: 'function',
                       function: {
-                        name: value.type.replace('.', '_'),
+                        name: value.type.replaceAll('.', '_'),
                         arguments: JSON.stringify(
                           Object.fromEntries(
                             Object.entries(value).filter(

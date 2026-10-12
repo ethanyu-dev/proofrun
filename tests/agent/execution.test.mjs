@@ -1458,7 +1458,12 @@ test('候选只提供当前可用能力，变化控件不被普通元素淹没',
 // 范围：通过完整执行循环验证两类模型共用的停滞止损；页面与模型均为夹具，不代表业务成功率。
 test('连续无变化的观察在公共执行器有界停止', async () => {
   const { report, requests } = await run(
-    () => ({ type: 'browser.observe' }),
+    (context, turn, body) => {
+      if (turn >= 3)
+        assert(!body.tools.some((t) => t.function.name === 'browser_observe'));
+      if (turn >= 4) assert.match(context.feedback, /连续观察没有新增事实/);
+      return { type: 'browser.observe' };
+    },
     (_client, execution) => {
       execution.task.budget.maxActions = 30;
     },
@@ -1466,7 +1471,7 @@ test('连续无变化的观察在公共执行器有界停止', async () => {
   );
   assert.equal(report.executionDisposition, 'BLOCKED');
   assert.equal(report.executionDetails.reasonCode, 'NO_PROGRESS');
-  assert.equal(requests.length, 6);
+  assert.equal(requests.length, 5);
 });
 
 // 范围：模拟 JEV HTTP 回包，验证放宽后仍保留截断说明且新增尾部按钮进入候选；不验证供应商质量。
@@ -2727,8 +2732,8 @@ test('业务失败或阻塞后继续后续业务和清理，保留原结论', as
   }
 });
 
-// 范围：清理阻塞不会自动重放或执行后续清理，业务证据保留；不验证真实页面失败原因。
-test('清理自身阻塞后停止收尾，保留业务验收', async () => {
+// 范围：单个清理受阻后继续后续清理并保留业务结论；不验证真实页面失败原因。
+test('清理自身阻塞后继续后续清理，保留业务验收', async () => {
   const seen = [];
   const { report } = await run(
     (context) => {
@@ -2746,12 +2751,14 @@ test('清理自身阻塞后停止收尾，保留业务验收', async () => {
       execution.task.cleanupStepIds = ['step-2', 'step-3'];
     },
   );
-  assert.deepEqual(seen, ['step-1', 'step-2']);
+  assert.deepEqual(seen, ['step-1', 'step-2', 'step-3']);
   assert.deepEqual(
     report.steps.map((step) => step.status),
-    ['COMPLETED', 'BLOCKED', 'SKIPPED'],
+    ['COMPLETED', 'BLOCKED', 'BLOCKED'],
   );
   assert.equal(report.criteria[0].verdict, 'PASSED');
+  assert.equal(report.executionDisposition, 'EXECUTED');
+  assert.equal(report.verdict, 'PASSED');
 });
 
 // 范围：撤权后禁止末尾清理动作；使用本地 AbortSignal，不模拟节点断网或真实超时。

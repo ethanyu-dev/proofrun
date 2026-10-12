@@ -6,6 +6,8 @@ const CHANGED_TEXT_CHARS = 6000;
 const TARGET_MARKER = /\s*\[target=[^\]]+\]|\bref=[^,\]\s]+/g;
 /** 在操作没有改变事实时先提示恢复，再由公共执行器停止重复调用。 */
 export const STALLED_ROUNDS = 6;
+/** 两次无变化后撤下纯观察工具，保留登记结论、实际动作和明确受阻的选择。 */
+export const OBSERVATION_REVIEW_ROUNDS = 2;
 /** 在有限窗口中重复回到同一状态四次且无阶段证据进展时终止交替循环。 */
 export const CYCLIC_VISITS = 4;
 const CYCLE_WINDOW = 8;
@@ -112,6 +114,7 @@ export class ObservationTracker {
           .join('\n');
     const fingerprint = JSON.stringify([
       page.url,
+      page.viewport,
       normalize(page.text),
       page.documents?.map(({ url, lang }) => [url, lang]),
       page.targets.map(targetState).sort(),

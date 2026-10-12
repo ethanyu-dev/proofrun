@@ -761,6 +761,207 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       node.close();
     });
 
+    // 范围：真实事务保留运行中的部分结论，拒绝覆盖，失败后后续步骤继续；节点仍为协议夹具，不证明网页验收。
+    await suite.test(
+      '逐项结果保存后不可丢失，清理受阻不改写业务报告',
+      async () => {
+        const node = await addNode('case-fixture');
+        for (const partial of [true, false]) {
+          const caseId = `partial-criteria-${partial}`;
+          const url = 'https://criteria.example.test';
+          await api('POST', '/v2/cases', [
+            {
+              caseId,
+              platform: '逐项夹具',
+              entry: url,
+              steps: [1, 2].map((i) => ({
+                type: 'verification',
+                url,
+                exec_order: i,
+                description: '逐项检查',
+                policy: [],
+                expected: i === 1 ? ['A', 'B'] : ['C'],
+              })),
+              cleanup: [
+                { url, exec_order: 1, description: '清除 NEXT_LOCALE Cookie' },
+              ],
+            },
+          ]);
+          const execution = await until(
+            () => claim(true),
+            (value) => !!value,
+          );
+          await ready(execution);
+          const path = `/v1/executions/${execution.id}`;
+          const steps = execution.task.steps.map(
+            (step: { stepId: string }) => ({
+              stepId: step.stepId,
+              status: 'PENDING',
+              summary: '等待',
+              evidenceRefs: [] as string[],
+              criteria: [] as any[],
+              startedAt: null as string | null,
+              finishedAt: null as string | null,
+            }),
+          );
+          const save = (body = steps) =>
+            api('POST', `${path}/steps`, body, execution.leaseToken);
+          for (const [i, state] of steps.entries()) {
+            state.status = 'RUNNING';
+            state.startedAt = new Date().toISOString();
+            assert.equal((await save()).status, 200);
+            const clearRequest = {
+              type: 'execution.command',
+              commandId: randomUUID(),
+              timeoutMs: 15000,
+              command: {
+                type: 'browser.cookies.clear',
+                url,
+                names: ['NEXT_LOCALE'],
+              },
+            };
+            if (i === 0) {
+              assert.equal(
+                (
+                  await api(
+                    'POST',
+                    `${path}/commands`,
+                    clearRequest,
+                    execution.leaseToken,
+                  )
+                ).data.code,
+                'COOKIE_CLEANUP_FORBIDDEN',
+              );
+            }
+            if (i === 2) {
+              node.cookieCleanup = false;
+              node.heartbeat();
+              await until(
+                async () =>
+                  (
+                    await sql.query(
+                      'SELECT capabilities FROM pr_nodes WHERE id=$1',
+                      [node.id],
+                    )
+                  ).rows[0].capabilities.cookieCleanup,
+                (value) => value === false,
+              );
+              assert.equal(
+                (
+                  await api(
+                    'POST',
+                    `${path}/commands`,
+                    clearRequest,
+                    execution.leaseToken,
+                  )
+                ).data.code,
+                'COOKIE_CLEANUP_UNSUPPORTED',
+              );
+              node.cookieCleanup = true;
+              node.heartbeat();
+              await until(
+                async () =>
+                  (
+                    await sql.query(
+                      'SELECT capabilities FROM pr_nodes WHERE id=$1',
+                      [node.id],
+                    )
+                  ).rows[0].capabilities.cookieCleanup,
+                (value) => value === true,
+              );
+              await command(execution, clearRequest.command);
+              assert.equal(
+                (await api('GET', path, undefined, execution.leaseToken)).data
+                  .actionCount,
+                1,
+              );
+            }
+            await command(execution, { type: 'browser.observe' });
+            const view = (
+              await api('GET', path, undefined, execution.leaseToken)
+            ).data;
+            const artifact = view.artifacts.at(-1);
+            state.criteria = execution.task.acceptanceCriteria
+              .filter((c: any) => c.stepId === state.stepId)
+              .map((c: any) => ({
+                criterionId: c.id,
+                verdict: 'PASSED',
+                summary: '已观察并保存',
+                evidenceRefs: [artifact.id],
+              }));
+            if (i === 0 && partial) state.criteria.pop();
+            state.evidenceRefs = [artifact.id];
+            assert.equal((await save()).status, 200);
+            if (i === 0) {
+              const lost = structuredClone(steps);
+              lost[0].criteria = [];
+              assert.equal((await save(lost)).status, 422);
+              const overwritten = structuredClone(steps);
+              overwritten[0].criteria[0].summary = '改写原结论';
+              assert.equal((await save(overwritten)).status, 422);
+              const persisted = (
+                await api('GET', `/v1/tasks/${execution.task.taskId}`)
+              ).data;
+              assert.deepEqual(
+                persisted.stepResults[0].criteria,
+                state.criteria,
+              );
+            }
+            state.status =
+              i === 2 || (partial && i === 0) ? 'BLOCKED' : 'COMPLETED';
+            state.finishedAt = new Date().toISOString();
+            assert.equal((await save()).status, 200);
+          }
+          const view = (await api('GET', path, undefined, execution.leaseToken))
+            .data;
+          const recorded = steps.flatMap((s: any) => s.criteria);
+          const criteria = execution.task.acceptanceCriteria.map(
+            (c: any) =>
+              recorded.find((r: any) => r.criterionId === c.id) ?? {
+                criterionId: c.id,
+                verdict: 'SKIPPED',
+                summary: '尚未完成',
+                evidenceRefs: [],
+              },
+          );
+          const report = {
+            protocolVersion: '0.1',
+            taskId: execution.task.taskId,
+            lifecycle: 'COMPLETED',
+            executionDisposition: partial ? 'BLOCKED' : 'EXECUTED',
+            verdict: partial ? null : 'PASSED',
+            summary: '夹具报告',
+            criteria,
+            steps,
+            artifacts: view.artifacts.map((a: any) => ({
+              id: a.id,
+              kind: a.kind,
+              sha256: a.sha256,
+              uri: `${base}/v1/artifacts/${a.id}`,
+            })),
+          };
+          const completed = await api(
+            'POST',
+            `${path}/complete`,
+            { type: 'execution.complete', report },
+            execution.leaseToken,
+          );
+          assert.equal(completed.status, 200, JSON.stringify(completed));
+          await cleaned(execution.task.taskId);
+          const result = (
+            await api('GET', `/v1/tasks/${execution.task.taskId}`)
+          ).data.report;
+          assert.deepEqual(result.criteria, criteria);
+          assert.equal(
+            result.executionDisposition,
+            report.executionDisposition,
+          );
+        }
+        await api('POST', `/v1/nodes/${node.id}/revoke`);
+        node.close();
+      },
+    );
+
     // 范围：真实 HTTP/PostgreSQL 独立计数、幂等、耗尽推进和人工暂停；节点/模型结果为夹具，不验证网页行为。
     await suite.test(
       '逐步额度由服务端隔离，模型动作时间耗尽均允许下一步',

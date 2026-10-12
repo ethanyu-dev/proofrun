@@ -1,6 +1,7 @@
 import type { VerificationReport, VerificationTask } from '@proofrun/contracts';
 import type { BrowserOperation } from '../client.js';
 import type { Observation } from '../evidence/observation.js';
+import { OBSERVATION_REVIEW_ROUNDS } from '../evidence/changes.js';
 import type { ObservationChanges } from '../evidence/changes.js';
 import type { DecisionInput } from '../model/chat.js';
 import { evidenceExcerpt } from '../model/jev-progress.js';
@@ -28,6 +29,8 @@ export interface RecentOperation {
   targetName?: string;
   /** 执行器保留的输入摘要。 */
   value?: string;
+  /** Cookie 清理只向模型返回名字和验证结果，不含值。 */
+  cookieCleanup?: { names: string[]; verified: boolean };
   /** 命令执行状态。 */
   operationStatus: string;
   /** 是否已发生或可能发生副作用。 */
@@ -56,6 +59,10 @@ export interface ContextInput {
   task: VerificationTask;
   /** 结构化任务中当前获准执行的步骤。 */
   executionStep: NonNullable<VerificationTask['steps']>[number] | undefined;
+  /** 已持久化的逐项结论，后续失败不能覆盖。 */
+  recordedCriteria?: VerificationReport['criteria'];
+  /** 只在平台编排的后续清理步骤提供 Cookie 清理工具。 */
+  cleanup?: boolean;
   /** 当前观察和控制代次下的前置结果；只含业务条件与来源，不含身份配方或凭据。 */
   preconditions: CheckResult[];
   /** 公共工作流的只读视图。 */
@@ -107,6 +114,8 @@ export function decisionContext(input: ContextInput): DecisionInput {
       input.task,
     ),
     executionStep: input.executionStep,
+    recordedCriteria: input.recordedCriteria ?? [],
+    cleanup: input.cleanup === true,
     preconditions: structuredClone(input.preconditions),
     workflow: input.workflow,
     budgetRemaining: {
@@ -140,7 +149,7 @@ export function decisionContext(input: ContextInput): DecisionInput {
         (input.changes?.repeatedStateVisits ?? 0) >= 3
           ? '反复返回同一状态且没有阶段完成证据；请避免开关弹窗或来回导航，制定有界恢复计划。'
           : null,
-        (input.changes?.unchangedRounds ?? 0) >= 2
+        (input.changes?.unchangedRounds ?? 0) >= OBSERVATION_REVIEW_ROUNDS
           ? '连续操作后没有新增事实；请更换目标或策略，检查覆盖缺口，不要重复滚动或观察。'
           : null,
       ]
