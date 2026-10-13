@@ -5,6 +5,8 @@ import type { TaskDetail } from '../../contracts/src/index.ts';
 import { ApiClient } from '../../apps/console/src/api.ts';
 import { ExecutionControl } from '../../apps/console/src/components/execution-control.tsx';
 import { ComparisonDetails } from '../../apps/console/src/components/comparison.tsx';
+import { TaskComparisonLink } from '../../apps/console/src/components/task-comparison-link.tsx';
+import { ReportDetails } from '../../apps/console/src/pages/report-detail.tsx';
 
 /** 使用控制台自身的 React，服务端渲染只验证数据归属，不启动网络或真实执行。 */
 const require = createRequire(
@@ -13,6 +15,41 @@ const require = createRequire(
 const { createElement } = require('react');
 const { renderToStaticMarkup } = require('react-dom/server');
 const api = new ApiClient('fixture-comparison-credential');
+
+// 范围：入口使用服务端关联，任一组可进入两组详情；不凭名称推测双跑，不覆盖点击和接口轮询。
+test('双跑入口从任一组进入对照详情，单组和旧响应不伪造入口', () => {
+  for (const arm of ['llm', 'jev'] as const) {
+    const task = fixture(arm);
+    const html = renderToStaticMarkup(
+      createElement(TaskComparisonLink, {
+        id: task.id,
+        comparison: task.definition.comparison,
+      }),
+    );
+    assert.match(html, /查看双跑对比/);
+    assert.ok(html.includes(`href="#/tasks/${task.id}"`));
+    const report = renderToStaticMarkup(
+      createElement(ReportDetails, { api, task }),
+    );
+    assert.match(report, /当前仅展示/);
+    assert.match(report, /查看双跑对比/);
+    assert.ok(
+      report.includes(
+        arm === 'jev' ? '实验组 B（JEV + LLM）' : '对照组 A（纯 LLM）',
+      ),
+    );
+  }
+  for (const comparison of [null, undefined])
+    assert.equal(
+      renderToStaticMarkup(
+        createElement(TaskComparisonLink, {
+          id: 'comparison-case-v2-name-only-jev',
+          comparison,
+        }),
+      ),
+      '',
+    );
+});
 
 /** 两组刻意采用不同报告、节点及清理状态，使跨组混用不能被相同夹具掩盖。 */
 function fixture(arm: 'llm' | 'jev'): TaskDetail {

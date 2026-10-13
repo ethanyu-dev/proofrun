@@ -2,6 +2,8 @@ import { useState, type FormEvent } from 'react';
 import type { TaskList } from '@proofrun/contracts';
 import { ReportStatus } from '../components/report-status';
 import { TaskRerun } from '../components/task-rerun';
+import { TaskComparisonLink } from '../components/task-comparison-link';
+import { executionModeLabel } from '../execution-mode';
 import { ApiClient } from '../api';
 import { useResource } from '../use-resource';
 import {
@@ -161,6 +163,13 @@ export function TaskListPage({
                       {task.objective}
                     </a>
                     <span className="mono muted id-text">{task.id}</span>
+                    {(task.comparison || task.executionMode) && (
+                      <span className="muted id-text">
+                        {task.comparison
+                          ? `双跑 · ${task.comparison.arm === 'jev' ? '实验组 B · JEV + LLM' : '对照组 A · 纯 LLM'}`
+                          : executionModeLabel(task.executionMode ?? undefined)}
+                      </span>
+                    )}
                     {task.parentTaskId && (
                       <span className="muted id-text">
                         清理所属 case：{' '}
@@ -225,6 +234,10 @@ export function TaskListPage({
                     </>
                   )}
                   <td>
+                    <TaskComparisonLink
+                      id={task.id}
+                      comparison={task.comparison}
+                    />
                     {reports ? (
                       <a
                         className="button button-secondary button-small"

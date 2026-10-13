@@ -18,6 +18,7 @@ import { TaskEvidence } from '../components/task-sections';
 import { StepCompletion } from '../components/step-completion';
 import { FollowUpCleanup } from '../components/follow-up-cleanup';
 import { executionModeLabel } from '../execution-mode';
+import { TaskComparisonLink } from '../components/task-comparison-link';
 
 /** 报告按单次任务身份读取；重新执行产生新任务，不覆盖此页的历史结论。 */
 export function ReportDetailPage({ api, id }: { api: ApiClient; id: string }) {
@@ -34,6 +35,10 @@ export function ReportDetailPage({ api, id }: { api: ApiClient; id: string }) {
         <a className="button button-secondary" href="#/reports">
           返回报告
         </a>
+        <TaskComparisonLink
+          id={id}
+          comparison={resource.data?.definition.comparison}
+        />
         <a
           className="button button-secondary"
           href={`#/tasks/${encodeURIComponent(id)}`}
@@ -91,6 +96,19 @@ export function ReportDetails({
         </div>
         <h2>{task.definition.objective}</h2>
         <p className="muted wrap">{task.definition.target.url}</p>
+        {task.definition.comparison && (
+          <p className="report-notice">
+            当前仅展示
+            {task.definition.comparison.arm === 'jev'
+              ? '实验组 B（JEV + LLM）'
+              : '对照组 A（纯 LLM）'}
+            的报告。
+            <TaskComparisonLink
+              id={task.id}
+              comparison={task.definition.comparison}
+            />
+          </p>
+        )}
         <div className="report-context">
           <span>
             验证模式：{executionModeLabel(task.definition.executionMode)}

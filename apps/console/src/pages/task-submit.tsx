@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { TaskDetail } from '@proofrun/contracts';
 import { ApiClient, errorMessage } from '../api';
 import { TaskFields } from '../components/task-fields';
+import { submitCaseBatch } from '../components/task-submit-request';
 import {
   newTaskDefinition,
   parseTaskDefinition,
@@ -62,8 +63,8 @@ export function TaskSubmitPage({ api }: { api: ApiClient }) {
     setPending(true);
     try {
       if (Array.isArray(submitted)) {
-        await api.json('/v2/cases', controller.signal, submitted);
-        if (!controller.signal.aborted) window.location.hash = '/tasks';
+        const path = await submitCaseBatch(api, submitted, controller.signal);
+        if (!controller.signal.aborted) window.location.hash = path;
         return;
       }
       const result = await api.json<TaskDetail>(
