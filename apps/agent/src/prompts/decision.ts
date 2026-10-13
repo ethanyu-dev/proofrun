@@ -1,3 +1,4 @@
+import { PROFILE_RULES } from './profile.js';
 import { SETUP_RULES } from './setup.js';
 import { IDENTITY_CONTEXT_RULES } from './identity.js';
 import { VERIFICATION_RULES } from './verification.js';
@@ -24,6 +25,7 @@ export const SYSTEM_PROMPT = [
   // 人工身份事实与页面交接。
   IDENTITY_CONTEXT_RULES,
   SETUP_RULES,
+  PROFILE_RULES,
   PAGE_STATE_RULES,
   VERIFICATION_RULES,
   // 任务进度与恢复。

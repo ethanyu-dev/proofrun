@@ -29,6 +29,7 @@ export class ExecutionControl {
     reason?: string,
     items?: string[],
     reasonCode = 'GENERAL',
+    confirmedItems?: string[],
   ) {
     return this.db.transaction(async (client) => {
       const context = await executionContext(client, id);
@@ -133,8 +134,12 @@ export class ExecutionControl {
             ],
           );
         await client.query(
-          'UPDATE pr_interventions SET completed_at=clock_timestamp() WHERE execution_id=$1 AND revision=$2',
-          [id, revision],
+          'UPDATE pr_interventions SET completed_at=clock_timestamp(),confirmed_items=$3 WHERE execution_id=$1 AND revision=$2',
+          [
+            id,
+            revision,
+            confirmedItems ? JSON.stringify(confirmedItems) : null,
+          ],
         );
       }
       return {

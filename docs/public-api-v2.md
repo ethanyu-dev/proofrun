@@ -1,6 +1,6 @@
 # 结构化 Case API v2
 
-`POST /v2/cases` 接收数组，数组中每个对象是一个独立 case，默认创建纯 LLM 与 JEV+LLM 两组任务。不同 caseId 及同一 case 的两组可按平台容量并行执行；任务内部按 `exec_order` 升序执行，同序按原数组顺序串行。不会为每个步骤创建独立任务。
+`POST /v2/cases` 接收数组，数组中每个对象是一个独立 case，默认创建纯 LLM 与 JEV+LLM 两组任务。不同 caseId 及同一 case 的两组可按平台容量并行执行；每个对象是独立 profile 维度；内部先按 `exec_order` 稳定排序，再以 setup 拆成独占 tab 的分组，默认两个组并发、组内串行。不同账号或有冲突的环境应放在不同对象，存在先后依赖的步骤放在同一分组。不会为每个步骤创建独立任务。
 
 旧 `/v1/cases` 单 case 接口继续保留。新旧请求格式不混用；内部 `/v1/tasks` 不接收新版 case、结构化步骤或清理任务，也不支持从内部入口对它们自动重跑或追加双组对照。重新执行可使用下述 case 重跑接口，或通过新版提交接口提交新的 caseId。
 
@@ -44,11 +44,11 @@ curl --fail-with-body --silent --show-error \
 
 文字字段不接受纯空白，说明和数组中的字符串最多 2000 字符，policy/expected 各最多 32 项。每条 expected 的 criterionId 是 `<stepId>-expected-<原始位置+1>`，结果按此身份关联。自然语言 policy 会进入当前步骤的模型上下文；本版没有将其转换成程序强制校验规则。
 
-业务 setup 是所有后续步骤的准备门禁，cleanup 自身不承担准备核验，但同样受该门禁约束。执行器逐条保留其 description 和 policy，不通过关键词抽取角色要求；模型须为每条准备要求提交带本步证据的完成声明，显式 preconditions 也必须满足。即使 expected 为空、只有一个准备要求，也不能省略该检查。已复用登录态不等于账号角色、团队关系或绑定状态符合要求。
+新任务的 setup 分为 PREPARING（执行 description 的准备操作）、CHECKING（强制核验原始 policy 与显式身份条件）、READY。准备阶段允许浏览器操作；操作完成声明只触发检查，不直接放行业务。检查不会从 description 增加条件，也不会把被测产品的资格提示当成账号角色矛盾。空 policy 仍经过新观察及显式身份条件校验。
 
-准备条件未满足、无法确认或准备过程停滞时，允许人工辅助的任务按未解决条件交接。登录缺失使用独立的 `LOGIN_REQUIRED` 原因，登录完成后其他资格或页面条件仍可交接。条件身份来自原始 workflow/preconditions；同一条件只交接一次，每次执行最多三轮，不因改写原因而重置。人工交还后重新观察并核实全部准备要求，不自动通过；旧环境的完成声明失效。
+条件未满足、无法确认或准备停滞时，按未解决条件交接人工。同一条件每组只交接一次，每组最多三轮。交接期间暂停整个 profile；只有处理页逐项提交的确认才能作为该条件的人工声明。交还后重新观察，其他正在验证的 tab 先重查本组 policy，管理员直接恢复不代表确认环境。
 
-仍未就绪或未授权人工时记录 BLOCKED / `ENVIRONMENT_NOT_READY`，Console 显示“不符合验证环境”。所有后续步骤（包括 cleanup）标为 SKIPPED，startedAt 保持空值，不执行退出登录、清 Cookie 等清理动作；浏览器会话资源仍由控制面正常关闭回收。准备失败不记为产品验收 FAILED。浏览器、模型、预算等执行故障保留原错误分类，但 setup 未完成同样不能放行任何后续步骤。
+仍未就绪时记录 BLOCKED / `ENVIRONMENT_NOT_READY`，本组后续 verification 为 SKIPPED，其他 setup 分组继续执行。任一组环境未就绪时禁止 profile 的全部 cleanup；浏览器资源仍由控制面关闭回收。执行故障保留原始分类，准备或环境重查未完成同样不能放行本组验证和 profile 清理。历史冻结任务没有 profilePlan 时保持原来的整链门禁。
 
 步骤的可选 `blockage` 保存具体未解决条件、冻结时刻和当时证据引用；截图不可用时保留 `screenshotError`，不会覆盖原阻塞原因。API 校验证据归属并禁止替换已保存快照。Console 单组及对照组终态优先展示阻塞截图；旧报告只回退到同一步证据，不用 cleanup 最后一帧代替。清理截图在「后续清理」中单独展示。
 
@@ -60,7 +60,7 @@ setup 通过后，普通 verification 步骤的 FAILED/INCONCLUSIVE、BLOCKED �
 
 显式等待自动计入本步额度：无验收项使用等待时长加 30 秒取证，不调用模型；带验收项在等待时长上另加五分钟。领取后才启用业务预算，排队不扣减步骤额度。
 
-新 v2 每个业务步骤独立五分钟、10 次动作、20 次模型请求（JEV+LLM 为 40 次）。步骤不能互借额度，耗尽后记录 BLOCKED 和具体原因；普通业务可继续独立后续步骤，setup 未完成则停止全部后续执行。旧 profile 总预算只用于旧版 case。cleanup 整段独立三分钟、10 次动作和 20/40 次模型请求，业务耗尽不侵占它的额度。人工等待暂停业务计时，恢复剩余额度，不清零计数；清理墙钟不暂停。每个业务步骤另预留两分钟供在途调用和取证落库，不能用于派发新操作。取消、租约丢失、未知浏览器效果仍终止执行。
+新 v2 每个业务步骤独立五分钟、10 次动作、20 次模型请求（JEV+LLM 为 40 次）。步骤不能互借额度，耗尽后记录 BLOCKED 和具体原因；普通业务可继续独立后续步骤，setup 未完成则跳过本组后续验证并禁止 profile 清理。旧 profile 总预算只用于旧版 case。cleanup 整段独立三分钟、10 次动作和 20/40 次模型请求，业务耗尽不侵占它的额度。人工等待暂停业务计时，恢复剩余额度，不清零计数；清理墙钟不暂停。每个业务步骤另预留两分钟供在途调用和取证落库，不能用于派发新操作。取消、租约丢失、未知浏览器效果仍终止执行。
 
 节点默认会话硬期限为一小时，必须覆盖全部业务、逐步收尾预留和清理；不足时排队原因显示 SESSION_BUDGET_UNSUPPORTED。会话预算超过一天的 case 直接拒绝，不削减后续步骤额度。长 case 需提高 max_session_ms 或拆分。请求不接受自定义预算或模式，详见[平台预算规则](case-platform-config.md)。
 
@@ -78,7 +78,7 @@ setup 通过后，普通 verification 步骤的 FAILED/INCONCLUSIVE、BLOCKED �
 
 所有接口沿用部署管理员 Bearer 凭据。结果结构见 [CaseResultV2 Schema](../contracts/schemas/case-result-v2.schema.json) 与 [OpenAPI](../contracts/public-api.openapi.json)。
 
-响应包含 caseId、status、reportStatus、criteriaCounts、result、steps、cleanup。双跑时额外返回 `comparison: { id, arms }`；arms 按 llm、jev 顺序分别包含 taskId、executionMode 和各自的完整 case 结果（含步骤、清理及排队原因）。顶层字段保持纯 LLM 主组的原有投影，不能用顶层完成或通过推断另一组的状态。单组及历史单组任务省略 comparison。查询、幂等重提和取消均返回相同结构；证据入口允许读取两组及各自清理中已记录的证据。status 为原任务生命周期；result 为原有 outcome、summary、criteria、evidence 结构，无报告时为 null。steps 包含 stepId、status、summary、evidenceRefs、criteria、startedAt、finishedAt。步骤状态为 PENDING、RUNNING、COMPLETED、BLOCKED、ERROR、SKIPPED。
+响应包含 caseId、status、reportStatus、criteriaCounts、result、steps、cleanup。双跑时额外返回 `comparison: { id, arms }`；arms 按 llm、jev 顺序分别包含 taskId、executionMode 和各自的完整 case 结果（含步骤、清理及排队原因）。顶层字段保持纯 LLM 主组的原有投影，不能用顶层完成或通过推断另一组的状态。单组及历史单组任务省略 comparison。查询、幂等重提和取消均返回相同结构；证据入口允许读取两组及各自清理中已记录的证据。status 为原任务生命周期；result 为原有 outcome、summary、criteria、evidence 结构，无报告时为 null。steps 包含 stepId、status、summary、evidenceRefs、criteria、startedAt、finishedAt；新任务另有 groupId 与 phase，标识 tab 分组及准备/检查/验证阶段。步骤状态为 PENDING、RUNNING、COMPLETED、BLOCKED、ERROR、SKIPPED。
 
 `reportStatus` 是与 Console 验证报告一致的结论，新增字段不改变原有 `status`、`result.outcome` 或清理结果的语义。提交、查询、幂等重提与取消响应均返回：
 
@@ -123,3 +123,5 @@ steps 按实际执行顺序包含清理步骤；cleanup 仍提供 taskId、statu
 - API 启动会应用 009-structured-cases.sql，新增逐步结果列及清理意图表；不删除旧任务与报告。
 - Console 的 JSON 模式可直接提交 case 数组，详情展示步骤、约束、执行结果以及同任务清理状态（历史独立清理仍显示链接）。普通表单继续编辑原内部任务。
 - 更新 contracts、API、Agent、Console 后部署；代码验证不替代真实业务环境验收。
+
+同 profile 的 tab 共享登录与站点存储；初始认证快照只加载一次，人工保存显式更新快照，运行结束不自动回写。网络/TRACE 当前为 profile 级证据，需要这类证据时分组串行。完整生命周期见 [架构说明](architecture.md#v2-profile-与-tab-分组)。

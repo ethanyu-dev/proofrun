@@ -44,6 +44,17 @@
       "properties": {
         "type": {
           "const": "complete"
+        },
+        "confirmedItems": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 10,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9
+          },
+          "description": "人工明确勾选的待办序号，与本次交接绑定。"
         }
       },
       "required": ["type"]

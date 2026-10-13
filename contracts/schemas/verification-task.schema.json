@@ -283,6 +283,48 @@
     },
     "sessionPlan": {
       "$ref": "session-plan.schema.json"
+    },
+    "profilePlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "一个执行拥有一个 profile，各 setup 分组独占标签页；旧任务缺省时保持串行语义。",
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "maxConcurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "groups": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,80}$"
+              },
+              "stepIds": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 32,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,80}$"
+                }
+              }
+            },
+            "required": ["id", "stepIds"]
+          }
+        }
+      },
+      "required": ["version", "maxConcurrency", "groups"]
     }
   },
   "$schema": "http://json-schema.org/draft-07/schema#",

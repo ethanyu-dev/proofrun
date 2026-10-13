@@ -650,3 +650,32 @@ test('v2 新预算按步骤冻结，混合组请求加倍，超过上限直接�
     original.budget,
   );
 });
+
+// 范围：稳定排序后 setup 拆组，cleanup 不占业务 tab，双跑保持计划；不验证真实浏览器并发。
+test('profile 按 setup 分组且保持原步骤身份', () => {
+  const input = structuredClone(INPUT);
+  input.steps.push({
+    ...input.steps[1]!,
+    stepId: 'second-setup',
+    exec_order: 6,
+  });
+  input.steps.push({
+    ...input.steps[0]!,
+    stepId: 'second-verify',
+    exec_order: 7,
+  });
+  const task = compileCase(input, PROFILE);
+  assert.deepEqual(task.profilePlan, {
+    version: 1,
+    maxConcurrency: 2,
+    groups: [
+      { id: 'group-1', stepIds: ['step-2', 'step-1', 'step-3'] },
+      { id: 'group-2', stepIds: ['second-setup', 'second-verify'] },
+    ],
+  });
+  assert(
+    task.cleanupStepIds!.every(
+      (id) => !task.profilePlan!.groups.some((g) => g.stepIds.includes(id)),
+    ),
+  );
+});

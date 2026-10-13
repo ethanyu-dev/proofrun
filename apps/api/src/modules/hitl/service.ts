@@ -51,6 +51,8 @@ interface Grant {
   auth: unknown;
   /** 仅用于人工确认 Cookie 所属站点。 */
   target_url: string;
+  /** 分组模式必须提交与本次待办完全对应的人工确认。 */
+  profile_plan: unknown;
 }
 interface Viewer {
   socket: WebSocket;
@@ -79,7 +81,7 @@ export class HitlService {
     const row = (
       await this.db.query<Grant>(
         `SELECT h.*,e.control_mode,e.control_revision,e.control_reason,
-      t.definition->'target'->>'url' AS target_url,e.state AS execution_state,e.lease_expires_at,t.id AS task_id,t.state AS task_state,t.deadline_at,
+      t.definition->'profilePlan' AS profile_plan,t.definition->'target'->>'url' AS target_url,e.state AS execution_state,e.lease_expires_at,t.id AS task_id,t.state AS task_state,t.deadline_at,
       s.auth_state AS auth,s.id AS session_id,s.node_id,s.node_epoch,s.lease_id,s.fence,s.state AS session_state
       FROM pr_interventions h JOIN pr_executions e ON e.id=h.execution_id JOIN pr_tasks t ON t.id=e.task_id
       JOIN pr_sessions s ON s.execution_id=e.id WHERE h.id=$1`,
@@ -214,6 +216,19 @@ export class HitlService {
           if (grant.control_mode !== 'HUMAN')
             throw new ApiError(409, 'HITL_WAIT', '正在等待 Agent 完成交接');
           if (message.type === 'complete') {
+            const checked = message.confirmedItems;
+            if (
+              (grant.profile_plan || checked) &&
+              (!checked ||
+                checked.length !== grant.items.length ||
+                checked.some((index) => index >= grant.items.length))
+            )
+              throw new ApiError(
+                422,
+                'HITL_CONFIRMATION_REQUIRED',
+                '请逐项确认本次交接待办',
+              );
+
             const authStatus = grant.auth
               ? await this.saveAuth(grant, socket)
               : 'disabled';
@@ -224,6 +239,10 @@ export class HitlService {
               null,
               'resume',
               grant.revision,
+              undefined,
+              undefined,
+              undefined,
+              checked ? checked.map((index) => grant.items[index]!) : undefined,
             );
             this.send(socket, { type: 'completed', authStatus });
             this.end(viewer);

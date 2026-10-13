@@ -177,3 +177,9 @@ export type { SessionPlan } from './generated/session-plan.js';
 export const validateSessionPlan = ajv.getSchema<
   import('./generated/session-plan.js').SessionPlan
 >('session-plan.schema.json')!;
+
+export {
+  compileProfilePlan,
+  profileGroup,
+  PROFILE_CONCURRENCY,
+} from './profile-plan.js';

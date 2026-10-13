@@ -85,6 +85,7 @@ export class Coordinator {
   async submit(task: VerificationTask) {
     if (
       task.steps ||
+      task.profilePlan ||
       task.cleanupStepIds !== undefined ||
       task.caseV2Definition ||
       task.purpose === 'cleanup' ||
@@ -370,6 +371,7 @@ export class Coordinator {
         taskDeadlineAt: context.deadline_at,
         cleanupDeadlineAt: context.cleanup_deadline_at,
         stepBudget: context.budget_state,
+        stepBudgets: context.budget_state?.steps,
         leaseExpiresAt: context.lease_expires_at,
         controlMode: context.control_mode,
         controlRevision: context.control_revision,
@@ -537,6 +539,7 @@ export class Coordinator {
     structuredSteps = false,
     stepBudgetVersion?: number,
     identityVersion?: number,
+    profileTabsVersion?: number,
   ) {
     const live = this.gateway.live();
     if (!live.length) return { execution: null };
@@ -550,7 +553,7 @@ export class Coordinator {
       const tasks = await client.query<{ id: string }>(
         `SELECT candidate.id FROM unnest($1::text[]) AS pool(name)
         CROSS JOIN LATERAL (SELECT id,created_at FROM pr_tasks WHERE state='QUEUED'
-          AND deadline_at>clock_timestamp() AND definition#>>'{environment,nodePool}'=pool.name AND ($3 OR NOT (definition ? 'steps')) AND ($4 OR NOT (definition ? 'stepBudget')) AND ($5 OR NOT (definition ? 'sessionPlan'))
+          AND deadline_at>clock_timestamp() AND definition#>>'{environment,nodePool}'=pool.name AND ($3 OR NOT (definition ? 'steps')) AND ($4 OR NOT (definition ? 'stepBudget')) AND ($5 OR NOT (definition ? 'sessionPlan')) AND ($6 OR NOT (definition ? 'profilePlan'))
           ORDER BY created_at,id LIMIT $2) candidate ORDER BY candidate.created_at,candidate.id`,
         [
           pools,
@@ -558,6 +561,7 @@ export class Coordinator {
           structuredSteps,
           stepBudgetVersion === 1,
           identityVersion === 1,
+          profileTabsVersion === 1,
         ],
       );
       for (const candidate of tasks.rows) {
@@ -580,6 +584,7 @@ export class Coordinator {
           targetHostname(task.target.url),
         );
         if (task.sessionPlan && identityVersion !== 1) continue;
+        if (task.profilePlan && profileTabsVersion !== 1) continue;
         const allocationTask = task;
         // 把尚未出现在心跳中的会话预留也计入，池内其他账号可改用空闲节点。
         const identityReservations = task.sessionPlan?.candidates.length
@@ -875,6 +880,7 @@ export class Coordinator {
   private eligible(heartbeat: Heartbeat, task: VerificationTask): boolean {
     return (
       heartbeat.pool === task.environment.nodePool &&
+      (!task.profilePlan || heartbeat.capabilities.profileTabs === true) &&
       (!task.steps || heartbeat.limits.maxSessionMs >= sessionBudgetMs(task)) &&
       (!(task.environment.allowIntervention || task.comparison) ||
         heartbeat.capabilities.liveView === true) &&
@@ -956,6 +962,7 @@ export class Coordinator {
         taskDeadlineAt: context.deadline_at,
         cleanupDeadlineAt: context.cleanup_deadline_at,
         stepBudget: context.budget_state,
+        stepBudgets: context.budget_state?.steps,
         controlMode: context.control_mode,
         controlRevision: context.control_revision,
       };
@@ -973,7 +980,21 @@ export class Coordinator {
           [id],
         )
       ).rows;
+      const confirmation = (
+        await client.query(
+          'SELECT confirmed_items FROM pr_interventions WHERE execution_id=$1 AND revision=$2 AND completed_at IS NOT NULL AND confirmed_items IS NOT NULL',
+          [id, context.control_revision - 1],
+        )
+      ).rows[0];
       return {
+        ...(confirmation
+          ? {
+              humanConfirmation: {
+                revision: context.control_revision,
+                items: confirmation.confirmed_items,
+              },
+            }
+          : {}),
         id,
         taskId: context.task_id,
         state: context.execution_state,
@@ -989,6 +1010,7 @@ export class Coordinator {
         taskDeadlineAt: context.deadline_at,
         cleanupDeadlineAt: context.cleanup_deadline_at,
         stepBudget: context.budget_state,
+        stepBudgets: context.budget_state?.steps,
         artifacts,
       };
     });
@@ -1002,6 +1024,7 @@ export class Coordinator {
     timeoutMs: number,
     operation: NodeCommand['command'],
     controlRevision = 0,
+    stepId?: string,
   ) {
     if (!operation.type.startsWith('browser.'))
       throw new ApiError(
@@ -1028,7 +1051,13 @@ export class Coordinator {
         'Only a human controller can change authentication or send manual input',
       );
     const hash = digest(
-      canonical({ timeoutMs, command: operation, actor, controlRevision }),
+      canonical({
+        timeoutMs,
+        command: operation,
+        actor,
+        controlRevision,
+        ...(stepId ? { stepId } : {}),
+      }),
     );
     return this.db.transaction(async (client) => {
       const context = await executionContext(client, id);
@@ -1058,6 +1087,41 @@ export class Coordinator {
           'CONTROL_CHANGED',
           'Execution control changed; refresh before acting',
         );
+      if (
+        actor === 'AGENT' &&
+        context.definition.profilePlan &&
+        operation.type !== 'browser.identity.prepare' &&
+        operation.type !== 'browser.trace'
+      ) {
+        const group = context.definition.profilePlan.groups.find((g) =>
+          g.stepIds.includes(stepId ?? ''),
+        );
+        const expectedScope =
+          group?.id ??
+          (context.definition.cleanupStepIds?.includes(stepId ?? '')
+            ? 'profile-cleanup'
+            : undefined);
+        if (
+          !expectedScope ||
+          !('tabScope' in operation) ||
+          operation.tabScope !== expectedScope
+        )
+          throw new ApiError(
+            403,
+            'TAB_SCOPE_MISMATCH',
+            '操作必须绑定当前步骤所属标签页',
+          );
+      } else if (
+        !context.definition.profilePlan &&
+        'tabScope' in operation &&
+        operation.tabScope
+      ) {
+        throw new ApiError(
+          403,
+          'TAB_SCOPE_FORBIDDEN',
+          '旧任务不能启用分组标签页',
+        );
+      }
       // Cookie 权限绑定任务 origin，不能借人工链接写入其他站点或任意 URL。
       if (operation.type === 'browser.cookies.set') {
         const url = new URL(operation.url);
@@ -1112,6 +1176,7 @@ export class Coordinator {
           ['browser.act', 'browser.cookies.clear'].includes(operation.type)
             ? 'actions'
             : 'observe',
+          stepId,
         );
       if (
         actor === 'AGENT' &&

@@ -81,3 +81,9 @@ Node 在派发前记录 commandId 与规范化 payload hash。相同请求重复
 ```
 
 只有验证该回执并提交 SQLite 后，节点才发送 artifact.available 并删除本地文件。每 10 秒尝试待上传文件，网络失败不改成 AVAILABLE。控制面将 artifactId 关联回原命令与会话，验证最终报告引用。apps/api 已实现上传和可用确认入口；注册、worker 调用和持久化顺序见 [API 说明](../apps/api/README.md)。
+
+### Profile tab 路由
+
+节点心跳能力 `profileTabs: true` 表示支持浏览器命令上的可选 `tabScope`。同一 session 的每个 scope 首次使用时创建 tab，后续每条命令先切回该 tab；观察、元素映射、frame 和视觉引用按 scope 隔离，观察只展示所属 tab。分组自动动作不能创建、切换或关闭其他 tab。没有 scope 的历史命令继续使用原会话行为，人工操作使用已定位的求助 tab。
+
+控制面要求新任务命令携带对应 RUNNING 步骤的 `stepId`，并核对冻结计划中的 tabScope。模型调用也携带 stepId，动作和模型预算按步骤独立累计；整段 cleanup 共享自己的预算。报告证据通过已持久化命令核对分组归属。网络/TRACE 仍属于整个 profile，需要这类证据时 Agent 串行执行分组。

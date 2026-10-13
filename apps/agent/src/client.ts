@@ -41,6 +41,8 @@ export type BrowserOperation = Extract<
 export type CommandResult = Extract<NodeEvent, { type: 'command.result' }>;
 /** 执行视图只用于生命周期控制；节点和会话身份始终来自领取响应。 */
 export interface ExecutionView extends ExecutionTiming {
+  /** 仅来自独立人工处理页逐项确认，普通 resume 不会携带此证据。 */
+  humanConfirmation?: { revision: number; items: string[] };
   /** 任务终态用于撤销模型调用，不依赖模型理解取消文本。 */
   taskState: string;
   /** 操作权与代次独立于任务生命周期，暂停期间仍由原 worker 续租。 */
@@ -58,6 +60,8 @@ export interface ExecutionView extends ExecutionTiming {
 
 /** 控制面时间快照；旧版心跳未带这些字段时不能自行推断预算已刷新。 */
 export interface ExecutionTiming {
+  /** profile 中各步骤独立计时，客户端只投影当前组。 */
+  stepBudgets?: Record<string, NonNullable<ExecutionTiming['stepBudget']>>;
   taskDeadlineAt?: string;
   /** 当前步骤的服务端计时与计数；旧 worker 不会领取携带此策略的新任务。 */
   stepBudget?: {
@@ -114,6 +118,7 @@ export class ControlClient {
         structuredSteps: true,
         stepBudgetVersion: 1,
         identityVersion: 1,
+        profileTabsVersion: 1,
       },
       this.config.requestMs,
       signal,
@@ -193,9 +198,11 @@ export class ControlClient {
     timeoutMs: number,
     signal: AbortSignal,
     controlRevision = 0,
+    stepId?: string,
   ): Promise<CommandResult> {
     const request = {
       type: 'execution.command',
+      ...(stepId ? { stepId } : {}),
       controlRevision,
       commandId,
       timeoutMs,

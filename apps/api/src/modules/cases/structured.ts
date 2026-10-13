@@ -1,6 +1,7 @@
 import { resolveSession, type IdentityCatalog } from '../identities/catalog.js';
 import {
   compileStepBudget,
+  compileProfilePlan,
   businessBudget,
   CASE_MAX_MS,
   CASE_MAX_ACTIONS,
@@ -155,6 +156,9 @@ export function compileCase(
     sessionPlan,
     budget,
     stepBudget,
+    profilePlan: compileProfilePlan(
+      businessSteps as NonNullable<VerificationTask['steps']>,
+    ),
     cleanupStepIds: cleanupSteps.map((step) => step.stepId!),
     executionMode: profile.executionMode ?? 'parallel',
     purpose: 'verification',

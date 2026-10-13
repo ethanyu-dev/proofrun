@@ -66,6 +66,8 @@ export interface DecisionOutput {
 }
 /** 执行循环只依赖此接口，供应商细节限制在单个适配器中。 */
 export interface DecisionModel {
+  /** 有跨轮状态的适配器必须为每个 tab 创建独立实例；无状态适配器可直接复用。 */
+  fork?(): DecisionModel;
   decide(input: DecisionInput, signal: AbortSignal): Promise<DecisionOutput>;
 }
 

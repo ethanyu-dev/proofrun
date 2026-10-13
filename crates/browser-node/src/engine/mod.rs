@@ -4,6 +4,7 @@ mod cookies;
 mod dom;
 mod identity;
 
+mod scopes;
 use crate::{
     error::{Fault, Result},
     process,
@@ -69,6 +70,10 @@ pub struct EngineConfig {
 }
 /// 一场浏览器会话的 CLI 适配器和最近一次观察的临时目标映射。
 pub struct Engine {
+    /// 每个 setup 分组独占一个标签页，数据仍属于同一 profile。
+    scopes: HashMap<String, scopes::TabState>,
+    /// 当前引擎 CLI 所在分组；切换和操作共享同一串行队列。
+    active_scope: Option<String>,
     /// CLI、Chrome 和会话目录配置。
     config: EngineConfig,
     /// 当前会话允许更新的共享快照版本；并发会话更新后不得覆盖。
@@ -113,6 +118,8 @@ impl Engine {
             serde_json::to_vec(&options)?,
         )?;
         Ok(Self {
+            scopes: HashMap::new(),
+            active_scope: None,
             config,
             auth_version: None,
             observation: None,
@@ -280,6 +287,19 @@ impl Engine {
         let deadline = process::boot_ms() + timeout_ms;
         let remaining = || deadline.saturating_sub(process::boot_ms()).max(1);
         let raw = serde_json::to_value(&operation).unwrap();
+        if let Some(scope) = raw["tabScope"].as_str() {
+            if raw["type"] == "browser.act"
+                && raw["action"]
+                    .as_str()
+                    .is_some_and(|a| a.starts_with("tab."))
+            {
+                return Err(Fault::rejected(
+                    "TAB_SCOPE_FORBIDDEN",
+                    "group cannot switch or close another tab",
+                ));
+            }
+            self.activate_scope(scope, remaining()).await?;
+        }
         match operation {
             BrowserCommand::BrowserIdentityPrepare { .. } => {
                 self.prepare_identity(&raw, deadline).await
@@ -360,7 +380,7 @@ impl Engine {
                 }
                 Ok(json!({"applied":true}))
             }
-            BrowserCommand::BrowserObserve { screenshot } => {
+            BrowserCommand::BrowserObserve { screenshot, .. } => {
                 // DOM、URL、标题和可选截图由多次调用组成，结果明确标记非原子。
                 // 验收依赖状态文本等非交互内容，不能只采集按钮与输入框。
                 self.dom = None;
@@ -421,6 +441,17 @@ impl Engine {
                     self.dom = Some(dom);
                     self.targets.clear();
                 }
+                if let Some(scope) = &self.active_scope {
+                    let owned = &self.scopes[scope].tab_id;
+                    tabs = json!(
+                        tabs.as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter(|tab| tab["tabId"].as_str() == Some(owned))
+                            .cloned()
+                            .collect::<Vec<_>>()
+                    );
+                }
                 self.tabs = tabs
                     .as_array()
                     .into_iter()
@@ -429,6 +460,9 @@ impl Engine {
                     .collect();
                 self.observation = Some(id.clone());
                 let mut result = json!({"observationId":id,"url":url.get("url"),"title":title.get("title"),"text":text,"targets":targets,"atomic":false,"truncated":dom_truncated,"coverage":coverage,"tabs":tabs});
+                if let Some(scope) = &self.active_scope {
+                    result["tabScope"] = json!(scope);
+                }
                 if let Some(documents) = documents {
                     result["documents"] = documents;
                 }
@@ -643,7 +677,7 @@ impl Engine {
                 }
                 Ok(json!({"performed":true}))
             }
-            BrowserCommand::BrowserTrace { action } => {
+            BrowserCommand::BrowserTrace { action, .. } => {
                 let action = serde_json::to_value(action).unwrap();
                 if action == "start" {
                     if self.trace.is_some() {
@@ -711,8 +745,8 @@ impl Engine {
                     Ok(json!({"written":true}))
                 }
             }
-            BrowserCommand::BrowserAuthSave => self.save_auth(remaining()).await,
-            BrowserCommand::BrowserWait { selector, text } => {
+            BrowserCommand::BrowserAuthSave { .. } => self.save_auth(remaining()).await,
+            BrowserCommand::BrowserWait { selector, text, .. } => {
                 if self.dom.is_none() {
                     let endpoint = self
                         .cli(vec!["get".into(), "cdp-url".into()], remaining())
@@ -922,7 +956,7 @@ pub fn validate(command: &BrowserCommand, writes: bool) -> Result<()> {
                 action_args(*action, target.clone(), value.clone())?;
             }
         }
-        BrowserCommand::BrowserWait { selector, text }
+        BrowserCommand::BrowserWait { selector, text, .. }
             if selector.is_empty() || selector.len() > 1024 || text.len() > 8192 =>
         {
             return Err(Fault::rejected(

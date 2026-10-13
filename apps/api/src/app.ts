@@ -460,6 +460,7 @@ export async function buildApp(
       body.structuredSteps === true,
       body.stepBudgetVersion,
       body.identityVersion,
+      body.profileTabsVersion,
     );
   });
   app.get<{ Params: IdParams }>('/v1/executions/:id', (request) =>
@@ -515,6 +516,7 @@ export async function buildApp(
             body.timeoutMs,
             body.command,
             body.controlRevision,
+            body.stepId,
           ),
         );
     },
@@ -587,6 +589,7 @@ export async function buildApp(
             body.timeoutMs,
             body.command,
             body.controlRevision,
+            body.stepId,
           ),
         );
     },

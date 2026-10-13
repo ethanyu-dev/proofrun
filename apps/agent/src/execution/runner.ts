@@ -1,3 +1,4 @@
+import { executeProfile } from './profile-runner.js';
 import {
   EnvironmentHandoffs,
   unresolvedRequirements,
@@ -127,6 +128,42 @@ class Execution {
   /** 后续清理之间只切换 stepId，保留整段累计计数。 */
   private cleanupAllowance: StepAllowance | undefined;
   private stepIndex = 0;
+  /** 上次本组 policy 通过时的共享控制代次；跨步骤也不能丢失重新检查要求。 */
+  private readyRevision: number | undefined;
+  /** 仅新版 profile 分组启用，准备 finish 只能进入独立检查阶段。 */
+  private setupPhase: 'PREPARING' | 'CHECKING' | undefined;
+  /** 兄弟 tab 人工改变共享环境后，暂存当前验证进度并重新检查本组 policy。 */
+  private recheck: { task: VerificationTask; workflow: Workflow } | undefined;
+
+  /** 复核只恢复本组验证进度，不重新执行已交付的验收项。 */
+  private finishRecheck() {
+    if (!this.recheck) return;
+    this.currentTask = this.recheck.task;
+    this.workflow = this.recheck.workflow;
+    this.recheck = undefined;
+    this.setupPhase = undefined;
+    this.readyRevision = this.controlRevision;
+    this.stepResults[this.stepIndex]!.phase = 'VERIFYING';
+    this.current = undefined;
+    this.image = undefined;
+    this.tracker.reset();
+    this.feedback =
+      '共享环境的 policy 已重新检查，可以继续本步骤未完成的验证。';
+  }
+
+  /** policy 检查只决定环境准入；准备阶段已采集的 expected 结论仍保留原证据。 */
+  private finishProfileSetup(summary: string): VerificationReport {
+    this.completionEvidence = [
+      ...new Set([
+        ...this.completionEvidence,
+        ...this.criteria
+          .values()
+          .flatMap((criterion) => criterion.evidenceRefs),
+      ]),
+    ];
+    return this.report('EXECUTED', summary, this.criteria.values(), null);
+  }
+
   /** 逐步进度快照只由执行器推进，完成后不可再改写。 */
   private stepResults: StepResult[] = [];
   /** 当前步骤开始前的证据集合，防止旧观察被冒充为本步执行。 */
@@ -290,8 +327,11 @@ class Execution {
           this.details.actions--;
         throw error;
       });
+    if (result.commandId && result.commandId !== id)
+      this.details.commandIds[this.details.commandIds.length - 1] =
+        result.commandId;
     this.history.push({
-      commandId: id,
+      commandId: result.commandId ?? id,
       operation: operation.type,
       ...(operation.type === 'browser.act'
         ? {
@@ -447,7 +487,44 @@ class Execution {
         if (!view.stepBudget) this.allowance?.resume();
         const changed = this.controlRevision !== (view.controlRevision ?? 0);
         this.controlRevision = view.controlRevision ?? 0;
-        if (changed) {
+        const recheckNeeded =
+          !this.recheck &&
+          !!this.currentTask &&
+          !this.isSetup() &&
+          !this.isCleanup() &&
+          this.readyRevision !== undefined &&
+          this.readyRevision !== this.controlRevision;
+        if (changed || recheckNeeded) {
+          if (
+            this.grant.task.profilePlan &&
+            this.currentTask &&
+            !this.isSetup() &&
+            !this.isCleanup() &&
+            recheckNeeded
+          ) {
+            const setup = this.grant.task.steps?.find(
+              (step) => step.type === 'setup',
+            );
+            if (setup) {
+              this.recheck = {
+                task: this.currentTask,
+                workflow: this.workflow,
+              };
+              this.currentTask = {
+                ...this.currentTask,
+                objective: `共享环境变化后重新核实本组 policy：${JSON.stringify(setup.policy)}`,
+                acceptanceCriteria: [],
+              };
+              this.setupPhase = 'CHECKING';
+              this.workflow = new Workflow(
+                this.currentTask.objective,
+                `${setup.stepId}-policy`,
+                setup.policy,
+              );
+              this.stepResults[this.stepIndex]!.phase = 'CHECKING';
+              await this.client.recordSteps(this.grant, this.stepResults);
+            }
+          }
           this.invalidateReadiness();
           // 人工交还的是同一会话的当前页面；旧观察失效，但不能用导航覆盖处理结果。
           this.pendingNavigation = undefined;
@@ -471,8 +548,11 @@ class Execution {
   private context(): DecisionInput {
     return decisionContext({
       task: this.task,
-      executionStep: this.grant.task.steps?.[this.stepIndex],
-      recordedCriteria: this.criteria.values(),
+      setupPhase: this.setupPhase,
+      executionStep: this.recheck
+        ? this.grant.task.steps?.find((step) => step.type === 'setup')
+        : this.grant.task.steps?.[this.stepIndex],
+      recordedCriteria: this.recheck ? [] : this.criteria.values(),
       cleanup: this.isCleanup(),
       preconditions: evaluateChecks(
         this.identityChecks(),
@@ -656,6 +736,7 @@ class Execution {
   }
   /** cleanup 不承担环境准备职责，但仍受此前 setup 门禁约束。 */
   private isSetup(): boolean {
+    if (this.recheck) return true;
     return (
       this.grant.task.steps?.[this.stepIndex]?.type === 'setup' &&
       !this.isCleanup()
@@ -684,7 +765,12 @@ class Execution {
               : '该条件尚未确认',
           status: check.status as 'UNSATISFIED' | 'UNCONFIRMED',
         })),
-      ...unresolvedRequirements(this.workflow.view()),
+      ...unresolvedRequirements(this.workflow.view()).map((condition) => ({
+        ...condition,
+        id: this.setupPhase
+          ? `${this.setupPhase}:${condition.id}`
+          : condition.id,
+      })),
     ];
   }
 
@@ -714,21 +800,74 @@ class Execution {
       : [];
     if (requested.length) {
       const revision = this.controlRevision;
-      await this.requestIntervention(
-        `不符合验证环境：${summary}。待处理：${detail}`.slice(0, 1000),
-        requested.map((condition) =>
-          `${condition.description}：${condition.summary}`.slice(0, 500),
-        ),
-        requested.some((condition) => condition.id === 'session:login'),
-      );
-      // 只确认本次明确交接的 manual 项；其他条件必须用交还后的页面重新验证。
+      try {
+        await this.requestIntervention(
+          `不符合验证环境：${summary}。待处理：${requested.map((item) => `${item.description}：${item.summary}`).join('；')}`.slice(
+            0,
+            1000,
+          ),
+          requested.map((condition) =>
+            `${condition.description}：${condition.summary}`.slice(0, 500),
+          ),
+          requested.some((condition) => condition.id === 'session:login'),
+        );
+      } catch (error) {
+        if (error instanceof AgentFault && error.code === 'CONTROL_CHANGED')
+          this.environmentHandoffs.release(
+            this.grant.task.steps![this.stepIndex]!.stepId!,
+            requested,
+          );
+        throw error;
+      }
+      const returned = this.grant.task.profilePlan
+        ? await this.client.view(this.grant, this.guard.signal)
+        : undefined;
+      const explicitlyConfirmed = (id: string) =>
+        requested.some(
+          (item) =>
+            item.id === id &&
+            returned?.humanConfirmation?.revision === this.controlRevision &&
+            returned.humanConfirmation.items.includes(
+              `${item.description}：${item.summary}`.slice(0, 500),
+            ),
+        );
+      // 新版只接受处理页逐项提交的确认；管理员恢复控制权不能冒充确认账号条件。
       if (this.controlRevision > revision)
         for (const check of this.identityChecks())
           if (
             check.method === 'manual' &&
-            requested.some((item) => item.id === `check:${check.id}`)
+            requested.some((item) => item.id === `check:${check.id}`) &&
+            (!this.grant.task.profilePlan ||
+              explicitlyConfirmed(`check:${check.id}`))
           )
             this.confirmedChecks.set(check.id, this.controlRevision);
+      if (this.setupPhase === 'CHECKING') {
+        const view = await this.client.view(this.grant, this.guard.signal);
+        if (view.humanConfirmation?.revision === this.controlRevision) {
+          const confirmed = requested.filter((condition) =>
+            view.humanConfirmation!.items.includes(
+              `${condition.description}：${condition.summary}`.slice(0, 500),
+            ),
+          );
+          const assessments = this.workflow
+            .view()
+            .steps.filter((step) =>
+              confirmed.some(
+                (condition) =>
+                  condition.id === `CHECKING:requirement:${step.id}`,
+              ),
+            )
+            .map((step) => ({
+              stepId: step.id,
+              outcome: 'complete',
+              summary:
+                '人工在本次交接中逐项确认该 policy；页面证据仅记录交还现场',
+              evidenceRefs: this.current!.artifactRefs.map((r) => r.artifactId),
+            }));
+          if (assessments.length)
+            this.workflow.apply({ assessments }, new Set(this.evidence.keys()));
+        }
+      }
       this.feedback =
         '人工已交还控制权。请重新核实完整准备要求：已解决项提交新证据，其余未解决项明确说明原因；不得沿用旧账号证据或仅凭人工完成判定就绪。';
       return null;
@@ -811,6 +950,12 @@ class Execution {
       original.sessionPlan?.candidates[0]?.checks ?? [],
       original.sessionPlan?.requirements ?? [],
       step?.preconditions ?? [],
+      ...(this.recheck
+        ? [
+            original.steps?.find((item) => item.type === 'setup')
+              ?.preconditions ?? [],
+          ]
+        : []),
     );
   }
 
@@ -832,7 +977,7 @@ class Execution {
         this.controlRevision,
       );
     let results = evaluate();
-    if (this.isSetup()) {
+    if (this.isSetup() || original.profilePlan) {
       while (results.some((r) => r.status !== 'SATISFIED')) {
         const conditions: EnvironmentCondition[] = results
           .filter((r) => r.status !== 'SATISFIED')
@@ -983,6 +1128,7 @@ class Execution {
         }
         // 登录前置条件需要人工时先交接，不能先进入模型重复观察或长时间等待挑战。
         if (
+          !this.grant.task.profilePlan &&
           (this.isSetup() || !this.loginInterventions.has(this.stepIndex)) &&
           !this.identityChecks().length &&
           needsLoginIntervention(this.grant.task, this.current!, this.stepIndex)
@@ -1024,8 +1170,30 @@ class Execution {
           errors = 0;
           continue;
         }
-        const identityBlock = await this.checkIdentity(true);
+        const identityBlock =
+          this.setupPhase === 'PREPARING'
+            ? null
+            : await this.checkIdentity(true);
         if (identityBlock) return identityBlock;
+        if (
+          this.setupPhase === 'CHECKING' &&
+          !(
+            this.recheck
+              ? this.grant.task.steps!.find((step) => step.type === 'setup')!
+              : this.grant.task.steps![this.stepIndex]!
+          ).policy.length
+        ) {
+          if (this.recheck) {
+            this.finishRecheck();
+            continue;
+          }
+          this.completionEvidence = this.current!.artifactRefs.map(
+            (ref) => ref.artifactId,
+          );
+          return this.finishProfileSetup(
+            '准备操作完成；本组未配置 policy，显式身份条件已核实',
+          );
+        }
         if (
           (this.changes?.unchangedRounds ?? 0) >= STALLED_ROUNDS ||
           ((this.changes?.repeatedStateVisits ?? 0) >= CYCLIC_VISITS &&
@@ -1218,6 +1386,34 @@ class Execution {
               'INVALID_MODEL_DECISION',
               '逐项保存需要结构化步骤',
             );
+          if (
+            this.setupPhase === 'PREPARING' &&
+            decision.type === 'verification.finish'
+          ) {
+            this.workflow.assertFinish(decision);
+            const prepared = new CriteriaLedger(this.task.acceptanceCriteria);
+            prepared.record(decision.criteria, this.evidence);
+            this.finish(decision, prepared);
+            this.criteria = prepared;
+            this.currentTask = { ...this.task, acceptanceCriteria: [] };
+            const step = this.grant.task.steps![this.stepIndex]!;
+            this.setupPhase = 'CHECKING';
+            this.stepResults[this.stepIndex]!.phase = 'CHECKING';
+            this.workflow = new Workflow(
+              this.task.objective,
+              `${step.stepId}-policy`,
+              step.policy,
+            );
+            this.readinessEvidence = new Set(this.evidence.keys());
+            this.current = undefined;
+            this.image = undefined;
+            this.tracker.reset();
+            this.changes = undefined;
+            this.feedback =
+              '准备操作已结束。现在只检查原始 policy；不得从 description 添加额外环境要求。';
+            await this.client.recordSteps(this.grant, this.stepResults);
+            continue;
+          }
           const identityBlock = await this.checkIdentity(false);
           if (identityBlock) return identityBlock;
           // 准备结论必须先过门禁，不能提前将 FAILED 写成产品验收或保留人工处理前的部分通过。
@@ -1269,6 +1465,12 @@ class Execution {
             ready.record(decision.criteria, currentEvidence);
             await this.captureTrace();
             const report = this.finish(decision, ready);
+            if (this.recheck) {
+              this.finishRecheck();
+              continue;
+            }
+            if (this.setupPhase === 'CHECKING')
+              return this.finishProfileSetup(decision.summary);
             this.criteria = ready;
             return report;
           }
@@ -1585,6 +1787,8 @@ class Execution {
       // 相同入口的连续步骤继承当前页面，包括站点重定向、语言及团队选择。
       if (this.stepIndex > 0 && steps[this.stepIndex - 1]!.url !== step.url)
         this.pendingNavigation = step.url;
+      this.currentTask = undefined;
+      this.recheck = undefined;
       await this.checkpoint();
       this.currentTask = {
         ...this.grant.task,
@@ -1602,10 +1806,18 @@ class Execution {
       delete this.currentTask.steps;
       delete this.currentTask.stepBudget;
       delete this.currentTask.cleanupStepIds;
+      this.setupPhase =
+        this.grant.task.profilePlan && this.isSetup() ? 'PREPARING' : undefined;
+      if (this.grant.task.profilePlan)
+        state.phase = this.isCleanup()
+          ? 'CLEANUP'
+          : (this.setupPhase ?? 'VERIFYING');
       this.workflow = new Workflow(
         this.currentTask.objective,
         step.stepId,
-        this.isSetup() ? [step.description, ...step.policy] : undefined,
+        this.isSetup()
+          ? [step.description, ...(this.setupPhase ? [] : step.policy)]
+          : undefined,
       );
       this.readinessEvidence = new Set(this.evidence.keys());
       this.criteria = new CriteriaLedger(this.currentTask.acceptanceCriteria);
@@ -1698,7 +1910,12 @@ class Execution {
           await this.preserveBlockage(
             report.executionDisposition === 'BLOCKED',
           );
-        if (this.isSetup()) setupFailure = report;
+        if (
+          this.isSetup() ||
+          (this.grant.task.profilePlan &&
+            report.executionDetails?.reasonCode === 'ENVIRONMENT_NOT_READY')
+        )
+          setupFailure = report;
         state.status =
           report.executionDisposition === 'BLOCKED' ? 'BLOCKED' : 'ERROR';
         state.summary = report.summary;
@@ -1727,6 +1944,10 @@ class Execution {
         continue;
       }
       state.status = 'COMPLETED';
+      if (this.isSetup() && this.grant.task.profilePlan) {
+        state.phase = 'READY';
+        this.readyRevision = this.controlRevision;
+      }
       state.summary = report.summary;
       state.criteria = report.criteria;
       state.evidenceRefs = [...this.completionEvidence];
@@ -1863,7 +2084,7 @@ class Execution {
             /* 终态撤权时由最终报告提交保留已知事实。 */
           }
         }
-        if (!validateVerificationReport(report))
+        if (!this.grant.task.profilePlan && !validateVerificationReport(report))
           throw new AgentFault('INVALID_REPORT', '执行器生成的报告不满足协议');
         try {
           await this.client.complete(this.grant, report, this.controlRevision);
@@ -1911,6 +2132,19 @@ export function execute(
   model: DecisionModel,
   grant: ExecutionGrant,
   stop: AbortSignal = new AbortController().signal,
+): Promise<VerificationReport> {
+  return grant.task.profilePlan
+    ? executeProfile(config, client, model, grant, stop, executeSingle)
+    : executeSingle(config, client, model, grant, stop);
+}
+
+/** 子组复用单组执行器，最终报告由 profile 编排器统一提交。 */
+export function executeSingle(
+  config: AgentConfig,
+  client: ExecutionClient,
+  model: DecisionModel,
+  grant: ExecutionGrant,
+  stop: AbortSignal,
 ): Promise<VerificationReport> {
   return new Execution(config, client, model, grant, stop).run();
 }

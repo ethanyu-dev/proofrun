@@ -55,6 +55,8 @@ export interface PreviousObservation {
 
 /** 执行器传入事实快照；上下文模块不改变执行状态或原始证据。 */
 export interface ContextInput {
+  /** 新 profile 模式强制将准备与 policy 核验分离。 */
+  setupPhase?: 'PREPARING' | 'CHECKING' | undefined;
   /** 当前步骤可见的任务定义。 */
   task: VerificationTask;
   /** 结构化任务中当前获准执行的步骤。 */
@@ -114,6 +116,7 @@ export function decisionContext(input: ContextInput): DecisionInput {
       input.task,
     ),
     executionStep: input.executionStep,
+    setupPhase: input.setupPhase,
     recordedCriteria: input.recordedCriteria ?? [],
     cleanup: input.cleanup === true,
     preconditions: structuredClone(input.preconditions),

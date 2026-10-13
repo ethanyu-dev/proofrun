@@ -141,6 +141,35 @@ export type VerificationTask = {
     settleMs: number;
   };
   sessionPlan?: SessionPlan;
+  /**
+   * 一个执行拥有一个 profile，各 setup 分组独占标签页；旧任务缺省时保持串行语义。
+   */
+  profilePlan?: {
+    version: 1;
+    maxConcurrency: number;
+    /**
+     * @minItems 1
+     * @maxItems 32
+     */
+    groups: [
+      {
+        id: string;
+        /**
+         * @minItems 1
+         * @maxItems 32
+         */
+        stepIds: [string, ...string[]];
+      },
+      ...{
+        id: string;
+        /**
+         * @minItems 1
+         * @maxItems 32
+         */
+        stepIds: [string, ...string[]];
+      }[],
+    ];
+  };
 };
 export type CaseStep = {
   /**

@@ -86,6 +86,9 @@
         },
         "identityVersion": {
           "const": 1
+        },
+        "profileTabsVersion": {
+          "const": 1
         }
       },
       "required": ["type", "workerId"]
@@ -121,6 +124,10 @@
           "minimum": 0,
           "maximum": 2147483647,
           "description": "人工控制代次；旧页面和旧模型决定不能操作恢复后的会话。"
+        },
+        "stepId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,80}$"
         }
       },
       "required": ["type", "commandId", "timeoutMs", "command"]

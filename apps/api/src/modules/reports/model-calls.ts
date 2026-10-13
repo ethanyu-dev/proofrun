@@ -137,7 +137,7 @@ export class ModelCalls {
               'Invalid thinking parameter',
             );
         }
-        await consumeStepBudget(client, context, 'modelCalls');
+        await consumeStepBudget(client, context, 'modelCalls', record.stepId);
         const inserted = await client.query(
           'INSERT INTO pr_model_calls(id,execution_id,call_index,record,start_hash) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING RETURNING id',
           [id, executionId, record.callIndex, JSON.stringify(record), hash],

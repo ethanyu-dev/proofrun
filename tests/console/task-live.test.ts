@@ -199,3 +199,20 @@ test('截图缺失或归档时保留原因，不以清理图兜底', () => {
   archived.archived_at = '2026-10-13T03:00:00Z';
   assert.match(render(archived), /证据已清理/);
 });
+
+// 范围：多个 tab 受阻时都展示各自冻结原因及截图；SSR 不验证真实画面或操作控制权。
+test('profile 多个阻塞分组均保留现场', () => {
+  const value = blockedTask();
+  const other = structuredClone(value.report!.steps![0]!);
+  other.stepId = 'second-setup';
+  other.groupId = 'group-2';
+  other.summary = '第二组资格未确认';
+  other.blockage!.evidenceRefs = ['later-image'];
+  value.report!.steps!.push(other);
+  const html = render(value);
+  assert.match(html, /登录成功，GitHub 绑定状态未确认/);
+  assert.match(html, /第二组资格未确认/);
+  assert.match(html, /blocked-image/);
+  assert.match(html, /later-image/);
+  assert.equal((html.match(/aria-label="阻塞原因与截图"/g) ?? []).length, 2);
+});
