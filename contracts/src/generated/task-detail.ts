@@ -141,6 +141,35 @@ export type VerificationTask = {
     settleMs: number;
   };
   sessionPlan?: SessionPlan;
+  /**
+   * 一个执行拥有一个 profile，各 setup 分组独占标签页；旧任务缺省时保持串行语义。
+   */
+  profilePlan?: {
+    version: 1;
+    maxConcurrency: number;
+    /**
+     * @minItems 1
+     * @maxItems 32
+     */
+    groups: [
+      {
+        id: string;
+        /**
+         * @minItems 1
+         * @maxItems 32
+         */
+        stepIds: [string, ...string[]];
+      },
+      ...{
+        id: string;
+        /**
+         * @minItems 1
+         * @maxItems 32
+         */
+        stepIds: [string, ...string[]];
+      }[],
+    ];
+  };
 };
 export type CaseStep = {
   /**
@@ -792,6 +821,11 @@ export interface StepResult {
      */
     screenshotError?: string;
   };
+  groupId?: string;
+  /**
+   * 环境准备先操作再检查 policy，READY 才允许本组验证。
+   */
+  phase?: 'PREPARING' | 'CHECKING' | 'READY' | 'VERIFYING' | 'CLEANUP';
 }
 /**
  * 节点进程上报的编译身份；用于排查部署版本，不作为授权或能力判断依据。

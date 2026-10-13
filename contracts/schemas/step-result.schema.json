@@ -223,6 +223,14 @@
           "description": "截图未取得时保留原因，不覆盖原始阻塞原因。"
         }
       }
+    },
+    "groupId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,80}$"
+    },
+    "phase": {
+      "enum": ["PREPARING", "CHECKING", "READY", "VERIFYING", "CLEANUP"],
+      "description": "环境准备先操作再检查 policy，READY 才允许本组验证。"
     }
   },
   "required": [

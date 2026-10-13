@@ -148,6 +148,11 @@
             "screenshot": {
               "description": "是否同时采集 PNG 截图；截图与 DOM 来自不同时间点。",
               "type": "boolean"
+            },
+            "tabScope": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,80}$",
+              "description": "平台分配的标签页分组身份，不是模型指定的活动页；同一 profile 内独立保存观察引用。"
             }
           },
           "required": ["type"],
@@ -208,6 +213,11 @@
               "minimum": 0,
               "maximum": 16384,
               "description": "visual.click 使用当前截图的视口 CSS 坐标。"
+            },
+            "tabScope": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,80}$",
+              "description": "平台分配的标签页分组身份，不是模型指定的活动页；同一 profile 内独立保存观察引用。"
             }
           },
           "required": ["type", "action"],
@@ -228,6 +238,11 @@
             "text": {
               "description": "目标元素文本中必须包含的字符串。",
               "type": "string"
+            },
+            "tabScope": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,80}$",
+              "description": "平台分配的标签页分组身份，不是模型指定的活动页；同一 profile 内独立保存观察引用。"
             }
           },
           "required": ["type", "selector", "text"],
@@ -241,6 +256,11 @@
           "properties": {
             "type": {
               "const": "browser.auth.save"
+            },
+            "tabScope": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,80}$",
+              "description": "平台分配的标签页分组身份，不是模型指定的活动页；同一 profile 内独立保存观察引用。"
             }
           },
           "required": ["type"],
@@ -281,6 +301,11 @@
               "type": "integer",
               "minimum": -2000,
               "maximum": 2000
+            },
+            "tabScope": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,80}$",
+              "description": "平台分配的标签页分组身份，不是模型指定的活动页；同一 profile 内独立保存观察引用。"
             }
           },
           "required": ["type", "action"],
@@ -296,6 +321,11 @@
             },
             "action": {
               "enum": ["start", "stop"]
+            },
+            "tabScope": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,80}$",
+              "description": "平台分配的标签页分组身份，不是模型指定的活动页；同一 profile 内独立保存观察引用。"
             }
           },
           "required": ["type", "action"],
@@ -327,6 +357,11 @@
             },
             "httpOnly": {
               "type": "boolean"
+            },
+            "tabScope": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,80}$",
+              "description": "平台分配的标签页分组身份，不是模型指定的活动页；同一 profile 内独立保存观察引用。"
             }
           },
           "required": ["type", "url", "name", "value", "httpOnly"],
@@ -370,6 +405,11 @@
             "saveSnapshot": {
               "type": "boolean",
               "description": "仅全部身份条件可自动核验时保存快照；人工条件由 HITL 确认。"
+            },
+            "tabScope": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,80}$",
+              "description": "平台分配的标签页分组身份，不是模型指定的活动页；同一 profile 内独立保存观察引用。"
             }
           },
           "required": ["type", "url", "checks", "saveSnapshot"]
@@ -397,6 +437,11 @@
                 "maxLength": 256,
                 "pattern": "^[A-Za-z0-9!#$%&'*+.^_`|~-]+$"
               }
+            },
+            "tabScope": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,80}$",
+              "description": "平台分配的标签页分组身份，不是模型指定的活动页；同一 profile 内独立保存观察引用。"
             }
           },
           "required": ["type", "url", "names"]

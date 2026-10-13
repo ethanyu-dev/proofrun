@@ -138,3 +138,5 @@ proofrun-node --config /etc/proofrun/node.toml auth-forget --state-id qa-account
 ## 环境准备中的条件交接
 
 业务 setup 按未解决条件分配人工交接机会：登录缺失与原始 workflow/preconditions 条件分别记录，同一条件只交接一次，单次执行最多三轮。用户完成登录不代表角色、第三方绑定或页面前置条件已满足，返回后仍重新核实；新发现的未解决条件可继续交接，重复失败或额度耗尽时保留具体原因及阻塞截图。环境未 ready 时阻止全部后续步骤，包括 cleanup；仅关闭浏览器会话回收资源，不自动退出业务账号或清 Cookie。任务终态展示阻塞现场，历史清理截图单独展示。
+
+新 profile 分组任务的人工请求会先定位求助组 tab，再暂停同 profile 所有组。处理页 complete 消息须携带 confirmedItems，明确确认本次待办；这些确认随控制代次保存，管理员 resume 不生成确认。恢复后活动组重查自身 policy。环境未就绪只跳过本组验证，并禁止整个 profile 的 cleanup；其他组继续。历史任务保留整链门禁。

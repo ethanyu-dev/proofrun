@@ -254,6 +254,7 @@ export class SimulatedNode {
         state: 'ACTIVE',
       })),
       capabilities: {
+        profileTabs: true,
         observe: true,
         screenshot: true,
         conditionWait: true,

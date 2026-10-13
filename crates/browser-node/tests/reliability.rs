@@ -125,6 +125,7 @@ async fn closing_and_quarantined_sessions_keep_capacity_until_verified_closed() 
 #[test]
 fn excludes_raw_shell_flags_and_disables_unverified_writes() {
     let command = BrowserCommand::BrowserAct {
+        tab_scope: None,
         action: ActBrowserAction::Click,
         target: Some("#save".into()),
         value: None,

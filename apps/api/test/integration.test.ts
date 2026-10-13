@@ -97,6 +97,51 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
     body?: unknown,
     token = ADMIN,
   ) => {
+    // 旧的单步协议夹具补齐新版身份字段；错误身份、跨组证据和并发行为另有专门回归。
+    const executionPath = /^\/v1\/executions\/([^/]+)\//.exec(path);
+    if (method === 'POST' && body && executionPath) {
+      const stored = (
+        await sql.query(
+          'SELECT t.definition,t.step_results FROM pr_executions e JOIN pr_tasks t ON t.id=e.task_id WHERE e.id=$1',
+          [executionPath[1]],
+        )
+      ).rows[0];
+      const plan = stored?.definition.profilePlan;
+      if (plan) {
+        const payload = body as any;
+        const active = stored.step_results?.find(
+          (step: any) => step.status === 'RUNNING',
+        )?.stepId;
+        if (
+          payload.type === 'execution.command' &&
+          active &&
+          payload.command.type !== 'browser.identity.prepare'
+        ) {
+          payload.stepId ??= active;
+          payload.command.tabScope ??=
+            plan.groups.find((group: any) =>
+              group.stepIds.includes(payload.stepId),
+            )?.id ?? 'profile-cleanup';
+        }
+        if (payload.phase === 'start' && active)
+          payload.record.stepId ??= active;
+        const states = Array.isArray(payload) ? payload : payload.report?.steps;
+        for (const state of states ?? []) {
+          const group = plan.groups.find((group: any) =>
+            group.stepIds.includes(state.stepId),
+          );
+          if (group) state.groupId ??= group.id;
+          if (
+            group &&
+            state.status === 'COMPLETED' &&
+            stored.definition.steps.find(
+              (step: any) => step.stepId === state.stepId,
+            )?.type === 'setup'
+          )
+            state.phase ??= 'READY';
+        }
+      }
+    }
     const response = await fetch(base + path, {
       method,
       headers: {
@@ -164,7 +209,11 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
           workerId: randomUUID(),
           structuredSteps,
           ...(structuredSteps
-            ? { stepBudgetVersion: 1, identityVersion: 1 }
+            ? {
+                stepBudgetVersion: 1,
+                identityVersion: 1,
+                profileTabsVersion: 1,
+              }
             : {}),
         },
         WORKER,
@@ -455,6 +504,24 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
           JSON.stringify(validateCaseResultV2.errors),
         );
       }
+      // 范围：支持旧步骤/预算但不支持 tab 的 worker 不能领取新版任务。
+      assert.equal(
+        (
+          await api(
+            'POST',
+            '/v1/worker/claim',
+            {
+              type: 'worker.claim',
+              workerId: 'without-profile-tabs',
+              structuredSteps: true,
+              stepBudgetVersion: 1,
+              identityVersion: 1,
+            },
+            WORKER,
+          )
+        ).data.execution,
+        null,
+      );
       const arms = responses[0]!.data[0].comparison.arms;
       assert.equal(arms.length, 2);
       const pair = (await api('GET', `/v1/tasks/${arms[0].taskId}/comparison`))
@@ -1188,7 +1255,7 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         assert.equal(after.stepBudget.modelCalls, 0);
         // 服务端计时到期，但整个任务仍保持授权，后续清理可取得独立额度。
         await sql.query(
-          "UPDATE pr_executions SET budget_state=jsonb_set(budget_state,'{deadlineAt}',to_jsonb(0)) WHERE id=$1",
+          "UPDATE pr_executions SET budget_state=jsonb_set(jsonb_set(budget_state,'{deadlineAt}',to_jsonb(0)),ARRAY['steps',budget_state->>'stepId','deadlineAt'],to_jsonb(0)) WHERE id=$1",
           [execution.id],
         );
         const timed = await api(
@@ -4191,7 +4258,14 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
             async () => messages,
             (rows) => rows.some((m) => m.type === 'frame'),
           );
-          ws.send(JSON.stringify({ type: 'complete' }));
+          ws.send(
+            JSON.stringify({
+              type: 'complete',
+              confirmedItems: link.items.map(
+                (_: string, index: number) => index,
+              ),
+            }),
+          );
           await until(
             async () =>
               (

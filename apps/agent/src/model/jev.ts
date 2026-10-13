@@ -85,6 +85,16 @@ export class JevModel implements DecisionModel {
   ) {
     this.text = reviewer ?? new ChatModel(config);
   }
+  /** tab 之间不共享页面历史、停滞计数或工作流代次，文本审查器也按相同规则隔离。 */
+  fork(): DecisionModel {
+    return new JevModel(
+      this.config,
+      this.key,
+      this.model,
+      this.request,
+      this.text.fork?.() ?? this.text,
+    );
+  }
   /** 将当前页面转换为有限候选；输出仍遵守原执行器的动作协议。 */
   async decide(
     input: DecisionInput,

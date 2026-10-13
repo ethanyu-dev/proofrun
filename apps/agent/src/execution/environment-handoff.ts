@@ -33,6 +33,13 @@ export class EnvironmentHandoffs {
   /** 只有实际获准交接才增长，模型反复改写原因不会重置。 */
   private rounds = 0;
 
+  /** 控制权竞争导致请求未获准时回滚预占，不消耗该条件的人工机会。 */
+  release(stepId: string, conditions: EnvironmentCondition[]) {
+    for (const condition of conditions)
+      this.requested.delete(`${stepId}/${condition.id}`);
+    if (conditions.length) this.rounds = Math.max(0, this.rounds - 1);
+  }
+
   /** 返回本次可交接事项；空数组表示无新条件或总额度耗尽。 */
   claim(
     stepId: string,

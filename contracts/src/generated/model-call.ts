@@ -69,4 +69,5 @@ export interface ModelCall {
    * 正文是否已按任务保留策略清理。
    */
   archived: boolean;
+  stepId?: string;
 }

@@ -5,6 +5,14 @@ import { ReportStatus } from './report-status';
 
 /** 汇总只摘取短原因，完整模型说明和证据放在逐项验收中。 */
 const REASON_LIMIT = 72;
+/** 阶段是执行器强制状态，不能从模型摘要推测。 */
+const PHASE_LABEL = {
+  PREPARING: '准备操作',
+  CHECKING: '环境检查',
+  READY: '环境就绪',
+  VERIFYING: '业务验证',
+  CLEANUP: '统一清理',
+};
 
 /** 终态不能继续显示等待或运行；原始步骤记录不被此展示转换修改。 */
 export function stepStatus(
@@ -40,6 +48,13 @@ export function StepCompletion({
       <div className="section-heading">
         <h2>验证汇总</h2>
       </div>
+      {task.definition.profilePlan && (
+        <p className="muted">
+          同一 profile 共 {task.definition.profilePlan.groups.length} 个 tab
+          分组，共享登录状态。人工处理期间暂停整个
+          profile；清理等待全部分组结束且环境就绪。
+        </p>
+      )}
       <BudgetTotal task={task.definition} results={results} />
       <div className={card ? 'panel verification-summary-card' : undefined}>
         <div className="table-scroll report-table-scroll">
@@ -102,6 +117,11 @@ export function StepCompletion({
                               {step.type === 'setup' ? '前置操作' : '业务验收'}
                             </strong>
                             <p className="wrap">{step.description}</p>
+                            {result?.groupId && (
+                              <p className="muted">
+                                Tab 分组：{result.groupId}
+                              </p>
+                            )}
                             {result?.preconditions?.map((check) => (
                               <p key={check.id} className="wrap">
                                 {check.description}：
@@ -128,6 +148,11 @@ export function StepCompletion({
                                     : status
                               }
                             />
+                            {result?.phase && (
+                              <p className="muted">
+                                {PHASE_LABEL[result.phase]}
+                              </p>
+                            )}
                             <BudgetUsage usage={result?.budgetUsage} />
                           </td>
                         </>

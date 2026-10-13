@@ -13,6 +13,23 @@ export type HitlClient =
     }
   | {
       type: 'complete';
+      /**
+       * 人工明确勾选的待办序号，与本次交接绑定。
+       *
+       * @maxItems 10
+       */
+      confirmedItems?:
+        | []
+        | [number]
+        | [number, number]
+        | [number, number, number]
+        | [number, number, number, number]
+        | [number, number, number, number, number]
+        | [number, number, number, number, number, number]
+        | [number, number, number, number, number, number, number]
+        | [number, number, number, number, number, number, number, number]
+        | [number, number, number, number, number, number, number, number, number]
+        | [number, number, number, number, number, number, number, number, number, number];
     };
 /**
  * 节点可执行的封闭命令集合，不包含任意 shell 或 CLI 透传。
@@ -43,6 +60,10 @@ export type BrowserCommand =
        * 仅全部身份条件可自动核验时保存快照；人工条件由 HITL 确认。
        */
       saveSnapshot: boolean;
+      /**
+       * 平台分配的标签页分组身份，不是模型指定的活动页；同一 profile 内独立保存观察引用。
+       */
+      tabScope?: string;
     }
   | {
       type: 'browser.cookies.clear';
@@ -198,6 +219,10 @@ export type BrowserCommand =
             string,
             string,
           ];
+      /**
+       * 平台分配的标签页分组身份，不是模型指定的活动页；同一 profile 内独立保存观察引用。
+       */
+      tabScope?: string;
     };
 
 /**
@@ -277,6 +302,10 @@ export interface ObserveBrowser {
    * 是否同时采集 PNG 截图；截图与 DOM 来自不同时间点。
    */
   screenshot?: boolean;
+  /**
+   * 平台分配的标签页分组身份，不是模型指定的活动页；同一 profile 内独立保存观察引用。
+   */
+  tabScope?: string;
 }
 /**
  * 执行一次浏览器动作。生产环境默认关闭，直到引擎丢响应后的写入行为得到验证。
@@ -326,6 +355,10 @@ export interface ActBrowser {
    * visual.click 使用当前截图的视口 CSS 坐标。
    */
   y?: number;
+  /**
+   * 平台分配的标签页分组身份，不是模型指定的活动页；同一 profile 内独立保存观察引用。
+   */
+  tabScope?: string;
 }
 /**
  * 等待一个明确的选择器及文本条件成立。
@@ -340,12 +373,20 @@ export interface WaitBrowser {
    * 目标元素文本中必须包含的字符串。
    */
   text: string;
+  /**
+   * 平台分配的标签页分组身份，不是模型指定的活动页；同一 profile 内独立保存观察引用。
+   */
+  tabScope?: string;
 }
 /**
  * 仅人工控制时，将本次会话状态原子保存到任务绑定的节点私有登录槽。
  */
 export interface SaveAuthentication {
   type: 'browser.auth.save';
+  /**
+   * 平台分配的标签页分组身份，不是模型指定的活动页；同一 profile 内独立保存观察引用。
+   */
+  tabScope?: string;
 }
 /**
  * 仅人工处理页使用的受限视口输入；不计入 Agent 动作次数，仍受控制权与单条命令超时约束。
@@ -358,6 +399,10 @@ export interface BrowserInput {
   value?: string;
   deltaX?: number;
   deltaY?: number;
+  /**
+   * 平台分配的标签页分组身份，不是模型指定的活动页；同一 profile 内独立保存观察引用。
+   */
+  tabScope?: string;
 }
 /**
  * 开始或停止 Chromium trace，路径由节点生成，停止后按原证据链上传。
@@ -365,6 +410,10 @@ export interface BrowserInput {
 export interface BrowserTrace {
   type: 'browser.trace';
   action: 'start' | 'stop';
+  /**
+   * 平台分配的标签页分组身份，不是模型指定的活动页；同一 profile 内独立保存观察引用。
+   */
+  tabScope?: string;
 }
 /**
  * 仅人工接管时写入任务目标站点的 host-only、根路径、SameSite=Lax 会话 Cookie；不回传值，不自动刷新或保存共享登录槽。
@@ -375,4 +424,8 @@ export interface SetBrowserCookie {
   name: string;
   value: string;
   httpOnly: boolean;
+  /**
+   * 平台分配的标签页分组身份，不是模型指定的活动页；同一 profile 内独立保存观察引用。
+   */
+  tabScope?: string;
 }

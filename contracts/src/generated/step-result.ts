@@ -88,4 +88,9 @@ export interface StepResult {
      */
     screenshotError?: string;
   };
+  groupId?: string;
+  /**
+   * 环境准备先操作再检查 policy，READY 才允许本组验证。
+   */
+  phase?: 'PREPARING' | 'CHECKING' | 'READY' | 'VERIFYING' | 'CLEANUP';
 }

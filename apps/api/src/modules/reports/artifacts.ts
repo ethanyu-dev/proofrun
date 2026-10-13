@@ -7,6 +7,7 @@ import { pipeline } from 'node:stream/promises';
 import type { PoolClient } from 'pg';
 import {
   validateStepResults,
+  profileGroup,
   type StepResult,
   type VerificationReport,
 } from '@proofrun/contracts';
@@ -103,6 +104,7 @@ export class ArtifactStore {
         );
       const content = {
         observationId: result.data.observationId,
+        tabScope: result.data.tabScope ?? null,
         url: result.data.url ?? null,
         title: result.data.title ?? null,
         text: result.data.text,
@@ -359,14 +361,57 @@ export class ArtifactStore {
     ).rows[0]?.step_results as StepResult[] | null;
     const artifacts = (
       await client.query(
-        "SELECT id,kind FROM pr_artifacts WHERE execution_id=$1 AND state='AVAILABLE'",
+        "SELECT a.id,a.kind,c.envelope#>>'{command,tabScope}' AS tab_scope FROM pr_artifacts a JOIN pr_commands c ON c.id=a.command_id WHERE a.execution_id=$1 AND a.state='AVAILABLE'",
         [context.id],
       )
     ).rows;
     const evidence = new Map(artifacts.map((a) => [a.id, a.kind]));
+    const plan = context.definition.profilePlan;
+    const scopes = new Map(artifacts.map((a) => [a.id, a.tab_scope]));
+    if (
+      plan &&
+      steps.filter((s) => s.status === 'RUNNING').length > plan.maxConcurrency
+    )
+      throw invalid();
+    let previousGroup: string | undefined;
     let stopped = false;
     for (const [i, step] of steps.entries()) {
       const definition = definitions[i]!;
+      if (plan) {
+        const group = profileGroup(context.definition, step.stepId);
+        if (group?.id !== previousGroup) stopped = false;
+        previousGroup = group?.id;
+        if (step.groupId !== undefined && step.groupId !== group?.id)
+          throw invalid();
+        if (
+          definition.type === 'setup' &&
+          group &&
+          step.status === 'COMPLETED' &&
+          step.phase !== 'READY'
+        )
+          throw invalid();
+        const expectedScope = group?.id ?? 'profile-cleanup';
+        if (
+          [
+            ...step.evidenceRefs,
+            ...step.criteria.flatMap((c) => c.evidenceRefs),
+          ].some(
+            (id) =>
+              evidence.get(id) !== 'TRACE' && scopes.get(id) !== expectedScope,
+          )
+        )
+          throw invalid();
+        if (!group)
+          stopped ||= steps.some(
+            (s, index) =>
+              profileGroup(context.definition, s.stepId) &&
+              (['PENDING', 'RUNNING'].includes(s.status) ||
+                (definitions[index]!.type === 'setup' &&
+                  s.status !== 'COMPLETED') ||
+                s.reasonCode === 'ENVIRONMENT_NOT_READY' ||
+                s.phase === 'CHECKING'),
+          );
+      }
       if (
         step.stepId !== definition.stepId ||
         (stopped && !['PENDING', 'SKIPPED'].includes(step.status))
@@ -443,8 +488,16 @@ export class ArtifactStore {
       // 新版准备阻塞快照是全部后续执行的门禁，包含清理；历史无快照报告保持可读取。
       if (
         step.blockage &&
-        definition.type === 'setup' &&
+        (definition.type === 'setup' || (plan && step.phase === 'CHECKING')) &&
         !context.definition.cleanupStepIds?.includes(step.stepId)
+      )
+        stopped = true;
+      if (plan && step.reasonCode === 'ENVIRONMENT_NOT_READY') stopped = true;
+      if (
+        plan &&
+        definition.type === 'setup' &&
+        profileGroup(context.definition, step.stepId) &&
+        step.status !== 'COMPLETED'
       )
         stopped = true;
       // 普通业务失败可继续独立步骤；尚未开始或仍运行时不能越步执行。

@@ -95,6 +95,10 @@ export type NodeEvent =
          * 支持仅删除指定站点指定名字的 Cookie 并回读验证
          */
         cookieCleanup?: boolean;
+        /**
+         * 支持分组标签页及每页独立观察引用。
+         */
+        profileTabs?: boolean;
       };
       /**
        * 节点接受的租约和会话硬期限上限，控制面不得超额授权。

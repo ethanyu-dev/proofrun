@@ -273,6 +273,81 @@ test(
         definition.stepBudget = compileStepBudget(definition);
         return definition;
       };
+      // 范围：真实 API、数据库预算与并发 Agent 串接；模型和页面为脚本夹具，不证明业务通过。
+      await suite.test(
+        '同 profile 两组并发独立保存，环境失败只跳过本组和清理',
+        async () => {
+          const definition = structured('profile-groups');
+          definition.steps = ['a', 'b'].flatMap((group, index) => [
+            {
+              stepId: `${group}-setup`,
+              type: 'setup',
+              url: definition.target.url,
+              exec_order: index * 2 + 1,
+              description: `准备 ${group}`,
+              policy: [`核实 ${group} 条件`],
+              expected: [],
+            },
+            {
+              stepId: `${group}-verify`,
+              type: 'verification',
+              url: definition.target.url,
+              exec_order: index * 2 + 2,
+              description: `验收 ${group}`,
+              policy: [],
+              expected: ['页面可观察'],
+            },
+          ]);
+          definition.steps.push({
+            stepId: 'cleanup',
+            type: 'setup',
+            url: definition.target.url,
+            exec_order: 5,
+            description: '恢复夹具',
+            policy: [],
+            expected: [],
+          });
+          definition.cleanupStepIds = ['cleanup'];
+          let arrivals = 0;
+          let release;
+          const both = new Promise((resolve) => {
+            release = resolve;
+          });
+          const { report, stored } = await run(definition, async (context) => {
+            if (context.setupPhase === 'PREPARING') {
+              if (++arrivals === 2) release();
+              await both;
+            }
+            if (
+              context.executionStep.stepId === 'a-setup' &&
+              context.setupPhase === 'CHECKING'
+            )
+              return {
+                type: 'verification.block',
+                summary: '甲组条件无法确认',
+              };
+            return {
+              ...finish(context),
+              evidenceRefs: context.observation.artifactRefs.map(
+                (r) => r.artifactId,
+              ),
+            };
+          });
+          assert.equal(arrivals, 2);
+          assert.deepEqual(
+            report.steps.map((s) => s.status),
+            ['BLOCKED', 'SKIPPED', 'COMPLETED', 'COMPLETED', 'SKIPPED'],
+          );
+          assert.deepEqual(stored.report.steps, report.steps);
+          assert.equal(report.steps[0].reasonCode, 'ENVIRONMENT_NOT_READY');
+          assert.equal(report.steps[2].phase, 'READY');
+          assert.equal(
+            report.criteria.find((c) => c.criterionId.startsWith('b-verify'))
+              .verdict,
+            'PASSED',
+          );
+        },
+      );
       // 范围：真实控制面、数据库与 Agent 保留 NOT_STARTED 会话并推进后续步骤；浏览器与模型仍为协议夹具。
       await suite.test('点击准备故障耗尽后仍完成后续业务和清理', async () => {
         const { report, stored, node } = await run(
@@ -498,7 +573,8 @@ test(
             },
           ]);
           const gated = await executeNext((context) =>
-            context.executionStep.stepId === 'step-1'
+            context.executionStep.stepId === 'step-1' &&
+            context.setupPhase === 'CHECKING'
               ? {
                   type: 'verification.block',
                   summary: '指定团队角色未确认',

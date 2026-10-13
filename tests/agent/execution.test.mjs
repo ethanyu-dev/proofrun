@@ -3448,3 +3448,33 @@ test('结构化登录和角色确认共用一次环境准备人工请求', async
   assert.equal(report.steps[0].preconditions[0].source, 'human');
   assert.equal(report.steps[0].preconditions[0].status, 'SATISFIED');
 });
+
+// 范围：JEV 分组实例并发时页面历史互不混入；请求为内存夹具，不调用真实供应商。
+test('JEV profile tab 实例隔离跨轮历史', async () => {
+  const { JevModel } = await import('../../apps/agent/dist/model/jev.js');
+  const calls = [];
+  const root = new JevModel(
+    config,
+    'fixture',
+    'jev-test',
+    async (_url, _key, _method, body) => {
+      calls.push(body);
+      return jevAnswer(body, 'A1');
+    },
+  );
+  const a = root.fork();
+  const b = root.fork();
+  const signal = new AbortController().signal;
+  await Promise.all([
+    a.decide(jevInput('a', '甲组独有页面'), signal),
+    b.decide(jevInput('b', '乙组独有页面'), signal),
+  ]);
+  await a.decide(jevInput('a2', '甲组后续页面'), signal);
+  assert.equal(calls.length, 3);
+  for (const call of calls) {
+    const history = JSON.stringify(call.state.previousObservations);
+    if (call.state.observation.text.includes('甲组'))
+      assert(!history.includes('乙组'));
+    else assert(!history.includes('甲组'));
+  }
+});

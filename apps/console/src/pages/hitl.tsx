@@ -511,7 +511,12 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
                 onClick={() => {
                   completing.current = true;
                   setBusy(true);
-                  socket.current?.send(JSON.stringify({ type: 'complete' }));
+                  socket.current?.send(
+                    JSON.stringify({
+                      type: 'complete',
+                      confirmedItems: checked,
+                    }),
+                  );
                   completionTimer.current = setTimeout(() => {
                     setError('交接结果未确认，请重新连接查看处理状态。');
                     setConnected(false);

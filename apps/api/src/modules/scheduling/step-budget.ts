@@ -5,6 +5,8 @@ import type { ExecutionContext } from './state.js';
 
 /** 控制面持有的额度游标，不能由 worker 的用量或 startedAt 反向覆盖。 */
 export interface BudgetState {
+  /** profile 分组拥有独立步骤计数；根游标仅兼容旧协议和统一清理。 */
+  steps?: Record<string, BudgetState>;
   /** 清理步骤之间切换身份，但不能重置整段清理的计数或期限。 */
   stepId: string;
   /** 已准入的自动动作，明确拒绝和幂等重送不计数。 */
@@ -24,6 +26,51 @@ export async function startStepBudget(
   results: StepResult[],
 ) {
   if (!context.definition.stepBudget) return;
+  if (context.definition.profilePlan) {
+    const previous = (
+      await client.query('SELECT step_results FROM pr_tasks WHERE id=$1', [
+        context.task_id,
+      ])
+    ).rows[0]?.step_results as StepResult[] | null;
+    const states = context.budget_state?.steps ?? {};
+    for (const running of results.filter((step) => step.status === 'RUNNING')) {
+      if (states[running.stepId]) continue;
+      if (context.control_mode !== 'AUTO')
+        throw new ApiError(
+          409,
+          'CONTROL_CHANGED',
+          '人工处理期间不能开始下一步',
+        );
+      if (
+        previous?.some(
+          (s) => s.stepId === running.stepId && s.status !== 'PENDING',
+        )
+      )
+        throw new ApiError(422, 'INVALID_STEPS', '已开始的步骤不能重置预算');
+      const limit = stepLimit(context.definition, running.stepId);
+      if (!limit)
+        throw new ApiError(422, 'INVALID_STEP_BUDGET', '步骤缺少冻结预算');
+      const cleanup = context.definition.cleanupStepIds ?? [];
+      const shared = cleanup.includes(running.stepId)
+        ? Object.values(states).find((s) => cleanup.includes(s.stepId))
+        : undefined;
+      const state: BudgetState = shared
+        ? { ...shared, stepId: running.stepId }
+        : {
+            stepId: running.stepId,
+            actions: 0,
+            modelCalls: 0,
+            deadlineAt:
+              context.cleanup_deadline_at?.getTime() ??
+              Date.now() + limit.timeoutMs,
+            pausedAt: null,
+          };
+      states[running.stepId] = state;
+      context.budget_state = { ...state, steps: states };
+    }
+    if (context.budget_state) await saveBudget(client, context);
+    return;
+  }
   const running = results.find((step) => step.status === 'RUNNING');
   if (!running || context.budget_state?.stepId === running.stepId) return;
   if (context.control_mode !== 'AUTO')
@@ -82,9 +129,14 @@ export async function consumeStepBudget(
   client: PoolClient,
   context: ExecutionContext,
   kind: 'actions' | 'modelCalls' | 'observe',
+  stepId?: string,
 ) {
   if (!context.definition.stepBudget) return;
-  const state = context.budget_state;
+  const state = context.definition.profilePlan
+    ? stepId
+      ? context.budget_state?.steps?.[stepId]
+      : null
+    : context.budget_state;
   const limit = state && stepLimit(context.definition, state.stepId);
   if (!state || !limit)
     throw new ApiError(409, 'STEP_NOT_STARTED', '先登记当前步骤，再执行操作');
@@ -113,6 +165,19 @@ export async function consumeStepBudget(
       `本步骤${kind === 'actions' ? '动作' : '模型请求'}预算已耗尽（${state[kind]}/${maximum}）`,
     );
   state[kind]++;
+  if (
+    context.definition.profilePlan &&
+    context.budget_state?.stepId === state.stepId
+  )
+    context.budget_state[kind] = state[kind];
+  // 清理是 profile 级串行收尾，多个清理步骤共享同一额度。
+  if (
+    context.definition.profilePlan &&
+    context.definition.cleanupStepIds?.includes(state.stepId)
+  )
+    for (const other of Object.values(context.budget_state?.steps ?? {}))
+      if (context.definition.cleanupStepIds.includes(other.stepId))
+        other[kind] = state[kind];
   await saveBudget(client, context);
 }
 
@@ -130,6 +195,15 @@ export async function pauseStepBudget(
     deadlineAt: context.deadline_at.getTime(),
     pausedAt: null,
   });
+  if (context.definition.profilePlan) {
+    for (const item of Object.values(state.steps ?? {})) {
+      if (action === 'request') item.pausedAt ??= Date.now();
+      if (action === 'resume' && item.pausedAt !== null) {
+        item.deadlineAt += Date.now() - item.pausedAt;
+        item.pausedAt = null;
+      }
+    }
+  }
   if (action === 'request') state.pausedAt ??= Date.now();
   if (action === 'resume' && state.pausedAt !== null) {
     const elapsed = Math.max(0, Date.now() - state.pausedAt);

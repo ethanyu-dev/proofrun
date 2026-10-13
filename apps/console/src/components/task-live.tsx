@@ -1,4 +1,4 @@
-import { blockedStep, BlockedEvidence } from './blocked-evidence';
+import { BlockedEvidence } from './blocked-evidence';
 import type { TaskDetail } from '@proofrun/contracts';
 import { ApiClient } from '../api';
 import { ExecutionControl } from './execution-control';
@@ -40,7 +40,11 @@ export function TaskPageView({
   const active =
     task.state === 'RUNNING' &&
     ['STARTING', 'RUNNING'].includes(execution.state);
-  const blocked = blockedStep(task);
+  const blocked = (task.report?.steps ?? task.stepResults ?? []).filter(
+    (step) =>
+      !task.definition.cleanupStepIds?.includes(step.stepId) &&
+      ['BLOCKED', 'ERROR'].includes(step.status),
+  );
   const results = task.report?.steps ?? task.stepResults ?? [];
   const cleanupRunning = results.some(
     (step) =>
@@ -51,8 +55,19 @@ export function TaskPageView({
     (step) =>
       !!step.startedAt && task.definition.cleanupStepIds?.includes(step.stepId),
   );
-  if (!active && blocked)
-    return <BlockedEvidence api={api} task={task} step={blocked} />;
+  if (!active && blocked.length)
+    return (
+      <>
+        {blocked.map((step) => (
+          <BlockedEvidence
+            key={step.stepId}
+            api={api}
+            task={task}
+            step={step}
+          />
+        ))}
+      </>
+    );
   if (!active && cleanupStarted)
     return (
       <p className="muted">执行已结束。清理截图在「后续清理」中单独展示。</p>
