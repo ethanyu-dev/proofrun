@@ -1,10 +1,24 @@
 import type { ExecutionOutcome, TaskDetail } from '@proofrun/contracts';
 import { Status, time } from './ui';
 
+/** 决策内容不合规与供应商服务故障分开显示，兼容历史 MODEL_ERROR 分类。 */
+function OutcomeStatus({ outcome }: { outcome: ExecutionOutcome }) {
+  return (
+    <Status
+      value={
+        outcome.category === 'MODEL_ERROR' &&
+        outcome.reasonCode === 'INVALID_MODEL_DECISION'
+          ? outcome.reasonCode
+          : outcome.category
+      }
+    />
+  );
+}
+
 /** 分类来自控制面的事实投影；旧响应缺失时继续兼容原生命周期。 */
 export function TaskExecutionStatus({ task }: { task: TaskDetail }) {
   if (task.executionOutcome)
-    return <Status value={task.executionOutcome.category} />;
+    return <OutcomeStatus outcome={task.executionOutcome} />;
   const execution = task.executions[0];
   if (
     task.state === 'RUNNING' &&
@@ -54,7 +68,7 @@ export function ExecutionOutcomeDetails({
         <div>
           <dt>原因分类</dt>
           <dd>
-            <Status value={outcome.category} />
+            <OutcomeStatus outcome={outcome} />
           </dd>
         </div>
         <div>

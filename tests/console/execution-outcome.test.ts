@@ -40,3 +40,31 @@ test('阻塞状态不被原始 ERROR 覆盖，原始原因和终止原因同时�
   assert.match(details, /旧节点未记录具体触发原因/);
   assert.doesNotMatch(details, /人工处理超时/);
 });
+
+// 范围：历史 MODEL_ERROR 可根据具体原因区分决策校验与服务故障；只验证静态呈现，不模拟供应商故障。
+test('非法决策显示校验失败，服务请求错误保留服务异常文案', () => {
+  for (const [code, label] of [
+    ['INVALID_MODEL_DECISION', '模型决策校验失败'],
+    ['MODEL_REQUEST_FAILED', '模型服务异常'],
+  ]) {
+    const outcome = executionOutcome({
+      state: 'ERROR',
+      code: 'AGENT_ERROR',
+      reportCode: code,
+    });
+    const task = {
+      state: 'ERROR',
+      executionOutcome: outcome,
+      executions: [],
+    } as unknown as TaskDetail;
+    for (const markup of [
+      renderToStaticMarkup(createElement(TaskExecutionStatus, { task })),
+      renderToStaticMarkup(createElement(ExecutionOutcomeDetails, { outcome })),
+    ]) {
+      assert(markup.includes(label!));
+      assert.match(markup, /data-tone="danger"/);
+      if (code === 'INVALID_MODEL_DECISION')
+        assert.doesNotMatch(markup, /模型服务异常/);
+    }
+  }
+});

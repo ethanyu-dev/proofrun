@@ -605,7 +605,7 @@ class Execution {
       },
       current: this.current!,
       changes: this.changes,
-      evidence: [...this.evidence.values()],
+      evidence: [...this.currentEvidence().values()],
       history: this.history,
       previousObservations: this.previousObservations,
       feedback: this.feedback,
@@ -613,6 +613,19 @@ class Execution {
       maxContextChars: this.config.maxContextChars,
     });
   }
+  /** 模型可引用列表与提交校验共用同一边界，前序步骤及准备阶段证据仅作历史背景。 */
+  private currentEvidence() {
+    return this.grant.task.steps
+      ? new Map(
+          [...this.evidence].filter(
+            ([id]) =>
+              !this.stepEvidence.has(id) &&
+              (!this.isSetup() || !this.readinessEvidence.has(id)),
+          ),
+        )
+      : this.evidence;
+  }
+
   /** 停止真实浏览器 trace 后等待可靠交付，只有可用且归属匹配的引用才进入报告。 */
   private async captureTrace(): Promise<string[]> {
     if (this.traceStarted) {
@@ -1568,15 +1581,7 @@ class Execution {
                 ];
             }
           }
-          const currentEvidence = this.grant.task.steps
-            ? new Map(
-                [...this.evidence].filter(
-                  ([id]) =>
-                    !this.stepEvidence.has(id) &&
-                    (!this.isSetup() || !this.readinessEvidence.has(id)),
-                ),
-              )
-            : this.evidence;
+          const currentEvidence = this.currentEvidence();
           if (this.isSetup() && decision.type === 'verification.finish') {
             // 准备结果整批提交；无效 finish 或后续人工交接不能留下半份旧账号结论。
             const ready = new CriteriaLedger(this.task.acceptanceCriteria);

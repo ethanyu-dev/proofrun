@@ -154,3 +154,96 @@ test('子项进度可裁剪但执行器保留完整报告来源', async () => {
   assert.equal(ledger.results().length, 32);
   assert.equal(ledger.view().items[0].text.length, 400);
 });
+
+// 范围：空白排版差异可登记且报告保留原文，重复提交不推进；不容忍字词改写，也不验证真实 FAQ 内容。
+test('FAQ 引文只规范化空白，已登记子项重复提交保留首次原文', () => {
+  const ledger = new InteractionProgress();
+  const observation = page();
+  const original = '1. Reward ($1).\n\n2. Use [A+B] vouchers.';
+  observation.targets[0].disclosure.text = original;
+  ledger.observe(observation);
+  ledger.record(ledger.validate([{ itemId: 'item-1', quote: original }]));
+  ledger.record(
+    ledger.validate([
+      { itemId: 'item-1', quote: '1. Reward ($1). 2. Use [A+B] vouchers.' },
+    ]),
+  );
+  assert.equal(ledger.view().revision, 1);
+  assert.deepEqual(ledger.view().recordedItemIds, ['item-1']);
+  assert.equal(ledger.results()[0].quote, original);
+  const fresh = new InteractionProgress();
+  fresh.observe(observation);
+  fresh.record(
+    fresh.validate([
+      { itemId: 'item-1', quote: '1. Reward ($1).\t2. Use [A+B] vouchers.' },
+    ]),
+  );
+  assert.equal(fresh.results()[0].quote, original);
+  for (const quote of [
+    '1. Reward ($2). 2. Use [A+B] vouchers.',
+    '1. Reward ($1). 2. Use AAB vouchers.',
+    '1. Reward ($1). 3. Use [A+B] vouchers.',
+  ])
+    assert.throws(() => ledger.validate([{ itemId: 'item-1', quote }]), {
+      code: 'INVALID_MODEL_DECISION',
+    });
+});
+
+// 范围：裁剪不会丢失已登记身份或修改输入；超长原文不能靠归一化绕过引文上限，不覆盖供应商上下文限制。
+test('裁剪保留全部已登记身份且不污染输入进度', async () => {
+  const { decisionContext } =
+    await import('../../apps/agent/dist/execution/context.js');
+  const { grant } = await import('./fixture.mjs');
+  const observation = {
+    ...page(),
+    text: '夹具页面',
+    title: 'FAQ',
+    atomic: false,
+  };
+  const first = observation.targets[0];
+  observation.targets = Array.from({ length: 12 }, (_, i) => ({
+    ...first,
+    comparisonKey: `faq-${i}`,
+    name: `问题${i}`,
+    disclosure: { ...first.disclosure, text: '已读答案'.repeat(90) },
+  }));
+  const ledger = new InteractionProgress();
+  ledger.observe(observation);
+  ledger.record(
+    ledger.validate(
+      ledger.view().items.map((item) => ({
+        itemId: item.id,
+        quote: '已读答案'.repeat(90),
+      })),
+    ),
+  );
+  const progress = ledger.view();
+  const before = structuredClone(progress);
+  const result = JSON.parse(
+    decisionContext({
+      task: grant().task,
+      current: observation,
+      preconditions: [],
+      interactionProgress: progress,
+      budgetRemaining: { actions: 20, modelCalls: 40, timeMs: 300000 },
+      evidence: [],
+      history: [],
+      previousObservations: [],
+      feedback: null,
+      maxContextChars: 4000,
+    }).text,
+  );
+  assert(result.interactionProgress.omittedItems > 0);
+  assert.deepEqual(
+    result.interactionProgress.recordedItemIds,
+    before.recordedItemIds,
+  );
+  assert.deepEqual(progress, before);
+  const long = page();
+  long.targets[0].disclosure.text = 'A' + '\n'.repeat(600) + 'B';
+  const bounded = new InteractionProgress();
+  bounded.observe(long);
+  assert.throws(() => bounded.validate([{ itemId: 'item-1', quote: 'A B' }]), {
+    code: 'INVALID_MODEL_DECISION',
+  });
+});

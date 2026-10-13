@@ -1,5 +1,6 @@
 import {
   FIELD_VALUE_PROMPT,
+  fieldValueRecovery,
   JEV_SELECTION_RULES,
   reviewFeedback,
 } from '../prompts/jev.js';
@@ -396,7 +397,18 @@ export class JevModel implements DecisionModel {
     try {
       value = JSON.parse(text.choices?.[0]?.message?.content ?? '').text;
     } catch {
-      value = null;
+      value = undefined;
+    }
+    if (value === null) {
+      // null 是字段协议允许的缺失信息结果；交回规划层，所有子请求仍计入原预算与用量。
+      const output = await review(
+        fieldValueRecovery(String(selectedAction!.field.name ?? '未命名字段')),
+      );
+      return finish(output.decision, {
+        ...output,
+        promptTokens: pi + (output.promptTokens ?? 0),
+        completionTokens: co + (output.completionTokens ?? 0),
+      });
     }
     if (typeof value !== 'string' || value.length > 8192)
       throw new AgentFault(
