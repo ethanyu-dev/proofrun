@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { TaskDetail, VerificationReport } from '@proofrun/contracts';
 import { ApiClient } from '../api';
 import { ReportSummary } from './report-summary';
-import { ReportStatus } from './report-status';
+import { CriterionStatus } from './report-status';
 import { ReportEvidenceButton, ReportEvidenceDrawer } from './report-evidence';
 import { stepStatus } from './step-completion';
 import { Status } from './ui';
@@ -43,9 +43,7 @@ export function ReportCriteria({
       <div className="section-heading">
         <div>
           <h2>逐项验收</h2>
-          <p className="muted">
-            优先展示未通过和未得出结论的项，展开查看本次记录与证据。
-          </p>
+          <p className="muted">展开查看各项的观察、原因与证据。</p>
         </div>
       </div>
       {task.definition.steps
@@ -132,11 +130,7 @@ export function ReportCriteria({
               </small>
               <strong>{definition.description}</strong>
             </span>
-            {!result || result.verdict === 'SKIPPED' ? (
-              <span className="status">未验收</span>
-            ) : (
-              <ReportStatus value={result.verdict} />
-            )}
+            <CriterionStatus value={result?.verdict} />
           </summary>
           <div className="report-criterion-body">
             <div className="report-expected">

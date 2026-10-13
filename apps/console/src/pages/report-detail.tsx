@@ -12,17 +12,20 @@ import {
   ErrorNotice,
   PageHeader,
   RefreshBar,
-  Status,
   time,
 } from '../components/ui';
-import { ReportStatus } from '../components/report-status';
+import { ReportProgress } from '../components/report-status';
+import {
+  verificationProgress,
+  reportMode,
+  reportDuration,
+} from '../report-presentation';
+import { VerificationSummary } from '../components/verification-summary';
 import { ReportCriteria } from '../components/report-criteria';
 import { ReportExport } from '../components/report-export';
 import { TaskEvidence } from '../components/task-sections';
-import { StepCompletion } from '../components/step-completion';
 import { FollowUpCleanup } from '../components/follow-up-cleanup';
 import { executionModeLabel } from '../execution-mode';
-import { TaskComparisonLink } from '../components/task-comparison-link';
 
 /** 报告按单次任务身份读取；重新执行产生新任务，不覆盖此页的历史结论。 */
 export function ReportDetailPage({ api, id }: { api: ApiClient; id: string }) {
@@ -31,7 +34,7 @@ export function ReportDetailPage({ api, id }: { api: ApiClient; id: string }) {
     `/v1/tasks/${encodeURIComponent(id)}`,
   );
   return (
-    <>
+    <div className="report-page">
       <PageHeader
         title="验证报告"
         description="核对本次结论、验收范围与原始证据。"
@@ -39,21 +42,23 @@ export function ReportDetailPage({ api, id }: { api: ApiClient; id: string }) {
         <a className="button button-secondary" href="#/reports">
           返回报告
         </a>
-        <TaskComparisonLink
-          id={id}
-          comparison={resource.data?.definition.comparison}
-        />
         <a
           className="button button-secondary"
           href={`#/tasks/${encodeURIComponent(id)}`}
         >
-          查看任务详情
+          {resource.data?.definition.comparison
+            ? '查看执行对比'
+            : '查看任务详情'}
         </a>
       </PageHeader>
       <RefreshBar {...resource} />
       <ErrorNotice message={resource.error} />
       {resource.data ? (
-        <ReportDetails api={api} task={resource.data} />
+        resource.data.definition.comparison ? (
+          <PairedReportDetails key={id} api={api} task={resource.data} />
+        ) : (
+          <ReportDetails api={api} task={resource.data} />
+        )
       ) : (
         <Empty title={resource.loading ? '正在读取报告…' : '无法读取报告'}>
           {resource.loading
@@ -61,105 +66,189 @@ export function ReportDetailPage({ api, id }: { api: ApiClient; id: string }) {
             : '请检查任务身份、访问凭据和服务连接。'}
         </Empty>
       )}
-    </>
+    </div>
   );
 }
 
-/** 展示只消费服务端状态，执行异常说明和未覆盖范围与验收结论并列保留。 */
-export function ReportDetails({
+/** 通过服务端关联读取双组，不从任务名字或相邻列表行猜测另一组。 */
+function PairedReportDetails({
   api,
   task,
 }: {
   api: ApiClient;
   task: TaskDetail;
 }) {
-  const [exportOpen, setExportOpen] = useState(false);
-  const report = task.report;
-  if (!report)
+  const resource = useResource<{ comparison: null | { arms: TaskDetail[] } }>(
+    api,
+    `/v1/tasks/${encodeURIComponent(task.id)}/comparison`,
+  );
+  const arms = resource.data?.comparison?.arms;
+  return (
+    <>
+      <ErrorNotice message={resource.error} />
+      {!arms?.length && (
+        <p className="report-notice">
+          {resource.loading
+            ? '正在读取两种模式的验证记录…'
+            : '双跑记录暂不可用，当前计数仅包含已读取项目。'}
+        </p>
+      )}
+      <ReportDetails api={api} task={task} arms={arms} />
+    </>
+  );
+}
+
+/** 顶部展示覆盖与各模式耗时，逐项原文、证据及导出仍绑定各自任务身份。 */
+export function ReportDetails({
+  api,
+  task,
+  arms,
+}: {
+  api: ApiClient;
+  task: TaskDetail;
+  arms?: TaskDetail[] | undefined;
+}) {
+  const [exportId, setExportId] = useState<string>();
+  const tasks = (arms?.length ? arms : [task])
+    .slice()
+    .sort(
+      (a, b) =>
+        Number(reportMode(a) === 'jev') - Number(reportMode(b) === 'jev'),
+    );
+  const paired = !!task.definition.comparison;
+  const exported = tasks.find((item) => item.id === exportId);
+  if (!tasks.some((item) => item.report))
     return (
       <Empty title="尚未生成验证报告">
         当前执行状态：
         <TaskExecutionStatus task={task} />
-        。执行终态本身不产生验收结论。
       </Empty>
     );
   return (
     <div className="verification-report">
       <section className="panel report-overview" aria-label="报告结论">
-        <div className="section-heading">
+        <div className="report-overview-main">
           <div>
-            <p className="eyebrow">本次验证结论</p>
-            <ReportStatus value={task.reportStatus} />
+            <p className="eyebrow">本次验证结论 · 通过 / 总数</p>
+            <ReportProgress counts={verificationProgress(tasks)} />
+            <h2>{task.definition.objective}</h2>
+            <p className="muted wrap">{task.definition.target.url}</p>
           </div>
-          <button
-            className="button button-primary"
-            onClick={() => setExportOpen(!exportOpen)}
-          >
-            导出报告
-          </button>
+          <div className="report-overview-notes">
+            <p className="muted">
+              {paired
+                ? '同一验证项目任一模式为对，即计入通过数；两种模式不重复计数。'
+                : '按验证项目统计，清理项目不计入总数。'}
+            </p>
+            <p className="muted">
+              对：已证实符合预期；错：未证实符合预期，具体原因见各模式记录；—：尚无记录。
+            </p>
+            <div className="report-mode-metrics">
+              {(paired ? (['llm', 'jev'] as const) : [reportMode(task)]).map(
+                (mode) => {
+                  const arm = tasks.find((item) => reportMode(item) === mode);
+                  return (
+                    <div key={mode}>
+                      <strong>{mode === 'llm' ? 'LLM' : 'LLM + JEV'}</strong>
+                      <span>
+                        执行时长：{arm ? reportDuration(arm) : '待获取'}
+                      </span>
+                      {arm && <TaskExecutionStatus task={arm} />}
+                      {arm?.report && (
+                        <button
+                          className="text-button"
+                          onClick={() =>
+                            setExportId(
+                              exportId === arm.id ? undefined : arm.id,
+                            )
+                          }
+                        >
+                          导出{paired ? '本组' : ''}报告
+                        </button>
+                      )}
+                    </div>
+                  );
+                },
+              )}
+            </div>
+          </div>
         </div>
-        <h2>{task.definition.objective}</h2>
-        <p className="muted wrap">{task.definition.target.url}</p>
-        {task.definition.comparison && (
-          <p className="report-notice">
-            当前仅展示
-            {task.definition.comparison.arm === 'jev'
-              ? '实验组 B（JEV + LLM）'
-              : '对照组 A（纯 LLM）'}
-            的报告。
-            <TaskComparisonLink
-              id={task.id}
-              comparison={task.definition.comparison}
-            />
-          </p>
-        )}
         <div className="report-context">
           <span>
-            验证模式：{executionModeLabel(task.definition.executionMode)}
+            验证模式：
+            {paired
+              ? 'LLM / LLM + JEV'
+              : executionModeLabel(task.definition.executionMode)}
           </span>
           <span>环境：{task.definition.environment.id}</span>
-          <span>验证结束：{time(task.finished_at)}</span>
-          <span>
-            任务执行状态（含清理）：
-            <TaskExecutionStatus task={task} />{' '}
-            <Status value={report.executionDisposition} />
-          </span>
+          {!paired && <span>验证结束：{time(task.finished_at)}</span>}
         </div>
-        <ExecutionOutcomeDetails outcome={task.executionOutcome} />
-        {task.archived_at && (
-          <p className="report-notice">
-            原始证据已于 {time(task.archived_at)}{' '}
-            清理。报告结论保留，证据不可预览或下载。
-          </p>
-        )}
+        {tasks
+          .filter((item) => item.archived_at)
+          .map((item) => (
+            <p key={item.id} className="report-notice">
+              {paired
+                ? `${reportMode(item) === 'llm' ? 'LLM' : 'LLM + JEV'}：`
+                : ''}
+              原始证据已于 {time(item.archived_at)}{' '}
+              清理。报告记录保留，证据不可预览或下载。
+            </p>
+          ))}
       </section>
-      {exportOpen && (
+      <VerificationSummary task={task} tasks={tasks} />
+      {exported?.report && (
         <ReportExport
-          report={report}
-          assessment={task}
-          close={() => setExportOpen(false)}
+          report={exported.report}
+          assessment={exported}
+          close={() => setExportId(undefined)}
         />
       )}
-      <TaskIdentity task={task} />
-      {task.definition.steps && <StepCompletion task={task} card />}
+      {paired ? (
+        <section className="report-mode-details" aria-label="各模式验证记录">
+          {tasks.map((item) => (
+            <details key={item.id} className="panel report-support">
+              <summary>
+                {reportMode(item) === 'llm' ? 'LLM' : 'LLM + JEV'} ·
+                验证记录与证据{' '}
+                <ReportProgress counts={verificationProgress([item])} />
+              </summary>
+              <ReportSupportingDetails api={api} task={item} />
+            </details>
+          ))}
+        </section>
+      ) : (
+        <ReportSupportingDetails api={api} task={task} />
+      )}
+    </div>
+  );
+}
+
+/** 身份和溯源下移，展开的证据只属于当前模式，避免双跑证据混用。 */
+function ReportSupportingDetails({
+  api,
+  task,
+}: {
+  api: ApiClient;
+  task: TaskDetail;
+}) {
+  return (
+    <>
+      <ExecutionOutcomeDetails outcome={task.executionOutcome} />
       <ReportCriteria api={api} task={task} />
       <FollowUpCleanup api={api} task={task} />
+      <TaskIdentity task={task} />
       <details className="panel report-support">
         <summary>
           全部证据{' '}
           <span className="muted">
-            {report.artifacts.length} 份 ·{' '}
-            {task.archived_at
-              ? '已清理'
-              : report.artifacts.length
-                ? '可核对'
-                : '未附证据'}
+            {task.report?.artifacts.length ?? 0} 份 ·{' '}
+            {task.archived_at ? '已清理' : '可核对'}
           </span>
         </summary>
         <TaskEvidence api={api} task={task} />
       </details>
-      <section className="panel" aria-label="报告溯源">
-        <h2>报告溯源</h2>
+      <details className="panel report-support">
+        <summary>报告溯源</summary>
         <dl className="facts">
           <div>
             <dt>关联任务</dt>
@@ -168,26 +257,15 @@ export function ReportDetails({
             </dd>
           </div>
           <div>
-            <dt>验证模式</dt>
-            <dd>{executionModeLabel(task.definition.executionMode)}</dd>
-          </div>
-          <div>
             <dt>模型</dt>
-            <dd>{report.executionDetails?.model ?? '未记录'}</dd>
+            <dd>{task.report?.executionDetails?.model ?? '未记录'}</dd>
           </div>
           <div>
-            <dt>执行耗时</dt>
-            <dd>
-              {report.executionDetails
-                ? `${(report.executionDetails.elapsedMs / 1000).toFixed(1)} 秒`
-                : '未记录'}
-            </dd>
+            <dt>验证结束</dt>
+            <dd>{time(task.finished_at)}</dd>
           </div>
         </dl>
-        <p className="muted">
-          报告对应本次执行；重新运行的结果保存在新的任务中。
-        </p>
-      </section>
-    </div>
+      </details>
+    </>
   );
 }

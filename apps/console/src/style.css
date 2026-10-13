@@ -2114,44 +2114,13 @@ summary {
 .verification-summary-card > .table-scroll {
   border-block: 0;
 }
-.report-overview {
-  padding: 32px;
-}
-.report-overview > h2 {
-  font-size: 26px;
-  margin-block: 24px 8px;
-  overflow-wrap: anywhere;
-  white-space: pre-line;
-}
-.report-overview .report-status {
-  font-size: 22px;
-  padding: 8px 18px;
-  margin-top: 8px;
-}
 .report-context {
   display: flex;
   flex-wrap: wrap;
   gap: 12px 24px;
-  margin-block: 20px;
+  margin-block: 12px 0;
   color: var(--color-muted);
   font-size: 13px;
-}
-.report-counts {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  padding-block: 24px;
-  margin: 24px 0;
-  border-block: 1px solid var(--color-border-strong);
-  gap: 16px;
-}
-.report-counts dt {
-  color: var(--color-muted);
-  font-size: 13px;
-}
-.report-counts dd {
-  margin: 8px 0 0;
-  font-size: 32px;
-  font-variant-numeric: tabular-nums;
 }
 .report-notice {
   padding: 12px 16px;
@@ -2277,25 +2246,11 @@ summary {
   padding-block: 20px;
   border-top: 1px solid var(--color-border);
 }
-.report-list-counts span,
-.report-list-counts small {
-  display: block;
-  line-height: 1.8;
-}
 @media (max-width: 700px) {
   .report-overview,
   .report-criterion-body,
   .report-evidence-content {
     padding: 20px;
-  }
-  .report-overview > h2 {
-    font-size: 22px;
-  }
-  .report-counts {
-    grid-template-columns: repeat(3, 1fr);
-  }
-  .report-counts dd {
-    font-size: 26px;
   }
   .report-criterion > summary {
     padding: 16px;
@@ -2341,4 +2296,115 @@ summary {
   padding: 0;
   margin: 0;
   flex-shrink: 0;
+}
+
+/* 报告优先展示覆盖与对照表，执行说明利用顶部两列空间。 */
+.report-overview {
+  padding: 20px 24px;
+}
+.report-overview-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 1fr);
+  gap: 24px;
+}
+.report-overview-main h2 {
+  font-size: 20px;
+  margin: 12px 0 6px;
+  overflow-wrap: anywhere;
+}
+.report-progress {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.report-overview .report-progress {
+  font-size: 30px;
+}
+.report-overview-notes {
+  font-size: 13px;
+}
+.report-mode-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+.verification-summary-heading {
+  padding: 16px 20px;
+  margin: 0;
+}
+.verification-matrix th:first-child {
+  width: 12%;
+}
+.verification-matrix th:nth-child(n + 3) {
+  width: 13%;
+}
+.verification-matrix td p {
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+.criterion-result {
+  font-weight: 600;
+}
+.criterion-result[data-tone='success'] {
+  color: var(--color-success);
+}
+.criterion-result[data-tone='danger'] {
+  color: var(--color-danger);
+}
+.report-support > summary .report-progress {
+  margin-left: 12px;
+}
+.verification-report .task-identity {
+  padding: 16px 20px;
+  font-size: 13px;
+}
+.verification-report .task-identity h2 {
+  font-size: 16px;
+}
+.verification-report .task-identity .facts {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-block: 12px 0;
+}
+@media (max-width: 760px) {
+  .report-overview-main {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+}
+
+/* 报告入口缩短标题和刷新区留白，首屏优先留给逐项对照。 */
+.report-page .page-header {
+  align-items: center;
+  margin-bottom: 12px;
+}
+.report-page .page-header .eyebrow {
+  display: none;
+}
+.report-page .page-header h1 {
+  font-size: 26px;
+  margin-block: 0 6px;
+}
+.report-page .page-header p {
+  margin-block: 0;
+}
+.report-page .refresh-bar {
+  margin-block: 12px;
+}
+.report-mode-metrics > div {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px 12px;
+  align-items: center;
+}
+.report-mode-metrics strong,
+.report-mode-metrics > div > span:not(.status) {
+  grid-column: 1 / -1;
+}
+.report-mode-metrics .status {
+  justify-self: start;
+}
+.report-mode-metrics .text-button {
+  padding: 4px 0;
 }

@@ -3,6 +3,7 @@ import {
   ExecutionOutcomeDetails,
   EXECUTION_REASONS,
 } from './execution-outcome';
+import { verificationProgress } from '../report-presentation';
 import { TaskIdentity } from './task-identity';
 import { NodeVersion } from './node-version';
 import { useState } from 'react';
@@ -10,7 +11,7 @@ import type { TaskDetail } from '@proofrun/contracts';
 import { ApiClient } from '../api';
 import { Evidence } from './evidence';
 import { ReportExport } from './report-export';
-import { ReportStatus } from './report-status';
+import { ReportProgress } from './report-status';
 import { Status, time } from './ui';
 import { StepCompletion } from './step-completion';
 import { ReportCriteria } from './report-criteria';
@@ -189,7 +190,7 @@ export function TaskReport({ api, task }: TaskSectionProps) {
               >
                 导出此组报告
               </button>
-              <ReportStatus value={task.reportStatus} />
+              <ReportProgress counts={verificationProgress([task])} />
             </div>
           )}
         </div>

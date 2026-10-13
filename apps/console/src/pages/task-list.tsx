@@ -1,6 +1,7 @@
+import { useListProgress } from '../use-list-progress';
 import { useState, type FormEvent } from 'react';
 import type { TaskList } from '@proofrun/contracts';
-import { ReportStatus } from '../components/report-status';
+import { ReportProgress } from '../components/report-status';
 import { TaskRerun } from '../components/task-rerun';
 import { TaskComparisonLink } from '../components/task-comparison-link';
 import { executionModeLabel } from '../execution-mode';
@@ -47,6 +48,12 @@ export function TaskListPage({
     api,
     `/v1/tasks?${params}`,
     cursors.length === 1,
+  );
+  const progress = useListProgress(
+    api,
+    resource.data,
+    cursors.length === 1,
+    resource.updatedAt,
   );
   const submitSearch = (event: FormEvent) => {
     event.preventDefault();
@@ -103,6 +110,9 @@ export function TaskListPage({
       </div>
       <RefreshBar {...resource} />
       <ErrorNotice message={resource.error} />
+      {progress.error && (
+        <p className="report-notice">部分验证统计暂不可用，刷新后重试。</p>
+      )}
       {!resource.data ? (
         <Empty
           title={
@@ -137,7 +147,6 @@ export function TaskListPage({
                 {reports ? (
                   <>
                     <th>报告结论</th>
-                    <th>验收项统计</th>
                     <th>证据状态</th>
                     <th>验证结束</th>
                   </>
@@ -184,24 +193,7 @@ export function TaskListPage({
                   {reports ? (
                     <>
                       <td>
-                        <ReportStatus value={task.reportStatus} />
-                      </td>
-                      <td className="report-list-counts">
-                        {task.criteriaCounts ? (
-                          <>
-                            <span>
-                              {task.criteriaCounts.passed} 通过 ·{' '}
-                              {task.criteriaCounts.failed} 未通过
-                            </span>
-                            <small className="muted">
-                              {task.criteriaCounts.inconclusive +
-                                task.criteriaCounts.skipped}{' '}
-                              未得出结论 / 共 {task.criteriaCounts.total} 项
-                            </small>
-                          </>
-                        ) : (
-                          '—'
-                        )}
+                        <ReportProgress counts={progress.counts(task)} />
                       </td>
                       <td>
                         {task.archived_at
@@ -229,7 +221,7 @@ export function TaskListPage({
                         />
                       </td>
                       <td>
-                        <ReportStatus value={task.reportStatus} />
+                        <ReportProgress counts={progress.counts(task)} />
                       </td>
                       <td className="date-cell">{time(task.created_at)}</td>
                     </>

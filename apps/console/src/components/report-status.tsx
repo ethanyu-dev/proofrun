@@ -1,51 +1,59 @@
 import type { TaskDetail } from '@proofrun/contracts';
+import type { VerificationProgress } from '../report-presentation';
 
-/** 报告结论与执行状态使用不同文案，null 只表示报告尚未生成。 */
-const REPORT_LABELS = {
-  PASSED: ['通过', 'success'],
-  FAILED: ['未通过', 'danger'],
-  INCONCLUSIVE: ['无法判定', 'warning'],
-} as const;
-
-/** 所有报告入口展示服务端提供的统一结论，不在浏览器另行推导。 */
-export function ReportStatus({ value }: { value: TaskDetail['reportStatus'] }) {
-  const [label, tone] = value ? REPORT_LABELS[value] : ['尚未生成', 'neutral'];
+/** 整体只呈现通过数与定义总数，不在展示层推导成功或失败标签。 */
+export function ReportProgress({
+  counts,
+}: {
+  counts: VerificationProgress | null | undefined;
+}) {
   return (
-    <span className="status report-status" data-tone={tone}>
-      {label}
+    <span
+      className="report-progress"
+      aria-label={
+        counts
+          ? `通过 ${counts.passed} 项，共 ${counts.total} 项`
+          : '尚无验证统计'
+      }
+    >
+      {counts ? `${counts.passed} / ${counts.total}` : '— / —'}
     </span>
   );
 }
 
-/** 未得出结论包含无法判定和未验收；保留细分数字避免把未执行伪装成已验证。 */
-export function ReportCounts({
-  counts,
+/** 对错仅描述该模式是否证实预期；未验收及证据不足通过提示保留原始含义。 */
+export function CriterionStatus({
+  value,
 }: {
-  counts: TaskDetail['criteriaCounts'];
+  value:
+    | NonNullable<TaskDetail['report']>['criteria'][number]['verdict']
+    | undefined;
 }) {
-  if (!counts) return null;
+  const label = value === 'PASSED' ? '对' : value ? '错' : '—';
+  const reason =
+    value === 'PASSED'
+      ? '已证实符合预期'
+      : value === 'FAILED'
+        ? '已证实不符合预期'
+        : value === 'INCONCLUSIVE'
+          ? '证据不足，未证实符合预期'
+          : value === 'SKIPPED'
+            ? '未验收，未证实符合预期'
+            : '尚无验收记录';
   return (
-    <dl className="report-counts" aria-label="验收项统计">
-      <div>
-        <dt>验收项</dt>
-        <dd>{counts.total}</dd>
-      </div>
-      <div>
-        <dt>通过</dt>
-        <dd>{counts.passed}</dd>
-      </div>
-      <div>
-        <dt>未通过</dt>
-        <dd>{counts.failed}</dd>
-      </div>
-      <div>
-        <dt>无法判定</dt>
-        <dd>{counts.inconclusive}</dd>
-      </div>
-      <div>
-        <dt>未验收</dt>
-        <dd>{counts.skipped}</dd>
-      </div>
-    </dl>
+    <span
+      className="criterion-result"
+      data-tone={
+        value === 'PASSED'
+          ? 'success'
+          : value === 'FAILED'
+            ? 'danger'
+            : 'neutral'
+      }
+      title={reason}
+      aria-label={reason}
+    >
+      {label}
+    </span>
   );
 }
