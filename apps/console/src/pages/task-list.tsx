@@ -233,21 +233,27 @@ export function TaskListPage({
                       <td className="date-cell">{time(task.created_at)}</td>
                     </>
                   )}
-                  <td>
-                    <TaskComparisonLink
-                      id={task.id}
-                      comparison={task.comparison}
-                    />
-                    {reports ? (
-                      <a
-                        className="button button-secondary button-small"
-                        href={`#/reports/${encodeURIComponent(task.id)}`}
-                      >
-                        查看报告
-                      </a>
-                    ) : (
-                      <TaskRerun api={api} id={task.id} caseId={task.caseId} />
-                    )}
+                  <td className="task-actions-cell">
+                    <div className="task-list-actions">
+                      <TaskComparisonLink
+                        id={task.id}
+                        comparison={task.comparison}
+                      />
+                      {reports ? (
+                        <a
+                          className="button button-secondary button-small"
+                          href={`#/reports/${encodeURIComponent(task.id)}`}
+                        >
+                          查看报告
+                        </a>
+                      ) : (
+                        <TaskRerun
+                          api={api}
+                          id={task.id}
+                          caseId={task.caseId}
+                        />
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}

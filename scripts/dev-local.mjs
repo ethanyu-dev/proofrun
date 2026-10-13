@@ -11,9 +11,10 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseEnv } from 'node:util';
 import { X509Certificate } from 'node:crypto';
+import { createRequire } from 'node:module';
 import { setTimeout as delay } from 'node:timers/promises';
 
-/** 此入口复用本机已有 preview 容器和数据，不创建另一套数据库或节点身份。 */
+/** 默认仅启动三个本机服务；旧 Docker 节点和转发需要显式启用。 */
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const RUNTIME = join(ROOT, '.proofrun/runtime');
 const CONTAINER = 'proofrun-preview-runtime-1';
@@ -52,6 +53,10 @@ const API_KEYS = [
   'PROOFRUN_API_PORT',
 ];
 const settings = parseEnv(readFileSync(ENV_FILE, 'utf8'));
+/** 本机显式保存启用状态后，普通启动命令也恢复已配对的 Docker 节点。 */
+const WITH_PREVIEW_NODE =
+  process.argv.includes('--with-preview-node') ||
+  settings.PROOFRUN_LOCAL_PREVIEW_NODE === 'true';
 const baseEnvironment = Object.fromEntries(
   Object.entries(process.env).filter(
     ([key]) => !key.startsWith('PROOFRUN_') && !key.startsWith('TYPESAFE_'),
@@ -176,18 +181,38 @@ function start(name, entry, args, environment, cwd = ROOT) {
   });
 }
 
-/** 单机迁移时保留既有证据；后续运行不把旧容器数据覆盖回本机。 */
+/** 启动前确认配置的数据库可连接，避免停止旧服务后才发现数据库不可用。 */
+async function checkDatabase() {
+  const require = createRequire(join(ROOT, 'apps/api/package.json'));
+  const { Client } = require('pg');
+  const client = new Client({
+    connectionString: settings.PROOFRUN_DATABASE_URL,
+    connectionTimeoutMillis: 5000,
+  });
+  try {
+    await client.connect();
+    await client.query('SELECT 1');
+  } catch {
+    throw new Error(
+      '数据库连接失败，请检查 .proofrun/local.env 中的 PROOFRUN_DATABASE_URL，并先创建项目数据库',
+    );
+  } finally {
+    await client.end();
+  }
+}
+
+/** 默认使用外部已运行的 PostgreSQL；仅旧预览模式管理 Docker 容器和节点。 */
 async function main() {
   if (process.platform !== 'darwin')
-    throw new Error('该入口用于当前 Mac + Docker 开发环境');
+    throw new Error('该入口用于当前 Mac 开发环境');
   mkdirSync(RUNTIME, { recursive: true, mode: 0o700 });
   for (const key of [
     'PROOFRUN_DATABASE_URL',
     'PROOFRUN_ADMIN_TOKEN',
     'PROOFRUN_WORKER_TOKEN',
-    'PROOFRUN_MODEL_BASE_URL',
-    'PROOFRUN_MODEL_API_KEY',
-    'PROOFRUN_MODEL',
+    ...(!NO_AGENT
+      ? ['PROOFRUN_MODEL_BASE_URL', 'PROOFRUN_MODEL_API_KEY', 'PROOFRUN_MODEL']
+      : []),
   ])
     if (!settings[key]) throw new Error(`${ENV_FILE} 缺少 ${key}`);
   if (!existsSync(PROFILE)) {
@@ -208,34 +233,45 @@ async function main() {
     "import { loadCaseProfile } from './apps/api/dist/modules/cases/profile.js'; loadCaseProfile(process.argv[1]);",
     PROFILE,
   ]);
-  run('docker', [
-    'compose',
-    '-f',
-    join(RUNTIME, 'compose.yml'),
-    'start',
-    '--wait',
-    '--wait-timeout',
-    '60',
-    'postgres',
-    'runtime',
-  ]);
-  run('docker', ['exec', CONTAINER, 'systemctl', 'start', 'user@1000.service']);
-  run('docker', [
-    'exec',
-    '-w',
-    '/workspace',
-    CONTAINER,
-    'cargo',
-    'build',
-    '--locked',
-    '-p',
-    'proofrun-node',
-  ]);
+  if (WITH_PREVIEW_NODE) {
+    run('docker', [
+      'compose',
+      '-f',
+      join(RUNTIME, 'compose.yml'),
+      'start',
+      '--wait',
+      '--wait-timeout',
+      '60',
+      'postgres',
+      'runtime',
+    ]);
+    run('docker', [
+      'exec',
+      CONTAINER,
+      'systemctl',
+      'start',
+      'user@1000.service',
+    ]);
+    run('docker', [
+      'exec',
+      '-w',
+      '/workspace',
+      CONTAINER,
+      'cargo',
+      'build',
+      '--locked',
+      '-p',
+      'proofrun-node',
+    ]);
+  }
+  await checkDatabase();
   // 首次从 Docker API 切换时与后续 Mac API 重启都要保留正在执行的任务。
-  for (const origin of [ORIGIN, 'http://127.0.0.1:4100']) {
+  for (const origin of WITH_PREVIEW_NODE
+    ? [ORIGIN, 'http://127.0.0.1:4100']
+    : [ORIGIN]) {
     let response;
     try {
-      response = await fetch(`${origin}/v1/tasks`, {
+      response = await fetch(`${origin}/v1/tasks?state=RUNNING&limit=1`, {
         headers: { Authorization: `Bearer ${settings.PROOFRUN_ADMIN_TOKEN}` },
         signal: AbortSignal.timeout(2000),
       });
@@ -247,21 +283,23 @@ async function main() {
     if ((result.tasks ?? result).some((task) => task.state === 'RUNNING'))
       throw new Error('存在运行中的任务，请结束任务后再重启');
   }
-  systemctl(
-    'stop',
-    'proofrun-agent.service',
-    'proofrun-node.service',
-    'proofrun-api.service',
-  );
-  systemctl('disable', 'proofrun-api.service', 'proofrun-agent.service');
+  if (WITH_PREVIEW_NODE) {
+    systemctl(
+      'stop',
+      'proofrun-agent.service',
+      'proofrun-node.service',
+      'proofrun-api.service',
+    );
+    systemctl('disable', 'proofrun-api.service', 'proofrun-agent.service');
+  }
   for (const service of Object.values(state.processes))
     await stopOwned(service.pid, service.entry);
   await releaseConsole();
   requireFreePort(API_PORT);
-  requireFreePort(RELAY_PORT);
+  if (WITH_PREVIEW_NODE) requireFreePort(RELAY_PORT);
   const artifacts = join(ROOT, '.proofrun/api-artifacts');
   mkdirSync(artifacts, { recursive: true, mode: 0o700 });
-  if (!state.artifactsCopied) {
+  if (WITH_PREVIEW_NODE && !state.artifactsCopied) {
     run('docker', [
       'cp',
       `${CONTAINER}:/var/lib/proofrun/api-artifacts/.`,
@@ -271,10 +309,11 @@ async function main() {
   }
   // 专用开发证书只供 Docker 转发使用，不修改系统信任或关闭 TLS 校验。
   if (
-    !existsSync(CERT) ||
-    !existsSync(KEY) ||
-    Date.parse(new X509Certificate(readFileSync(CERT)).validTo) <
-      Date.now() + 7 * 86400000
+    WITH_PREVIEW_NODE &&
+    (!existsSync(CERT) ||
+      !existsSync(KEY) ||
+      Date.parse(new X509Certificate(readFileSync(CERT)).validTo) <
+        Date.now() + 7 * 86400000)
   ) {
     const config = join(RUNTIME, 'local-relay-openssl.cnf');
     writeFileSync(
@@ -317,52 +356,72 @@ async function main() {
     Object.fromEntries(API_KEYS.map((key) => [key, settings[key]])),
   );
   await waitHttp(`${ORIGIN}/health/ready`);
-  start(
-    'relay',
-    join(ROOT, 'scripts/dev-api-relay.mjs'),
-    [CERT, KEY, String(RELAY_PORT), String(API_PORT)],
-    {},
-  );
-  const unit =
-    '[Unit]\nDescription=ProofRun local Mac API TLS relay\n[Service]\nExecStart=/usr/bin/python3 /workspace/scripts/dev-node-relay.py\nRestart=on-failure\nRestartSec=2\nUMask=0077\n';
-  run(
-    'docker',
-    [
-      'exec',
-      '-i',
-      CONTAINER,
-      'runuser',
-      '-u',
-      'proofrun',
-      '--',
-      'tee',
-      '/home/proofrun/.config/systemd/user/proofrun-local-relay.service',
-    ],
-    { input: unit, stdio: ['pipe', 'ignore', 'inherit'] },
-  );
-  systemctl('daemon-reload');
-  systemctl('restart', 'proofrun-local-relay.service');
-  run('docker', [
-    'exec',
-    CONTAINER,
-    'curl',
-    '--fail',
-    '--silent',
-    '--retry',
-    '10',
-    '--retry-connrefused',
-    '--retry-delay',
-    '1',
-    '--max-time',
-    '3',
-    'http://127.0.0.1:4100/health/ready',
-  ]);
-  systemctl('start', 'proofrun-node.service');
-  // 测试页面使用临时单元，容器重启后重新创建；不会重置仍在运行的页面。
-  try {
+  if (WITH_PREVIEW_NODE) {
+    start(
+      'relay',
+      join(ROOT, 'scripts/dev-api-relay.mjs'),
+      [CERT, KEY, String(RELAY_PORT), String(API_PORT)],
+      {},
+    );
+    const unit =
+      '[Unit]\nDescription=ProofRun local Mac API TLS relay\n[Service]\nExecStart=/usr/bin/python3 /workspace/scripts/dev-node-relay.py\nRestart=on-failure\nRestartSec=2\nUMask=0077\n';
     run(
       'docker',
       [
+        'exec',
+        '-i',
+        CONTAINER,
+        'runuser',
+        '-u',
+        'proofrun',
+        '--',
+        'tee',
+        '/home/proofrun/.config/systemd/user/proofrun-local-relay.service',
+      ],
+      { input: unit, stdio: ['pipe', 'ignore', 'inherit'] },
+    );
+    systemctl('daemon-reload');
+    systemctl('restart', 'proofrun-local-relay.service');
+    run('docker', [
+      'exec',
+      CONTAINER,
+      'curl',
+      '--fail',
+      '--silent',
+      '--retry',
+      '10',
+      '--retry-connrefused',
+      '--retry-delay',
+      '1',
+      '--max-time',
+      '3',
+      'http://127.0.0.1:4100/health/ready',
+    ]);
+    systemctl('start', 'proofrun-node.service');
+    // 测试页面使用临时单元，容器重启后重新创建；不会重置仍在运行的页面。
+    try {
+      run(
+        'docker',
+        [
+          'exec',
+          CONTAINER,
+          'runuser',
+          '-u',
+          'proofrun',
+          '--',
+          'env',
+          'XDG_RUNTIME_DIR=/run/user/1000',
+          'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus',
+          'systemctl',
+          '--user',
+          'is-active',
+          '--quiet',
+          'proofrun-smoke-page.service',
+        ],
+        { stdio: 'pipe' },
+      );
+    } catch {
+      run('docker', [
         'exec',
         CONTAINER,
         'runuser',
@@ -372,33 +431,15 @@ async function main() {
         'env',
         'XDG_RUNTIME_DIR=/run/user/1000',
         'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus',
-        'systemctl',
+        'systemd-run',
         '--user',
-        'is-active',
-        '--quiet',
-        'proofrun-smoke-page.service',
-      ],
-      { stdio: 'pipe' },
-    );
-  } catch {
-    run('docker', [
-      'exec',
-      CONTAINER,
-      'runuser',
-      '-u',
-      'proofrun',
-      '--',
-      'env',
-      'XDG_RUNTIME_DIR=/run/user/1000',
-      'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus',
-      'systemd-run',
-      '--user',
-      '--collect',
-      '--unit=proofrun-smoke-page',
-      '--property=UMask=0077',
-      '/usr/bin/python3',
-      '/var/lib/proofrun/smoke-page.py',
-    ]);
+        '--collect',
+        '--unit=proofrun-smoke-page',
+        '--property=UMask=0077',
+        '/usr/bin/python3',
+        '/var/lib/proofrun/smoke-page.py',
+      ]);
+    }
   }
   if (!NO_AGENT)
     start(

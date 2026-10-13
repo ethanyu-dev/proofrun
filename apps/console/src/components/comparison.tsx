@@ -65,26 +65,23 @@ function Arm({
   const execution = task.executions[0];
   const metrics = task.report?.executionDetails;
   return (
-    <article className={`comparison-arm ${jev ? 'comparison-jev' : ''}`}>
+    <article className="comparison-arm">
       <header className="comparison-arm-heading">
         <div>
-          <span className="comparison-arm-label">
-            {jev ? '实验组 B' : '对照组 A'}
-          </span>
           <h3>{jev ? 'JEV + LLM' : '纯 LLM'}</h3>
         </div>
         <div className="comparison-arm-controls">
-          {execution && (
-            <ExecutionControl api={api} execution={execution} task={task} />
-          )}
           <TaskExecutionStatus task={task} />
         </div>
       </header>
-      <p className="comparison-description">
-        {jev
-          ? 'JEV 选择动作，LLM 填写、纠偏与验收'
-          : 'LLM 选择操作、填写内容并生成验收报告'}
-      </p>
+      {execution && (
+        <ExecutionControl
+          key={`${execution.id}-${execution.control_revision}`}
+          api={api}
+          execution={execution}
+          task={task}
+        />
+      )}
       {execution ? (
         <TaskPageView api={api} task={task} />
       ) : (
@@ -288,7 +285,7 @@ export function ComparisonDetails({
             return (
               <article
                 key={task.id}
-                className={`comparison-detail-arm ${jev ? 'comparison-jev' : ''}`}
+                className="comparison-detail-arm"
                 data-task-id={task.id}
                 aria-label={`${jev ? '实验组 B · JEV + LLM' : '对照组 A · 纯 LLM'} · ${section.title}`}
                 id={
@@ -352,7 +349,6 @@ export function Comparison({ api, id }: { api: ApiClient; id: string }) {
             <p className="comparison-eyebrow">同一任务 · 独立会话</p>
             <h2>并行执行对比</h2>
           </div>
-          <span className="status">对照组 A / 实验组 B</span>
         </div>
         <p className="muted">
           两组使用相同目标、验收标准和预算。以下所有模块均按组展示；模型调用可分别选择，轮次不强行对应。
