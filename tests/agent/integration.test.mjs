@@ -114,6 +114,35 @@ test(
       }
     };
     await app.listen({ host: '127.0.0.1', port });
+    /** 补齐模拟节点的截图交付链路；仅证明上传与报告引用一致，不代表真实页面内容。 */
+    const uploadScreenshots = (node, result, uploads) => {
+      for (const ref of result?.data?.artifactRefs ?? [])
+        uploads.push(
+          (async () => {
+            await until(
+              async () =>
+                (
+                  await fetch(`${base}/v1/artifacts/${ref.artifactId}`, {
+                    method: 'PUT',
+                    headers: {
+                      authorization: `Bearer ${node.token}`,
+                      'content-type': 'image/png',
+                      'x-content-sha256': PNG_HASH,
+                    },
+                    body: PNG,
+                  })
+                ).status,
+              (status) => status === 200,
+            );
+            node.send({
+              type: 'artifact.available',
+              messageId: `artifact:${ref.artifactId}`,
+              artifactId: ref.artifactId,
+              sha256: PNG_HASH,
+            });
+          })(),
+        );
+    };
     const run = async (
       definition,
       decide,
@@ -146,32 +175,7 @@ test(
           node.domObservationFailures = observeFailuresAfterClick;
         original(command);
         const result = node.results.get(command.commandId);
-        for (const ref of result?.data?.artifactRefs ?? [])
-          uploads.push(
-            (async () => {
-              await until(
-                async () =>
-                  (
-                    await fetch(`${base}/v1/artifacts/${ref.artifactId}`, {
-                      method: 'PUT',
-                      headers: {
-                        authorization: `Bearer ${node.token}`,
-                        'content-type': 'image/png',
-                        'x-content-sha256': PNG_HASH,
-                      },
-                      body: PNG,
-                    })
-                  ).status,
-                (status) => status === 200,
-              );
-              node.send({
-                type: 'artifact.available',
-                messageId: `artifact:${ref.artifactId}`,
-                artifactId: ref.artifactId,
-                sha256: PNG_HASH,
-              });
-            })(),
-          );
+        uploadScreenshots(node, result, uploads);
       };
       await node.pair(ADMIN);
       await until(
@@ -356,6 +360,16 @@ test(
         '结构化 case 的逐步执行、部分结论和清理贯通',
         async () => {
           const node = new SimulatedNode(base, 'v2-agent');
+          const uploads = [];
+          const original = node.execute.bind(node);
+          node.execute = (command) => {
+            original(command);
+            uploadScreenshots(
+              node,
+              node.results.get(command.commandId),
+              uploads,
+            );
+          };
           nodes.push(node);
           await node.pair(ADMIN);
           const step = {
@@ -502,7 +516,7 @@ test(
           );
           assert.deepEqual(
             gatedStored.report.steps.map((s) => s.status),
-            ['BLOCKED', 'SKIPPED', 'COMPLETED'],
+            ['BLOCKED', 'SKIPPED', 'SKIPPED'],
           );
           assert.equal(gatedStored.report.steps[1].startedAt, null);
           assert.equal(gatedStored.report.criteria[0].verdict, 'SKIPPED');
@@ -512,6 +526,22 @@ test(
             'ENVIRONMENT_NOT_READY',
           );
           assert.equal(list.tasks[0].reportStatus, 'INCONCLUSIVE');
+          assert.equal(gatedStored.report.steps[2].startedAt, null);
+          assert.match(gatedStored.report.steps[0].summary, /指定团队角色/);
+          assert.ok(
+            gatedStored.report.steps[0].blockage.conditions.some((c) =>
+              c.description.includes('指定团队角色'),
+            ),
+          );
+          assert.ok(
+            gatedStored.report.steps[0].blockage.evidenceRefs.some((id) =>
+              gatedStored.report.artifacts.some(
+                (a) => a.id === id && a.kind === 'SCREENSHOT',
+              ),
+            ),
+          );
+          await verifyEvidence(gatedStored.report);
+          await Promise.all(uploads);
           await api('POST', `/v1/nodes/${node.id}/revoke`);
           node.close();
         },

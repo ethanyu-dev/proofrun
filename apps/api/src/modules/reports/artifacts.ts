@@ -373,6 +373,8 @@ export class ArtifactStore {
       )
         throw invalid();
       const old = previous?.[i];
+      if (old?.blockage && canonical(old.blockage) !== canonical(step.blockage))
+        throw invalid();
       if (old?.status === 'COMPLETED' && canonical(old) !== canonical(step))
         throw invalid();
       // RUNNING 阶段已保存的逐项结论同样不可丢失或改写。
@@ -411,6 +413,14 @@ export class ArtifactStore {
       )
         throw invalid();
       if (step.evidenceRefs.some((id) => !evidence.has(id))) throw invalid();
+      if (
+        step.blockage &&
+        (!['BLOCKED', 'ERROR'].includes(step.status) ||
+          step.blockage.evidenceRefs.some(
+            (id) => !step.evidenceRefs.includes(id) || !evidence.has(id),
+          ))
+      )
+        throw invalid();
       const seen = new Set<string>();
       for (const criterion of step.criteria) {
         const source = expected.find((c) => c.id === criterion.criterionId);
@@ -430,7 +440,14 @@ export class ArtifactStore {
         )
           throw invalid();
       }
-      // 已结束的失败/受阻步骤不阻挡后续；尚未开始或仍运行时不能越步执行。
+      // 新版准备阻塞快照是全部后续执行的门禁，包含清理；历史无快照报告保持可读取。
+      if (
+        step.blockage &&
+        definition.type === 'setup' &&
+        !context.definition.cleanupStepIds?.includes(step.stepId)
+      )
+        stopped = true;
+      // 普通业务失败可继续独立步骤；尚未开始或仍运行时不能越步执行。
       if (['PENDING', 'RUNNING'].includes(step.status)) stopped = true;
     }
   }

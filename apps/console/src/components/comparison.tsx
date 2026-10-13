@@ -5,8 +5,7 @@ import { useResource } from '../use-resource';
 import { ErrorNotice, RefreshBar } from './ui';
 import { DecisionContext } from './decision-context';
 import { ExecutionControl } from './execution-control';
-import { LivePage } from './live-page';
-import { TaskExecutionStatus } from './task-live';
+import { TaskExecutionStatus, TaskPageView } from './task-live';
 import {
   TaskResources,
   TaskReport,
@@ -87,14 +86,7 @@ function Arm({
           : 'LLM 选择操作、填写内容并生成验收报告'}
       </p>
       {execution ? (
-        <LivePage
-          api={api}
-          execution={execution}
-          active={
-            task.state === 'RUNNING' &&
-            ['STARTING', 'RUNNING'].includes(execution.state)
-          }
-        />
+        <TaskPageView api={api} task={task} />
       ) : (
         <div className="comparison-screen comparison-placeholder">
           <p>排队中，等待独立浏览器会话</p>

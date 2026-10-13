@@ -29,7 +29,7 @@ Schema 与 OpenAPI 通过 `pnpm contracts:generate` 同步，`pnpm contracts:che
 | setup 或带验收项的等待               | 指定时长 + 五分钟    | 10       | LLM 20 / JEV+LLM 40 |
 | 整段后续清理                         | 三分钟墙钟，共享     | 10       | LLM 20 / JEV+LLM 40 |
 
-模型失败请求与重试均计数，自动导航占动作额度。步骤不能借用其他步骤额度；耗尽标为 BLOCKED，记录 `STEP_MODEL_BUDGET_EXCEEDED`、`STEP_ACTION_BUDGET_EXCEEDED` 或 `STEP_TIME_BUDGET_EXCEEDED`；setup 未完成时跳过后续业务，仍可清理，普通业务步骤则继续独立后续步骤。后续步骤仍核实自己的前置条件。无进展保护、单次调用超时、证据交付时限、上下文裁剪不随步骤数扩大。
+模型失败请求与重试均计数，自动导航占动作额度。步骤不能借用其他步骤额度；耗尽标为 BLOCKED，记录 `STEP_MODEL_BUDGET_EXCEEDED`、`STEP_ACTION_BUDGET_EXCEEDED` 或 `STEP_TIME_BUDGET_EXCEEDED`；setup 未完成时跳过全部后续业务及清理，普通业务步骤则继续独立后续步骤。后续步骤仍核实自己的前置条件。无进展保护、单次调用超时、证据交付时限、上下文裁剪不随步骤数扩大。
 
 已派发命令必须先确定效果，再推进下一步。每个业务步骤另预留最多两分钟用于在途调用、取证和结果落库，不能用来派发新业务操作。领取后才开始业务总安全时限，排队另受已有队列期限约束。节点 max_session_ms 必须覆盖业务、逐步收尾预留及清理；不足时明确显示 SESSION_BUDGET_UNSUPPORTED。节点默认一小时，长 case 需提高会话上限或拆分。会话预算超过一天、总动作超过 10000 或模型请求超过 20000 时直接拒绝，不削减后续步骤额度。
 

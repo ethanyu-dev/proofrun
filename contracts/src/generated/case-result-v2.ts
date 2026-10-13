@@ -573,6 +573,29 @@ export interface StepResult {
     evidenceRefs: string[];
     controlRevision?: number;
   }[];
+  /**
+   * 阻塞时冻结的条件与页面证据；后续清理不能替换该快照。
+   */
+  blockage?: {
+    /**
+     * @maxItems 128
+     */
+    conditions: {
+      id: string;
+      description: string;
+      summary: string;
+      status: 'UNCONFIRMED' | 'UNSATISFIED';
+    }[];
+    evidenceRefs: string[];
+    /**
+     * 执行器冻结阻塞记录的时间，不冒充节点截图拍摄时间。
+     */
+    recordedAt: string;
+    /**
+     * 截图未取得时保留原因，不覆盖原始阻塞原因。
+     */
+    screenshotError?: string;
+  };
 }
 /**
  * 最近一次领取检查发现的排队原因；不包含节点身份或登录凭据，也不是业务验收结论。

@@ -73,6 +73,22 @@ export function CleanupResult({
     <div aria-label={`清理结果：${step.stepId}`}>
       <strong>清理结果：{label}</strong>
       <p className="muted wrap">{reason}</p>
+      <div className="report-evidence-grid" aria-label="清理截图">
+        {refs.map((ref) => {
+          const image = artifacts.find(
+            (item) => item.id === ref && item.kind === 'SCREENSHOT',
+          );
+          return image ? (
+            <ReportEvidenceButton
+              key={ref}
+              api={api}
+              artifact={image}
+              archived={!!task.archived_at}
+              onSelect={() => setSelected(ref)}
+            />
+          ) : null;
+        })}
+      </div>
       <details>
         <summary>清理记录与证据（{refs.length}）</summary>
         {result && <ReportSummary text={result.summary} />}
@@ -84,6 +100,7 @@ export function CleanupResult({
         ))}
         {refs.map((ref) => {
           const evidence = artifacts.find((item) => item.id === ref);
+          if (evidence?.kind === 'SCREENSHOT') return null;
           return evidence ? (
             <ReportEvidenceButton
               key={ref}

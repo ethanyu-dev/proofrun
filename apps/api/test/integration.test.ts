@@ -3125,6 +3125,15 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         );
         node.renewableSessions = true;
         node.heartbeat();
+        // 心跳发送不等于能力已落库；确认可续期能力后再领取，避免空领取遗留任务污染后续用例。
+        await until(
+          async () => (await api('GET', '/v1/nodes')).data.nodes,
+          (rows) =>
+            rows.some(
+              (n: any) =>
+                n.id === node.id && n.capabilities.renewableSessions === true,
+            ),
+        );
         const execution = await claim();
         const worker = new SimulatedWorker(base, execution);
         t.after(() => worker.close());

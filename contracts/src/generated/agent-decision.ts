@@ -271,6 +271,10 @@ export interface RequestHumanAssistance {
     | [string, string, string, string, string, string, string, string]
     | [string, string, string, string, string, string, string, string, string]
     | [string, string, string, string, string, string, string, string, string, string];
+  /**
+   * 登录缺失单独交接，不占用其他未解决条件的交接机会。
+   */
+  reasonCode?: 'LOGIN_REQUIRED' | 'IDENTITY_UNCONFIRMED' | 'OTHER';
 }
 /**
  * 立即保存当前步骤已取得证据的部分验收结论，不结束步骤；已保存结论不会被后续故障覆盖。
