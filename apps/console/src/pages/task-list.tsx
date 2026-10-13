@@ -209,9 +209,12 @@ export function TaskListPage({
                       <td>
                         <Status
                           value={
-                            task.execution_disposition === 'BLOCKED'
-                              ? 'BLOCKED'
-                              : task.state
+                            task.execution_reason_code ===
+                            'ENVIRONMENT_NOT_READY'
+                              ? 'ENVIRONMENT_NOT_READY'
+                              : task.execution_disposition === 'BLOCKED'
+                                ? 'BLOCKED'
+                                : task.state
                           }
                         />
                       </td>

@@ -2171,28 +2171,28 @@ test('结构化步骤逐个执行并独立保存结果，不向模型暴露后�
   );
 });
 
-// 范围：setup 验收不通过仍尝试后续步骤，保留已知结论和前序异常提示；不将夹具结论视为产品缺陷。
-test('setup 失败后继续后续步骤，保留该步验收证据', async () => {
+// 范围：准备失败归为环境不符合，禁止后续业务并不产生产品失败结论；模型和网页均为夹具。
+test('setup 验收不通过时拦截后续业务', async () => {
   const { report, client } = await run(
     (context) => {
+      assert.equal(context.executionStep.stepId, 'step-1');
       const result = finish(context);
-      if (context.executionStep.stepId === 'step-1')
-        result.criteria[0].verdict = 'FAILED';
-      else assert.match(context.task.objective, /前序异常：step-1/);
+      result.criteria[0].verdict = 'FAILED';
       return result;
     },
     (_client, execution) => structuredGrant(execution, [{ type: 'setup' }, {}]),
   );
-  assert.equal(report.executionDisposition, 'EXECUTED');
-  assert.equal(report.verdict, 'FAILED');
+  assert.equal(report.executionDisposition, 'BLOCKED');
+  assert.equal(report.executionDetails.reasonCode, 'ENVIRONMENT_NOT_READY');
   assert.deepEqual(
     report.criteria.map((c) => c.verdict),
-    ['FAILED', 'PASSED'],
+    ['SKIPPED', 'SKIPPED'],
   );
   assert.deepEqual(
     report.steps.map((s) => s.status),
-    ['COMPLETED', 'COMPLETED'],
+    ['BLOCKED', 'SKIPPED'],
   );
+  assert.equal(report.steps[1].startedAt, null);
   assert.equal(
     client.calls.filter((c) => c.operation.action === 'navigate').length,
     1,
@@ -2219,8 +2219,8 @@ test('后续步骤受阻仍保留前面通过的验收', async () => {
   );
 });
 
-// 范围：显式短等待不消耗模型调用且随后正常验收；不是一小时等待的真实环境验收。
-test('显式等待由执行器计时，不调用模型空转', async () => {
+// 范围：显式等待只计时一次，随后仍核实准备条件；不证明真实环境的就绪时机。
+test('显式等待后仍须通过准备门禁', async () => {
   const start = performance.now();
   const { report } = await run(finish, (_client, execution) =>
     structuredGrant(execution, [
@@ -2229,7 +2229,7 @@ test('显式等待由执行器计时，不调用模型空转', async () => {
     ]),
   );
   assert.equal(report.verdict, 'PASSED');
-  assert.equal(report.executionDetails.modelCalls, 1);
+  assert.equal(report.executionDetails.modelCalls, 2);
   assert.equal(report.executionDetails.actions, 0);
   assert(performance.now() - start >= 30);
   assert.equal(report.steps[0].evidenceRefs.length, 1);
@@ -2273,12 +2273,18 @@ test('显式等待可取消，后续业务操作不会执行', async () => {
 
 // 范围：setup 没有 expected 仍需本步执行证据；不验证证据的业务含义。
 test('setup 空标准不能在没有证据时直接完成', async () => {
-  const { report } = await run(finish, (_client, execution) =>
-    structuredGrant(execution, [{ type: 'setup', expected: [] }, {}]),
+  const { report } = await run(
+    (context) => {
+      const result = finish(context);
+      delete result.evidenceRefs;
+      return result;
+    },
+    (_client, execution) =>
+      structuredGrant(execution, [{ type: 'setup', expected: [] }, {}]),
   );
   assert.equal(report.executionDisposition, 'ERROR');
   assert.equal(report.steps[0].status, 'ERROR');
-  assert.equal(report.steps[1].status, 'COMPLETED');
+  assert.equal(report.steps[1].status, 'SKIPPED');
 });
 
 // 范围：结构化步骤切换重置 JEV 局部停滞，模型总调用仍累计；不调用真实供应商。
@@ -2685,7 +2691,7 @@ test('cleanup 在原任务末尾串行执行，只提交一次报告', async () 
   assert.equal(client.reports.length, 1);
 });
 
-// 范围：前置失败与模型阻塞均继续后续业务和收尾；不保证真实业务清理幂等。
+// 范围：业务验收失败与模型阻塞均继续独立业务和收尾；不保证真实业务清理幂等。
 test('业务失败或阻塞后继续后续业务和清理，保留原结论', async () => {
   for (const mode of ['failed', 'blocked']) {
     const seen = [];
@@ -2707,11 +2713,7 @@ test('业务失败或阻塞后继续后续业务和清理，保留原结论', as
         };
       },
       (_client, execution) => {
-        structuredGrant(execution, [
-          { type: 'setup' },
-          {},
-          { type: 'setup', expected: [] },
-        ]);
+        structuredGrant(execution, [{}, {}, { type: 'setup', expected: [] }]);
         execution.task.cleanupStepIds = ['step-3'];
       },
     );
@@ -3119,8 +3121,8 @@ test('整段清理共享独立模型预算，不能每条清理重新充值', as
   assert.equal(report.verdict, 'PASSED');
 });
 
-// 范围：新策略下的纯等待无需模型；不验证页面真实计时准确度。
-test('纯等待不消耗模型和动作，随后业务仍有完整额度', async () => {
+// 范围：等待后准备复核消耗本步模型额度，后续业务额度独立；不验证真实页面计时。
+test('等待后的准备复核使用本步额度', async () => {
   const { report } = await run(finish, (_client, execution) => {
     structuredGrant(execution, [
       { type: 'setup', expected: [], wait: { durationMs: 5 } },
@@ -3132,7 +3134,7 @@ test('纯等待不消耗模型和动作，随后业务仍有完整额度', async
     report.steps.map((s) => s.status),
     ['COMPLETED', 'COMPLETED'],
   );
-  assert.equal(report.steps[0].budgetUsage.modelCalls, 0);
+  assert.equal(report.steps[0].budgetUsage.modelCalls, 1);
   assert.equal(report.steps[0].budgetUsage.actions, 0);
 });
 
@@ -3188,7 +3190,7 @@ test('新预算保留无进展保护与后续步骤前置条件检查', async ()
       if (context.executionStep.stepId === 'step-1')
         return { type: 'browser.observe' };
       assert.match(context.task.objective, /前序异常：step-1/);
-      assert.match(context.task.objective, /前置条件已满足/);
+      assert.match(context.task.objective, /核实本步必要条件/);
       return {
         type: 'verification.block',
         summary: '本步必要的访客状态尚未建立，不能判通过',
@@ -3243,8 +3245,8 @@ test('步骤时间到期不中断在途动作，确认结果后继续下一步',
   assert.equal(report.steps[0].budgetUsage.actions, 2);
 });
 
-// 范围：身份前提未满足时阻止模型伪造完成，但后续独立步骤及清理继续；页面与模型均为夹具。
-test('前置身份缺失不能由模型完成声明绕过，也不阻止独立后续步骤', async () => {
+// 范围：setup 身份前提未满足时阻止模型伪造完成和后续业务，仍执行清理；页面与模型均为夹具。
+test('setup 身份缺失禁止执行后续业务但保留清理', async () => {
   const seen = [];
   const { report } = await run(
     (context) => {
@@ -3272,10 +3274,10 @@ test('前置身份缺失不能由模型完成声明绕过，也不阻止独立�
       execution.task.environment.allowIntervention = false;
     },
   );
-  assert.deepEqual(seen, ['step-2', 'step-3']);
-  assert.equal(report.steps[0].reasonCode, 'PRECONDITION_UNMET');
+  assert.deepEqual(seen, ['step-3']);
+  assert.equal(report.steps[0].reasonCode, 'ENVIRONMENT_NOT_READY');
   assert.equal(report.steps[0].preconditions[0].status, 'UNSATISFIED');
-  assert.equal(report.steps[1].status, 'COMPLETED');
+  assert.equal(report.steps[1].status, 'SKIPPED');
   assert.equal(report.steps[2].status, 'COMPLETED');
 });
 
@@ -3339,7 +3341,7 @@ test('自动登录仅准备一次且不占业务动作额度', async () => {
 });
 
 // 范围：结构化身份条件将登录和角色核验合并为一次 HITL；人工、网页与模型均为夹具。
-test('结构化登录和角色确认共用一次人工请求并保留配方失败分类', async () => {
+test('结构化登录和角色确认共用一次环境准备人工请求', async () => {
   const execution = grant();
   structuredGrant(execution, [{ type: 'setup', expected: [] }]);
   execution.task.steps[0].description = '使用已授权账号登录后确认角色';
@@ -3405,7 +3407,7 @@ test('结构化登录和角色确认共用一次人工请求并保留配方失�
     reasonCode,
   ) => {
     requests++;
-    assert.equal(reasonCode, 'LOGIN_RECIPE_MISSING');
+    assert.equal(reasonCode, 'ENVIRONMENT_NOT_READY');
     assert.deepEqual(items, ['确认当前账号是非所有者团队成员']);
     mode = 'REQUESTED';
     revision++;
@@ -3424,9 +3426,11 @@ test('结构化登录和角色确认共用一次人工请求并保留配方失�
     {
       async decide(input) {
         const context = JSON.parse(input.text);
+        const { workflow, ...decision } = finish(context);
         return {
+          workflow,
           decision: {
-            ...finish(context),
+            ...decision,
             evidenceRefs: context.observation.artifactRefs.map(
               (a) => a.artifactId,
             ),

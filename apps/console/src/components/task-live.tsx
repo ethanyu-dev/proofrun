@@ -21,6 +21,8 @@ export function TaskExecutionStatus({ task }: { task: TaskDetail }) {
         </span>
       );
   }
+  if (task.report?.executionDetails?.reasonCode === 'ENVIRONMENT_NOT_READY')
+    return <Status value="ENVIRONMENT_NOT_READY" />;
   return <Status value={task.state} />;
 }
 

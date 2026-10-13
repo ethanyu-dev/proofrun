@@ -111,6 +111,10 @@ class Execution {
   private decisionIndex = 0;
   /** 每一步最多自动请求一次登录辅助，人工未解决问题时不能无限暂停。 */
   private readonly loginInterventions = new Set<number>();
+  /** setup 交接共享一次机会，避免登录、角色及准备停滞各自重复等待人工。 */
+  private readonly environmentInterventions = new Set<number>();
+  /** 人工交还前的准备证据只能作历史参考，不能再次证明环境已就绪。 */
+  private readinessEvidence = new Set<string>();
   /** 原任务阶段和恢复计划由所有决策模式共享。 */
   private workflow: Workflow;
   /** 新版业务逐步独立计数，整段清理共享另一份额度；旧任务沿用冻结语义。 */
@@ -439,6 +443,7 @@ class Execution {
         const changed = this.controlRevision !== (view.controlRevision ?? 0);
         this.controlRevision = view.controlRevision ?? 0;
         if (changed) {
+          this.invalidateReadiness();
           // 人工交还的是同一会话的当前页面；旧观察失效，但不能用导航覆盖处理结果。
           this.pendingNavigation = undefined;
           this.current = undefined;
@@ -605,22 +610,26 @@ class Execution {
   /** 完成决定只提供结论，证据元数据与总判定由执行器生成并由 API 再次核实。 */
   private finish(
     decision: Extract<AgentDecision, { type: 'verification.finish' }>,
+    ledger = this.criteria,
   ): VerificationReport {
-    const invalid = () =>
-      this.criteria.invalid('完成结果缺少本步骤新取得的执行证据');
-    const pending = this.criteria.pending();
-    if (pending.length)
-      throw this.criteria.invalid(`尚未登记：${pending.join('、')}`);
+    const invalid = () => ledger.invalid('完成结果缺少本步骤新取得的执行证据');
+    const pending = ledger.pending();
+    if (pending.length) throw ledger.invalid(`尚未登记：${pending.join('、')}`);
     if (this.grant.task.steps) {
       const refs = [
         ...new Set([
           ...(decision.evidenceRefs ?? []),
-          ...this.criteria.values().flatMap((c) => c.evidenceRefs),
+          ...ledger.values().flatMap((c) => c.evidenceRefs),
         ]),
       ];
       if (
         !refs.length ||
-        refs.some((id) => !this.evidence.has(id) || this.stepEvidence.has(id))
+        refs.some(
+          (id) =>
+            !this.evidence.has(id) ||
+            this.stepEvidence.has(id) ||
+            (this.isSetup() && this.readinessEvidence.has(id)),
+        )
       )
         throw invalid();
       this.completionEvidence = refs;
@@ -628,7 +637,7 @@ class Execution {
     return this.report(
       'EXECUTED',
       decision.summary,
-      this.criteria.complete('该项尚未验收'),
+      ledger.complete('该项尚未验收'),
       null,
     );
   }
@@ -640,6 +649,44 @@ class Execution {
       ) === true
     );
   }
+  /** 清理虽使用 setup 类型，也必须在准备失败后保留独立执行权限。 */
+  private isSetup(): boolean {
+    return (
+      this.grant.task.steps?.[this.stepIndex]?.type === 'setup' &&
+      !this.isCleanup()
+    );
+  }
+
+  /** 只有环境准备问题进入人工；调用方不能把传输、租约或未知副作用改写成环境不符。 */
+  private async environmentNotReady(
+    summary: string,
+  ): Promise<VerificationReport | null> {
+    if (
+      this.grant.task.environment.allowIntervention &&
+      !this.environmentInterventions.has(this.stepIndex)
+    ) {
+      const step = this.grant.task.steps![this.stepIndex]!;
+      await this.requestIntervention(
+        `不符合验证环境：${summary}`.slice(0, 1000),
+        [step.description, ...step.policy]
+          .slice(0, 10)
+          .map((item) => item.slice(0, 500)),
+        false,
+      );
+      this.feedback =
+        '人工已交还控制权。请按完整 setup 描述和每条约束重新核实，所有准备项必须引用交还后取得的证据；人工完成本身不是就绪证明。';
+      return null;
+    }
+    return this.blocked(`不符合验证环境：${summary}`, 'ENVIRONMENT_NOT_READY');
+  }
+
+  /** 控制权变化时撤销全部准备声明，避免沿用另一账号或旧环境的证据。 */
+  private invalidateReadiness() {
+    if (!this.isSetup()) return;
+    this.workflow.invalidateAssessments();
+    this.readinessEvidence = new Set(this.evidence.keys());
+  }
+
   /** 显式条件统一驱动登录与角色交接，避免同一步先“登录”再“确认身份”重复 HITL。 */
   private identityChecks() {
     const original = this.grant.task;
@@ -674,20 +721,25 @@ class Execution {
       results.some((r) => r.status !== 'SATISFIED') &&
       allowIntervention &&
       original.environment.allowIntervention &&
-      !this.identityInterventions.has(this.stepIndex)
+      !this.identityInterventions.has(this.stepIndex) &&
+      (!this.isSetup() || !this.environmentInterventions.has(this.stepIndex))
     ) {
       this.identityInterventions.add(this.stepIndex);
       const revision = this.controlRevision;
+      const requested = results
+        .filter((r) => r.status !== 'SATISFIED')
+        .slice(0, 10);
       await this.requestIntervention(
         '请确认本次测试身份及前置条件；已登录不代表账号角色符合要求',
-        results
-          .filter((r) => r.status !== 'SATISFIED')
-          .map((r) => r.description),
+        requested.map((r) => r.description.slice(0, 500)),
         true,
       );
       if (this.controlRevision > revision)
         for (const check of checks)
-          if (check.method === 'manual')
+          if (
+            check.method === 'manual' &&
+            requested.some((r) => r.id === check.id)
+          )
             this.confirmedChecks.set(check.id, this.controlRevision);
       results = evaluate();
     }
@@ -697,7 +749,7 @@ class Execution {
     return missing.length
       ? this.blocked(
           `前置条件未满足：${missing.map((r) => r.description).join('；')}`,
-          'PRECONDITION_UNMET',
+          this.isSetup() ? 'ENVIRONMENT_NOT_READY' : 'PRECONDITION_UNMET',
         )
       : null;
   }
@@ -789,13 +841,17 @@ class Execution {
         // 登录前置条件需要人工时先交接，不能先进入模型重复观察或长时间等待挑战。
         if (
           !this.loginInterventions.has(this.stepIndex) &&
+          (!this.isSetup() ||
+            !this.environmentInterventions.has(this.stepIndex)) &&
           !this.identityChecks().length &&
           needsLoginIntervention(this.grant.task, this.current!, this.stepIndex)
         ) {
           if (!this.grant.task.environment.allowIntervention)
             return this.blocked(
               '当前步骤需要登录，但任务未授权人工辅助',
-              'INTERVENTION_DISABLED',
+              this.isSetup()
+                ? 'ENVIRONMENT_NOT_READY'
+                : 'INTERVENTION_DISABLED',
             );
           await this.requestIntervention(
             '当前步骤需要已登录账号，页面仍显示登录表单或人机验证，请完成本次登录',
@@ -818,19 +874,17 @@ class Execution {
         }
         const identityBlock = await this.checkIdentity(true);
         if (identityBlock) return identityBlock;
-        if ((this.changes?.unchangedRounds ?? 0) >= STALLED_ROUNDS)
-          return this.blocked(
-            '连续多轮操作和观察未获得新事实，停止重复执行；请检查页面覆盖或人工处理。',
-            'NO_PROGRESS',
-          );
         if (
-          (this.changes?.repeatedStateVisits ?? 0) >= CYCLIC_VISITS &&
-          this.changes?.unchangedRounds === 0
-        )
-          return this.blocked(
-            '反复返回相同页面状态，且未记录新的阶段完成证据，停止循环。',
-            'NO_PROGRESS',
-          );
+          (this.changes?.unchangedRounds ?? 0) >= STALLED_ROUNDS ||
+          ((this.changes?.repeatedStateVisits ?? 0) >= CYCLIC_VISITS &&
+            this.changes?.unchangedRounds === 0)
+        ) {
+          const summary = '重复操作未取得新的完成证据，无法确认当前步骤已就绪';
+          if (!this.isSetup()) return this.blocked(summary, 'NO_PROGRESS');
+          const blocked = await this.environmentNotReady(summary);
+          if (blocked) return blocked;
+          continue;
+        }
         const input = this.context();
         const decisionIndex = ++this.decisionIndex;
         input.traceRequest = async (request) => {
@@ -959,7 +1013,16 @@ class Execution {
           );
         if (decision.type === 'browser.act') this.operation(decision);
         const revision = this.workflow.view().revision;
-        this.workflow.apply(output.workflow, new Set(this.evidence.keys()));
+        this.workflow.apply(
+          output.workflow,
+          new Set(
+            [...this.evidence.keys()].filter(
+              (id) =>
+                !this.isSetup() ||
+                (!this.stepEvidence.has(id) && !this.readinessEvidence.has(id)),
+            ),
+          ),
+        );
         if (revision !== this.workflow.view().revision) {
           this.tracker.reset();
           workflowRecoveries = 0;
@@ -967,6 +1030,12 @@ class Execution {
 
         this.workflow.assertAction(decision);
         if (decision.type === 'verification.intervene') {
+          if (this.isSetup()) {
+            const blocked = await this.environmentNotReady(decision.reason);
+            if (blocked) return blocked;
+            errors = 0;
+            continue;
+          }
           if (!this.grant.task.environment.allowIntervention)
             return this.blocked(decision.reason, 'INTERVENTION_DISABLED');
           const login = requiresLogin(this.grant.task, this.stepIndex);
@@ -994,6 +1063,20 @@ class Execution {
             );
           const identityBlock = await this.checkIdentity(false);
           if (identityBlock) return identityBlock;
+          // 准备结论必须先过门禁，不能提前将 FAILED 写成产品验收或保留人工处理前的部分通过。
+          if (this.isSetup()) {
+            if (decision.type === 'verification.record')
+              throw new AgentFault(
+                'INVALID_MODEL_DECISION',
+                'setup 请统一提交 finish 和逐条准备证据，不逐项保存业务验收',
+              );
+            this.workflow.assertFinish(decision);
+            if (decision.criteria.some((c) => c.verdict !== 'PASSED')) {
+              const blocked = await this.environmentNotReady(decision.summary);
+              if (blocked) return blocked;
+              continue;
+            }
+          } else this.workflow.assertFinish(decision);
           // TRACE 先落地再校验引用；逐项提交也必须有真实交付的证据。
           if (
             decision.criteria.some((c) =>
@@ -1014,15 +1097,27 @@ class Execution {
                 ];
             }
           }
+          const currentEvidence = this.grant.task.steps
+            ? new Map(
+                [...this.evidence].filter(
+                  ([id]) =>
+                    !this.stepEvidence.has(id) &&
+                    (!this.isSetup() || !this.readinessEvidence.has(id)),
+                ),
+              )
+            : this.evidence;
+          if (this.isSetup() && decision.type === 'verification.finish') {
+            // 准备结果整批提交；无效 finish 或后续人工交接不能留下半份旧账号结论。
+            const ready = new CriteriaLedger(this.task.acceptanceCriteria);
+            ready.record(decision.criteria, currentEvidence);
+            await this.captureTrace();
+            const report = this.finish(decision, ready);
+            this.criteria = ready;
+            return report;
+          }
           const changed = this.criteria.record(
             decision.criteria,
-            this.grant.task.steps
-              ? new Map(
-                  [...this.evidence].filter(
-                    ([id]) => !this.stepEvidence.has(id),
-                  ),
-                )
-              : this.evidence,
+            currentEvidence,
           );
           // 即使完成声明还缺其他项，也先保存本批合法结论；持久化失败则不继续业务动作。
           const state = this.stepResults[this.stepIndex];
@@ -1050,6 +1145,12 @@ class Execution {
           return this.finish(decision);
         }
         if (decision.type === 'verification.block') {
+          if (this.isSetup()) {
+            const blocked = await this.environmentNotReady(decision.summary);
+            if (blocked) return blocked;
+            errors = 0;
+            continue;
+          }
           if (
             blockedLoginIntervention(
               this.grant.task,
@@ -1136,6 +1237,11 @@ class Execution {
             error.code,
           )
         ) {
+          if (this.isSetup()) {
+            const blocked = await this.environmentNotReady(error.message);
+            if (blocked) return blocked;
+            continue;
+          }
           if (++workflowRecoveries >= MAX_WORKFLOW_RECOVERIES)
             return this.blocked(error.message, error.code);
           this.feedback = `${error.code}: ${error.message}`;
@@ -1173,8 +1279,14 @@ class Execution {
         )
           throw error;
         if (++errors >= MAX_DECISION_ERRORS) {
-          if (error.code === 'OBSERVATION_STALLED')
-            return this.blocked(error.message, 'NO_PROGRESS');
+          if (error.code === 'OBSERVATION_STALLED') {
+            if (!this.isSetup())
+              return this.blocked(error.message, 'NO_PROGRESS');
+            const blocked = await this.environmentNotReady(error.message);
+            if (blocked) return blocked;
+            errors = 0;
+            continue;
+          }
           throw error;
         }
         this.feedback =
@@ -1193,6 +1305,7 @@ class Execution {
     items: string[] | undefined,
     login: boolean,
   ) {
+    if (this.isSetup()) this.environmentInterventions.add(this.stepIndex);
     if (login) this.loginInterventions.add(this.stepIndex);
     await this.client.intervene(
       this.grant,
@@ -1200,13 +1313,15 @@ class Execution {
       reason,
       this.guard.signal,
       items,
-      login
-        ? this.loginReason() !== 'LOGIN_REQUIRED'
-          ? this.loginReason()
-          : this.identityInterventions.has(this.stepIndex)
-            ? 'IDENTITY_CHECK_UNMET'
-            : 'LOGIN_REQUIRED'
-        : 'GENERAL',
+      this.isSetup()
+        ? 'ENVIRONMENT_NOT_READY'
+        : login
+          ? this.loginReason() !== 'LOGIN_REQUIRED'
+            ? this.loginReason()
+            : this.identityInterventions.has(this.stepIndex)
+              ? 'IDENTITY_CHECK_UNMET'
+              : 'LOGIN_REQUIRED'
+          : 'GENERAL',
     );
     // 请求成功即暂停本地时钟，不等待下一轮心跳；后台仍独立续租。
     this.guard.syncTiming({
@@ -1278,7 +1393,7 @@ class Execution {
     };
   }
 
-  /** 逐步记录失败并继续后续业务，前置条件由各步核实；新版预算独立，撤权或未知操作效果立即停止。 */
+  /** setup 是后续业务的硬门禁；准备失败仍保留清理权限，撤权或未知效果立即停止。 */
   private async sequence(): Promise<VerificationReport> {
     const steps = this.grant.task.steps!;
     await this.checkpoint();
@@ -1291,11 +1406,21 @@ class Execution {
       await this.checkpoint();
     }
     let stopped: VerificationReport | undefined;
+    let setupFailure: VerificationReport | undefined;
     const cleanupIds = new Set(this.grant.task.cleanupStepIds ?? []);
     for (; this.stepIndex < steps.length; this.stepIndex++) {
       const step = steps[this.stepIndex]!;
       const state = this.stepResults[this.stepIndex]!;
       this.guard.signal.throwIfAborted();
+      if (setupFailure && !cleanupIds.has(step.stepId!)) {
+        state.status = 'SKIPPED';
+        state.reasonCode =
+          setupFailure.executionDetails?.reasonCode ?? 'SETUP_FAILED';
+        state.summary = `前置准备未通过，本步骤未执行：${setupFailure.summary}`;
+        state.finishedAt = new Date().toISOString();
+        await this.client.recordSteps(this.grant, this.stepResults);
+        continue;
+      }
       // 相同入口的连续步骤继承当前页面，包括站点重定向、语言及团队选择。
       if (this.stepIndex > 0 && steps[this.stepIndex - 1]!.url !== step.url)
         this.pendingNavigation = step.url;
@@ -1316,7 +1441,12 @@ class Execution {
       delete this.currentTask.steps;
       delete this.currentTask.stepBudget;
       delete this.currentTask.cleanupStepIds;
-      this.workflow = new Workflow(this.currentTask.objective, step.stepId);
+      this.workflow = new Workflow(
+        this.currentTask.objective,
+        step.stepId,
+        this.isSetup() ? [step.description, ...step.policy] : undefined,
+      );
+      this.readinessEvidence = new Set(this.evidence.keys());
       this.criteria = new CriteriaLedger(this.currentTask.acceptanceCriteria);
       this.stepEvidence = new Set(this.evidence.keys());
       this.completionEvidence = [];
@@ -1366,14 +1496,15 @@ class Execution {
           this.completionEvidence = [...this.evidence.keys()].filter(
             (id) => !this.stepEvidence.has(id),
           );
-          report = step.expected.length
-            ? await this.loop()
-            : this.report(
-                'EXECUTED',
-                `已等待 ${step.wait.durationMs} 毫秒`,
-                [],
-                null,
-              );
+          report =
+            step.expected.length || this.isSetup()
+              ? await this.loop()
+              : this.report(
+                  'EXECUTED',
+                  `已等待 ${step.wait.durationMs} 毫秒`,
+                  [],
+                  null,
+                );
         } else report = await this.loop();
       } catch (error) {
         report = this.failure(error);
@@ -1393,6 +1524,7 @@ class Execution {
       state.criteria = this.criteria.values();
       state.reasonCode = report.executionDetails?.reasonCode ?? null;
       if (report.executionDisposition !== 'EXECUTED') {
+        if (this.isSetup()) setupFailure = report;
         state.status =
           report.executionDisposition === 'BLOCKED' ? 'BLOCKED' : 'ERROR';
         state.summary = report.summary;

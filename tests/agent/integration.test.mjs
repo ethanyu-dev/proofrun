@@ -50,7 +50,11 @@ test(
     await new Promise((resolve) => holder.close(resolve));
     const base = `http://127.0.0.1:${port}`;
     const caseProfile = {
-      environment: { id: 'v2-fixture', nodePool: 'v2-agent' },
+      environment: {
+        id: 'v2-fixture',
+        nodePool: 'v2-agent',
+        allowIntervention: false,
+      },
       budget: { timeoutMs: 15000, maxActions: 20 },
       executionMode: 'llm',
       evidenceKinds: ['DOM'],
@@ -458,6 +462,56 @@ test(
           );
           assert.equal(persisted.cleanup.result.outcome, 'PASSED');
           assert.equal(persisted.cleanup.taskId, partial.grant.task.taskId);
+          // 范围：准备门禁经真实 API 落库与列表分类，网页和角色判断仍由夹具模拟。
+          await api('POST', '/v2/cases', [
+            {
+              caseId: 'v2-environment-gate',
+              platform: '夹具',
+              entry: step.url,
+              steps: [
+                {
+                  ...step,
+                  type: 'setup',
+                  exec_order: 1,
+                  expected: [],
+                  policy: ['指定团队角色必须已确认'],
+                },
+                step,
+              ],
+              cleanup: [
+                { url: step.url, exec_order: 1, description: '清理夹具' },
+              ],
+            },
+          ]);
+          const gated = await executeNext((context) =>
+            context.executionStep.stepId === 'step-1'
+              ? {
+                  type: 'verification.block',
+                  summary: '指定团队角色未确认',
+                  reasonCode: 'OTHER',
+                }
+              : completed(context),
+          );
+          assert.equal(
+            gated.report.executionDetails.reasonCode,
+            'ENVIRONMENT_NOT_READY',
+          );
+          const gatedStored = await api(
+            'GET',
+            `/v1/tasks/${gated.grant.task.taskId}`,
+          );
+          assert.deepEqual(
+            gatedStored.report.steps.map((s) => s.status),
+            ['BLOCKED', 'SKIPPED', 'COMPLETED'],
+          );
+          assert.equal(gatedStored.report.steps[1].startedAt, null);
+          assert.equal(gatedStored.report.criteria[0].verdict, 'SKIPPED');
+          const list = await api('GET', '/v1/tasks?q=v2-environment-gate');
+          assert.equal(
+            list.tasks[0].execution_reason_code,
+            'ENVIRONMENT_NOT_READY',
+          );
+          assert.equal(list.tasks[0].reportStatus, 'INCONCLUSIVE');
           await api('POST', `/v1/nodes/${node.id}/revoke`);
           node.close();
         },

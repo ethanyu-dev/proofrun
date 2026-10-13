@@ -30,12 +30,16 @@ export function decisionTools(
           (context.changes?.unchangedRounds ?? 0) <
             OBSERVATION_REVIEW_ROUNDS) &&
         (tool.type !== 'verification.record' ||
-          (!!ids?.length && !!context.executionStep)),
+          (!!ids?.length &&
+            !!context.executionStep &&
+            (context.executionStep.type !== 'setup' ||
+              context.cleanup === true))),
     )
     .map((tool) => {
       const parameters = structuredClone(tool.parameters) as {
         properties: Record<string, unknown>;
         allOf?: object[];
+        required?: string[];
       };
       if (
         ids &&
@@ -60,6 +64,13 @@ export function decisionTools(
             : {}),
         };
       }
+      // setup 的空 criteria 不能让供应商省略准备声明；公共执行器仍独立校验完整性。
+      if (
+        tool.type === 'verification.finish' &&
+        context.executionStep?.type === 'setup' &&
+        !context.cleanup
+      )
+        parameters.required = [...(parameters.required ?? []), 'workflow'];
       if (tool.type === 'browser.act') {
         const scrollTargets =
           context.observation?.targets

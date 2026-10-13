@@ -123,6 +123,7 @@ export class TaskReader {
           'acceptanceCriteria', (SELECT coalesce(jsonb_agg(jsonb_build_object('id',c->'id','stepId',c->'stepId')),'[]'::jsonb) FROM jsonb_array_elements(definition->'acceptanceCriteria') c)
         ) AS report_scope,
         jsonb_array_length(report->'artifacts') AS "evidenceCount",
+        report#>>'{executionDetails,reasonCode}' AS execution_reason_code,
         report->>'executionDisposition' AS execution_disposition,report->>'verdict' AS verdict,
         to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_at
        FROM pr_tasks WHERE ($1::text IS NULL OR state=$1)

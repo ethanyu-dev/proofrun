@@ -34,6 +34,7 @@ export function TaskIdentity({ task }: { task: TaskDetail }) {
     LOGIN_RECIPE_UNAVAILABLE: '登录配方不可用',
     LOGIN_FORM_MISMATCH: '页面与配置的登录表单不符',
     LOGIN_CHALLENGE_OR_REJECTED: '需要验证码或登录未获确认',
+    ENVIRONMENT_NOT_READY: '不符合验证环境',
     IDENTITY_CHECK_UNMET: '页面身份条件不满足',
     IDENTITY_MANUAL_CHECK_REQUIRED: '账号角色仍需人工确认',
     IDENTITY_VERIFIED: '已核验页面身份条件',

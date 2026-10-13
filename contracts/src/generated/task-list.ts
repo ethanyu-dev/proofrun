@@ -26,6 +26,10 @@ export interface TaskSummary {
   state: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'CANCELLED' | 'TIMED_OUT' | 'ERROR';
   created_at: string;
   finished_at: string | null;
+  /**
+   * 执行终态的稳定原因，用于区分环境不符合、执行故障与业务结论。
+   */
+  execution_reason_code?: string | null;
   execution_disposition: 'EXECUTED' | 'BLOCKED' | 'ERROR' | null;
   verdict: 'PASSED' | 'FAILED' | 'INCONCLUSIVE' | null;
   /**

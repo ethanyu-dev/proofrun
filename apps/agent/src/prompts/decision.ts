@@ -1,3 +1,4 @@
+import { SETUP_RULES } from './setup.js';
 import { IDENTITY_CONTEXT_RULES } from './identity.js';
 import { VERIFICATION_RULES } from './verification.js';
 import { PAGE_STATE_RULES } from './page-state.js';
@@ -22,6 +23,7 @@ export const SYSTEM_PROMPT = [
   '需要登录恢复或人工处理页面时用 verification_intervene 并说明具体原因，用 items 列出人工需要完成的具体事项；只有 environment.allowIntervention 为 true 才允许等待人工，等待暂停任务执行时限，人工完成后重新获得二十分钟，人工操作不消耗 Agent 动作额度，Agent 已消耗次数不因交接清零。人工不会替你判定验收通过。当前步骤要求登录而缺少可用登录态、账号或遇到人机验证时，立即请求介入，不反复观察或等待验证自动消失。人工可在处理页写入已授权账号的 Cookie，恢复后需重新观察确认登录及账号身份，不能仅凭人工完成动作判定业务通过。',
   // 人工身份事实与页面交接。
   IDENTITY_CONTEXT_RULES,
+  SETUP_RULES,
   PAGE_STATE_RULES,
   VERIFICATION_RULES,
   // 任务进度与恢复。

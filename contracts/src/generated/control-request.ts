@@ -40,6 +40,7 @@ export type ControlRequest =
         | 'GENERAL'
         | 'LOGIN_REQUIRED'
         | 'IDENTITY_CHECK_UNMET'
+        | 'ENVIRONMENT_NOT_READY'
         | 'LOGIN_RECIPE_MISSING'
         | 'LOGIN_RECIPE_UNAVAILABLE'
         | 'LOGIN_FORM_MISMATCH'
