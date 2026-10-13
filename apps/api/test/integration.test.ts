@@ -24,6 +24,7 @@ import {
   validateCaseResult,
   validateCaseResultV2,
   validateExecutionGrant,
+  type TaskList,
   type VerificationTask,
 } from '@proofrun/contracts';
 import {
@@ -524,6 +525,21 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       );
       const arms = responses[0]!.data[0].comparison.arms;
       assert.equal(arms.length, 2);
+      // 范围：真实列表查询保留双跑归属和模式，供两种列表显示入口；不验证真实浏览器画面。
+      const listResponse = (await api('GET', `/v1/tasks?q=${input.caseId}`))
+        .data;
+      assert(
+        validateTaskList(listResponse),
+        JSON.stringify(validateTaskList.errors),
+      );
+      const listed = listResponse as TaskList;
+      assert.equal(listed.tasks.length, 2);
+      for (const arm of arms) {
+        const summary = listed.tasks.find((task) => task.id === arm.taskId)!;
+        assert.equal(summary.executionMode, arm.executionMode);
+        assert.equal(summary.comparison?.arm, arm.executionMode);
+        assert.equal(summary.comparison?.sourceTaskId, arms[0].taskId);
+      }
       const pair = (await api('GET', `/v1/tasks/${arms[0].taskId}/comparison`))
         .data.comparison;
       assert.deepEqual(

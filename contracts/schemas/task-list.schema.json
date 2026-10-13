@@ -29,6 +29,17 @@
           "evidenceCount"
         ],
         "properties": {
+          "executionMode": {
+            "enum": ["llm", "jev", "parallel", null],
+            "description": "当前任务的执行模式；历史定义未记录时为 null。"
+          },
+          "comparison": {
+            "anyOf": [
+              { "type": "null" },
+              { "$ref": "verification-task.schema.json#/properties/comparison" }
+            ],
+            "description": "服务端保存的双跑归属；单组为 null，旧响应可缺失，不根据任务名称推测。"
+          },
           "parentTaskId": {
             "type": ["string", "null"],
             "description": "清理所属的主任务身份；列表相邻行不代表归属。旧响应可缺失。"

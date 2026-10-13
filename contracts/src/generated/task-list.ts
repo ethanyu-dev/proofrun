@@ -12,6 +12,14 @@ export interface TaskList {
  */
 export interface TaskSummary {
   /**
+   * 当前任务的执行模式；历史定义未记录时为 null。
+   */
+  executionMode?: 'llm' | 'jev' | 'parallel' | null;
+  /**
+   * 服务端保存的双跑归属；单组为 null，旧响应可缺失，不根据任务名称推测。
+   */
+  comparison?: null | Comparison;
+  /**
    * 清理所属的主任务身份；列表相邻行不代表归属。旧响应可缺失。
    */
   parentTaskId?: string | null;
@@ -69,4 +77,12 @@ export interface TaskSummary {
    * 报告收录的证据数量；无报告为 null，数量不表示证据仍可下载。
    */
   evidenceCount: number | null;
+}
+/**
+ * 控制面原子创建的双组对比身份；两组业务目标与预算一致，分别占用独立会话。
+ */
+export interface Comparison {
+  id: string;
+  arm: 'llm' | 'jev';
+  sourceTaskId: string;
 }

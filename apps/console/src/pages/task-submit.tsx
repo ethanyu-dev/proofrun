@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { TaskDetail } from '@proofrun/contracts';
 import { ApiClient, errorMessage } from '../api';
 import { TaskFields } from '../components/task-fields';
+import { submitCaseBatch } from '../components/task-submit-request';
 import {
   newTaskDefinition,
   parseTaskDefinition,
@@ -62,8 +63,8 @@ export function TaskSubmitPage({ api }: { api: ApiClient }) {
     setPending(true);
     try {
       if (Array.isArray(submitted)) {
-        await api.json('/v2/cases', controller.signal, submitted);
-        if (!controller.signal.aborted) window.location.hash = '/tasks';
+        const path = await submitCaseBatch(api, submitted, controller.signal);
+        if (!controller.signal.aborted) window.location.hash = path;
         return;
       }
       const result = await api.json<TaskDetail>(
@@ -190,7 +191,7 @@ export function TaskSubmitPage({ api }: { api: ApiClient }) {
         <div className="form-footer">
           <p className="muted">
             {version === 'v2'
-              ? '提交后进入任务列表。自动生成的 caseId 会保留在输入框中；同一 ID 只接受同一份定义。'
+              ? '单个 case 提交后进入任务详情，双跑并列展示两组；批量提交后进入任务列表。自动生成的 caseId 会保留在输入框中；同一 ID 只接受同一份定义。'
               : '同一任务 ID 只接受同一份定义。'}
             提交后可能立即开始执行。
           </p>
