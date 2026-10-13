@@ -221,6 +221,11 @@ export type AgentDecision =
             string,
             string,
           ];
+    }
+  | {
+      type: 'verification.environment';
+      mode: 'guest' | 'configured';
+      summary: string;
     };
 
 export interface FinishVerification {

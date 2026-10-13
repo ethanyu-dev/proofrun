@@ -98,7 +98,7 @@ test('点击准备故障后换用新观察，模型可以改选填写动作', as
   assert.equal(client.value, 'Alice');
 });
 
-// 范围：连续失败在第三次停止当前步骤，后续业务和独立清理继续；不声称故障业务步骤已通过。
+// 范围：前置条件未变时不再派发重复点击，恢复建议耗尽后停止当前步骤，后续业务和独立清理继续；不声称故障业务步骤已通过。
 test('准备恢复耗尽只阻塞当前步骤，后续步骤与清理仍执行', async () => {
   const client = new FakeControl();
   preparationFailures(client, 100);
@@ -122,7 +122,7 @@ test('准备恢复耗尽只阻塞当前步骤，后续步骤与清理仍执行',
   );
   assert.equal(
     client.calls.filter((c) => c.operation.action === 'click').length,
-    3,
+    1,
   );
   assert.deepEqual(
     report.criteria.map((c) => c.verdict),

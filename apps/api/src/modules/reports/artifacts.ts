@@ -368,6 +368,17 @@ export class ArtifactStore {
     const evidence = new Map(artifacts.map((a) => [a.id, a.kind]));
     const plan = context.definition.profilePlan;
     const scopes = new Map(artifacts.map((a) => [a.id, a.tab_scope]));
+    const gate = steps.find((s) => s.stepId === plan?.environmentGateStepId);
+    if (
+      plan?.environmentGateStepId &&
+      steps.some(
+        (s) =>
+          s.stepId !== plan.environmentGateStepId &&
+          !['PENDING', 'SKIPPED'].includes(s.status),
+      ) &&
+      (gate?.status !== 'COMPLETED' || gate.phase !== 'READY')
+    )
+      throw invalid();
     if (
       plan &&
       steps.filter((s) => s.status === 'RUNNING').length > plan.maxConcurrency
@@ -395,6 +406,7 @@ export class ArtifactStore {
           [
             ...step.evidenceRefs,
             ...step.criteria.flatMap((c) => c.evidenceRefs),
+            ...(step.readings ?? []).flatMap((item) => item.evidenceRefs),
           ].some(
             (id) =>
               evidence.get(id) !== 'TRACE' && scopes.get(id) !== expectedScope,
@@ -458,6 +470,16 @@ export class ArtifactStore {
       )
         throw invalid();
       if (step.evidenceRefs.some((id) => !evidence.has(id))) throw invalid();
+      for (const item of step.readings ?? []) {
+        if (
+          item.evidenceRefs.some(
+            (id) => !evidence.has(id) || !step.evidenceRefs.includes(id),
+          ) ||
+          (item.status === 'recorded' &&
+            (!item.quote?.trim() || !item.evidenceRefs.length))
+        )
+          throw invalid();
+      }
       if (
         step.blockage &&
         (!['BLOCKED', 'ERROR'].includes(step.status) ||

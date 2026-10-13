@@ -231,6 +231,41 @@
     "phase": {
       "enum": ["PREPARING", "CHECKING", "READY", "VERIFYING", "CLEANUP"],
       "description": "环境准备先操作再检查 policy，READY 才允许本组验证。"
+    },
+    "readings": {
+      "description": "子项阅读进度与原文证据，不代表原验收标准已通过。",
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "heading": {
+            "type": "string"
+          },
+          "status": {
+            "enum": ["pending", "observed", "recorded"]
+          },
+          "quote": {
+            "type": "string",
+            "maxLength": 600
+          },
+          "evidenceRefs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 24
+          }
+        },
+        "required": ["id", "name", "heading", "status", "evidenceRefs"]
+      }
     }
   },
   "required": [

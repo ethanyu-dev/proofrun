@@ -169,6 +169,10 @@ export type VerificationTask = {
         stepIds: [string, ...string[]];
       }[],
     ];
+    /**
+     * 新任务首个 setup 核实共享环境后才启动其他组；缺省保持历史并发行为。
+     */
+    environmentGateStepId?: string;
   };
 };
 export type CaseStep = {

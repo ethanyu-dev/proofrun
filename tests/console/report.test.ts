@@ -1,3 +1,4 @@
+import { StepReadings } from '../../apps/console/src/components/step-readings.tsx';
 import { FollowUpCleanup } from '../../apps/console/src/components/follow-up-cleanup.tsx';
 import { StepCompletion } from '../../apps/console/src/components/step-completion.tsx';
 import assert from 'node:assert/strict';
@@ -552,4 +553,33 @@ test('报告保留登录方式、身份准备及账号释放状态', () => {
   );
   assert.match(exported, /chosen-member/);
   assert.match(exported, /cookies/);
+});
+
+// 范围：静态报告区分部分读取与验收通过并转义页面引文；不加载真实截图。
+test('报告展示未读子项与已记录原文，不宣称验收通过', () => {
+  const html = renderToStaticMarkup(
+    createElement(StepReadings, {
+      readings: [
+        {
+          id: 'a',
+          name: '问题一',
+          heading: 'FAQ',
+          status: 'recorded',
+          quote: '<script>答案</script>',
+          evidenceRefs: ['dom'],
+        },
+        {
+          id: 'b',
+          name: '问题二',
+          heading: 'FAQ',
+          status: 'pending',
+          evidenceRefs: [],
+        },
+      ],
+    }),
+  );
+  assert.match(html, /不代表验收通过/);
+  assert.match(html, /尚未取得内容/);
+  assert.match(html, /&lt;script&gt;/);
+  assert.doesNotMatch(html, /<script>/);
 });

@@ -84,6 +84,7 @@ function fixture() {
     });
   };
   return {
+    context,
     states,
     start,
     complete,
@@ -143,4 +144,37 @@ test('拒绝跨 tab 证据和跳过前序 cleanup', async () => {
   f.states[5]!.startedAt = null;
   f.start(4);
   await f.validate();
+});
+
+// 范围：新计划的共享门禁在 API 二次校验，旧计划继续保持组级并发；不判断账号事实。
+test('共享环境未就绪时不能开始兄弟组', async () => {
+  const f = fixture();
+  f.context.definition.profilePlan!.environmentGateStepId = 'a-setup';
+  f.start(0);
+  await f.validate();
+  f.start(2);
+  await assert.rejects(f.validate(), { code: 'INVALID_STEPS' });
+  f.complete(0, 'a-setup');
+  await f.validate();
+});
+
+// 范围：读取记录不可借用兄弟 tab 证据或缺失原文，真实 DOM 引文匹配由 Agent 校验。
+test('子项读取证据必须属于当前步骤', async () => {
+  const f = fixture();
+  f.complete(0, 'a-setup');
+  f.states[0]!.readings = [
+    {
+      id: 'item-1',
+      name: 'FAQ',
+      heading: 'FAQ',
+      status: 'recorded',
+      quote: '答案',
+      evidenceRefs: ['b-setup'],
+    },
+  ];
+  await assert.rejects(f.validate(), { code: 'INVALID_STEPS' });
+  f.states[0]!.readings[0]!.evidenceRefs = ['a-setup'];
+  await f.validate();
+  f.states[0]!.readings[0]!.quote = '';
+  await assert.rejects(f.validate(), { code: 'INVALID_STEPS' });
 });

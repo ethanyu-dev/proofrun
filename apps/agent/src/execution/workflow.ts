@@ -16,6 +16,8 @@ const TERM_CHARS = 80;
 
 /** 模型提交的是带证据的完成声明；执行器验证来源，不冒充业务语义判定器。 */
 export interface WorkflowUpdate {
+  /** 逐项阅读只能引用执行器已观察的关联面板，不增加原验收要求。 */
+  readings?: Array<{ itemId: string; quote: string }>;
   /** 已观察事实的逐步骤声明，不能认领待执行动作。 */
   assessments?: Array<{
     /** 必须匹配原任务步骤身份。 */
@@ -72,6 +74,19 @@ export const WORKFLOW_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {
+    readings: {
+      type: 'array',
+      maxItems: 32,
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          itemId: { type: 'string' },
+          quote: { type: 'string', minLength: 1, maxLength: 600 },
+        },
+        required: ['itemId', 'quote'],
+      },
+    },
     assessments: {
       type: 'array',
       maxItems: MAX_ASSESSMENTS,
@@ -186,7 +201,8 @@ export class Workflow {
     if (
       !object(update) ||
       Object.keys(update).some(
-        (k) => !['assessments', 'activeStep', 'recovery'].includes(k),
+        (k) =>
+          !['assessments', 'activeStep', 'recovery', 'readings'].includes(k),
       )
     )
       throw bad();

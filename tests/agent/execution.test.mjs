@@ -877,7 +877,7 @@ test('连续目标遮挡有界退出', async () => {
   assert.equal(report.verdict, null);
   assert.equal(
     client.calls.filter((c) => c.operation.action === 'click').length,
-    3,
+    1,
   );
 });
 
@@ -3478,3 +3478,38 @@ test('JEV profile tab 实例隔离跨轮历史', async () => {
     else assert(!history.includes('甲组'));
   }
 });
+
+// 范围：JEV 不能绕过共享环境声明、面板读取或失败恢复审查；模型端口均为夹具。
+for (const kind of ['environment', 'reading', 'recovery'])
+  test(`JEV 将 ${kind} 交由文本模型核实`, async () => {
+    const { JevModel } = await import('../../apps/agent/dist/model/jev.js');
+    let reviews = 0;
+    const model = new JevModel(
+      config,
+      'fixture',
+      'jev-test',
+      async () => {
+        throw new Error('此阶段不应提出新的 JEV 动作');
+      },
+      {
+        async decide(input) {
+          reviews++;
+          if (kind === 'reading')
+            assert.match(JSON.parse(input.text).feedback, /workflow.readings/);
+          return { decision: { type: 'browser.observe' } };
+        },
+      },
+    );
+    const input = jevInput('policy-review');
+    const context = JSON.parse(input.text);
+    if (kind === 'environment') context.environmentReview = { required: true };
+    if (kind === 'reading')
+      context.interactionProgress = { items: [{ status: 'observed' }] };
+    if (kind === 'recovery')
+      context.feedback = 'INTERACTION_RECOVERY_REQUIRED: 遮挡条件未改变';
+    await model.decide(
+      { text: JSON.stringify(context) },
+      new AbortController().signal,
+    );
+    assert.equal(reviews, 1);
+  });

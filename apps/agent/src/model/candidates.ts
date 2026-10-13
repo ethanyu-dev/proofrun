@@ -83,6 +83,8 @@ export function candidates(
       const field = {
         role: t.role,
         region: t.region,
+        context: t.context,
+        disclosure: t.disclosure,
         frame: t.frame,
         name: t.name,
         value: t.value,

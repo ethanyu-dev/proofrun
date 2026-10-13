@@ -169,6 +169,10 @@ export type VerificationTask = {
         stepIds: [string, ...string[]];
       }[],
     ];
+    /**
+     * 新任务首个 setup 核实共享环境后才启动其他组；缺省保持历史并发行为。
+     */
+    environmentGateStepId?: string;
   };
 };
 export type CaseStep = {
@@ -826,6 +830,22 @@ export interface StepResult {
    * 环境准备先操作再检查 policy，READY 才允许本组验证。
    */
   phase?: 'PREPARING' | 'CHECKING' | 'READY' | 'VERIFYING' | 'CLEANUP';
+  /**
+   * 子项阅读进度与原文证据，不代表原验收标准已通过。
+   *
+   * @maxItems 32
+   */
+  readings?: {
+    id: string;
+    name: string;
+    heading: string;
+    status: 'pending' | 'observed' | 'recorded';
+    quote?: string;
+    /**
+     * @maxItems 24
+     */
+    evidenceRefs: string[];
+  }[];
 }
 /**
  * 节点进程上报的编译身份；用于排查部署版本，不作为授权或能力判断依据。

@@ -4,6 +4,9 @@ function inspectControl(wheelScroll = false) {
   const REGION_DEPTH_LIMIT = 64;
   const REGION_ANCESTORS_LIMIT = 4;
   const REGION_NAME_CHARS = 160;
+  const CONTENT_CHARS = 2000;
+  const CONTEXT_DEPTH = 6;
+  const HEADING_SELECTOR = 'h1,h2,h3,h4,h5,h6,[role="heading"]';
   const el = this;
   const doc = el.ownerDocument;
   const win = doc.defaultView;
@@ -171,8 +174,100 @@ function inspectControl(wheelScroll = false) {
       ancestors: [],
     };
   }
+  // 标题只沿本控件祖先内的前序兄弟查找；固定浮窗不能借用正文的 FAQ 标题。
+  let heading = '',
+    fixed = false;
+  for (let node = el; node && node !== doc.body; node = parent(node))
+    fixed ||= win.getComputedStyle(node).position === 'fixed';
+  for (
+    let node = el, depth = 0;
+    node && node !== doc.body && depth < CONTEXT_DEPTH;
+    node = parent(node), depth++
+  ) {
+    if (win.getComputedStyle(node).position === 'fixed') break;
+    for (
+      let sibling = node.previousElementSibling, n = 0;
+      sibling && n < 20 && !heading;
+      sibling = sibling.previousElementSibling, n++
+    ) {
+      const headings = sibling.matches(HEADING_SELECTOR)
+        ? [sibling]
+        : [...sibling.querySelectorAll(HEADING_SELECTOR)];
+      heading = (headings.at(-1)?.textContent || '')
+        .trim()
+        .slice(0, REGION_NAME_CHARS);
+    }
+    if (heading) break;
+  }
+  // 显式控制关系优先；普通 div 折叠头只保留相邻面板这个结构事实，不推断业务含义。
+  const controlled = (el.getAttribute('aria-controls') || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  let panel =
+    controlled.length === 1
+      ? el.getRootNode().getElementById?.(controlled[0])
+      : null;
+  let relation = panel ? 'aria-controls' : null;
+  if (
+    !panel &&
+    el.localName === 'summary' &&
+    el.parentElement?.localName === 'details'
+  ) {
+    panel = el.parentElement;
+    relation = 'details';
+  }
+  if (
+    !panel &&
+    ['button', 'div'].includes(el.localName) &&
+    el.parentElement?.childElementCount <= 3 &&
+    el.nextElementSibling?.matches('div,p,section') &&
+    !el.nextElementSibling.matches('[role="button"]')
+  ) {
+    panel = el.nextElementSibling;
+    relation = 'adjacent';
+  }
+  const panelVisible =
+    panel &&
+    (relation !== 'details' || panel.open) &&
+    panel.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
+  const panelText = panelVisible
+    ? (relation === 'details'
+        ? [...panel.childNodes]
+            .filter((n) => n !== el)
+            .map((n) =>
+              n.nodeType === 3
+                ? n.textContent || ''
+                : n.nodeType === 1 &&
+                    n.checkVisibility({
+                      checkOpacity: true,
+                      checkVisibilityCSS: true,
+                    })
+                  ? n.innerText || ''
+                  : '',
+            )
+            .join(' ')
+        : panel.innerText || ''
+      ).trim()
+    : '';
+  const disclosure = panel
+    ? {
+        relation,
+        expanded:
+          relation === 'details'
+            ? panel.open
+            : el.hasAttribute('aria-expanded')
+              ? el.getAttribute('aria-expanded') === 'true'
+              : null,
+        visible: !!panelVisible,
+        text: panelText.slice(0, CONTENT_CHARS),
+        truncated: panelText.length > CONTENT_CHARS,
+      }
+    : null;
   return {
     region,
+    context: { heading, fixed },
+    disclosure,
     // overflow:hidden 的虚拟列表只有确认存在 wheel 监听后才提供滚动能力。
     wheelCandidate:
       (style.overflowY === 'hidden' && el.scrollHeight > el.clientHeight) ||

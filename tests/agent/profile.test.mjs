@@ -464,3 +464,225 @@ test('setup 非空 expected 不会变成 policy 检查项目', async () => {
     ),
   );
 });
+
+// 范围：共享访客条件只在并发前请求一次人工确认，未确认时包括清理在内全部跳过；不验证人工声明真实性。
+for (const confirm of [true, false])
+  test(`共享访客门禁：人工${confirm ? '确认' : '仅恢复'}后再调度兄弟组`, async () => {
+    const client = new HumanControl();
+    client.confirm = confirm;
+    let classified = false;
+    const { report, seen } = await run(
+      (context) => {
+        if (context.environmentReview?.required) {
+          classified = true;
+          assert.equal(context.executionStep.stepId, 'a-setup');
+          assert(!client.calls.some((c) => c.operation.tabScope === 'group-2'));
+          return {
+            type: 'verification.environment',
+            mode: 'guest',
+            summary: '原始用例要求未登录访客',
+          };
+        }
+        assert(classified);
+        if (context.executionStep.stepId === 'b-setup') {
+          assert.equal(client.requests.length, 1);
+          assert.equal(client.mode, 'AUTO');
+        }
+        return finish(context);
+      },
+      (execution) => {
+        execution.task.profilePlan.environmentGateStepId = 'a-setup';
+        execution.task.environment.allowIntervention = true;
+        execution.task.sessionPlan = {
+          version: 1,
+          mode: 'manual',
+          candidates: [],
+          requirements: [],
+          preparationMs: 120000,
+        };
+      },
+      client,
+    );
+    assert.equal(client.requests.length, 1);
+    assert(client.requests[0].items.some((i) => i.includes('未登录访客')));
+    assert.equal(
+      report.steps[0].status,
+      confirm ? 'COMPLETED' : 'BLOCKED',
+      report.summary,
+    );
+    if (confirm) {
+      assert.equal(report.verdict, 'PASSED', report.summary);
+      assert.equal(
+        report.steps[2].preconditions.find((c) => c.id === 'profile-guest')
+          .source,
+        'human',
+      );
+    } else {
+      assert(report.steps.slice(1).every((s) => s.status === 'SKIPPED'));
+      assert(!seen.some(([id]) => id === 'b-setup' || id === 'cleanup'));
+      assert(report.steps[0].blockage.conditions.length > 0);
+    }
+  });
+
+// 范围：模型试图跳过声明时不能通过首门禁；不测试模型遵循提示词的成功率。
+test('未经环境意图声明的 finish 不能放行共享 profile', async () => {
+  const { report, client } = await run(finish, (execution) => {
+    execution.task.profilePlan.environmentGateStepId = 'a-setup';
+  });
+  assert.notEqual(report.steps[0].status, 'COMPLETED');
+  assert(report.steps.slice(1).every((s) => s.status === 'SKIPPED'));
+  assert(
+    !client.calls.some((c) =>
+      ['group-2', 'profile-cleanup'].includes(c.operation.tabScope),
+    ),
+  );
+});
+
+// 范围：首门禁只串行共享准备，READY 后首组验证与兄弟组准备可重叠；不测物理浏览器吞吐。
+test('首门禁 READY 后恢复分组并发', async () => {
+  const waiting = [];
+  const { report } = await run(
+    async (context) => {
+      if (context.environmentReview?.required)
+        return {
+          type: 'verification.environment',
+          mode: 'configured',
+          summary: '无访客要求',
+        };
+      if (
+        context.executionStep.stepId === 'a-verify' ||
+        (context.executionStep.stepId === 'b-setup' &&
+          context.setupPhase === 'PREPARING')
+      ) {
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(
+            () => reject(new Error('门禁后没有恢复并发')),
+            2000,
+          );
+          waiting.push(() => {
+            clearTimeout(timer);
+            resolve();
+          });
+          if (waiting.length === 2) waiting.forEach((done) => done());
+        });
+      }
+      return finish(context);
+    },
+    (execution) => {
+      execution.task.profilePlan.environmentGateStepId = 'a-setup';
+    },
+  );
+  assert.equal(report.verdict, 'PASSED', report.summary);
+  assert.equal(waiting.length, 2);
+});
+
+// 范围：显式访客配置优先，隔离会话不额外请求人工；真实不恢复认证由节点已有集成测试验证。
+test('显式 guest 不能被模型声明为 configured 覆盖', async () => {
+  const { report } = await run(
+    (context) => {
+      if (context.environmentReview?.required)
+        return {
+          type: 'verification.environment',
+          mode: 'configured',
+          summary: '夹具尝试覆盖配置',
+        };
+      if (context.environmentReview)
+        assert.equal(context.environmentReview.mode, 'guest');
+      return finish(context);
+    },
+    (execution) => {
+      execution.task.profilePlan.environmentGateStepId = 'a-setup';
+      execution.task.sessionPlan = {
+        version: 1,
+        mode: 'guest',
+        candidates: [],
+        requirements: [],
+        preparationMs: 120000,
+      };
+    },
+  );
+  assert.equal(report.verdict, 'PASSED', report.summary);
+});
+
+// 范围：已选择账号的任务不能被 guest 推断覆盖；不验证真实身份配方执行。
+test('访客意图和指定账号冲突时阻塞且保留原因', async () => {
+  const { report } = await run(
+    () => ({
+      type: 'verification.environment',
+      mode: 'guest',
+      summary: '要求访客',
+    }),
+    (execution) => {
+      execution.task.profilePlan.environmentGateStepId = 'a-setup';
+      execution.task.sessionPlan = {
+        version: 1,
+        mode: 'identity',
+        candidates: [],
+        requirements: [],
+        preparationMs: 120000,
+      };
+    },
+  );
+  assert.equal(report.steps[0].reasonCode, 'ENVIRONMENT_NOT_READY');
+  assert.match(report.steps[0].summary, /指定账号配置冲突/);
+  assert(report.steps.slice(1).every((s) => s.status === 'SKIPPED'));
+});
+
+// 范围：读取进度随阻塞持久化且证据属于步骤；浏览器面板和原文均为夹具。
+for (const completed of [false, true])
+  test(`FAQ 读取在${completed ? '完成' : '阻塞'}报告中保留独立证据`, async () => {
+    const client = new FakeControl();
+    const command = client.command.bind(client);
+    client.command = async (...args) => {
+      const result = await command(...args);
+      if (args[2].type === 'browser.observe')
+        result.data.targets.push({
+          target: '@faq',
+          comparisonKey: 'faq-1',
+          role: 'button',
+          name: '问题一',
+          context: { heading: 'FAQ', fixed: false },
+          disclosure: {
+            relation: 'aria-controls',
+            expanded: true,
+            visible: true,
+            text: '第一条答案已显示',
+            truncated: false,
+          },
+        });
+      return result;
+    };
+    const { report } = await run(
+      (context) => {
+        if (
+          context.executionStep.stepId === 'a-verify' &&
+          context.interactionProgress.items[0].status !== 'recorded'
+        )
+          return {
+            type: completed ? 'browser.observe' : 'verification.block',
+            ...(completed ? {} : { summary: '第二个问题无法定位' }),
+            workflow: {
+              readings: [
+                {
+                  itemId: context.interactionProgress.items[0].id,
+                  quote: '第一条答案已显示',
+                },
+              ],
+            },
+          };
+        return finish(context);
+      },
+      () => {},
+      client,
+    );
+    const result = report.steps[1];
+    assert.equal(result.status, completed ? 'COMPLETED' : 'BLOCKED');
+    assert.equal(result.readings[0].status, 'recorded');
+    assert.equal(result.readings[0].quote, '第一条答案已显示');
+    assert(
+      result.readings[0].evidenceRefs.every((id) =>
+        result.evidenceRefs.includes(id),
+      ),
+    );
+    assert.equal(report.steps[3].status, 'COMPLETED');
+  });

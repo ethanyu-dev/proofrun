@@ -156,9 +156,14 @@ export function compileCase(
     sessionPlan,
     budget,
     stepBudget,
-    profilePlan: compileProfilePlan(
-      businessSteps as NonNullable<VerificationTask['steps']>,
-    ),
+    profilePlan: {
+      ...compileProfilePlan(
+        businessSteps as NonNullable<VerificationTask['steps']>,
+      ),
+      ...(businessSteps[0]?.type === 'setup'
+        ? { environmentGateStepId: businessSteps[0].stepId! }
+        : {}),
+    },
     cleanupStepIds: cleanupSteps.map((step) => step.stepId!),
     executionMode: profile.executionMode ?? 'parallel',
     purpose: 'verification',

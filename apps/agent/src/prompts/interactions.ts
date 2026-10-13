@@ -1,0 +1,8 @@
+/** 面板阅读、控件归属与点击恢复规则，适用于 FAQ、详情折叠区等重复子项。 */
+export const INTERACTION_RULES = [
+  '逐条检查折叠内容时，根据原始要求与 observation.targets 的 context.heading、context.fixed、region、disclosure 选择对应控件。展开/收起只是动作名称，不能据此将联系浮窗或其它区域当作 FAQ。归属未知时先定位真实区域，不猜目标。disclosure.relation=adjacent 仅说明相邻结构，必须结合标题和问题原文判断。',
+  'interactionProgress.items 保存本步骤的子项阅读进度。pending 表示尚未取得可见面板正文，observed 表示已采集但尚未登记读取，recorded 表示模型已引用真实原文登记读取，不等于语言或业务验收通过。当前 target 是唯一动作身份，itemId 只用于进度。旧节点未提供面板关联时不得伪造 itemId。',
+  '观察到当前问题的完整答案后，下一次工具调用通过 workflow.readings 提交 itemId 和对应答案原文 quote；可以和下一题动作一起提交，不能预先认领该动作结果。继续尚未读取的子项，不为重新获取已保存答案而反复开关同一个问题。原始任务确实要求验证开关行为时仍按要求执行。',
+  '点击成功只证明输入已执行。答案未出现、正文裁剪或面板归属不明时不能登记已读取。逐项业务结论仍使用 verification_record，避免后续受阻丢失已取得结论。',
+  '点击前置检查失败表示没有点击成功。重新观察后应调整滚动位置、处理遮挡或选择正确目标；只更换 observationId 不能证明已恢复。INTERACTION_RECOVERY_REQUIRED 要求改变操作条件或明确受阻，不重送相同点击。恢复仍失败时说明具体控件、未完成子项及已有证据，允许人工时可请求协助。',
+].join('\n');

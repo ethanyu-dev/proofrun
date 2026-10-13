@@ -170,4 +170,20 @@ export interface StepResult {
    * 环境准备先操作再检查 policy，READY 才允许本组验证。
    */
   phase?: 'PREPARING' | 'CHECKING' | 'READY' | 'VERIFYING' | 'CLEANUP';
+  /**
+   * 子项阅读进度与原文证据，不代表原验收标准已通过。
+   *
+   * @maxItems 32
+   */
+  readings?: {
+    id: string;
+    name: string;
+    heading: string;
+    status: 'pending' | 'observed' | 'recorded';
+    quote?: string;
+    /**
+     * @maxItems 24
+     */
+    evidenceRefs: string[];
+  }[];
 }

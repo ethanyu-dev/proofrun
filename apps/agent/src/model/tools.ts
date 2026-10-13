@@ -25,6 +25,9 @@ export function decisionTools(
   return tools
     .filter(
       (tool) =>
+        (context.environmentReview?.required
+          ? tool.type === 'verification.environment'
+          : tool.type !== 'verification.environment') &&
         (tool.type !== 'browser.cookies.clear' || context.cleanup === true) &&
         (tool.type !== 'browser.observe' ||
           (context.changes?.unchangedRounds ?? 0) <

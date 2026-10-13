@@ -668,6 +668,7 @@ test('profile 按 setup 分组且保持原步骤身份', () => {
   assert.deepEqual(task.profilePlan, {
     version: 1,
     maxConcurrency: 2,
+    environmentGateStepId: 'step-2',
     groups: [
       { id: 'group-1', stepIds: ['step-2', 'step-1', 'step-3'] },
       { id: 'group-2', stepIds: ['second-setup', 'second-verify'] },

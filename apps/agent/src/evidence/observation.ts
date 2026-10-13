@@ -28,6 +28,16 @@ export interface ObservedTarget {
     name: string;
     ancestors?: Array<{ role: string; name: string }>;
   } | null;
+  /** 邻近标题与浮窗位置来自实际 DOM；缺省表示旧节点未提供。 */
+  context?: { heading: string; fixed: boolean };
+  /** 面板关联及可见正文只表示结构事实，不证明该子项已完成业务验收。 */
+  disclosure?: {
+    relation: 'aria-controls' | 'details' | 'adjacent';
+    expanded: boolean | null;
+    visible: boolean;
+    text: string;
+    truncated: boolean;
+  } | null;
   scroll?: {
     x: number;
     y: number;
@@ -107,6 +117,19 @@ export function observation(result: CommandResult): Observation {
         (t.comparisonKey !== undefined &&
           typeof t.comparisonKey !== 'string') ||
         (t.frame !== undefined && typeof t.frame !== 'string') ||
+        (t.context !== undefined &&
+          (!t.context ||
+            typeof t.context.heading !== 'string' ||
+            typeof t.context.fixed !== 'boolean')) ||
+        (t.disclosure != null &&
+          (!['aria-controls', 'details', 'adjacent'].includes(
+            t.disclosure.relation,
+          ) ||
+            typeof t.disclosure.text !== 'string' ||
+            typeof t.disclosure.visible !== 'boolean' ||
+            typeof t.disclosure.truncated !== 'boolean' ||
+            (t.disclosure.expanded !== null &&
+              typeof t.disclosure.expanded !== 'boolean'))) ||
         (t.region != null &&
           (typeof t.region !== 'object' ||
             typeof t.region.role !== 'string' ||
