@@ -1,3 +1,4 @@
+import { blockedStep, BlockedEvidence } from './blocked-evidence';
 import type { TaskDetail } from '@proofrun/contracts';
 import { ApiClient } from '../api';
 import { ExecutionControl } from './execution-control';
@@ -26,6 +27,51 @@ export function TaskExecutionStatus({ task }: { task: TaskDetail }) {
   return <Status value={task.state} />;
 }
 
+/** 单组及对照组共用终态画面选择；清理最后一帧不得覆盖业务阻塞现场。 */
+export function TaskPageView({
+  api,
+  task,
+}: {
+  api: ApiClient;
+  task: TaskDetail;
+}) {
+  const execution = task.executions[0];
+  if (!execution) return null;
+  const active =
+    task.state === 'RUNNING' &&
+    ['STARTING', 'RUNNING'].includes(execution.state);
+  const blocked = blockedStep(task);
+  const results = task.report?.steps ?? task.stepResults ?? [];
+  const cleanupRunning = results.some(
+    (step) =>
+      step.status === 'RUNNING' &&
+      task.definition.cleanupStepIds?.includes(step.stepId),
+  );
+  const cleanupStarted = results.some(
+    (step) =>
+      !!step.startedAt && task.definition.cleanupStepIds?.includes(step.stepId),
+  );
+  if (!active && blocked)
+    return <BlockedEvidence api={api} task={task} step={blocked} />;
+  if (!active && cleanupStarted)
+    return (
+      <p className="muted">执行已结束。清理截图在「后续清理」中单独展示。</p>
+    );
+  return (
+    <>
+      {cleanupRunning && (
+        <p className="muted">当前为清理画面，业务阻塞现场另行保留。</p>
+      )}
+      <LivePage
+        key={execution.id}
+        api={api}
+        execution={execution}
+        active={active}
+      />
+    </>
+  );
+}
+
 /** 单组任务与对照组复用只读画面，人工接管入口始终位于画面上方。 */
 export function TaskLive({ api, task }: { api: ApiClient; task: TaskDetail }) {
   const execution = task.executions[0];
@@ -36,15 +82,7 @@ export function TaskLive({ api, task }: { api: ApiClient; task: TaskDetail }) {
         <h2>浏览器画面</h2>
       </div>
       <ExecutionControl api={api} task={task} execution={execution} />
-      <LivePage
-        key={execution.id}
-        api={api}
-        execution={execution}
-        active={
-          task.state === 'RUNNING' &&
-          ['STARTING', 'RUNNING'].includes(execution.state)
-        }
-      />
+      <TaskPageView api={api} task={task} />
     </section>
   );
 }

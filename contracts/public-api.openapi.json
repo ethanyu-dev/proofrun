@@ -914,6 +914,47 @@
               ]
             },
             "maxItems": 64
+          },
+          "blockage": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "阻塞时冻结的条件与页面证据；后续清理不能替换该快照。",
+            "required": ["conditions", "evidenceRefs", "recordedAt"],
+            "properties": {
+              "conditions": {
+                "type": "array",
+                "maxItems": 128,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["id", "description", "summary", "status"],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "description": { "type": "string", "minLength": 1 },
+                    "summary": { "type": "string", "minLength": 1 },
+                    "status": { "enum": ["UNCONFIRMED", "UNSATISFIED"] }
+                  }
+                }
+              },
+              "evidenceRefs": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": { "type": "string" }
+              },
+              "recordedAt": {
+                "type": "string",
+                "format": "date-time",
+                "description": "执行器冻结阻塞记录的时间，不冒充节点截图拍摄时间。"
+              },
+              "screenshotError": {
+                "type": "string",
+                "description": "截图未取得时保留原因，不覆盖原始阻塞原因。"
+              }
+            }
           }
         },
         "required": [

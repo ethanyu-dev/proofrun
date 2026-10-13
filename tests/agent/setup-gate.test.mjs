@@ -113,7 +113,7 @@ async function run(decide, prepare = () => {}) {
   }
 }
 
-/** 准备失败后，清理仍提供本步真实夹具证据，不隐式声明环境通过。 */
+/** 夹具为获准执行的当前步骤提供证据，不代表真实业务通过。 */
 function complete(context) {
   return {
     ...finish(context),
@@ -140,7 +140,7 @@ for (const outcome of ['incomplete', 'blocked']) {
   });
 }
 
-// 范围：未提供逐项完成、仅确认部分条件均拦截业务，清理保留；不验证真实站点权限。
+// 范围：未提供逐项完成、仅确认部分条件均拦截业务和清理；不验证真实站点权限。
 for (const partial of [false, true]) {
   test(`setup ${partial ? '部分确认' : '缺少完成声明'} 不能通过门禁`, async () => {
     const { report, client, seen } = await run((context) => {
@@ -155,11 +155,11 @@ for (const partial of [false, true]) {
       }
       return value;
     });
-    assert.deepEqual(seen, ['prepare', 'cleanup']);
+    assert.deepEqual(seen, ['prepare']);
     assert.equal(report.executionDetails.reasonCode, 'ENVIRONMENT_NOT_READY');
     assert.deepEqual(
       report.steps.map((s) => s.status),
-      ['BLOCKED', 'SKIPPED', 'COMPLETED'],
+      ['BLOCKED', 'SKIPPED', 'SKIPPED'],
     );
     assert.equal(report.steps[1].startedAt, null);
     assert.equal(report.criteria[0].verdict, 'SKIPPED');
@@ -228,7 +228,7 @@ test('人工交还后仍未就绪只交接一次并跳过后续业务', async ()
       execution.task.environment.allowIntervention = true;
     },
   );
-  assert.deepEqual(seen, ['prepare', 'prepare', 'cleanup']);
+  assert.deepEqual(seen, ['prepare', 'prepare']);
   assert.equal(client.requests.length, 1);
   assert.equal(report.executionDetails.reasonCode, 'ENVIRONMENT_NOT_READY');
   assert.equal(report.steps[1].status, 'SKIPPED');
@@ -260,7 +260,7 @@ test('拒绝用人工交还前的证据证明环境就绪', async () => {
   assert.equal(client.requests.length, 1);
   assert.equal(report.executionDetails.reasonCode, 'INVALID_MODEL_DECISION');
   assert.ok(!seen.includes('verify'));
-  assert.equal(report.steps[2].status, 'COMPLETED');
+  assert.equal(report.steps[2].status, 'SKIPPED');
 });
 
 // 范围：显式账号条件在模型前检查，人工返回依旧不匹配则关闭门禁；字符串规则由输入明确指定，不自动猜测角色。
@@ -277,7 +277,7 @@ test('已复用登录态也不能跳过显式账号前置条件', async () => {
     ];
     control.pageText = '当前已登录，个人工作区，可切换测试团队';
   });
-  assert.deepEqual(seen, ['cleanup']);
+  assert.deepEqual(seen, []);
   assert.equal(client.requests.length, 1);
   assert.equal(report.executionDetails.reasonCode, 'ENVIRONMENT_NOT_READY');
   assert.equal(report.steps[0].preconditions[0].status, 'UNSATISFIED');
@@ -340,15 +340,23 @@ test('setup 重复观察触发人工而非耗尽业务预算', async () => {
   assert.ok(!seen.includes('verify'));
 });
 
-// 范围：准备环境不符合后的清理故障保留独立状态，不覆盖主环境分类；节点故障是夹具。
-test('清理故障不覆盖不符合验证环境的原因', async () => {
-  const { report } = await run((context) =>
-    context.executionStep.stepId === 'prepare'
-      ? { type: 'verification.block', summary: '指定资格不符合' }
-      : { type: 'verification.block', summary: '清理对象无法确认' },
+// 范围：环境未就绪时禁止执行 cleanup，退出登录或清 Cookie 不会发生；不连接真实浏览器。
+test('环境未 ready 时连 cleanup 也不执行', async () => {
+  const { report, client, seen } = await run((context) => {
+    assert.equal(context.executionStep.stepId, 'prepare');
+    return { type: 'verification.block', summary: '指定资格不符合' };
+  });
+  assert.deepEqual(seen, ['prepare']);
+  assert.equal(report.steps[2].reasonCode, 'ENVIRONMENT_NOT_READY');
+  assert.equal(report.steps[2].status, 'SKIPPED');
+  assert.equal(report.steps[2].startedAt, null);
+  assert.ok(
+    !client.calls.some(
+      (c) =>
+        c.operation.type === 'browser.cookies.clear' ||
+        c.operation.action === 'click',
+    ),
   );
-  assert.equal(report.executionDetails.reasonCode, 'ENVIRONMENT_NOT_READY');
-  assert.equal(report.steps[2].reasonCode, 'MODEL_BLOCKED');
 });
 
 // 范围：setup 未知点击保留基础设施故障并停止后续动作，绝不进入人工重试；不执行真实写入。
@@ -403,4 +411,169 @@ test('准备完成声明必须整批通过校验后才保存', async () => {
       .filter((s) => s[0].status === 'RUNNING')
       .every((s) => s[0].criteria.length === 0),
   );
+});
+
+// 范围：登录恢复与随后发现的资格条件各自交接，交还后复核通过才放行；人工和账号均为协议夹具。
+test('人工登录成功后仍可针对未解决条件再次交接', async () => {
+  const { report, client, seen } = await run(
+    (context, turn, control) => {
+      if (turn === 1)
+        return {
+          type: 'verification.intervene',
+          reasonCode: 'LOGIN_REQUIRED',
+          reason: '请完成指定账号登录',
+          items: ['登录'],
+        };
+      if (turn === 2) {
+        assert.equal(control.requests.length, 1);
+        const value = complete(context);
+        value.workflow.assessments[1].outcome = 'incomplete';
+        value.workflow.assessments[1].summary = '已登录，但甲类资格尚未核实';
+        return {
+          type: 'verification.block',
+          reasonCode: 'IDENTITY_UNCONFIRMED',
+          summary: '已登录，仍需确认甲类资格',
+          workflow: value.workflow,
+        };
+      }
+      if (turn === 3) {
+        assert.equal(control.requests.length, 2);
+        assert.equal(control.requests[1].items.length, 1);
+        assert.match(control.requests[1].items[0], /甲类资格尚未核实/);
+        assert.ok(
+          context.workflow.steps.every((step) => step.status === 'pending'),
+        );
+      }
+      return complete(context);
+    },
+    (execution) => {
+      execution.task.environment.allowIntervention = true;
+    },
+  );
+  assert.deepEqual(seen, [
+    'prepare',
+    'prepare',
+    'prepare',
+    'verify',
+    'cleanup',
+  ]);
+  assert.equal(client.requests.length, 2);
+  assert.equal(report.verdict, 'PASSED');
+});
+
+// 范围：不同原因文字不产生新条件，同条件交还仍失败时停止全部后续；不评估模型业务判断。
+test('同一未解决条件不能通过改写原因反复请求人工', async () => {
+  const { report, client } = await run(
+    (context, turn) => {
+      const value = complete(context);
+      value.workflow.assessments[1].outcome = 'incomplete';
+      value.workflow.assessments[1].summary = `第 ${turn} 次仍未核实甲类资格`;
+      return {
+        type: 'verification.block',
+        summary: `原因变化 ${turn}`,
+        workflow: value.workflow,
+      };
+    },
+    (execution) => {
+      execution.task.environment.allowIntervention = true;
+    },
+  );
+  assert.equal(client.requests.length, 1);
+  assert.match(report.summary, /第 2 次仍未核实甲类资格/);
+  assert.deepEqual(
+    report.steps.map((s) => s.status),
+    ['BLOCKED', 'SKIPPED', 'SKIPPED'],
+  );
+});
+
+// 范围：不同条件最多三轮交接，超过总上限保留剩余事项，不无限延长执行；无真实人工参与。
+test('不同未解决条件也受整次执行三轮交接上限约束', async () => {
+  const { report, client } = await run(
+    (context, turn) => {
+      const value = complete(context);
+      value.workflow.assessments[turn].outcome = 'incomplete';
+      value.workflow.assessments[turn].summary = `未确认条件 ${turn}`;
+      return {
+        type: 'verification.block',
+        summary: `缺少条件 ${turn}`,
+        workflow: value.workflow,
+      };
+    },
+    (execution) => {
+      execution.task.environment.allowIntervention = true;
+      execution.task.steps[0].policy = ['条件一', '条件二', '条件三', '条件四'];
+    },
+  );
+  assert.equal(client.requests.length, 3);
+  assert.match(report.summary, /未确认条件 4/);
+  assert.equal(report.steps[2].status, 'SKIPPED');
+});
+
+// 范围：无进展保护仍保留最近具体未解决项，冻结截图属于当前执行，后续无 cleanup 覆盖；图片为证据元数据夹具。
+test('准备停滞保存具体条件与阻塞时截图', async () => {
+  const { report, client } = await run(
+    (context, turn) => {
+      const value = complete(context);
+      const workflow = value.workflow;
+      workflow.assessments[1].outcome = 'incomplete';
+      workflow.assessments[1].summary =
+        '已登录，但未找到如何获得奖励页签，GitHub 绑定状态未确认';
+      return turn === 1
+        ? { type: 'browser.observe', workflow }
+        : { type: 'browser.observe' };
+    },
+    (_execution, control) => {
+      const command = control.command.bind(control);
+      control.command = async (...args) => {
+        const result = await command(...args);
+        if (args[2].type === 'browser.observe' && args[2].screenshot) {
+          const ref = {
+            artifactId: 'blocked-screenshot',
+            kind: 'SCREENSHOT',
+            sha256: 'b'.repeat(64),
+          };
+          control.artifacts.push({
+            id: ref.artifactId,
+            kind: ref.kind,
+            sha256: ref.sha256,
+            state: 'AVAILABLE',
+          });
+          result.data.artifactRefs.push(ref);
+        }
+        return result;
+      };
+    },
+  );
+  assert.match(report.summary, /GitHub 绑定状态未确认/);
+  assert.match(report.summary, /未找到如何获得奖励/);
+  assert.equal(report.steps[0].blockage.conditions.length, 1);
+  assert.ok(
+    report.steps[0].blockage.evidenceRefs.includes('blocked-screenshot'),
+  );
+  assert.ok(report.steps[0].evidenceRefs.includes('blocked-screenshot'));
+  assert.ok(report.artifacts.some((a) => a.id === 'blocked-screenshot'));
+  assert.equal(report.steps[2].startedAt, null);
+  assert.equal(client.requests.length, 0);
+});
+
+// 范围：截图取证失败不覆盖具体阻塞理由，也不继续业务或清理；不模拟真实节点截图质量。
+test('截图失败保留原始原因和明确取证限制', async () => {
+  const { report } = await run(
+    () => ({ type: 'verification.block', summary: '绑定状态未知' }),
+    (_execution, control) => {
+      const command = control.command.bind(control);
+      control.command = async (...args) => {
+        if (args[2].screenshot)
+          throw new Error('fixture screenshot unavailable');
+        return command(...args);
+      };
+    },
+  );
+  assert.equal(report.executionDetails.reasonCode, 'ENVIRONMENT_NOT_READY');
+  assert.match(report.summary, /绑定状态未知/);
+  assert.equal(
+    report.steps[0].blockage.screenshotError,
+    'SCREENSHOT_UNAVAILABLE',
+  );
+  assert.equal(report.steps[2].status, 'SKIPPED');
 });

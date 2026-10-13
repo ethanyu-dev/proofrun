@@ -134,3 +134,7 @@ proofrun-node --config /etc/proofrun/node.toml auth-forget --state-id qa-account
 ```
 
 导入文件必须仅运行用户可读，且包含 cookies/origins。状态失效时由模型请求人工或明确阻塞，不自动提交登录口令，不保证 sessionStorage、跨域 SSO、设备绑定或 MFA 的跨会话有效性。
+
+## 环境准备中的条件交接
+
+业务 setup 按未解决条件分配人工交接机会：登录缺失与原始 workflow/preconditions 条件分别记录，同一条件只交接一次，单次执行最多三轮。用户完成登录不代表角色、第三方绑定或页面前置条件已满足，返回后仍重新核实；新发现的未解决条件可继续交接，重复失败或额度耗尽时保留具体原因及阻塞截图。环境未 ready 时阻止全部后续步骤，包括 cleanup；仅关闭浏览器会话回收资源，不自动退出业务账号或清 Cookie。任务终态展示阻塞现场，历史清理截图单独展示。

@@ -3245,8 +3245,8 @@ test('步骤时间到期不中断在途动作，确认结果后继续下一步',
   assert.equal(report.steps[0].budgetUsage.actions, 2);
 });
 
-// 范围：setup 身份前提未满足时阻止模型伪造完成和后续业务，仍执行清理；页面与模型均为夹具。
-test('setup 身份缺失禁止执行后续业务但保留清理', async () => {
+// 范围：setup 身份前提未满足时阻止模型伪造完成及后续业务与清理；页面与模型均为夹具。
+test('setup 身份缺失禁止执行后续业务及清理', async () => {
   const seen = [];
   const { report } = await run(
     (context) => {
@@ -3274,11 +3274,11 @@ test('setup 身份缺失禁止执行后续业务但保留清理', async () => {
       execution.task.environment.allowIntervention = false;
     },
   );
-  assert.deepEqual(seen, ['step-3']);
+  assert.deepEqual(seen, []);
   assert.equal(report.steps[0].reasonCode, 'ENVIRONMENT_NOT_READY');
   assert.equal(report.steps[0].preconditions[0].status, 'UNSATISFIED');
   assert.equal(report.steps[1].status, 'SKIPPED');
-  assert.equal(report.steps[2].status, 'COMPLETED');
+  assert.equal(report.steps[2].status, 'SKIPPED');
 });
 
 // 范围：一次自动登录在逐步预算前派发、不给模型原始秘密；准备回执及浏览器为夹具。
@@ -3408,7 +3408,8 @@ test('结构化登录和角色确认共用一次环境准备人工请求', async
   ) => {
     requests++;
     assert.equal(reasonCode, 'ENVIRONMENT_NOT_READY');
-    assert.deepEqual(items, ['确认当前账号是非所有者团队成员']);
+    assert.equal(items.length, 1);
+    assert.match(items[0], /确认当前账号是非所有者团队成员/);
     mode = 'REQUESTED';
     revision++;
   };

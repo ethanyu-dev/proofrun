@@ -1,3 +1,4 @@
+import { FollowUpCleanup } from '../../apps/console/src/components/follow-up-cleanup.tsx';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createRequire } from 'node:module';
@@ -89,4 +90,112 @@ test('准备不符合要求时展示不符合验证环境', () => {
   const html = render(value);
   assert.ok(html.includes('不符合验证环境'));
   assert.ok(!html.includes('等待人工处理'));
+});
+
+/** 同一任务含不同的业务阻塞和清理截图，检验页面不能用最后清理图覆盖业务现场。 */
+function blockedTask(): TaskDetail {
+  const value = task('AUTO', 'COMPLETED');
+  value.definition = {
+    cleanupStepIds: ['cleanup'],
+    acceptanceCriteria: [],
+    steps: [
+      {
+        stepId: 'setup',
+        type: 'setup',
+        description: '准备账号',
+        policy: [],
+        expected: [],
+      },
+      {
+        stepId: 'cleanup',
+        type: 'setup',
+        description: '退出登录',
+        policy: [],
+        expected: [],
+      },
+    ],
+  } as TaskDetail['definition'];
+  value.report = {
+    artifacts: ['blocked-image', 'cleanup-image', 'later-image'].map((id) => ({
+      id,
+      kind: 'SCREENSHOT',
+      sha256: 'a'.repeat(64),
+      uri: `/v1/artifacts/${id}`,
+    })),
+    steps: [
+      {
+        stepId: 'setup',
+        status: 'BLOCKED',
+        summary: '登录成功，GitHub 绑定状态未确认',
+        criteria: [],
+        evidenceRefs: ['blocked-image', 'later-image'],
+        startedAt: '2026-10-13T02:07:00Z',
+        finishedAt: '2026-10-13T02:08:00Z',
+        blockage: {
+          recordedAt: '2026-10-13T02:08:00Z',
+          evidenceRefs: ['blocked-image'],
+          conditions: [
+            {
+              id: 'binding',
+              description: 'GitHub 未绑定',
+              summary: '尚未进入设置页核实',
+              status: 'UNCONFIRMED',
+            },
+          ],
+        },
+      },
+      {
+        stepId: 'cleanup',
+        status: 'COMPLETED',
+        summary: '已退出',
+        criteria: [],
+        evidenceRefs: ['cleanup-image'],
+        startedAt: '2026-10-13T02:08:01Z',
+        finishedAt: '2026-10-13T02:09:00Z',
+      },
+    ],
+  } as TaskDetail['report'];
+  return value;
+}
+
+// 范围：终态选用冻结截图及具体条件，清理证据独立展示；SSR 不验证图片下载或浏览器像素。
+test('阻塞截图与清理截图分开，主画面不使用最后一帧', () => {
+  const value = blockedTask();
+  const html = render(value);
+  assert.match(html, /阻塞时截图/);
+  assert.match(html, /blocked-image/);
+  assert.match(html, /尚未进入设置页核实/);
+  assert.ok(!html.includes('cleanup-image'));
+  assert.ok(!html.includes('later-image'));
+  assert.ok(!html.includes('comparison-screen'));
+  const cleanup = renderToStaticMarkup(
+    createElement(FollowUpCleanup, { api, task: value }),
+  );
+  assert.match(cleanup, /清理截图/);
+  assert.match(cleanup, /cleanup-image/);
+  assert.ok(!cleanup.includes('blocked-image'));
+});
+
+// 范围：旧报告无冻结快照时仅回退到同一步证据，不混用 cleanup；不补造历史拍摄时间。
+test('历史报告回退到阻塞步骤截图并说明来源', () => {
+  const value = blockedTask();
+  delete value.report!.steps![0]!.blockage;
+  const html = render(value);
+  assert.match(html, /阻塞步骤最后记录的截图/);
+  assert.match(html, /later-image/);
+  assert.ok(!html.includes('cleanup-image'));
+});
+
+// 范围：无截图明确展示取证限制，已归档证据不可预览；不伪造新截图。
+test('截图缺失或归档时保留原因，不以清理图兜底', () => {
+  const value = blockedTask();
+  value.report!.steps![0]!.blockage!.evidenceRefs = [];
+  value.report!.steps![0]!.blockage!.screenshotError = 'SCREENSHOT_UNAVAILABLE';
+  const html = render(value);
+  assert.match(html, /未取得可展示的阻塞截图/);
+  assert.match(html, /SCREENSHOT_UNAVAILABLE/);
+  assert.ok(!html.includes('cleanup-image'));
+  const archived = blockedTask();
+  archived.archived_at = '2026-10-13T03:00:00Z';
+  assert.match(render(archived), /证据已清理/);
 });

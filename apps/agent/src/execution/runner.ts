@@ -1,3 +1,8 @@
+import {
+  EnvironmentHandoffs,
+  unresolvedRequirements,
+  type EnvironmentCondition,
+} from './environment-handoff.js';
 import { CriteriaLedger } from './criteria.js';
 import { evaluateChecks, mergeChecks } from './identity.js';
 import { stepLimit } from '@proofrun/contracts';
@@ -111,8 +116,8 @@ class Execution {
   private decisionIndex = 0;
   /** 每一步最多自动请求一次登录辅助，人工未解决问题时不能无限暂停。 */
   private readonly loginInterventions = new Set<number>();
-  /** setup 交接共享一次机会，避免登录、角色及准备停滞各自重复等待人工。 */
-  private readonly environmentInterventions = new Set<number>();
+  /** 未解决条件分别交接，同一条件和整次执行均有上限。 */
+  private readonly environmentHandoffs = new EnvironmentHandoffs();
   /** 人工交还前的准备证据只能作历史参考，不能再次证明环境已就绪。 */
   private readinessEvidence = new Set<string>();
   /** 原任务阶段和恢复计划由所有决策模式共享。 */
@@ -393,7 +398,7 @@ class Execution {
     const png = current.artifactRefs.find((r) => r.kind === 'SCREENSHOT');
     if (screenshot && !png)
       throw new AgentFault('EVIDENCE_UNAVAILABLE', '本次观察没有返回所需截图');
-    if (png)
+    if (png && this.config.vision)
       this.image = await this.client.image(
         this.grant,
         { id: png.artifactId, sha256: png.sha256 },
@@ -649,7 +654,7 @@ class Execution {
       ) === true
     );
   }
-  /** 清理虽使用 setup 类型，也必须在准备失败后保留独立执行权限。 */
+  /** cleanup 不承担环境准备职责，但仍受此前 setup 门禁约束。 */
   private isSetup(): boolean {
     return (
       this.grant.task.steps?.[this.stepIndex]?.type === 'setup' &&
@@ -657,27 +662,137 @@ class Execution {
     );
   }
 
-  /** 只有环境准备问题进入人工；调用方不能把传输、租约或未知副作用改写成环境不符。 */
+  /** 汇总当前缺失事实，显式前置条件不被模型的自由描述覆盖。 */
+  private environmentConditions(): EnvironmentCondition[] {
+    const checks = this.current
+      ? evaluateChecks(
+          this.identityChecks(),
+          this.current,
+          this.confirmedChecks,
+          this.controlRevision,
+        )
+      : [];
+    return [
+      ...checks
+        .filter((check) => check.status !== 'SATISFIED')
+        .map((check) => ({
+          id: `check:${check.id}`,
+          description: check.description,
+          summary:
+            check.status === 'UNSATISFIED'
+              ? '当前观察不满足指定条件'
+              : '该条件尚未确认',
+          status: check.status as 'UNSATISFIED' | 'UNCONFIRMED',
+        })),
+      ...unresolvedRequirements(this.workflow.view()),
+    ];
+  }
+
+  /** 只有环境问题进入交接；不同条件可继续处理，同一条件不重复等待。 */
   private async environmentNotReady(
     summary: string,
+    conditions = this.environmentConditions(),
   ): Promise<VerificationReport | null> {
-    if (
-      this.grant.task.environment.allowIntervention &&
-      !this.environmentInterventions.has(this.stepIndex)
-    ) {
-      const step = this.grant.task.steps![this.stepIndex]!;
+    const unresolved = conditions.length
+      ? conditions
+      : [
+          {
+            id: 'environment:unconfirmed',
+            description: '确认当前步骤的验证环境',
+            summary,
+            status: 'UNCONFIRMED' as const,
+          },
+        ];
+    const detail = unresolved
+      .map((condition) => `${condition.description}：${condition.summary}`)
+      .join('；');
+    const requested = this.grant.task.environment.allowIntervention
+      ? this.environmentHandoffs.claim(
+          this.grant.task.steps![this.stepIndex]!.stepId!,
+          unresolved,
+        )
+      : [];
+    if (requested.length) {
+      const revision = this.controlRevision;
       await this.requestIntervention(
-        `不符合验证环境：${summary}`.slice(0, 1000),
-        [step.description, ...step.policy]
-          .slice(0, 10)
-          .map((item) => item.slice(0, 500)),
-        false,
+        `不符合验证环境：${summary}。待处理：${detail}`.slice(0, 1000),
+        requested.map((condition) =>
+          `${condition.description}：${condition.summary}`.slice(0, 500),
+        ),
+        requested.some((condition) => condition.id === 'session:login'),
       );
+      // 只确认本次明确交接的 manual 项；其他条件必须用交还后的页面重新验证。
+      if (this.controlRevision > revision)
+        for (const check of this.identityChecks())
+          if (
+            check.method === 'manual' &&
+            requested.some((item) => item.id === `check:${check.id}`)
+          )
+            this.confirmedChecks.set(check.id, this.controlRevision);
       this.feedback =
-        '人工已交还控制权。请按完整 setup 描述和每条约束重新核实，所有准备项必须引用交还后取得的证据；人工完成本身不是就绪证明。';
+        '人工已交还控制权。请重新核实完整准备要求：已解决项提交新证据，其余未解决项明确说明原因；不得沿用旧账号证据或仅凭人工完成判定就绪。';
       return null;
     }
-    return this.blocked(`不符合验证环境：${summary}`, 'ENVIRONMENT_NOT_READY');
+    const state = this.stepResults[this.stepIndex]!;
+    state.blockage = {
+      conditions: unresolved,
+      evidenceRefs: [],
+      recordedAt: new Date().toISOString(),
+    };
+    return this.blocked(
+      `不符合验证环境：${summary}。未解决条件：${detail}`,
+      'ENVIRONMENT_NOT_READY',
+    );
+  }
+
+  /** 登录有独立条件身份，登录恢复后不消耗角色、绑定或页面准备条件的交接机会。 */
+  private loginCondition(summary: string): EnvironmentCondition[] {
+    const step = this.grant.task.steps?.[this.stepIndex];
+    return [
+      {
+        id: 'session:login',
+        description: '使用当前步骤指定的已授权账号完成登录',
+        summary: `${summary}。原始账号要求：${step?.description ?? this.task.objective}；${step?.policy.join('；') ?? ''}`,
+        status: 'UNCONFIRMED',
+      },
+    ];
+  }
+
+  /** 在终止步骤处冻结观察；截图失败只记录取证限制，不能覆盖业务阻塞原因。 */
+  private async preserveBlockage(allowCapture: boolean) {
+    const state = this.stepResults[this.stepIndex]!;
+    const conditions =
+      state.blockage?.conditions ??
+      (this.isSetup() ? this.environmentConditions() : []);
+    let screenshotError: string | undefined;
+    if (
+      allowCapture &&
+      !this.current?.artifactRefs.some((ref) => ref.kind === 'SCREENSHOT') &&
+      !this.guard.signal.aborted
+    ) {
+      try {
+        await this.observe(true, false);
+      } catch (error) {
+        screenshotError =
+          error instanceof AgentFault ? error.code : 'SCREENSHOT_UNAVAILABLE';
+      }
+    }
+    const refs =
+      this.current?.artifactRefs
+        .map((ref) => ref.artifactId)
+        .filter((id) => this.evidence.has(id) && !this.stepEvidence.has(id)) ??
+      [];
+    const hasScreenshot = refs.some(
+      (id) => this.evidence.get(id)?.kind === 'SCREENSHOT',
+    );
+    state.blockage = {
+      conditions,
+      evidenceRefs: refs,
+      recordedAt: new Date().toISOString(),
+      ...(!hasScreenshot
+        ? { screenshotError: screenshotError ?? 'SCREENSHOT_UNAVAILABLE' }
+        : {}),
+    };
   }
 
   /** 控制权变化时撤销全部准备声明，避免沿用另一账号或旧环境的证据。 */
@@ -717,12 +832,40 @@ class Execution {
         this.controlRevision,
       );
     let results = evaluate();
+    if (this.isSetup()) {
+      while (results.some((r) => r.status !== 'SATISFIED')) {
+        const conditions: EnvironmentCondition[] = results
+          .filter((r) => r.status !== 'SATISFIED')
+          .map((r) => ({
+            id: `check:${r.id}`,
+            description: r.description,
+            summary:
+              r.status === 'UNSATISFIED'
+                ? '当前观察不满足指定条件'
+                : '该条件尚未确认',
+            status: r.status as 'UNSATISFIED' | 'UNCONFIRMED',
+          }));
+        this.stepResults[this.stepIndex]!.preconditions = results;
+        if (!allowIntervention)
+          return this.blocked(
+            `前置条件未满足：${conditions.map((c) => c.description).join('；')}`,
+            'ENVIRONMENT_NOT_READY',
+          );
+        const blocked = await this.environmentNotReady(
+          '账号或前置条件尚未满足',
+          conditions,
+        );
+        if (blocked) return blocked;
+        results = evaluate();
+      }
+      this.stepResults[this.stepIndex]!.preconditions = results;
+      return null;
+    }
     if (
       results.some((r) => r.status !== 'SATISFIED') &&
       allowIntervention &&
       original.environment.allowIntervention &&
-      !this.identityInterventions.has(this.stepIndex) &&
-      (!this.isSetup() || !this.environmentInterventions.has(this.stepIndex))
+      !this.identityInterventions.has(this.stepIndex)
     ) {
       this.identityInterventions.add(this.stepIndex);
       const revision = this.controlRevision;
@@ -840,12 +983,21 @@ class Execution {
         }
         // 登录前置条件需要人工时先交接，不能先进入模型重复观察或长时间等待挑战。
         if (
-          !this.loginInterventions.has(this.stepIndex) &&
-          (!this.isSetup() ||
-            !this.environmentInterventions.has(this.stepIndex)) &&
+          (this.isSetup() || !this.loginInterventions.has(this.stepIndex)) &&
           !this.identityChecks().length &&
           needsLoginIntervention(this.grant.task, this.current!, this.stepIndex)
         ) {
+          if (this.isSetup()) {
+            const summary =
+              '页面仍显示登录表单或人机验证，请完成当前指定账号的登录';
+            const blocked = await this.environmentNotReady(
+              summary,
+              this.loginCondition(summary),
+            );
+            if (blocked) return blocked;
+            errors = 0;
+            continue;
+          }
           if (!this.grant.task.environment.allowIntervention)
             return this.blocked(
               '当前步骤需要登录，但任务未授权人工辅助',
@@ -1031,7 +1183,12 @@ class Execution {
         this.workflow.assertAction(decision);
         if (decision.type === 'verification.intervene') {
           if (this.isSetup()) {
-            const blocked = await this.environmentNotReady(decision.reason);
+            const blocked = await this.environmentNotReady(
+              decision.reason,
+              decision.reasonCode === 'LOGIN_REQUIRED'
+                ? this.loginCondition(decision.reason)
+                : undefined,
+            );
             if (blocked) return blocked;
             errors = 0;
             continue;
@@ -1146,7 +1303,12 @@ class Execution {
         }
         if (decision.type === 'verification.block') {
           if (this.isSetup()) {
-            const blocked = await this.environmentNotReady(decision.summary);
+            const blocked = await this.environmentNotReady(
+              decision.summary,
+              decision.reasonCode === 'LOGIN_REQUIRED'
+                ? this.loginCondition(decision.summary)
+                : undefined,
+            );
             if (blocked) return blocked;
             errors = 0;
             continue;
@@ -1305,7 +1467,6 @@ class Execution {
     items: string[] | undefined,
     login: boolean,
   ) {
-    if (this.isSetup()) this.environmentInterventions.add(this.stepIndex);
     if (login) this.loginInterventions.add(this.stepIndex);
     await this.client.intervene(
       this.grant,
@@ -1393,7 +1554,7 @@ class Execution {
     };
   }
 
-  /** setup 是后续业务的硬门禁；准备失败仍保留清理权限，撤权或未知效果立即停止。 */
+  /** setup 未就绪时停止全部后续步骤，包括 cleanup；会话资源回收由控制面负责。 */
   private async sequence(): Promise<VerificationReport> {
     const steps = this.grant.task.steps!;
     await this.checkpoint();
@@ -1412,11 +1573,11 @@ class Execution {
       const step = steps[this.stepIndex]!;
       const state = this.stepResults[this.stepIndex]!;
       this.guard.signal.throwIfAborted();
-      if (setupFailure && !cleanupIds.has(step.stepId!)) {
+      if (setupFailure) {
         state.status = 'SKIPPED';
         state.reasonCode =
           setupFailure.executionDetails?.reasonCode ?? 'SETUP_FAILED';
-        state.summary = `前置准备未通过，本步骤未执行：${setupFailure.summary}`;
+        state.summary = `验证环境未就绪，本步骤未执行（含后续清理）：${setupFailure.summary}`;
         state.finishedAt = new Date().toISOString();
         await this.client.recordSteps(this.grant, this.stepResults);
         continue;
@@ -1524,6 +1685,19 @@ class Execution {
       state.criteria = this.criteria.values();
       state.reasonCode = report.executionDetails?.reasonCode ?? null;
       if (report.executionDisposition !== 'EXECUTED') {
+        if (
+          !this.isCleanup() &&
+          !this.guard.signal.aborted &&
+          ![
+            'BROWSER_EFFECT_UNKNOWN',
+            'LEASE_LOST',
+            'EXECUTION_ENDED',
+            'EXECUTION_EXPIRED',
+          ].includes(report.executionDetails?.reasonCode ?? '')
+        )
+          await this.preserveBlockage(
+            report.executionDisposition === 'BLOCKED',
+          );
         if (this.isSetup()) setupFailure = report;
         state.status =
           report.executionDisposition === 'BLOCKED' ? 'BLOCKED' : 'ERROR';

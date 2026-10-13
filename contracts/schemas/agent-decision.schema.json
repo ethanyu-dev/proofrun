@@ -209,6 +209,10 @@
             "maxLength": 500
           },
           "description": "本次人工需要处理的事项，不替代原验收标准。"
+        },
+        "reasonCode": {
+          "enum": ["LOGIN_REQUIRED", "IDENTITY_UNCONFIRMED", "OTHER"],
+          "description": "登录缺失单独交接，不占用其他未解决条件的交接机会。"
         }
       },
       "required": ["type", "reason"]
