@@ -111,7 +111,12 @@ export class JevModel implements DecisionModel {
       workflow?: WorkflowView;
       executionStep?: { stepId: string };
       cleanup?: boolean;
+      environmentReview?: { required: boolean };
+      interactionProgress?: { items: Array<{ status: string }> };
     };
+    // 环境意图必须由拥有完整原始约束的文本模型单独声明，不能被动作提案跳过。
+    if (context.environmentReview?.required)
+      return this.text.decide(input, signal);
     if (
       context.executionStep &&
       context.executionStep.stepId !== this.structuredStep
@@ -165,21 +170,25 @@ export class JevModel implements DecisionModel {
       this.progress.reviewed();
       return output;
     };
-    const reason = context.cleanup
-      ? '后续清理由文本模型核对明确的恢复条件及 Cookie 清理回执，满足后及时结束'
-      : typeof context.feedback === 'string' &&
-          /^(WORKFLOW_|OBSERVATION_STALLED:|BROWSER_TARGET_OBSCURED:|BROWSER_STALE_OBSERVATION:|BROWSER_ACTION_PRECONDITION_FAILED:)/u.test(
-            context.feedback,
-          )
-        ? '执行器反馈步骤缺口、预算耗尽或动作目标失效；请核对当前状态并改变恢复策略，无法继续时 verification.block'
-        : context.workflow?.activeStep === null
-          ? '全部原始步骤已登记证据，请按原 criterionId 整理最终结论，避免继续浏览'
-          : recovery?.remaining === 0
-            ? '恢复计划动作预算耗尽，核对成功条件；未成功时改变策略或停止，不能重复同一计划'
-            : this.progress.reviewReason(
-                context.budgetRemaining.actions,
-                !!recovery && recovery.remaining > 0,
-              );
+    const reason = context.interactionProgress?.items.some(
+      (item) => item.status === 'observed',
+    )
+      ? '新展开的面板已取得原文，请先通过 workflow.readings 登记子项，再继续尚未读取的问题；记录不等于验收通过'
+      : context.cleanup
+        ? '后续清理由文本模型核对明确的恢复条件及 Cookie 清理回执，满足后及时结束'
+        : typeof context.feedback === 'string' &&
+            /^(WORKFLOW_|INTERACTION_RECOVERY_REQUIRED:|OBSERVATION_STALLED:|BROWSER_TARGET_OBSCURED:|BROWSER_STALE_OBSERVATION:|BROWSER_ACTION_PRECONDITION_FAILED:)/u.test(
+              context.feedback,
+            )
+          ? '执行器反馈步骤缺口、预算耗尽或动作目标失效；请核对当前状态并改变恢复策略，无法继续时 verification.block'
+          : context.workflow?.activeStep === null
+            ? '全部原始步骤已登记证据，请按原 criterionId 整理最终结论，避免继续浏览'
+            : recovery?.remaining === 0
+              ? '恢复计划动作预算耗尽，核对成功条件；未成功时改变策略或停止，不能重复同一计划'
+              : this.progress.reviewReason(
+                  context.budgetRemaining.actions,
+                  !!recovery && recovery.remaining > 0,
+                );
     if (reason) return review(reason);
     const available = candidates(
       page.targets,

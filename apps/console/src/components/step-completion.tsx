@@ -1,3 +1,4 @@
+import { StepReadings } from './step-readings.js';
 import { BudgetUsage, BudgetTotal } from './budget-usage';
 import type { StepResult, TaskDetail } from '@proofrun/contracts';
 import { Status } from './ui';
@@ -154,6 +155,7 @@ export function StepCompletion({
                               </p>
                             )}
                             <BudgetUsage usage={result?.budgetUsage} />
+                            <StepReadings readings={result?.readings} />
                           </td>
                         </>
                       )}

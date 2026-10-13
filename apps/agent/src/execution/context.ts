@@ -1,3 +1,4 @@
+import type { InteractionProgress } from './interaction-progress.js';
 import type { VerificationReport, VerificationTask } from '@proofrun/contracts';
 import type { BrowserOperation } from '../client.js';
 import type { Observation } from '../evidence/observation.js';
@@ -55,6 +56,14 @@ export interface PreviousObservation {
 
 /** 执行器传入事实快照；上下文模块不改变执行状态或原始证据。 */
 export interface ContextInput {
+  /** 并发开始前单独分类原始环境要求，字段不能作为登录事实证明。 */
+  environmentReview?:
+    | {
+        required: boolean;
+        requestedMode: string;
+        mode: 'guest' | 'configured' | undefined;
+      }
+    | undefined;
   /** 新 profile 模式强制将准备与 policy 核验分离。 */
   setupPhase?: 'PREPARING' | 'CHECKING' | undefined;
   /** 当前步骤可见的任务定义。 */
@@ -67,6 +76,8 @@ export interface ContextInput {
   cleanup?: boolean;
   /** 当前观察和控制代次下的前置结果；只含业务条件与来源，不含身份配方或凭据。 */
   preconditions: CheckResult[];
+  /** 子项阅读来源与跨轮进度，不等同验收通过。 */
+  interactionProgress?: ReturnType<InteractionProgress['view']>;
   /** 公共工作流的只读视图。 */
   workflow: WorkflowView | undefined;
   /** 剩余原任务动作、模型请求与时间预算。 */
@@ -117,10 +128,12 @@ export function decisionContext(input: ContextInput): DecisionInput {
     ),
     executionStep: input.executionStep,
     setupPhase: input.setupPhase,
+    environmentReview: input.environmentReview,
     recordedCriteria: input.recordedCriteria ?? [],
     cleanup: input.cleanup === true,
     preconditions: structuredClone(input.preconditions),
     workflow: input.workflow,
+    interactionProgress: input.interactionProgress,
     budgetRemaining: {
       actions: input.budgetRemaining.actions,
       modelCalls: input.budgetRemaining.modelCalls,
@@ -163,7 +176,19 @@ export function decisionContext(input: ContextInput): DecisionInput {
   let text = JSON.stringify(context);
   while (text.length > input.maxContextChars) {
     context.truncated = true;
-    if (context.previousObservations.length > 0)
+    if (
+      context.interactionProgress?.items.some((item) => item.text.length > 80)
+    )
+      context.interactionProgress.items = context.interactionProgress.items.map(
+        (item) => ({ ...item, text: item.text.slice(0, 80) }),
+      );
+    else if ((context.interactionProgress?.items.length ?? 0) > 1) {
+      // 只裁剪模型视图，完整进度仍保留在执行器和报告；优先保留已展开的新子项。
+      const progress = context.interactionProgress!;
+      const count = Math.ceil(progress.items.length / 2);
+      progress.omittedItems += progress.items.length - count;
+      progress.items = progress.items.slice(0, count);
+    } else if (context.previousObservations.length > 0)
       context.previousObservations.shift();
     else if (
       context.observation.network &&

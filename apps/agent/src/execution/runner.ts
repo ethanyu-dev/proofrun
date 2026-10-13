@@ -1,3 +1,4 @@
+import { InteractionProgress } from './interaction-progress.js';
 import { executeProfile } from './profile-runner.js';
 import {
   EnvironmentHandoffs,
@@ -75,7 +76,12 @@ export type ExecutionClient = Pick<
   | 'acknowledge'
   | 'recordModelCall'
   | 'recordSteps'
->;
+> & {
+  /** 只由 profile 编排器共享意图与当前人工确认代次，不暴露认证数据。 */
+  profileEnvironment?: () =>
+    { mode: 'guest' | 'configured'; confirmedRevision?: number } | undefined;
+  declareEnvironment?: (mode: 'guest' | 'configured') => void;
+};
 
 /** 一个领取结果对应一个执行器；实例不复用，也不恢复已经失去租约的动作。 */
 class Execution {
@@ -95,6 +101,8 @@ class Execution {
   private identityPrepared = false;
   /** 节点只返回固定诊断，供 HITL 分类使用，不记录原始凭据。 */
   private preparationReason: string | undefined;
+  /** 环境意图不等同身份事实；访客证明由隔离配置或当前人工确认提供。 */
+  private environmentMode: 'guest' | 'configured' | undefined;
   /** 每次导航只执行一次有界外壳等待，不在普通决策轮反复等待。 */
   private settlePending = true;
   /** TRACE 由执行器按验收需求采集，模型不能指定路径或伪造文件身份。 */
@@ -103,6 +111,8 @@ class Execution {
   /** 比较原始观察，不因模型重规划或暂时遮挡重置。 */
   private readonly tracker = new ObservationTracker();
   private changes: ObservationChanges | undefined;
+  /** 子项阅读与点击恢复独立于页面变化，按步骤和人工环境隔离。 */
+  private interactions = new InteractionProgress();
   /** 历史证据保留来源及裁剪标记，避免切换栏目后只剩无法解读的证据编号。 */
   private readonly previousObservations: PreviousObservation[] = [];
   private image: string | undefined;
@@ -299,6 +309,12 @@ class Execution {
         throw new AgentFault('ACTION_BUDGET_EXCEEDED', '浏览器动作预算已耗尽');
       this.details.actions++;
     }
+    const clicked =
+      operation.type === 'browser.act' && operation.action === 'click'
+        ? this.current?.targets.find(
+            (target) => target.target === operation.target,
+          )
+        : undefined;
     const id = randomUUID();
     this.details.commandIds.push(id);
     const result = await this.client
@@ -356,6 +372,15 @@ class Execution {
       effect: result.effect,
     });
     if (this.history.length > HISTORY_LIMIT) this.history.shift();
+    if (
+      clicked &&
+      this.current &&
+      result.effect === 'NOT_STARTED' &&
+      ['DOM_ACTION_PRECONDITION_FAILED', 'TARGET_OBSCURED'].includes(
+        result.error?.code ?? '',
+      )
+    )
+      this.interactions.failedClick(this.current, clicked, result.error?.code);
     if (recoverableObservationFailure(operation.type, result))
       throw new AgentFault(
         'DOM_OBSERVATION_FAILED',
@@ -427,6 +452,7 @@ class Execution {
       rememberObservation(this.previousObservations, this.current);
     this.changes = this.tracker.observe(current, countProgress);
     this.current = current;
+    this.interactions.observe(current);
     this.image = undefined;
     for (const ref of current.artifactRefs)
       this.evidence.set(ref.artifactId, {
@@ -549,6 +575,13 @@ class Execution {
     return decisionContext({
       task: this.task,
       setupPhase: this.setupPhase,
+      environmentReview: this.needsEnvironmentReview()
+        ? {
+            required: !this.environmentMode,
+            requestedMode: this.grant.task.sessionPlan?.mode ?? 'manual',
+            mode: this.environmentMode,
+          }
+        : undefined,
       executionStep: this.recheck
         ? this.grant.task.steps?.find((step) => step.type === 'setup')
         : this.grant.task.steps?.[this.stepIndex],
@@ -561,6 +594,7 @@ class Execution {
         this.controlRevision,
       ),
       workflow: this.workflow.view(),
+      interactionProgress: this.interactions.view(),
       budgetRemaining: this.allowance?.available(
         this.details.actions,
         this.details.modelCalls,
@@ -739,6 +773,16 @@ class Execution {
     if (this.recheck) return true;
     return (
       this.grant.task.steps?.[this.stepIndex]?.type === 'setup' &&
+      !this.isCleanup()
+    );
+  }
+
+  /** 首个 setup 在兄弟组启动之前分类共享登录要求，避免并发中途变更认证。 */
+  private needsEnvironmentReview() {
+    return (
+      this.grant.task.profilePlan?.environmentGateStepId !== undefined &&
+      this.grant.task.profilePlan.environmentGateStepId ===
+        this.grant.task.steps?.[this.stepIndex]?.stepId &&
       !this.isCleanup()
     );
   }
@@ -936,6 +980,7 @@ class Execution {
 
   /** 控制权变化时撤销全部准备声明，避免沿用另一账号或旧环境的证据。 */
   private invalidateReadiness() {
+    this.interactions = new InteractionProgress();
     if (!this.isSetup()) return;
     this.workflow.invalidateAssessments();
     this.readinessEvidence = new Set(this.evidence.keys());
@@ -946,7 +991,23 @@ class Execution {
     const original = this.grant.task;
     const step = original.steps?.[this.stepIndex];
     if (original.cleanupStepIds?.includes(step?.stepId ?? '')) return [];
+    const shared = this.client.profileEnvironment?.();
+    const guest =
+      (this.environmentMode ?? shared?.mode) === 'guest' &&
+      original.sessionPlan?.mode !== 'guest';
+    if (shared?.confirmedRevision === this.controlRevision)
+      this.confirmedChecks.set('profile-guest', this.controlRevision);
     return mergeChecks(
+      guest
+        ? [
+            {
+              id: 'profile-guest',
+              method: 'manual',
+              description:
+                '确认本 profile 已退出登录并清除登录状态，当前为未登录访客；团队或用户图标不能作为证明',
+            },
+          ]
+        : [],
       original.sessionPlan?.candidates[0]?.checks ?? [],
       original.sessionPlan?.requirements ?? [],
       step?.preconditions ?? [],
@@ -1331,7 +1392,60 @@ class Execution {
             'OBSERVATION_STALLED',
             '页面连续观察没有新增事实，请保存已验收项目后执行实际动作或明确受阻，不再重复 observe。',
           );
-        if (decision.type === 'browser.act') this.operation(decision);
+        if (
+          this.needsEnvironmentReview() &&
+          !this.environmentMode &&
+          decision.type !== 'verification.environment'
+        )
+          throw new AgentFault(
+            'INVALID_MODEL_DECISION',
+            '并发前必须先声明共享环境意图，不能用 finish 冒充已完成登录状态准备',
+          );
+        if (decision.type === 'verification.environment') {
+          if (
+            !this.needsEnvironmentReview() ||
+            this.environmentMode ||
+            this.setupPhase !== 'PREPARING'
+          )
+            throw new AgentFault(
+              'INVALID_MODEL_DECISION',
+              '共享环境声明只能在首个 setup 准备开始时提交一次',
+            );
+          // 显式账号选择不能被自然语言推断覆盖；冲突留给人工调整任务定义。
+          if (
+            decision.mode === 'guest' &&
+            ['identity', 'pool'].includes(
+              this.grant.task.sessionPlan?.mode ?? '',
+            )
+          )
+            return this.blocked(
+              '访客要求与指定账号配置冲突，请拆分 profile 或调整账号配置',
+              'ENVIRONMENT_NOT_READY',
+            );
+          this.environmentMode =
+            this.grant.task.sessionPlan?.mode === 'guest'
+              ? 'guest'
+              : decision.mode;
+          this.client.declareEnvironment?.(this.environmentMode);
+          const blocked = await this.checkIdentity(true);
+          if (blocked) return blocked;
+          this.feedback =
+            this.environmentMode === 'guest'
+              ? '访客准备来源已核实，仍须观察并核对原始 policy；不得把未执行的 Cookie 清理声称为自动操作。'
+              : '共享环境意图已登记，继续按原始要求准备与核实，登录态复用不等于账号资格已满足。';
+          continue;
+        }
+        if (decision.type === 'browser.act') {
+          this.operation(decision);
+          if (decision.action === 'click') {
+            const target = this.current!.targets.find(
+              (t) => t.target === decision.target,
+            );
+            if (target) this.interactions.assertClick(this.current!, target);
+          }
+        }
+        const readings = this.interactions.validate(output.workflow?.readings);
+        const readingRevision = this.interactions.view().revision;
         const revision = this.workflow.view().revision;
         this.workflow.apply(
           output.workflow,
@@ -1343,7 +1457,11 @@ class Execution {
             ),
           ),
         );
-        if (revision !== this.workflow.view().revision) {
+        this.interactions.record(readings);
+        if (
+          revision !== this.workflow.view().revision ||
+          readingRevision !== this.interactions.view().revision
+        ) {
           this.tracker.reset();
           workflowRecoveries = 0;
         }
@@ -1481,9 +1599,13 @@ class Execution {
           // 即使完成声明还缺其他项，也先保存本批合法结论；持久化失败则不继续业务动作。
           const state = this.stepResults[this.stepIndex];
           if (state && this.criteria.values().length) {
+            state.readings = this.interactions.results();
             state.criteria = this.criteria.values();
             state.evidenceRefs = [
-              ...new Set(state.criteria.flatMap((c) => c.evidenceRefs)),
+              ...new Set([
+                ...state.criteria.flatMap((c) => c.evidenceRefs),
+                ...state.readings.flatMap((item) => item.evidenceRefs),
+              ]),
             ];
             state.summary = decision.summary;
             await this.client.recordSteps(this.grant, this.stepResults);
@@ -1597,9 +1719,11 @@ class Execution {
       } catch (error) {
         if (
           error instanceof AgentFault &&
-          ['WORKFLOW_INCOMPLETE', 'WORKFLOW_RECOVERY_EXHAUSTED'].includes(
-            error.code,
-          )
+          [
+            'WORKFLOW_INCOMPLETE',
+            'WORKFLOW_RECOVERY_EXHAUSTED',
+            'INTERACTION_RECOVERY_REQUIRED',
+          ].includes(error.code)
         ) {
           if (this.isSetup()) {
             const blocked = await this.environmentNotReady(error.message);
@@ -1607,7 +1731,12 @@ class Execution {
             continue;
           }
           if (++workflowRecoveries >= MAX_WORKFLOW_RECOVERIES)
-            return this.blocked(error.message, error.code);
+            return this.blocked(
+              error.message,
+              error.code === 'INTERACTION_RECOVERY_REQUIRED'
+                ? this.interactions.recoveryReason
+                : error.code,
+            );
           this.feedback = `${error.code}: ${error.message}`;
           continue;
         }
@@ -1826,6 +1955,7 @@ class Execution {
       this.current = undefined;
       this.image = undefined;
       this.feedback = null;
+      this.interactions = new InteractionProgress();
       this.settlePending = false;
       this.tracker.reset();
       this.changes = undefined;
@@ -1894,6 +2024,7 @@ class Execution {
           elapsedMs: Math.max(0, usage.elapsedMs - startUsage.elapsedMs),
         };
       }
+      state.readings = this.interactions.results();
       state.criteria = this.criteria.values();
       state.reasonCode = report.executionDetails?.reasonCode ?? null;
       if (report.executionDisposition !== 'EXECUTED') {
@@ -1950,7 +2081,12 @@ class Execution {
       }
       state.summary = report.summary;
       state.criteria = report.criteria;
-      state.evidenceRefs = [...this.completionEvidence];
+      state.evidenceRefs = [
+        ...new Set([
+          ...this.completionEvidence,
+          ...state.readings.flatMap((item) => item.evidenceRefs),
+        ]),
+      ];
       state.finishedAt = new Date().toISOString();
       await this.client.recordSteps(this.grant, this.stepResults);
     }

@@ -295,6 +295,41 @@ async fn native_dom_preserves_language_and_clicks_visible_portion() {
         .await
         .unwrap();
     assert_eq!(clicks["result"]["value"], 1);
+    // 范围：真实 Chromium 区分 FAQ 与固定浮窗，关联答案只在展开后提供，隐藏子内容不能成为引文；不覆盖生产框架变体。
+    dom.call(Some(&session), "Page.navigate", json!({"url":"data:text/html,<main><section><h2>FAQ</h2><div><button aria-controls='answer' aria-expanded='false' onclick='this.setAttribute(\"aria-expanded\",\"true\");document.getElementById(\"answer\").hidden=false'>Question one</button><div id='answer' hidden>Visible answer<span hidden>Secret hidden answer</span></div></div></section><aside style='position:fixed;right:0;top:0'><button>Contact toggle</button></aside><details open><summary>Question two</summary><p>Details answer<span hidden>Hidden details</span></p><p hidden>Invisible block</p></details></main>"})).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let snapshot = dom.snapshot(target, None).await.unwrap();
+    let targets = snapshot["targets"].as_array().unwrap();
+    let faq = targets
+        .iter()
+        .find(|t| t["name"] == "Question one")
+        .unwrap();
+    assert_eq!(faq["context"]["heading"], "FAQ");
+    assert_eq!(faq["disclosure"]["visible"], false);
+    assert_eq!(faq["disclosure"]["text"], "");
+    let floating = targets
+        .iter()
+        .find(|t| t["name"] == "Contact toggle")
+        .unwrap();
+    assert_eq!(floating["context"]["heading"], "");
+    assert_eq!(floating["context"]["fixed"], true);
+    let details = targets
+        .iter()
+        .find(|t| t["name"] == "Question two")
+        .unwrap();
+    assert_eq!(details["disclosure"]["text"], "Details answer");
+    dom.act(faq["target"].as_str().unwrap(), "click", None)
+        .await
+        .unwrap();
+    let snapshot = dom.snapshot(target, None).await.unwrap();
+    let answer = snapshot["targets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "Question one")
+        .unwrap();
+    assert_eq!(answer["disclosure"]["visible"], true);
+    assert_eq!(answer["disclosure"]["text"], "Visible answer");
     // 范围：真实 Cookie 存储只清除精确站点和名字的全部路径，保留其他名字和子域；不证明生产注销效果。
     for (name, domain, path) in [
         ("locale", ".fixture.test", "/"),

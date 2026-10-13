@@ -306,6 +306,25 @@
         }
       },
       "required": ["type", "names"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "verification.environment"
+        },
+        "mode": {
+          "enum": ["guest", "configured"]
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        }
+      },
+      "required": ["type", "mode", "summary"],
+      "description": "仅共享环境准备阶段使用。依据原始 setup 与 policy 声明是否必须使用未登录访客；这是意图分类，不是登录事实证明，平台单独核实准备来源。"
     }
   ]
 }

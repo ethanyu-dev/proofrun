@@ -205,7 +205,13 @@ test(
         }
       } else await api('POST', '/v1/tasks', definition);
       const server = await modelServer((...args) =>
-        decide(...args, { execution, client }),
+        args[0].environmentReview?.required
+          ? {
+              type: 'verification.environment',
+              mode: 'configured',
+              summary: '夹具沿用已配置环境',
+            }
+          : decide(...args, { execution, client }),
       );
       const settings = {
         ...agentConfig,
@@ -314,17 +320,21 @@ test(
             release = resolve;
           });
           const { report, stored } = await run(definition, async (context) => {
-            if (context.setupPhase === 'PREPARING') {
+            if (
+              context.executionStep.stepId === 'a-verify' ||
+              (context.executionStep.stepId === 'b-setup' &&
+                context.setupPhase === 'PREPARING')
+            ) {
               if (++arrivals === 2) release();
               await both;
             }
             if (
-              context.executionStep.stepId === 'a-setup' &&
+              context.executionStep.stepId === 'b-setup' &&
               context.setupPhase === 'CHECKING'
             )
               return {
                 type: 'verification.block',
-                summary: '甲组条件无法确认',
+                summary: '乙组条件无法确认',
               };
             return {
               ...finish(context),
@@ -336,13 +346,13 @@ test(
           assert.equal(arrivals, 2);
           assert.deepEqual(
             report.steps.map((s) => s.status),
-            ['BLOCKED', 'SKIPPED', 'COMPLETED', 'COMPLETED', 'SKIPPED'],
+            ['COMPLETED', 'COMPLETED', 'BLOCKED', 'SKIPPED', 'SKIPPED'],
           );
           assert.deepEqual(stored.report.steps, report.steps);
-          assert.equal(report.steps[0].reasonCode, 'ENVIRONMENT_NOT_READY');
-          assert.equal(report.steps[2].phase, 'READY');
+          assert.equal(report.steps[2].reasonCode, 'ENVIRONMENT_NOT_READY');
+          assert.equal(report.steps[0].phase, 'READY');
           assert.equal(
-            report.criteria.find((c) => c.criterionId.startsWith('b-verify'))
+            report.criteria.find((c) => c.criterionId.startsWith('a-verify'))
               .verdict,
             'PASSED',
           );
@@ -376,7 +386,7 @@ test(
           [...node.results.values()].filter(
             (r) => r.error?.code === 'DOM_ACTION_PRECONDITION_FAILED',
           ).length,
-          3,
+          1,
         );
       });
       // 范围：真实撤权与步骤保存竞争不抹掉 DOM 根因或已验收项目；不证明生产浏览器具体故障已复现。
@@ -470,7 +480,15 @@ test(
             },
           ]);
           const executeNext = async (decide) => {
-            const model = await modelServer(decide);
+            const model = await modelServer((context, ...args) =>
+              context.environmentReview?.required
+                ? {
+                    type: 'verification.environment',
+                    mode: 'configured',
+                    summary: '夹具沿用已配置环境',
+                  }
+                : decide(context, ...args),
+            );
             const settings = {
               ...agentConfig,
               apiUrl: base,

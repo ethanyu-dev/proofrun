@@ -50,6 +50,16 @@ export async function executeProfile(
 ): Promise<VerificationReport> {
   const plan = grant.task.profilePlan!;
   const steps = grant.task.steps!;
+  if (
+    plan.environmentGateStepId &&
+    (plan.environmentGateStepId !== plan.groups[0]?.stepIds[0] ||
+      steps[0]?.stepId !== plan.environmentGateStepId ||
+      steps[0]?.type !== 'setup')
+  )
+    throw new AgentFault(
+      'INVALID_PROFILE_PLAN',
+      '共享环境门禁必须绑定第一个分组的首个 setup',
+    );
   const results = new Map<string, StepResult>(
     steps.map((step) => [
       step.stepId!,
@@ -79,6 +89,15 @@ export async function executeProfile(
   const signal = AbortSignal.any([stop, abort.signal]);
   const guard = new LeaseGuard(client, grant, signal);
   let modelIndex = 0;
+  /** 首个共享环境门禁通过前兄弟组不进入 RUNNING，禁止并发中清登录。 */
+  const gateId = plan.environmentGateStepId;
+  let releaseEnvironment!: (ready: boolean) => void;
+  const environmentReady = new Promise<boolean>((resolve) => {
+    releaseEnvironment = resolve;
+  });
+  let sharedEnvironment:
+    { mode: 'guest' | 'configured'; confirmedRevision?: number } | undefined;
+  if (!gateId) releaseEnvironment(true);
   let preparation: ReturnType<ExecutionClient['command']> | undefined;
   const allSteps = () =>
     steps.map((step) => structuredClone(results.get(step.stepId!)!));
@@ -114,6 +133,10 @@ export async function executeProfile(
       },
     };
     const scoped: ExecutionClient = {
+      profileEnvironment: () => sharedEnvironment,
+      declareEnvironment: (mode) => {
+        sharedEnvironment = { mode };
+      },
       view: async (_grant, abortSignal) =>
         project(await client.view(grant, abortSignal), active) as ExecutionView,
       heartbeat: async (_grant, abortSignal) =>
@@ -142,6 +165,22 @@ export async function executeProfile(
               ...(!cleanup ? { groupId: id } : {}),
             });
           const timing = await client.recordSteps(grant, allSteps());
+          const gate = gateId ? results.get(gateId) : undefined;
+          const confirmation = gate?.preconditions?.find(
+            (c) =>
+              c.id === 'profile-guest' &&
+              c.status === 'SATISFIED' &&
+              c.source === 'human',
+          );
+          if (sharedEnvironment && confirmation?.controlRevision !== undefined)
+            sharedEnvironment.confirmedRevision = confirmation.controlRevision;
+          if (gate?.status === 'COMPLETED' && gate.phase === 'READY')
+            releaseEnvironment(true);
+          else if (
+            gate &&
+            ['BLOCKED', 'ERROR', 'SKIPPED'].includes(gate.status)
+          )
+            releaseEnvironment(false);
           return timing ? project(timing, active) : undefined;
         }),
       command: async (
@@ -227,6 +266,11 @@ export async function executeProfile(
         ...state,
         ...(!cleanup ? { groupId: id } : {}),
       });
+    if (gateId && selected.has(gateId))
+      releaseEnvironment(
+        results.get(gateId)?.status === 'COMPLETED' &&
+          results.get(gateId)?.phase === 'READY',
+      );
     reports.push(report);
     if (!cleanup) businessReports.push(report);
     if (PROFILE_FATAL.has(report.executionDetails?.reasonCode ?? ''))
@@ -250,9 +294,16 @@ export async function executeProfile(
         try {
           while (next < plan.groups.length && !guard.signal.aborted) {
             const group = plan.groups[next++]!;
+            if (
+              gateId &&
+              !group.stepIds.includes(gateId) &&
+              !(await environmentReady)
+            )
+              continue;
             await executeGroup(group.id, group.stepIds);
           }
         } catch (error) {
+          releaseEnvironment(false);
           abort.abort(error);
           throw error;
         }

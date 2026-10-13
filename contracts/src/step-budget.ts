@@ -6,6 +6,10 @@ export const STEP_LIMIT = {
   maxActions: 10,
   maxModelCalls: 20,
 };
+/** 验证项多的步骤需要逐项交互和取证；按结构化 expected 数量增加额度，不猜测自然语言复杂度。 */
+const EXTRA_ACTIONS_PER_CRITERION = 2;
+/** 扩容仍有硬上限，循环检测与恢复次数不因额度变大而放宽。 */
+const MAX_STEP_ACTIONS = 30;
 /** 整段清理独立三分钟，不因清理步骤数量增加或人工等待而加时。 */
 export const CLEANUP_LIMIT = { ...STEP_LIMIT, timeoutMs: 180_000 };
 /** 只供在途命令、证据交付和结果落库收尾，不能用于发起新的业务操作。 */
@@ -30,22 +34,33 @@ export function compileStepBudget(
     settleMs: STEP_SETTLE_MS,
     steps: (task.steps ?? [])
       .filter((step) => !task.cleanupStepIds?.includes(step.stepId!))
-      .map((step) => ({
-        stepId: step.stepId!,
-        timeoutMs:
-          (step.wait?.durationMs ?? 0) +
-          (step.wait && !step.expected.length && step.type !== 'setup'
-            ? WAIT_EVIDENCE_MS
-            : STEP_LIMIT.timeoutMs),
-        maxActions:
-          step.wait && !step.expected.length && step.type !== 'setup'
-            ? 0
-            : STEP_LIMIT.maxActions,
-        maxModelCalls:
-          step.wait && !step.expected.length && step.type !== 'setup'
-            ? 0
-            : STEP_LIMIT.maxModelCalls * factor,
-      })) as StepBudgetPlan['steps'],
+      .map((step) => {
+        const actions =
+          step.type === 'verification'
+            ? Math.min(
+                MAX_STEP_ACTIONS,
+                STEP_LIMIT.maxActions +
+                  Math.max(0, step.expected.length - 1) *
+                    EXTRA_ACTIONS_PER_CRITERION,
+              )
+            : STEP_LIMIT.maxActions;
+        return {
+          stepId: step.stepId!,
+          timeoutMs:
+            (step.wait?.durationMs ?? 0) +
+            (step.wait && !step.expected.length && step.type !== 'setup'
+              ? WAIT_EVIDENCE_MS
+              : STEP_LIMIT.timeoutMs),
+          maxActions:
+            step.wait && !step.expected.length && step.type !== 'setup'
+              ? 0
+              : actions,
+          maxModelCalls:
+            step.wait && !step.expected.length && step.type !== 'setup'
+              ? 0
+              : Math.max(STEP_LIMIT.maxModelCalls, actions * 2) * factor,
+        };
+      }) as StepBudgetPlan['steps'],
     cleanup: {
       ...CLEANUP_LIMIT,
       maxModelCalls: CLEANUP_LIMIT.maxModelCalls * factor,
