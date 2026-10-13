@@ -253,6 +253,9 @@ export class CaseV2Service {
     return {
       caseId: id,
       status: task.state,
+      ...(task.executionOutcome
+        ? { executionOutcome: task.executionOutcome }
+        : {}),
       queueReason: task.queueReason ?? null,
       ...summarizeReport(
         task.report,

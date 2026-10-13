@@ -35,8 +35,12 @@
           },
           "comparison": {
             "anyOf": [
-              { "type": "null" },
-              { "$ref": "verification-task.schema.json#/properties/comparison" }
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "verification-task.schema.json#/properties/comparison"
+              }
             ],
             "description": "服务端保存的双跑归属；单组为 null，旧响应可缺失，不根据任务名称推测。"
           },
@@ -147,6 +151,9 @@
             "type": ["integer", "null"],
             "minimum": 0,
             "description": "报告收录的证据数量；无报告为 null，数量不表示证据仍可下载。"
+          },
+          "executionOutcome": {
+            "$ref": "execution-outcome.schema.json"
           }
         },
         "title": "TaskSummary"

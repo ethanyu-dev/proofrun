@@ -1,10 +1,15 @@
+import { taskOutcomes } from '../tasks/outcome.js';
 import { authorizeCookieCleanup } from './cookie-cleanup.js';
 import { identitySummary } from '../identities/metrics.js';
 import { authorizePreparation } from '../identities/preparation.js';
 import { allocateIdentity } from '../identities/allocation.js';
 import { sessionBudgetMs } from '@proofrun/contracts';
 import { startStepBudget, consumeStepBudget } from './step-budget.js';
-import { executionDeadline, CLEANUP_EXECUTION_MS } from './execution-time.js';
+import {
+  executionDeadline,
+  executionTimeoutCode,
+  CLEANUP_EXECUTION_MS,
+} from './execution-time.js';
 import { inlineCleanup } from '../cases/inline-cleanup.js';
 import {
   summarizeReport,
@@ -499,15 +504,20 @@ export class Coordinator {
     const executions = (
       await this.db.query(
         `SELECT e.id,e.worker_id,e.state,e.lease_expires_at,s.id AS session_id,s.node_id,s.node_runtime,
-      s.state AS session_state,s.closure_verified,e.action_count,e.control_mode,e.control_revision,e.control_reason FROM pr_executions e JOIN pr_sessions s ON s.execution_id=e.id WHERE e.task_id=$1`,
+      s.state AS session_state,s.closure_verified,s.close_reason,e.action_count,e.control_mode,e.control_revision,e.control_reason FROM pr_executions e JOIN pr_sessions s ON s.execution_id=e.id WHERE e.task_id=$1`,
         [id],
       )
     ).rows;
     const cleanup = task.definition.caseV2Definition
       ? await this.caseCleanup(id)
       : null;
+    const outcome = (await taskOutcomes(this.db, [id])).get(id);
     return {
       ...task,
+      ...(outcome ? { executionOutcome: outcome } : {}),
+      ...(!['RUNNING', 'QUEUED'].includes(task.state) && task.report?.steps
+        ? { stepResults: task.report.steps }
+        : {}),
       ...summarizeReport(
         task.report,
         task.definition.acceptanceCriteria.map((c) => c.id),
@@ -1276,9 +1286,7 @@ export class Coordinator {
           client,
           context,
           'TIMED_OUT',
-          context.cleanup_deadline_at
-            ? 'CLEANUP_DEADLINE_EXCEEDED'
-            : 'TASK_DEADLINE',
+          executionTimeoutCode(context, 'TASK_DEADLINE'),
         );
         context.task_state = 'TIMED_OUT';
       }
@@ -1663,9 +1671,19 @@ export class Coordinator {
         'CLOSURE_MISMATCH',
         'Closure identity or state mismatch',
       );
+    // 原始关闭原因独立于清理结果持久化；未知旧节点保留空值。
+    await client.query(
+      'UPDATE pr_sessions SET close_reason=COALESCE(close_reason,$2) WHERE id=$1',
+      [context.session_id, event.closeReason ?? null],
+    );
     if (context.closure_verified) return;
     if (context.task_state === 'RUNNING')
-      await stopExecution(client, context, 'ERROR', 'SESSION_ENDED');
+      await stopExecution(
+        client,
+        context,
+        'ERROR',
+        event.closeReason ?? 'SESSION_ENDED',
+      );
     if (event.closureVerified) await releaseSession(client, context);
     else
       await client.query(
@@ -1694,7 +1712,7 @@ export class Coordinator {
     );
     const expired = await this.db.query(
       `SELECT e.id FROM pr_executions e JOIN pr_tasks t ON t.id=e.task_id
-      WHERE e.state IN ('STARTING','RUNNING') AND (e.lease_expires_at<=clock_timestamp() OR t.cleanup_deadline_at<=clock_timestamp() OR (e.control_mode='AUTO' AND t.deadline_at<=clock_timestamp())) LIMIT $1`,
+      WHERE e.state IN ('STARTING','RUNNING') AND (e.lease_expires_at<=clock_timestamp() OR t.cleanup_deadline_at<=clock_timestamp() OR (e.control_mode<>'AUTO' AND e.human_deadline_at<=clock_timestamp()) OR (e.control_mode='AUTO' AND t.deadline_at<=clock_timestamp())) LIMIT $1`,
       [BATCH_SIZE],
     );
     for (const row of expired.rows)
@@ -1706,9 +1724,7 @@ export class Coordinator {
             client,
             context,
             'TIMED_OUT',
-            context.cleanup_deadline_at
-              ? 'CLEANUP_DEADLINE_EXCEEDED'
-              : 'TASK_DEADLINE_EXCEEDED',
+            executionTimeoutCode(context),
           );
         else if (context.lease_expires_at.getTime() <= Date.now())
           await stopExecution(client, context, 'ERROR', 'WORKER_LEASE_EXPIRED');

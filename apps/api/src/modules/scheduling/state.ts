@@ -40,6 +40,9 @@ export interface ExecutionContext {
   control_mode: 'AUTO' | 'REQUESTED' | 'HUMAN';
   control_revision: number;
   control_reason: string | null;
+  /** 独立人工等待时钟；为空的历史记录不推断超时。 */
+  human_requested_at?: Date | null;
+  human_deadline_at?: Date | null;
   /** 会话创建后身份不可复用。 */
   session_id: string;
   /** 本机浏览器资源的创建、活动、清理或隔离状态。 */
@@ -63,7 +66,7 @@ export async function executionContext(
 ): Promise<ExecutionContext> {
   const result = await client.query<ExecutionContext>(
     `
-    SELECT e.id,e.task_id,e.token_hash,e.lease_expires_at,e.state AS execution_state,e.action_count,e.budget_state,e.control_mode,e.control_revision,e.control_reason,
+    SELECT e.id,e.task_id,e.token_hash,e.lease_expires_at,e.state AS execution_state,e.action_count,e.budget_state,e.control_mode,e.control_revision,e.control_reason,e.human_requested_at,e.human_deadline_at,
       t.definition,t.state AS task_state,t.deadline_at,t.cleanup_deadline_at,
       s.id AS session_id,s.state AS session_state,s.node_id,s.node_epoch,s.lease_id,s.fence,s.closure_verified
     FROM pr_executions e JOIN pr_tasks t ON t.id=e.task_id JOIN pr_sessions s ON s.execution_id=e.id

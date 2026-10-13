@@ -17,6 +17,9 @@ pub struct Store {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 /// 会话的持久创建意图及关闭身份，供崩溃恢复核实原进程范围。
 pub struct SessionRecord {
+    /// 首次关闭触发原因；旧 SQLite 记录缺失时保持未知，恢复过程不得覆盖已有原因。
+    #[serde(default)]
+    pub close_reason: Option<String>,
     /// 控制面分配且不可复用的会话身份。
     pub session_id: String,
     /// 此次启动专用的 systemd unit 名。
@@ -201,12 +204,15 @@ impl Store {
             )?;
             if matches!(record.state.as_str(), "CLOSED" | "QUARANTINED") {
                 let id = format!("session:{}:{}", record.session_id, record.state);
-                let event = serde_json::json!({
+                let mut event = serde_json::json!({
                     "type": "session.closed", "messageId": id,
                     "sessionId": record.session_id, "nodeEpoch": record.node_epoch,
                     "leaseId": record.lease_id, "fence": record.fence,
                     "state": record.state, "closureVerified": record.state == "CLOSED"
                 });
+                if let Some(reason) = &record.close_reason {
+                    event["closeReason"] = serde_json::json!(reason);
+                }
                 tx.execute(
                     "INSERT OR IGNORE INTO outbox VALUES(?,?)",
                     params![id, event.to_string()],
@@ -274,5 +280,37 @@ impl Store {
             Ok(())
         })
         .await
+    }
+}
+
+#[cfg(test)]
+mod closure_tests {
+    use super::*;
+
+    // 范围：SQLite 持久化、事件重送与旧记录兼容；不启动真实 systemd 或浏览器。
+    #[tokio::test]
+    async fn closure_reason_survives_store_restart_and_legacy_records_remain_unknown() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("node.db");
+        let legacy = serde_json::json!({"session_id":"session", "unit":"fixture", "boot_id":"boot", "cgroup":null, "invocation":null, "state":"ACTIVE", "launch_id":"launch", "lease_id":"lease", "fence":1, "node_epoch":"epoch"});
+        let mut record: SessionRecord = serde_json::from_value(legacy).unwrap();
+        assert_eq!(record.close_reason, None);
+        let store = Store::open(&path).unwrap();
+        store.reserve(record.clone(), 1).await.unwrap();
+        record.state = "CLOSING".into();
+        record.close_reason = Some("NODE_SHUTDOWN".into());
+        store.save_session(record.clone()).await.unwrap();
+        drop(store);
+        let store = Store::open(&path).unwrap();
+        assert_eq!(
+            store.sessions().await.unwrap()[0].close_reason,
+            record.close_reason
+        );
+        record.state = "CLOSED".into();
+        store.save_session(record.clone()).await.unwrap();
+        store.save_session(record).await.unwrap();
+        let events = store.pending().await.unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["closeReason"], "NODE_SHUTDOWN");
     }
 }

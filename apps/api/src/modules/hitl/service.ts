@@ -32,6 +32,8 @@ interface Grant {
   token_hash: string;
   items: string[];
   expires_at: Date;
+  /** 与链接有效期独立的本次人工等待截止时间；旧请求可为空。 */
+  human_deadline_at: Date | null;
   completed_at: Date | null;
   control_mode: string;
   control_revision: number;
@@ -81,7 +83,7 @@ export class HitlService {
     const row = (
       await this.db.query<Grant>(
         `SELECT h.*,e.control_mode,e.control_revision,e.control_reason,
-      t.definition->'profilePlan' AS profile_plan,t.definition->'target'->>'url' AS target_url,e.state AS execution_state,e.lease_expires_at,t.id AS task_id,t.state AS task_state,t.deadline_at,
+      t.definition->'profilePlan' AS profile_plan,t.definition->'target'->>'url' AS target_url,e.state AS execution_state,e.lease_expires_at,e.human_deadline_at,t.id AS task_id,t.state AS task_state,t.deadline_at,
       s.auth_state AS auth,s.id AS session_id,s.node_id,s.node_epoch,s.lease_id,s.fence,s.state AS session_state
       FROM pr_interventions h JOIN pr_executions e ON e.id=h.execution_id JOIN pr_tasks t ON t.id=e.task_id
       JOIN pr_sessions s ON s.execution_id=e.id WHERE h.id=$1`,
@@ -93,6 +95,8 @@ export class HitlService {
   }
   private active(grant: Grant): void {
     if (
+      (grant.human_deadline_at != null &&
+        grant.human_deadline_at.getTime() <= Date.now()) ||
       grant.completed_at ||
       grant.expires_at.getTime() <= Date.now() ||
       grant.lease_expires_at.getTime() <= Date.now() ||

@@ -3,29 +3,8 @@ import type { TaskDetail } from '@proofrun/contracts';
 import { ApiClient } from '../api';
 import { ExecutionControl } from './execution-control';
 import { LivePage } from './live-page';
-import { Status } from './ui';
 
-/** 生命周期保持原值，人工等待另用明确文案呈现；终态不沿用残留的 HUMAN 模式。 */
-export function TaskExecutionStatus({ task }: { task: TaskDetail }) {
-  const execution = task.executions[0];
-  if (task.state === 'RUNNING' && execution?.state === 'RUNNING') {
-    if (execution.control_mode === 'REQUESTED')
-      return (
-        <span className="status" data-tone="warning">
-          等待执行交接
-        </span>
-      );
-    if (execution.control_mode === 'HUMAN')
-      return (
-        <span className="status" data-tone="warning">
-          等待人工处理
-        </span>
-      );
-  }
-  if (task.report?.executionDetails?.reasonCode === 'ENVIRONMENT_NOT_READY')
-    return <Status value="ENVIRONMENT_NOT_READY" />;
-  return <Status value={task.state} />;
-}
+export { TaskExecutionStatus } from './execution-outcome';
 
 /** 单组及对照组共用终态画面选择；清理最后一帧不得覆盖业务阻塞现场。 */
 export function TaskPageView({

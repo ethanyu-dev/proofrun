@@ -10,9 +10,26 @@ export function executionDeadline(context: {
   control_mode: string;
   deadline_at: Date;
   cleanup_deadline_at?: Date | null;
+  human_deadline_at?: Date | null;
 }): number {
-  if (context.cleanup_deadline_at) return context.cleanup_deadline_at.getTime();
-  return ['REQUESTED', 'HUMAN'].includes(context.control_mode)
-    ? Infinity
+  const business = ['REQUESTED', 'HUMAN'].includes(context.control_mode)
+    ? (context.human_deadline_at?.getTime() ?? Infinity)
     : context.deadline_at.getTime();
+  return Math.min(business, context.cleanup_deadline_at?.getTime() ?? Infinity);
+}
+
+/** 多个期限同时过期时使用最早截止项，避免把清理超时误报成人工超时。 */
+export function executionTimeoutCode(
+  context: Parameters<typeof executionDeadline>[0],
+  taskCode = 'TASK_DEADLINE_EXCEEDED',
+): string {
+  const deadline = executionDeadline(context);
+  if (context.cleanup_deadline_at?.getTime() === deadline)
+    return 'CLEANUP_DEADLINE_EXCEEDED';
+  if (
+    context.control_mode !== 'AUTO' &&
+    context.human_deadline_at?.getTime() === deadline
+  )
+    return 'HUMAN_INTERVENTION_TIMEOUT';
+  return taskCode;
 }

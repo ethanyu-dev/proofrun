@@ -131,6 +131,20 @@ export type NodeEvent =
        * 只有 true 才表示进程资源已确认回收，容量可以释放。
        */
       closureVerified: boolean;
+      /**
+       * 节点保存的首个关闭触发原因；旧节点可省略，不从关闭结果倒推原因。
+       */
+      closeReason?:
+        | 'SESSION_CLOSE_REQUESTED'
+        | 'NODE_SHUTDOWN'
+        | 'NODE_RESTART_RECOVERY'
+        | 'SESSION_LEASE_EXPIRED'
+        | 'SESSION_START_FAILED'
+        | 'HOST_EXITED'
+        | 'HOST_CHANNEL_CLOSED'
+        | 'SESSION_OPERATION_FAILED'
+        | 'SESSION_COMMAND_TIMEOUT'
+        | 'UNKNOWN';
     };
 
 /**

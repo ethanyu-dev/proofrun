@@ -133,6 +133,10 @@
               }
             ],
             "description": "分配会话时冻结的节点版本，升级后保留原值；历史记录未知时为 null。"
+          },
+          "close_reason": {
+            "type": ["string", "null"],
+            "description": "节点持久化的会话关闭触发原因；旧节点没有证据时为 null。"
           }
         }
       }
@@ -316,6 +320,9 @@
         "humanCompleted",
         "humanReasons"
       ]
+    },
+    "executionOutcome": {
+      "$ref": "execution-outcome.schema.json"
     }
   }
 }

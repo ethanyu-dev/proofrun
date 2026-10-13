@@ -132,6 +132,8 @@ export class SimulatedNode {
   results = new Map<string, Record<string, unknown>>();
   calls = new Map<string, number>();
   ignoreClose = false;
+  /** 只延后关闭事件，关闭命令仍确认成功，用于验证两类回执的乱序。 */
+  holdClosedEvent = false;
   unknownWrite = false;
   /** 注入旧节点的只读 DOM 故障，验证控制面与 Agent 恢复，不模拟真实 CDP。 */
   domObservationFailures = 0;
@@ -286,7 +288,7 @@ export class SimulatedNode {
     if (kind === 'browser.wait') return;
     if (kind === 'session.close') {
       if (this.ignoreClose) return;
-      this.closed(command.sessionId);
+      if (!this.holdClosedEvent) this.closed(command.sessionId);
     }
     const { command: operation, timeoutMs: _, ...identity } = command;
     const data: Record<string, unknown> =
@@ -381,12 +383,13 @@ export class SimulatedNode {
   }
 
   /** 模拟可核实关闭；其证据只用于协议测试，不代表真实进程已经终止。 */
-  closed(sessionId: string): void {
+  closed(sessionId: string, closeReason?: string): void {
     const session = this.sessions.get(sessionId);
     if (!session) return;
     this.sessions.delete(sessionId);
     this.send({
       type: 'session.closed',
+      ...(closeReason ? { closeReason } : {}),
       messageId: `session:${sessionId}:CLOSED`,
       sessionId,
       nodeEpoch: session.nodeEpoch,
