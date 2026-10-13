@@ -1,7 +1,7 @@
 import type { VerificationTask } from './generated/verification-task.js';
 
-/** 同一 profile 的模型并发上限；浏览器命令仍由节点按标签页安全串行。 */
-export const PROFILE_CONCURRENCY = 2;
+/** 优先缩短单任务耗时，最多重叠八组模型调用；浏览器命令仍按标签页安全串行。 */
+export const PROFILE_CONCURRENCY = 8;
 
 /** 按已排序的 setup 边界拆组；内部组号不会与用户步骤名或清理作用域冲突；首个 setup 前的旧式验证形成独立隐式组。 */
 export function compileProfilePlan(
@@ -19,7 +19,7 @@ export function compileProfilePlan(
   if (!groups.length) throw new Error('profile 至少需要一个步骤');
   return {
     version: 1,
-    maxConcurrency: PROFILE_CONCURRENCY,
+    maxConcurrency: Math.min(PROFILE_CONCURRENCY, groups.length),
     groups: groups as NonNullable<VerificationTask['profilePlan']>['groups'],
   };
 }

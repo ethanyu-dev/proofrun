@@ -23,9 +23,9 @@ function finish(context) {
 }
 
 /** 每个组两步且共用一个执行，页面事实仍是模拟数据，不代表真实站点环境通过。 */
-function profileGrant() {
+function profileGrant(ids = ['a', 'b']) {
   const execution = grant();
-  execution.task.steps = ['a', 'b'].flatMap((id) => [
+  execution.task.steps = ids.flatMap((id) => [
     {
       stepId: `${id}-setup`,
       type: 'setup',
@@ -56,7 +56,7 @@ function profileGrant() {
     expected: [],
   });
   execution.task.cleanupStepIds = ['cleanup'];
-  execution.task.acceptanceCriteria = ['a', 'b'].map((id) => ({
+  execution.task.acceptanceCriteria = ids.map((id) => ({
     id,
     stepId: `${id}-verify`,
     description: `检查 ${id}`,
@@ -67,8 +67,13 @@ function profileGrant() {
   return execution;
 }
 /** 验证模型 HTTP 协议及执行器调度，控制面和浏览器均为夹具。 */
-async function run(decide, prepare = () => {}, client = new FakeControl()) {
-  const execution = profileGrant();
+async function run(
+  decide,
+  prepare = () => {},
+  client = new FakeControl(),
+  ids,
+) {
+  const execution = profileGrant(ids);
   prepare(execution);
   const seen = [];
   const server = await modelServer(async (context) => {
@@ -135,6 +140,86 @@ test('同 profile 分组并发，强制 policy 检查后验证并统一清理', 
       .every((c) => c.body.record.stepId),
   );
 });
+
+// 范围：八组模型请求重叠、第九组等待名额、浏览器命令串行及清理屏障；不代表真实模型配额或 Chromium 性能。
+test('八组同时启动，第九组等待完成名额且浏览器命令不重叠', async () => {
+  const waiting = [];
+  const prepared = new Set();
+  const verified = new Set();
+  let commands = 0;
+  let maxCommands = 0;
+  const client = new FakeControl();
+  const command = client.command.bind(client);
+  client.command = async (...args) => {
+    maxCommands = Math.max(maxCommands, ++commands);
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      return await command(...args);
+    } finally {
+      commands--;
+    }
+  };
+  const ids = Array.from({ length: 9 }, (_, i) => `case-${i + 1}`);
+  const { report, seen } = await run(
+    async (context) => {
+      const id = context.executionStep.stepId;
+      if (context.setupPhase === 'PREPARING' && !context.cleanup) {
+        prepared.add(id);
+        if (id === 'case-9-setup') {
+          assert.equal(prepared.size, 9);
+          assert(verified.size > 0, '第九组必须等前面的组完成验证');
+        } else {
+          assert.equal(verified.size, 0);
+          await new Promise((resolve) => {
+            waiting.push(resolve);
+            if (waiting.length === 8) waiting.forEach((done) => done());
+          });
+        }
+      }
+      if (context.executionStep.type === 'verification') verified.add(id);
+      if (context.cleanup) assert.equal(verified.size, 9);
+      return finish(context);
+    },
+    () => {},
+    client,
+    ids,
+  );
+  assert.equal(report.verdict, 'PASSED', report.summary);
+  assert.equal(waiting.length, 8);
+  assert.equal(verified.size, 9);
+  assert.equal(maxCommands, 1);
+  assert.equal(seen.at(-1)[0], 'cleanup');
+  assert.deepEqual(
+    report.steps.map((s) => s.status),
+    Array(19).fill('COMPLETED'),
+  );
+  assert.equal(new Set(client.calls.map((c) => c.operation.tabScope)).size, 10);
+});
+
+// 范围：共享网络或跟踪证据要求整个组串行，即使计划允许八组；只检查调度，不验证网络证据内容。
+for (const kind of ['NETWORK', 'TRACE']) {
+  test(`${kind} 证据任务在高并发计划下仍逐组执行`, async () => {
+    const ids = Array.from({ length: 8 }, (_, i) => `case-${i + 1}`);
+    const visited = [];
+    await run(
+      (context) => {
+        const id = context.executionStep.stepId;
+        if (id !== 'cleanup' && visited.at(-1) !== id) visited.push(id);
+        return finish(context);
+      },
+      (execution) => {
+        assert.equal(execution.task.profilePlan.maxConcurrency, 8);
+        execution.task.acceptanceCriteria[0].evidenceKinds.push(kind);
+      },
+      new FakeControl(),
+      ids,
+    );
+    assert.deepEqual(
+      visited,
+      ids.flatMap((id) => [`${id}-setup`, `${id}-verify`]),
+    );
+  });
+}
 
 // 范围：一个组 policy 失败只跳过本组验证，阻塞证据保留且禁止清理；不验证真实业务权限。
 test('分组不符合环境不阻止兄弟组，并禁止整个 profile 的 cleanup', async () => {
