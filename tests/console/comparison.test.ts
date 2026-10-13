@@ -6,7 +6,6 @@ import type { TaskDetail } from '../../contracts/src/index.ts';
 import { ApiClient } from '../../apps/console/src/api.ts';
 import { ExecutionControl } from '../../apps/console/src/components/execution-control.tsx';
 import { ComparisonDetails } from '../../apps/console/src/components/comparison.tsx';
-import { TaskComparisonLink } from '../../apps/console/src/components/task-comparison-link.tsx';
 import { ReportDetails } from '../../apps/console/src/pages/report-detail.tsx';
 
 /** 使用控制台自身的 React，服务端渲染只验证数据归属，不启动网络或真实执行。 */
@@ -17,18 +16,10 @@ const { createElement } = require('react');
 const { renderToStaticMarkup } = require('react-dom/server');
 const api = new ApiClient('fixture-comparison-credential');
 
-// 范围：入口使用服务端关联，任一组可进入两组详情；不凭名称推测双跑，不覆盖点击和接口轮询。
-test('双跑入口从任一组进入对照详情，单组和旧响应不伪造入口', () => {
+// 范围：任一组的报告详情均标识双跑模式及耗时；静态渲染不覆盖入口点击和另一组的接口加载。
+test('双跑报告从任一组进入都标识对照模式', () => {
   for (const arm of ['llm', 'jev'] as const) {
     const task = fixture(arm);
-    const html = renderToStaticMarkup(
-      createElement(TaskComparisonLink, {
-        id: task.id,
-        comparison: task.definition.comparison,
-      }),
-    );
-    assert.match(html, /查看双跑对比/);
-    assert.ok(html.includes(`href="#/tasks/${task.id}"`));
     const report = renderToStaticMarkup(
       createElement(ReportDetails, { api, task }),
     );
@@ -36,16 +27,6 @@ test('双跑入口从任一组进入对照详情，单组和旧响应不伪造�
     assert.match(report, /LLM \/ LLM \+ JEV/);
     assert.match(report, /执行时长/);
   }
-  for (const comparison of [null, undefined])
-    assert.equal(
-      renderToStaticMarkup(
-        createElement(TaskComparisonLink, {
-          id: 'comparison-case-v2-name-only-jev',
-          comparison,
-        }),
-      ),
-      '',
-    );
 });
 
 /** 两组刻意采用不同报告、节点及清理状态，使跨组混用不能被相同夹具掩盖。 */
@@ -264,7 +245,7 @@ test('双跑通过数按项目合并，不以两组通过数相加或要求同�
   assert.deepEqual(verificationProgress([llm, jev]), { passed: 1, total: 3 });
 });
 
-// 范围：报告并列呈现对错、独立耗时及证据归属，整体仅呈现计数；静态渲染不覆盖网络加载和浏览器布局。
+// 范围：报告并列呈现勾叉、独立耗时及证据归属，整体仅呈现计数；静态渲染不覆盖网络加载和浏览器布局。
 test('报告从任一组进入都呈现相同合并计数和固定模式顺序', () => {
   const llm = fixture('llm');
   const jev = fixture('jev');
@@ -292,8 +273,8 @@ test('报告从任一组进入都呈现相同合并计数和固定模式顺序',
     assert.match(overview, />1 \/ 1</);
     assert.doesNotMatch(overview, /无法判定|未通过|当前仅展示/);
     const table = html.slice(html.indexOf('<table'), html.indexOf('</table>'));
-    assert.match(table, />对</);
-    assert.match(table, />错</);
+    assert.match(table, />✓</);
+    assert.match(table, />×</);
     assert(table.indexOf('>LLM<') < table.indexOf('>LLM + JEV<'));
     assert.match(html, /12.3 秒/);
     assert.match(html, /45.6 秒/);

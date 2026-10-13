@@ -21,7 +21,7 @@ export function ReportProgress({
   );
 }
 
-/** 对错仅描述该模式是否证实预期；未验收及证据不足通过提示保留原始含义。 */
+/** 勾叉沿用是否证实预期的归类；未验收及证据不足通过提示保留原始含义。 */
 export function CriterionStatus({
   value,
 }: {
@@ -29,7 +29,7 @@ export function CriterionStatus({
     | NonNullable<TaskDetail['report']>['criteria'][number]['verdict']
     | undefined;
 }) {
-  const label = value === 'PASSED' ? '对' : value ? '错' : '—';
+  const label = value === 'PASSED' ? '✓' : value ? '×' : '—';
   const reason =
     value === 'PASSED'
       ? '已证实符合预期'

@@ -3,7 +3,6 @@ import { useState, type FormEvent } from 'react';
 import type { TaskList } from '@proofrun/contracts';
 import { ReportProgress } from '../components/report-status';
 import { TaskRerun } from '../components/task-rerun';
-import { TaskComparisonLink } from '../components/task-comparison-link';
 import { executionModeLabel } from '../execution-mode';
 import { ApiClient } from '../api';
 import { useResource } from '../use-resource';
@@ -228,18 +227,13 @@ export function TaskListPage({
                   )}
                   <td className="task-actions-cell">
                     <div className="task-list-actions">
-                      <TaskComparisonLink
-                        id={task.id}
-                        comparison={task.comparison}
-                      />
-                      {reports ? (
-                        <a
-                          className="button button-secondary button-small"
-                          href={`#/reports/${encodeURIComponent(task.id)}`}
-                        >
-                          查看报告
-                        </a>
-                      ) : (
+                      <a
+                        className="button button-secondary button-small"
+                        href={`#/${reports ? 'reports' : 'tasks'}/${encodeURIComponent(task.id)}`}
+                      >
+                        查看详情
+                      </a>
+                      {!reports && (
                         <TaskRerun
                           api={api}
                           id={task.id}
