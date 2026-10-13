@@ -679,3 +679,33 @@ test('profile 按 setup 分组且保持原步骤身份', () => {
     ),
   );
 });
+
+// 范围：提交及重跑采用新并发、双跑计划一致、旧任务快照不被修改；不覆盖真实数据库或模型限流。
+test('多组 v2 提交和重跑最多并发八组，保留历史任务的冻结值', async () => {
+  for (const count of [5, 9]) {
+    const input = structuredClone(INPUT);
+    input.steps = Array.from({ length: count }, (_, i) => [
+      { ...INPUT.steps[1]!, stepId: `setup-${i}`, exec_order: i * 2 + 1 },
+      { ...INPUT.steps[0]!, stepId: `verify-${i}`, exec_order: i * 2 + 2 },
+    ]).flat() as VerificationCaseV2['steps'];
+    const arms = expandCaseTasks(
+      compileCase(input, { ...PROFILE, executionMode: 'parallel' }),
+    );
+    assert.equal(arms.length, 2);
+    for (const arm of arms) {
+      assert.equal(arm.profilePlan!.maxConcurrency, Math.min(count, 8));
+      assert(validateVerificationTask(arm));
+    }
+    const f = fixture();
+    await f.service.submit([input]);
+    const original = f.records.get('case-v2-case-1')!.definition;
+    original.profilePlan!.maxConcurrency = 2;
+    await f.service.rerun(input.caseId, 'new-parallelism');
+    assert.equal(original.profilePlan!.maxConcurrency, 2);
+    assert.equal(
+      f.records.get('case-v2-new-parallelism')!.definition.profilePlan!
+        .maxConcurrency,
+      Math.min(count, 8),
+    );
+  }
+});
