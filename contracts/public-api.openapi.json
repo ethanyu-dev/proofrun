@@ -343,6 +343,66 @@
       }
     },
     "schemas": {
+      "ExecutionOutcome": {
+        "title": "ExecutionOutcome",
+        "type": "object",
+        "additionalProperties": false,
+        "description": "执行原因投影；不改写生命周期与验收结论，终止原因不覆盖已确认的环境阻塞。",
+        "required": [
+          "category",
+          "reasonCode",
+          "terminationCode",
+          "detail",
+          "waitingSince",
+          "waitDeadline"
+        ],
+        "properties": {
+          "category": {
+            "enum": [
+              "QUEUED",
+              "RUNNING",
+              "COMPLETED",
+              "CANCELLED",
+              "WAITING_HUMAN",
+              "HUMAN_TIMEOUT",
+              "ENVIRONMENT_BLOCKED",
+              "EXECUTION_BLOCKED",
+              "QUEUE_TIMEOUT",
+              "EXECUTION_TIMEOUT",
+              "BUDGET_EXHAUSTED",
+              "WORKER_ERROR",
+              "NODE_ERROR",
+              "SESSION_ERROR",
+              "MODEL_ERROR",
+              "SERVICE_ERROR",
+              "BROWSER_ERROR",
+              "CLEANUP_ERROR",
+              "EXECUTION_ERROR"
+            ],
+            "description": "面向用户的执行分类，与验收结果分开。"
+          },
+          "reasonCode": {
+            "type": ["string", "null"],
+            "description": "主要原因；旧 AGENT_ERROR 可由报告具体原因细分。"
+          },
+          "terminationCode": {
+            "type": ["string", "null"],
+            "description": "控制面原始终止码，不覆盖主要环境阻塞。"
+          },
+          "detail": {
+            "type": ["string", "null"],
+            "description": "当前未完成人工请求原文，不参与自然语言分类。"
+          },
+          "waitingSince": {
+            "type": ["string", "null"],
+            "description": "本轮人工请求开始时间，历史缺失为 null。"
+          },
+          "waitDeadline": {
+            "type": ["string", "null"],
+            "description": "本轮固定等待截止时间，历史缺失为 null。"
+          }
+        }
+      },
       "IdentityCheck": {
         "type": "object",
         "additionalProperties": false,
@@ -1723,7 +1783,10 @@
                       "description": "最近一次领取检查发现的排队原因；成功领取后清空，取消或排队超时后保留。null 或缺失表示尚无诊断，不表示一定可执行。"
                     },
                     "executionMode": { "enum": ["llm", "jev"] },
-                    "taskId": { "type": "string" }
+                    "taskId": { "type": "string" },
+                    "executionOutcome": {
+                      "$ref": "#/components/schemas/ExecutionOutcome"
+                    }
                   },
                   "required": [
                     "caseId",
@@ -1740,6 +1803,9 @@
               }
             },
             "description": "双跑时返回两组独立结果；顶层字段兼容纯 LLM 主组，不代表两组汇总结论。单组任务省略。"
+          },
+          "executionOutcome": {
+            "$ref": "#/components/schemas/ExecutionOutcome"
           }
         },
         "required": [

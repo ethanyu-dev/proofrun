@@ -76,7 +76,11 @@ export async function buildApp(
     config.publicUrl,
     () => identities.catalog(),
   );
-  const control = new ExecutionControl(db, config.adminToken);
+  const control = new ExecutionControl(
+    db,
+    config.adminToken,
+    config.humanWaitMs,
+  );
   const gateway = new NodeGateway(
     (connection, event) => coordinator.receive(connection, event),
     app.log,

@@ -59,6 +59,7 @@ export type { CaseResultV2 } from './generated/case-result-v2.js';
 import type { VerificationCaseV2 } from './generated/verification-case-v2.js';
 import type { StepResult } from './generated/step-result.js';
 import type { CaseResultV2 } from './generated/case-result-v2.js';
+ajv.addSchema(readSchema('execution-outcome'), 'execution-outcome.schema.json');
 ajv.addSchema(readSchema('case-step'), 'case-step.schema.json');
 ajv.addSchema(readSchema('step-result'), 'step-result.schema.json');
 export const validateStepResults = ajv.compile<StepResult[]>({
@@ -183,3 +184,6 @@ export {
   profileGroup,
   PROFILE_CONCURRENCY,
 } from './profile-plan.js';
+
+export { executionOutcome, type ExecutionFacts } from './execution-outcome.js';
+export type { ExecutionOutcome } from './generated/execution-outcome.js';

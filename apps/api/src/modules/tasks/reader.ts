@@ -1,3 +1,4 @@
+import { taskOutcomes } from './outcome.js';
 import {
   summarizeReport,
   type ReportFacts,
@@ -98,6 +99,7 @@ export class TaskReader {
           | 'created_at'
           | 'finished_at'
           | 'archived_at'
+          | 'executionOutcome'
           | 'reportStatus'
           | 'criteriaCounts'
         > & {
@@ -144,6 +146,10 @@ export class TaskReader {
     ).rows;
     const page = rows.slice(0, limit);
     const last = page.at(-1);
+    const outcomes = await taskOutcomes(
+      this.db,
+      page.map((task) => task.id),
+    );
     return {
       tasks: page.map(
         ({
@@ -154,6 +160,7 @@ export class TaskReader {
           ...task
         }) => ({
           ...task,
+          executionOutcome: outcomes.get(task.id)!,
           ...summarizeReport(report_facts, criterion_ids, report_scope),
           archived_at: task.archived_at?.toISOString() ?? null,
           created_at: task.created_at.toISOString(),

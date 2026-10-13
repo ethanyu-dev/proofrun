@@ -9,6 +9,7 @@ use serde_json::json;
 // 构造纯数据库测试用的会话记录；unit/cgroup 字段不指向真实 systemd 资源。
 fn record(id: &str) -> SessionRecord {
     SessionRecord {
+        close_reason: None,
         session_id: id.into(),
         unit: format!("unit-{id}"),
         boot_id: "boot".into(),

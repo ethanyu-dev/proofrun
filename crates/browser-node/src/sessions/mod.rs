@@ -72,6 +72,8 @@ pub struct Session {
     live_view: bool,
     /// 关闭、到期或故障时立即撤销执行许可。
     cancel: CancellationToken,
+    /// 首个显式关闭请求的来源；停机与控制面关闭不能互相覆盖。
+    close_reason: std::sync::Mutex<Option<&'static str>>,
     /// 发送给本会话监管任务的有界浏览器操作队列。
     work: mpsc::Sender<Work>,
     /// 独立于浏览器操作的租约更新通知。
@@ -84,6 +86,12 @@ pub struct Session {
     stream_busy: Arc<Semaphore>,
 }
 impl Session {
+    /// 保存首个显式终止来源后撤权，后续关闭重试只等待原结果。
+    fn request_close(&self, reason: &'static str) {
+        self.close_reason.lock().unwrap().get_or_insert(reason);
+        self.cancel.cancel();
+    }
+
     /// 画面访问独立于操作队列，但仍受原会话许可约束。
     pub fn stream_permit(&self) -> Result<tokio::sync::OwnedSemaphorePermit> {
         if !self.live_view {
@@ -149,7 +157,7 @@ impl Session {
     }
     /// 撤销操作权限，并等待进程监管任务给出物理关闭结论。
     pub async fn close(&self) -> Result<()> {
-        self.cancel.cancel();
+        self.request_close("SESSION_CLOSE_REQUESTED");
         let mut closed = self.closed.clone();
         closed
             .wait_for(|value| value.is_some())
@@ -208,6 +216,7 @@ impl Sessions {
         let fence = command.fence;
         let launch_id = uuid::Uuid::new_v4().simple().to_string();
         let record = SessionRecord {
+            close_reason: None,
             session_id: id.clone(),
             unit: format!("proofrun-{}-{launch_id}.service", self.node_id),
             boot_id: process::boot_id()
@@ -284,6 +293,7 @@ impl Sessions {
             network_evidence,
             live_view,
             cancel: CancellationToken::new(),
+            close_reason: std::sync::Mutex::new(None),
             work,
             renew,
             closed,
@@ -337,7 +347,7 @@ impl Sessions {
         self.stopping.cancel();
         let sessions: Vec<_> = self.entries.lock().await.values().cloned().collect();
         for session in &sessions {
-            session.cancel.cancel();
+            session.request_close("NODE_SHUTDOWN");
         }
         for session in sessions {
             let _ = session.close().await;
@@ -472,7 +482,7 @@ async fn supervise(
         Ok(host) => {
             record.state = "ACTIVE".into();
             if let Err(error) = store.save_session(record.clone()).await {
-                session.cancel.cancel();
+                session.request_close("SESSION_OPERATION_FAILED");
                 let _ = opened.send(Err(Fault::unknown("STORE_FAILED", error.to_string())));
             } else {
                 let _ = opened.send(Ok(json!({"sessionId":record.session_id,"state":"ACTIVE"})));
@@ -487,32 +497,49 @@ async fn supervise(
             None
         }
     };
-    if let Some(io) = host.as_mut() {
+    let close_reason = if let Some(io) = host.as_mut() {
         let mut health = tokio::time::interval(HOST_HEALTH_INTERVAL);
         loop {
             let deadline = session.deadline.load(Ordering::SeqCst);
             tokio::select! {
-                _ = session.cancel.cancelled() => break,
-                _ = tokio::time::sleep(Duration::from_millis(deadline.saturating_sub(process::boot_ms()))) => break,
+                _ = session.cancel.cancelled() => break session.close_reason.lock().unwrap().unwrap_or("UNKNOWN"),
+                _ = tokio::time::sleep(Duration::from_millis(deadline.saturating_sub(process::boot_ms()))) => break "SESSION_LEASE_EXPIRED",
                 _ = health.tick() => {
-                    if !matches!(io.child.try_wait(), Ok(None)) { break; }
+                    if !matches!(io.child.try_wait(), Ok(None)) { break "HOST_EXITED"; }
                 },
                 changed = renew.changed() => {
-                    if changed.is_err() { break; }
-                    if send_renewal(io, &session).await.is_err() { break; }
+                    if changed.is_err() { break "HOST_CHANNEL_CLOSED"; }
+                    if send_renewal(io, &session).await.is_err() { break "HOST_CHANNEL_CLOSED"; }
                 },
                 message = work.recv() => {
-                    let Some(message) = message else { break };
+                    let Some(message) = message else { break "HOST_CHANNEL_CLOSED" };
                     let read_only_observation = matches!(&message.command, BrowserCommand::BrowserObserve { .. });
                     let result = run_operation(io, &session, &mut renew, message.command, message.deadline_ms).await;
                     // 与 host 使用同一白名单；仅采集失败不能提前回收仍可用的会话。
-                    let failed = result.as_ref().is_err_and(|fault| fault.requires_session_close(read_only_observation));
+                    let failure = result.as_ref().err()
+                        .filter(|fault| fault.requires_session_close(read_only_observation))
+                        .map(|fault| operation_close_reason(&fault.code, session.deadline.load(Ordering::SeqCst) <= message.deadline_ms && session.deadline.load(Ordering::SeqCst) <= process::boot_ms()));
                     let _ = message.result.send(result);
-                    if failed { break; }
+                    if let Some(reason) = failure { break reason; }
                 }
             }
         }
-    }
+    } else {
+        session
+            .close_reason
+            .lock()
+            .unwrap()
+            .unwrap_or("SESSION_START_FAILED")
+    };
+    let close_reason = *session
+        .close_reason
+        .lock()
+        .unwrap()
+        .get_or_insert(close_reason);
+    record
+        .close_reason
+        .get_or_insert_with(|| close_reason.to_owned());
+    tracing::info!(session_id = %record.session_id, close_reason, "session closing");
     // 任何退出路径都先撤销执行权限，再尝试通过 systemd 关闭整组后代。
     session.cancel.cancel();
     record.state = "CLOSING".into();
@@ -601,5 +628,40 @@ async fn run_operation(
                 _ => Err(Fault::unknown("HOST_IO", "host exited without a result")),
             }
         }
+    }
+}
+
+/// 操作进行中也保留租约、命令期限和监管通信的区别，不依赖错误文案。
+fn operation_close_reason(code: &str, lease_expired_first: bool) -> &'static str {
+    match code {
+        "HOST_IO" | "HOST_PROTOCOL" => "HOST_CHANNEL_CLOSED",
+        "DEADLINE_EXCEEDED" if lease_expired_first => "SESSION_LEASE_EXPIRED",
+        "DEADLINE_EXCEEDED" => "SESSION_COMMAND_TIMEOUT",
+        _ => "SESSION_OPERATION_FAILED",
+    }
+}
+
+#[cfg(test)]
+mod close_reason_tests {
+    // 范围：只验证操作失败时的原因选择；不启动 host，也不替代 Linux 租约验收。
+    #[test]
+    fn running_operation_distinguishes_lease_command_and_channel_failure() {
+        use super::operation_close_reason;
+        assert_eq!(
+            operation_close_reason("DEADLINE_EXCEEDED", true),
+            "SESSION_LEASE_EXPIRED"
+        );
+        assert_eq!(
+            operation_close_reason("DEADLINE_EXCEEDED", false),
+            "SESSION_COMMAND_TIMEOUT"
+        );
+        assert_eq!(
+            operation_close_reason("HOST_IO", false),
+            "HOST_CHANNEL_CLOSED"
+        );
+        assert_eq!(
+            operation_close_reason("DOM_ENGINE_FAILED", false),
+            "SESSION_OPERATION_FAILED"
+        );
     }
 }

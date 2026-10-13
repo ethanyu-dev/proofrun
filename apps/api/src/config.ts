@@ -15,10 +15,13 @@ const DEFAULTS = {
   workerLeaseMs: 15_000,
   nodeLeaseMs: 20_000,
   tickMs: 250,
+  humanWaitMs: 30 * 60_000,
 };
 
 /** 控制面只支持一个活动实例；队列、租约和消息均持久化到数据库。 */
 export interface ApiConfig {
+  /** 每次人工请求的独立等待期限；默认三十分钟，旧等待不补造截止时间。 */
+  humanWaitMs?: number;
   /** 测试身份元数据，不包含原始密码或 Cookie。 */
   identityCatalog?: IdentityCatalog;
   /** 外部元数据接口；配置与本地库二选一。 */
@@ -158,6 +161,12 @@ export function loadConfig(): ApiConfig {
       DEFAULTS.nodeLeaseMs,
       1000,
       60_000,
+    ),
+    humanWaitMs: integer(
+      'PROOFRUN_HUMAN_WAIT_MS',
+      DEFAULTS.humanWaitMs,
+      1000,
+      86_400_000,
     ),
     tickMs: integer('PROOFRUN_API_TICK_MS', DEFAULTS.tickMs, 50, 5000),
   };

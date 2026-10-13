@@ -637,6 +637,9 @@
               },
               "taskId": {
                 "type": "string"
+              },
+              "executionOutcome": {
+                "$ref": "execution-outcome.schema.json"
               }
             },
             "required": [
@@ -654,6 +657,9 @@
         }
       },
       "description": "双跑时返回两组独立结果；顶层字段兼容纯 LLM 主组，不代表两组汇总结论。单组任务省略。"
+    },
+    "executionOutcome": {
+      "$ref": "execution-outcome.schema.json"
     }
   },
   "required": [

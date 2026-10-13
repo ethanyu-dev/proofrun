@@ -3235,6 +3235,9 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
           reason: '等待用户',
           controlRevision: 0,
         });
+        const humanDeadline = (
+          await api('GET', `/v1/tasks/${definition.taskId}`)
+        ).data.executionOutcome.waitDeadline;
         const link = (await api('GET', `${adminPath}/intervention`)).data
           .intervention;
         assert.ok(Date.parse(link.expiresAt) - Date.now() > 4 * 3600000 - 5000);
@@ -3283,6 +3286,12 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         );
         const renewed = (await api('GET', `${adminPath}/intervention`)).data
           .intervention;
+        // 安全点确认及链接轮换不能延长任务人工等待期限。
+        assert.equal(
+          (await api('GET', `/v1/tasks/${definition.taskId}`)).data
+            .executionOutcome.waitDeadline,
+          humanDeadline,
+        );
         assert.notEqual(renewed.id, link.id);
         assert.notEqual(renewed.url, link.url);
         assert.ok(
@@ -3343,6 +3352,12 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         const resumed = (
           await api('GET', workerPath, undefined, execution.leaseToken)
         ).data;
+        const resumedOutcome = (
+          await api('GET', `/v1/tasks/${definition.taskId}`)
+        ).data.executionOutcome;
+        assert.equal(resumedOutcome.waitDeadline, null);
+        assert.equal(resumedOutcome.waitingSince, null);
+        assert.equal(resumedOutcome.category, 'RUNNING');
         assert.equal(resumed.controlMode, 'AUTO');
         assert.equal(resumed.actionCount, 0);
         assert.ok(
@@ -3371,6 +3386,124 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
           409,
         );
         await cleaned(definition.taskId);
+      },
+    );
+
+    // 范围：真实数据库/HTTP 验证独立人工期限、恢复边界与关闭原因；节点关闭由协议夹具模拟。
+    await suite.test(
+      '人工等待超时与提前关闭分别归类并保留环境阻塞',
+      async () => {
+        for (const ending of ['timeout', 'NODE_SHUTDOWN', 'legacy'] as const) {
+          const node = await addNode(`ending-${ending}`);
+          node.holdClosedEvent = ending === 'timeout';
+          const definition = {
+            ...task(`ending-${ending}`),
+            environment: {
+              id: 'fixture',
+              nodePool: `ending-${ending}`,
+              allowIntervention: true,
+            },
+          };
+          await submit(definition);
+          const execution = await claim();
+          await ready(execution);
+          const path = `/v1/admin/executions/${execution.id}`;
+          assert.equal(
+            (
+              await api('POST', `${path}/intervene`, {
+                type: 'execution.intervene',
+                reason: '缺少授权子账号',
+                reasonCode: 'ENVIRONMENT_NOT_READY',
+                controlRevision: 0,
+              })
+            ).status,
+            200,
+          );
+          const waiting = (await api('GET', `/v1/tasks/${definition.taskId}`))
+            .data;
+          assert.equal(waiting.executionOutcome.category, 'WAITING_HUMAN');
+          const deadline = waiting.executionOutcome.waitDeadline;
+          assert.ok(Date.parse(deadline) > Date.now() + 29 * 60_000);
+          // 重送同一交接请求不延长等待，链接刷新也不能替换这个持久时钟。
+          await api('POST', `${path}/intervene`, {
+            type: 'execution.intervene',
+            reason: '缺少授权子账号',
+            reasonCode: 'ENVIRONMENT_NOT_READY',
+            controlRevision: 0,
+          });
+          assert.equal(
+            (await api('GET', `/v1/tasks/${definition.taskId}`)).data
+              .executionOutcome.waitDeadline,
+            deadline,
+          );
+          if (ending === 'timeout') {
+            await sql.query(
+              "UPDATE pr_executions SET human_deadline_at=clock_timestamp()-interval '1 second' WHERE id=$1",
+              [execution.id],
+            );
+          } else
+            node.closed(
+              execution.sessionId,
+              ending === 'legacy' ? undefined : ending,
+            );
+          const result = await until(
+            async () =>
+              (await api('GET', `/v1/tasks/${definition.taskId}`)).data,
+            (d) => d.state !== 'RUNNING',
+          );
+          assert.equal(
+            result.executionOutcome.category,
+            ending === 'timeout' ? 'HUMAN_TIMEOUT' : 'ENVIRONMENT_BLOCKED',
+          );
+          assert.equal(
+            result.executionOutcome.reasonCode,
+            'ENVIRONMENT_NOT_READY',
+          );
+          assert.equal(
+            result.executionOutcome.terminationCode,
+            ending === 'timeout'
+              ? 'HUMAN_INTERVENTION_TIMEOUT'
+              : ending === 'legacy'
+                ? 'SESSION_ENDED'
+                : ending,
+          );
+          assert.equal(
+            result.executions[0].close_reason,
+            ending === 'NODE_SHUTDOWN' ? ending : null,
+          );
+          assert.equal(
+            (
+              await api('POST', `${path}/control`, {
+                type: 'execution.control',
+                action: 'resume',
+                controlRevision: 1,
+              })
+            ).status,
+            409,
+          );
+          const list = (
+            await api('GET', `/v1/tasks?q=${definition.taskId}`)
+          ).data.tasks.find((r: any) => r.id === definition.taskId);
+          assert.deepEqual(list.executionOutcome, result.executionOutcome);
+          assert.ok(
+            validateTaskDetail(result),
+            JSON.stringify(validateTaskDetail.errors),
+          );
+          await cleaned(definition.taskId);
+          if (ending === 'timeout') {
+            // 关闭命令先确认、事件后到，仍保留节点原因且不覆盖任务人工超时。
+            node.closed(execution.sessionId, 'SESSION_CLOSE_REQUESTED');
+            const closed = await until(
+              async () =>
+                (await api('GET', `/v1/tasks/${definition.taskId}`)).data,
+              (d) => d.executions[0].close_reason === 'SESSION_CLOSE_REQUESTED',
+            );
+            assert.equal(
+              closed.executionOutcome.terminationCode,
+              'HUMAN_INTERVENTION_TIMEOUT',
+            );
+          }
+        }
       },
     );
 

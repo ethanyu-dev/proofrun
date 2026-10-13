@@ -39,6 +39,9 @@ pub async fn recover_reboot(config: &NodeConfig) -> Result<Value> {
     let count = records.len();
     for mut record in records {
         record.state = "CLOSED".into();
+        record
+            .close_reason
+            .get_or_insert_with(|| "NODE_RESTART_RECOVERY".into());
         store.save_session(record).await?;
     }
     store.recover_commands().await?;
@@ -111,6 +114,7 @@ mod tests {
         };
         let store = Store::open(&root.path().join("node.db")).unwrap();
         let record = SessionRecord {
+            close_reason: None,
             session_id: "test-session".into(),
             unit: "fixture".into(),
             boot_id: "old-boot".into(),

@@ -62,6 +62,9 @@ impl Node {
                 "QUARANTINED"
             }
             .into();
+            record
+                .close_reason
+                .get_or_insert_with(|| "NODE_RESTART_RECOVERY".into());
             store.save_session(record).await?;
             if let Err(error) = closed {
                 anyhow::bail!("recovery requires attention: {error}")

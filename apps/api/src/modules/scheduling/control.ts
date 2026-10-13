@@ -12,12 +12,15 @@ import {
 
 /** 保留近期命令即可检查介入过程；完整历史仍在数据库中。 */
 const ACTIVITY_LIMIT = 100;
+/** 每次交接的默认等待上限，不使用可轮换的人工链接有效期计时。 */
+const DEFAULT_HUMAN_WAIT_MS = 30 * 60_000;
 
 /** 人工控制暂停执行时钟，恢复时重置截止时间；不新建会话或改写任务定义。 */
 export class ExecutionControl {
   constructor(
     private readonly db: Database,
     private readonly secret: string,
+    private readonly humanWaitMs = DEFAULT_HUMAN_WAIT_MS,
   ) {}
 
   /** 请求在 worker 的安全检查点暂停；已派发命令必须先取得确定结果。 */
@@ -99,6 +102,16 @@ export class ExecutionControl {
         'UPDATE pr_executions SET control_mode=$2,control_revision=$3,control_reason=$4 WHERE id=$1',
         [id, target, next, nextReason],
       );
+      if (action === 'request')
+        await client.query(
+          "UPDATE pr_executions SET human_requested_at=clock_timestamp(),human_deadline_at=clock_timestamp()+$2*interval '1 millisecond' WHERE id=$1",
+          [id, this.humanWaitMs],
+        );
+      else if (action === 'resume')
+        await client.query(
+          'UPDATE pr_executions SET human_requested_at=NULL,human_deadline_at=NULL WHERE id=$1',
+          [id],
+        );
       await client.query(
         'INSERT INTO pr_control_events(execution_id,mode,revision,reason) VALUES($1,$2,$3,$4)',
         [id, target, next, nextReason],
@@ -152,6 +165,9 @@ export class ExecutionControl {
 
   private active(context: ExecutionContext) {
     if (
+      (context.control_mode !== 'AUTO' &&
+        context.human_deadline_at != null &&
+        context.human_deadline_at.getTime() <= Date.now()) ||
       context.task_state !== 'RUNNING' ||
       context.execution_state !== 'RUNNING' ||
       context.session_state !== 'ACTIVE' ||

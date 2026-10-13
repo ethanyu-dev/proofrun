@@ -1,3 +1,7 @@
+import {
+  TaskExecutionStatus,
+  ExecutionOutcomeDetails,
+} from '../components/execution-outcome';
 import { TaskIdentity } from '../components/task-identity';
 import { useState } from 'react';
 import type { TaskDetail } from '@proofrun/contracts';
@@ -75,7 +79,7 @@ export function ReportDetails({
     return (
       <Empty title="尚未生成验证报告">
         当前执行状态：
-        <Status value={task.state} />
+        <TaskExecutionStatus task={task} />
         。执行终态本身不产生验收结论。
       </Empty>
     );
@@ -117,10 +121,11 @@ export function ReportDetails({
           <span>验证结束：{time(task.finished_at)}</span>
           <span>
             任务执行状态（含清理）：
-            <Status value={task.state} />{' '}
+            <TaskExecutionStatus task={task} />{' '}
             <Status value={report.executionDisposition} />
           </span>
         </div>
+        <ExecutionOutcomeDetails outcome={task.executionOutcome} />
         {task.archived_at && (
           <p className="report-notice">
             原始证据已于 {time(task.archived_at)}{' '}

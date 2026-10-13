@@ -1,3 +1,8 @@
+import {
+  TaskExecutionStatus,
+  ExecutionOutcomeDetails,
+  EXECUTION_REASONS,
+} from './execution-outcome';
 import { TaskIdentity } from './task-identity';
 import { NodeVersion } from './node-version';
 import { useState } from 'react';
@@ -28,7 +33,7 @@ export function TaskResources({ task }: { task: TaskDetail }) {
           <div>
             <dt>任务状态</dt>
             <dd>
-              <Status value={task.state} />
+              <TaskExecutionStatus task={task} />
             </dd>
           </div>
           <div>
@@ -84,6 +89,7 @@ export function TaskResources({ task }: { task: TaskDetail }) {
             ：{task.queueReason.message}
           </p>
         )}
+        <ExecutionOutcomeDetails outcome={task.executionOutcome} />
         {task.error && (
           <pre className="error-notice">
             {JSON.stringify(task.error, null, 2)}
@@ -115,6 +121,15 @@ export function TaskResources({ task }: { task: TaskDetail }) {
                   <dt>会话状态</dt>
                   <dd>
                     <Status value={execution.session_state} />
+                  </dd>
+                </div>
+                <div>
+                  <dt>关闭触发原因</dt>
+                  <dd>
+                    {execution.close_reason
+                      ? (EXECUTION_REASONS[execution.close_reason] ??
+                        execution.close_reason)
+                      : '未记录'}
                   </dd>
                 </div>
                 <div>

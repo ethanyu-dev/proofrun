@@ -22,7 +22,7 @@ const STATES = [
   ['COMPLETED', '执行完成'],
   ['CANCELLED', '已取消'],
   ['TIMED_OUT', '已超时'],
-  ['ERROR', '执行错误'],
+  ['ERROR', '异常结束（含阻塞）'],
 ];
 
 /** 报告列表复用任务索引；游标页面保持稳定，返回首页后继续自动刷新。 */
@@ -218,12 +218,13 @@ export function TaskListPage({
                       <td>
                         <Status
                           value={
-                            task.execution_reason_code ===
+                            task.executionOutcome?.category ??
+                            (task.execution_reason_code ===
                             'ENVIRONMENT_NOT_READY'
                               ? 'ENVIRONMENT_NOT_READY'
                               : task.execution_disposition === 'BLOCKED'
                                 ? 'BLOCKED'
-                                : task.state
+                                : task.state)
                           }
                         />
                       </td>

@@ -20,6 +20,21 @@ const LABELS: Record<string, string> = {
   CANCELLED: '已取消',
   TIMED_OUT: '已超时',
   ERROR: '执行错误',
+  WAITING_HUMAN: '等待人工处理',
+  HUMAN_TIMEOUT: '人工处理超时',
+  ENVIRONMENT_BLOCKED: '环境阻塞',
+  EXECUTION_BLOCKED: '执行受阻',
+  QUEUE_TIMEOUT: '排队超时',
+  EXECUTION_TIMEOUT: '执行超时',
+  BUDGET_EXHAUSTED: '执行预算耗尽',
+  WORKER_ERROR: '执行器异常',
+  NODE_ERROR: '节点异常',
+  SESSION_ERROR: '浏览器会话异常',
+  MODEL_ERROR: '模型服务异常',
+  SERVICE_ERROR: '服务请求异常',
+  BROWSER_ERROR: '浏览器操作异常',
+  CLEANUP_ERROR: '资源清理异常',
+  EXECUTION_ERROR: '执行异常（未分类）',
   EXECUTED: '已执行验收',
   BLOCKED: '执行受阻',
   ENVIRONMENT_NOT_READY: '不符合验证环境',
@@ -44,9 +59,16 @@ export function Status({ value }: { value: string | null | undefined }) {
       data-tone={
         value === 'PASSED'
           ? 'success'
-          : value === 'FAILED' || value === 'ERROR'
+          : value === 'FAILED' || value === 'ERROR' || value?.endsWith('_ERROR')
             ? 'danger'
             : [
+                  'WAITING_HUMAN',
+                  'HUMAN_TIMEOUT',
+                  'ENVIRONMENT_BLOCKED',
+                  'EXECUTION_BLOCKED',
+                  'QUEUE_TIMEOUT',
+                  'EXECUTION_TIMEOUT',
+                  'BUDGET_EXHAUSTED',
                   'BLOCKED',
                   'ENVIRONMENT_NOT_READY',
                   'QUARANTINED',
