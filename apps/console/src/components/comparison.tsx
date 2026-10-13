@@ -1,3 +1,4 @@
+import { verificationProgress } from '../report-presentation';
 import { useEffect, useRef, useState } from 'react';
 import type { TaskDetail, ExecutionActivity } from '@proofrun/contracts';
 import { ApiClient, errorMessage } from '../api';
@@ -13,7 +14,7 @@ import {
   TaskDefinition,
 } from './task-sections';
 import { ReportSummary } from './report-summary';
-import { ReportStatus } from './report-status';
+import { ReportProgress } from './report-status';
 
 /** 模块顺序在两列保持一致；每个模块的组件状态按任务身份独立挂载。 */
 const DETAIL_SECTIONS = [
@@ -106,7 +107,7 @@ function Arm({
         </div>
         <div>
           <span>验收结论</span>
-          <ReportStatus value={task.reportStatus} />
+          <ReportProgress counts={verificationProgress([task])} />
         </div>
       </div>
       {metrics && (

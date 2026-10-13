@@ -87,7 +87,10 @@ test('独立报告按结论和证据组织，并保留未覆盖范围', () => {
   const html = renderToStaticMarkup(
     createElement(ReportDetails, { api, task: fixture() }),
   );
-  assert(html.indexOf('failed 验收要求') < html.indexOf('passed 验收要求'));
+  const details = html.slice(html.indexOf('aria-label="逐项验收"'));
+  assert(
+    details.indexOf('failed 验收要求') < details.indexOf('passed 验收要求'),
+  );
   assert.doesNotMatch(html, /report-counts/);
   assert.doesNotMatch(html, /一项未满足要求/);
   assert.match(html, /本次报告未提供此项观察和判定/);
@@ -212,8 +215,8 @@ test('case 完成情况逐项列出业务、前置和清理，不把失败说成
     'check-2',
     'check-3',
     'check-4',
-    '未通过',
-    '未验收',
+    '错',
+    '尚无验收记录',
     '缺少团队身份',
     '未执行',
   ])
@@ -431,8 +434,8 @@ test('验证汇总列全验收项，细节和后续清理分开呈现', () => {
     'check-b',
     '提示为中文',
     '标题为中文',
-    '通过',
-    '未通过',
+    '对',
+    '错',
     '标题仍为英文',
   ])
     assert(summary.includes(text), text);

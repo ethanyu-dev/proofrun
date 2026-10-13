@@ -1,8 +1,8 @@
 import { StepReadings } from './step-readings.js';
-import { BudgetUsage, BudgetTotal } from './budget-usage';
+import { BudgetUsage } from './budget-usage';
 import type { StepResult, TaskDetail } from '@proofrun/contracts';
 import { Status } from './ui';
-import { ReportStatus } from './report-status';
+import { CriterionStatus } from './report-status';
 
 /** 汇总只摘取短原因，完整模型说明和证据放在逐项验收中。 */
 const REASON_LIMIT = 72;
@@ -49,14 +49,6 @@ export function StepCompletion({
       <div className="section-heading">
         <h2>验证汇总</h2>
       </div>
-      {task.definition.profilePlan && (
-        <p className="muted">
-          同一 profile 共 {task.definition.profilePlan.groups.length} 个 tab
-          分组，共享登录状态。人工处理期间暂停整个
-          profile；清理等待全部分组结束且环境就绪。
-        </p>
-      )}
-      <BudgetTotal task={task.definition} results={results} />
       <div className={card ? 'panel verification-summary-card' : undefined}>
         <div className="table-scroll report-table-scroll">
           <table aria-label="步骤与验收项汇总">
@@ -183,10 +175,8 @@ export function StepCompletion({
                       <td>
                         {!definition ? (
                           '—'
-                        ) : !criterion || criterion.verdict === 'SKIPPED' ? (
-                          <span className="status">未验收</span>
                         ) : (
-                          <ReportStatus value={criterion.verdict} />
+                          <CriterionStatus value={criterion?.verdict} />
                         )}
                       </td>
                       <td className="wrap">

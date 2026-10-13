@@ -40,7 +40,7 @@ export function TaskIdentity({ task }: { task: TaskDetail }) {
     IDENTITY_VERIFIED: '已核验页面身份条件',
   };
   return (
-    <section className="panel" aria-label="测试身份">
+    <section className="panel task-identity" aria-label="测试身份">
       <h2>测试身份</h2>
       <dl className="facts">
         <div>

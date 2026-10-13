@@ -1,3 +1,4 @@
+import { verificationProgress } from '../../apps/console/src/report-presentation.ts';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import test from 'node:test';
@@ -31,13 +32,9 @@ test('双跑入口从任一组进入对照详情，单组和旧响应不伪造�
     const report = renderToStaticMarkup(
       createElement(ReportDetails, { api, task }),
     );
-    assert.match(report, /当前仅展示/);
-    assert.match(report, /查看双跑对比/);
-    assert.ok(
-      report.includes(
-        arm === 'jev' ? '实验组 B（JEV + LLM）' : '对照组 A（纯 LLM）',
-      ),
-    );
+    assert.doesNotMatch(report, /当前仅展示/);
+    assert.match(report, /LLM \/ LLM \+ JEV/);
+    assert.match(report, /执行时长/);
   }
   for (const comparison of [null, undefined])
     assert.equal(
@@ -228,4 +225,110 @@ test('顶部待办区分交接与可处理状态且不再展示操作表', () =>
   assert.ok(human.includes('请登录 fixture-pair-jev'));
   assert.ok(!human.includes('请登录 fixture-pair-llm'));
   assert.ok(!human.includes('<table'));
+});
+
+// 范围：两组结果按验收身份取任一通过并去重，清理、未知和重复记录不增加通过数；不验证模型判断真实性。
+test('双跑通过数按项目合并，不以两组通过数相加或要求同时通过', () => {
+  const llm = fixture('llm');
+  const jev = fixture('jev');
+  const base = llm.definition.acceptanceCriteria[0]!;
+  for (const task of [llm, jev]) {
+    task.definition.acceptanceCriteria = [
+      base,
+      { ...base, id: 'second' },
+      { ...base, id: 'missing' },
+      { ...base, id: 'cleanup', stepId: 'cleanup' },
+    ];
+    task.definition.cleanupStepIds = ['cleanup'];
+    task.report!.criteria.push({
+      ...task.report!.criteria[0]!,
+      criterionId: 'cleanup',
+      verdict: 'PASSED',
+    });
+  }
+  jev.report!.criteria[0]!.verdict = 'FAILED';
+  jev.report!.criteria.push({
+    ...jev.report!.criteria[0]!,
+    criterionId: 'second',
+    verdict: 'PASSED',
+  });
+  assert.deepEqual(verificationProgress([llm, jev]), { passed: 2, total: 3 });
+  assert.deepEqual(verificationProgress([jev, llm]), { passed: 2, total: 3 });
+  llm.report!.criteria.push({ ...llm.report!.criteria[0]! });
+  assert.deepEqual(verificationProgress([llm, jev]), { passed: 1, total: 3 });
+  jev.report!.criteria.push({
+    ...jev.report!.criteria[0]!,
+    criterionId: 'unknown',
+    verdict: 'PASSED',
+  });
+  assert.deepEqual(verificationProgress([llm, jev]), { passed: 1, total: 3 });
+});
+
+// 范围：报告并列呈现对错、独立耗时及证据归属，整体仅呈现计数；静态渲染不覆盖网络加载和浏览器布局。
+test('报告从任一组进入都呈现相同合并计数和固定模式顺序', () => {
+  const llm = fixture('llm');
+  const jev = fixture('jev');
+  jev.report!.criteria[0]!.verdict = 'FAILED';
+  for (const [task, elapsedMs] of [
+    [llm, 12300],
+    [jev, 45600],
+  ] as const) {
+    task.report!.executionDetails = {
+      reasonCode: null,
+      model: 'fixture',
+      modelCalls: 1,
+      actions: 1,
+      elapsedMs,
+      commandIds: [],
+      promptTokens: 0,
+      completionTokens: 0,
+    };
+  }
+  for (const task of [llm, jev]) {
+    const html = renderToStaticMarkup(
+      createElement(ReportDetails, { api, task, arms: [jev, llm] }),
+    );
+    const overview = html.slice(0, html.indexOf('aria-label="验证汇总"'));
+    assert.match(overview, />1 \/ 1</);
+    assert.doesNotMatch(overview, /无法判定|未通过|当前仅展示/);
+    const table = html.slice(html.indexOf('<table'), html.indexOf('</table>'));
+    assert.match(table, />对</);
+    assert.match(table, />错</);
+    assert(table.indexOf('>LLM<') < table.indexOf('>LLM + JEV<'));
+    assert.match(html, /12.3 秒/);
+    assert.match(html, /45.6 秒/);
+    assert(html.indexOf('验证汇总') < html.indexOf('各模式验证记录'));
+    assert.match(html, /artifact-llm/);
+    assert.match(html, /artifact-jev/);
+  }
+});
+
+// 范围：未生成报告时仍按定义计总数，并只计已登记通过；不从执行状态或清理推断业务结果。
+test('运行中和零业务项目保留准确分母', () => {
+  const task = fixture('llm');
+  task.report = null;
+  assert.deepEqual(verificationProgress([task]), { passed: 0, total: 1 });
+  task.definition.acceptanceCriteria = [];
+  assert.deepEqual(verificationProgress([task]), { passed: 0, total: 0 });
+});
+
+// 范围：合并后的报告保留各模式执行异常，异常不覆盖任一模式已通过的计数；不验证真实故障触发。
+test('双跑报告保留各组执行原因且不改变合并通过数', () => {
+  const llm = fixture('llm');
+  const jev = fixture('jev');
+  jev.executionOutcome = {
+    category: 'ENVIRONMENT_BLOCKED',
+    reasonCode: 'ENVIRONMENT_NOT_READY',
+    terminationCode: 'SESSION_ENDED',
+    detail: 'JEV 组缺少指定测试账号',
+    waitingSince: null,
+    waitDeadline: null,
+  };
+  const html = renderToStaticMarkup(
+    createElement(ReportDetails, { api, task: jev, arms: [llm, jev] }),
+  );
+  assert.match(html, /环境阻塞/);
+  assert.match(html, /JEV 组缺少指定测试账号/);
+  assert.match(html, /旧节点未记录具体触发原因/);
+  assert.match(html, />1 \/ 1</);
 });
