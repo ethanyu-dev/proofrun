@@ -18,6 +18,12 @@ import {
   type IdentityMetrics,
 } from '../identity-config';
 
+/** 配置和统计分开浏览，面板保持挂载以保留未保存的配置草稿。 */
+const VIEWS = [
+  { id: 'settings', label: '身份配置' },
+  { id: 'usage', label: '使用情况' },
+] as const;
+
 /** 配置只手动刷新；统计可以轮询，不能用后台读取覆盖管理员正在编辑的草稿。 */
 export function IdentitiesPage({ api }: { api: ApiClient }) {
   const settings = useResource<IdentitySettingsView>(
@@ -33,53 +39,100 @@ export function IdentitiesPage({ api }: { api: ApiClient }) {
     '/v1/admin/identities/metrics',
   );
   const [notice, setNotice] = useState<string>();
+  const [view, setView] = useState<(typeof VIEWS)[number]['id']>('settings');
   return (
-    <>
+    <div className="identities-page">
       <PageHeader
         title="测试身份"
         description="配置登录身份、账号池与站点匹配规则，减少重复人工登录。"
       />
-      {notice && (
-        <p className="identity-notice" role="status">
-          {notice}
-        </p>
-      )}
-      <ErrorNotice message={settings.error} />
-      {!settings.data ? (
-        <Empty
-          title={settings.loading ? '正在读取身份配置…' : '身份配置读取失败'}
-        >
-          <button className="text-button" onClick={settings.refresh}>
-            重新读取
+      <div className="identity-tabs" role="tablist" aria-label="测试身份视图">
+        {VIEWS.map((item, index) => (
+          <button
+            key={item.id}
+            id={`identity-tab-${item.id}`}
+            type="button"
+            role="tab"
+            aria-selected={view === item.id}
+            aria-controls={`identity-view-${item.id}`}
+            tabIndex={view === item.id ? 0 : -1}
+            onClick={() => setView(item.id)}
+            onKeyDown={(event) => {
+              if (
+                !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)
+              )
+                return;
+              event.preventDefault();
+              const next =
+                event.key === 'Home'
+                  ? VIEWS[0]
+                  : event.key === 'End'
+                    ? VIEWS[1]
+                    : VIEWS[1 - index]!;
+              setView(next.id);
+              document.getElementById(`identity-tab-${next.id}`)?.focus();
+            }}
+          >
+            {item.label}
           </button>
-        </Empty>
-      ) : (
-        <IdentitySettingsForm
-          key={`${settings.data.revision}-${settings.updatedAt?.getTime()}`}
-          api={api}
-          settings={settings.data}
-          catalog={catalog.data?.catalog}
-          catalogError={catalog.error}
-          catalogLoading={catalog.loading}
-          edited={() => setNotice(undefined)}
-          reload={() => {
-            settings.refresh();
-            catalog.refresh();
-          }}
-          saved={() => {
-            setNotice(
-              '配置已保存，对新建和重跑的任务立即生效。正在执行的任务保持原身份计划。',
-            );
-            settings.refresh();
-            catalog.refresh();
-          }}
-          refreshed={catalog.refresh}
-        />
-      )}
-      <RefreshBar {...metrics} />
-      <ErrorNotice message={metrics.error} />
-      {metrics.data && <IdentityUsage metrics={metrics.data} />}
-    </>
+        ))}
+      </div>
+      <div
+        id="identity-view-settings"
+        role="tabpanel"
+        aria-labelledby="identity-tab-settings"
+        hidden={view !== 'settings'}
+      >
+        {notice && (
+          <p className="identity-notice" role="status">
+            {notice}
+          </p>
+        )}
+        <ErrorNotice message={settings.error} />
+        {!settings.data ? (
+          <Empty
+            title={settings.loading ? '正在读取身份配置…' : '身份配置读取失败'}
+          >
+            <button className="text-button" onClick={settings.refresh}>
+              重新读取
+            </button>
+          </Empty>
+        ) : (
+          <IdentitySettingsForm
+            key={`${settings.data.revision}-${settings.updatedAt?.getTime()}`}
+            api={api}
+            settings={settings.data}
+            catalog={catalog.data?.catalog}
+            catalogError={catalog.error}
+            catalogLoading={catalog.loading}
+            edited={() => setNotice(undefined)}
+            reload={() => {
+              settings.refresh();
+              catalog.refresh();
+            }}
+            saved={() => {
+              setNotice(
+                '配置已保存，对新建和重跑的任务立即生效。正在执行的任务保持原身份计划。',
+              );
+              settings.refresh();
+              catalog.refresh();
+            }}
+            refreshed={catalog.refresh}
+          />
+        )}
+      </div>
+      <div
+        id="identity-view-usage"
+        role="tabpanel"
+        aria-labelledby="identity-tab-usage"
+        hidden={view !== 'usage'}
+      >
+        <RefreshBar {...metrics} />
+        <ErrorNotice message={metrics.error} />
+        {metrics.data && <IdentityUsage metrics={metrics.data} />}
+        {!metrics.data && !metrics.error && <Empty title="正在读取使用情况…" />}
+      </div>
+    </div>
   );
 }
 
@@ -185,15 +238,12 @@ export function IdentitySettingsForm({
     >
       <fieldset className="task-editor" disabled={!!pending}>
         <section
-          className="panel identity-connection"
+          className="identity-section identity-connection"
           aria-labelledby="identity-connection-heading"
         >
           <div className="section-heading">
             <div>
               <h2 id="identity-connection-heading">身份库配置</h2>
-              <p className="muted">
-                保存后即时生效。外部库目录由提供方维护，页面可查看和刷新。
-              </p>
             </div>
             <span className="status">
               {dirty
@@ -203,88 +253,89 @@ export function IdentitySettingsForm({
                   : '页面配置生效中'}
             </span>
           </div>
-          <IdentityField label="配置来源">
-            <select
-              value={mode}
-              onChange={(e) => {
-                const next = e.target.value as typeof mode;
-                setMode(next);
-                setToken('');
-                if (next === 'local' && draft === null)
-                  setDraft(structuredClone(catalog ?? emptyCatalog()));
-                changed();
-              }}
-            >
-              <option value="http">外部身份库</option>
-              <option value="local">在页面维护</option>
-              <option value="environment">使用部署配置</option>
-            </select>
-          </IdentityField>
-          {mode === 'http' && (
-            <>
-              <div className="identity-form-grid">
-                <IdentityField label="外部库地址">
-                  <input
-                    required
-                    type="url"
-                    maxLength={2048}
-                    placeholder="https://identities.example.com/catalog"
-                    value={url}
-                    onChange={(e) => {
-                      setUrl(e.target.value);
-                      changed();
-                    }}
-                  />
-                </IdentityField>
-                <IdentityField
-                  label={
-                    canKeepToken ? '访问令牌（已配置，留空保留）' : '访问令牌'
-                  }
-                >
-                  <input
-                    required={!canKeepToken}
-                    type="password"
-                    maxLength={8192}
-                    autoComplete="new-password"
-                    spellCheck={false}
-                    placeholder={
-                      canKeepToken
-                        ? '输入新令牌以更新'
-                        : '填写外部库的 Bearer 令牌'
+          <div className="identity-connection-fields">
+            <IdentityField label="配置来源">
+              <select
+                value={mode}
+                onChange={(e) => {
+                  const next = e.target.value as typeof mode;
+                  setMode(next);
+                  setToken('');
+                  if (next === 'local' && draft === null)
+                    setDraft(structuredClone(catalog ?? emptyCatalog()));
+                  changed();
+                }}
+              >
+                <option value="http">外部身份库</option>
+                <option value="local">在页面维护</option>
+                <option value="environment">使用部署配置</option>
+              </select>
+            </IdentityField>
+            {mode === 'http' && (
+              <div>
+                <div className="identity-form-grid">
+                  <IdentityField label="外部库地址">
+                    <input
+                      required
+                      type="url"
+                      maxLength={2048}
+                      placeholder="https://identities.example.com/catalog"
+                      value={url}
+                      onChange={(e) => {
+                        setUrl(e.target.value);
+                        changed();
+                      }}
+                    />
+                  </IdentityField>
+                  <IdentityField
+                    label={
+                      canKeepToken ? '访问令牌（已配置，留空保留）' : '访问令牌'
                     }
-                    value={token}
-                    onChange={(e) => {
-                      setToken(e.target.value);
-                      changed();
-                    }}
-                  />
-                </IdentityField>
+                  >
+                    <input
+                      required={!canKeepToken}
+                      type="password"
+                      maxLength={8192}
+                      autoComplete="new-password"
+                      spellCheck={false}
+                      placeholder={
+                        canKeepToken
+                          ? '输入新令牌以更新'
+                          : '填写外部库的 Bearer 令牌'
+                      }
+                      value={token}
+                      onChange={(e) => {
+                        setToken(e.target.value);
+                        changed();
+                      }}
+                    />
+                  </IdentityField>
+                </div>
+                <p className="muted note">
+                  读取无密码、无 Cookie
+                  的身份目录。修改地址时须重新填写令牌；令牌不回显。
+                </p>
               </div>
-              <p className="muted note">
-                读取无密码、无 Cookie
-                的身份目录。修改地址时须重新填写令牌；令牌不回显。
+            )}
+            {mode === 'environment' && (
+              <p className="muted wrap">
+                沿用服务部署时的身份配置。
+                {settings.mode === 'environment'
+                  ? settings.source === 'http'
+                    ? ` 外部库：${settings.url}（令牌已配置）。`
+                    : ' 当前来源：本地元数据目录。'
+                  : ''}
               </p>
-            </>
-          )}
-          {mode === 'environment' && (
-            <p className="muted wrap">
-              保存后沿用服务部署时的身份配置。当前部署来源会在保存并重新读取后显示。
-              {settings.mode === 'environment'
-                ? settings.source === 'http'
-                  ? ` 外部库：${settings.url}（令牌已配置）。`
-                  : ' 当前为本地元数据目录。'
-                : ''}
-            </p>
-          )}
-          {mode === 'local' && (
-            <p className="muted">
-              在下方编辑身份、账号池与规则后统一保存。密码与 Cookie 由 Browser
-              Node 的私有登录配方或外部凭据服务管理。
-            </p>
-          )}
+            )}
+            {mode === 'local' && (
+              <p className="muted">
+                密码与 Cookie 保留在节点或外部凭据服务，目录只保存身份元数据。
+              </p>
+            )}
+          </div>
         </section>
         {mode === 'local' ? (
-          <section className="panel">
+          <section className="identity-section">
             <IdentityCatalogEditor
               catalog={draft ?? emptyCatalog()}
               change={(value) => {
@@ -294,14 +345,14 @@ export function IdentitySettingsForm({
             />
           </section>
         ) : (
-          <section className="panel">
+          <section className="identity-section">
             <div className="section-heading">
               <div>
                 <h2>当前生效目录</h2>
                 <p className="muted">
                   {dirty
                     ? '以下为已保存配置的目录，不代表上方尚未保存的草稿。'
-                    : '只读目录；选择“在页面维护”可复制已读取的目录进行编辑。'}
+                    : '已保存的身份、账号池与站点规则。'}
                 </p>
               </div>
               <button
@@ -324,13 +375,11 @@ export function IdentitySettingsForm({
             )}
           </section>
         )}
-        <div className="panel identity-save-bar">
+        <div className="identity-save-bar">
           <div>
             <ErrorNotice message={error} />
             {notice && <p role="status">{notice}</p>}
-            <p className="muted note">
-              任务需选择指定身份、账号池或自动匹配；配置目录不会更改任务的登录模式。
-            </p>
+            <p className="muted note">保存后对新建和重跑任务生效。</p>
           </div>
           <div className="page-actions">
             <button

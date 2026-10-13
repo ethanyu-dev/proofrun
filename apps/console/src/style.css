@@ -6,13 +6,66 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
 }
-/* 身份管理表单使用单列分区，连接、目录、保存反馈与统计保持同一宽度。 */
+/* 身份页采用同宽分区和紧凑控件，统计独立展示；样式不影响其他业务表单。 */
+.identity-tabs {
+  display: flex;
+  gap: 24px;
+  border-bottom: 1px solid var(--color-border);
+}
+.identity-tabs [role='tab'] {
+  padding: 12px 0;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--color-muted);
+  font-size: 14px;
+}
+.identity-tabs [aria-selected='true'] {
+  border-bottom-color: var(--color-foreground);
+  color: var(--color-foreground);
+}
+.identity-section {
+  min-width: 0;
+  padding: 20px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+.identity-settings h2,
+.identity-usage h2 {
+  font-size: 16px;
+}
+.identity-settings h3,
+.identity-usage h3 {
+  font-size: 13px;
+}
+.identity-settings p,
+.identity-usage p {
+  font-size: 13px;
+}
+.identity-settings .section-heading {
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.identity-settings .section-heading > .button,
+.identity-settings .section-heading > .status {
+  flex-shrink: 0;
+}
+.identity-settings .button {
+  min-height: 32px;
+  padding: 6px 12px;
+  font-size: 12px;
+}
+.identity-settings .text-button {
+  padding: 6px 8px;
+  font-size: 12px;
+}
 .identity-settings .task-editor {
   width: 100%;
 }
 .identity-field {
   display: grid;
-  gap: 8px;
+  gap: 5px;
   min-width: 0;
   font-size: 13px;
 }
@@ -24,6 +77,9 @@
 .identity-field select {
   width: 100%;
   min-width: 0;
+  min-height: 36px;
+  padding: 8px 10px;
+  font-size: 13px;
 }
 .identity-field textarea {
   resize: vertical;
@@ -31,44 +87,58 @@
 .identity-form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  align-items: start;
+  gap: 12px 16px;
 }
 .identity-connection {
   display: grid;
-  gap: 20px;
+  gap: 14px;
 }
 .identity-connection .section-heading {
   margin-bottom: 0;
 }
-.identity-connection > .identity-field {
-  max-width: 420px;
+.identity-connection-fields {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  align-items: center;
+  gap: 16px 24px;
+}
+.identity-connection-fields > * {
+  min-width: 0;
 }
 .identity-editor {
   display: grid;
-  gap: 36px;
+  gap: 24px;
+}
+.identity-editor > section + section {
+  padding-top: 20px;
+  border-top: 1px solid var(--color-border);
+}
+.identity-entry > .identity-form-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 .identity-entry {
   display: grid;
-  gap: 20px;
+  gap: 12px;
   min-width: 0;
   margin: 0 0 16px;
-  padding: 20px;
+  padding: 14px 16px;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-control);
+  border-radius: 6px;
 }
 .identity-entry legend {
   font-size: 14px;
   padding: 0 8px;
 }
 .identity-entry details > div {
-  margin-top: 16px;
+  margin-top: 12px;
 }
 .identity-entry > .text-button {
   justify-self: end;
 }
 .identity-checks {
   display: grid;
-  gap: 12px;
+  gap: 8px;
 }
 .identity-check-row {
   display: grid;
@@ -92,17 +162,22 @@
   gap: 12px 24px;
 }
 .identity-empty {
-  padding: 16px;
-  background: var(--color-surface);
-  border-radius: var(--radius-control);
+  padding: 8px 0;
 }
 .identity-save-bar {
-  display: grid;
-  gap: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 24px;
+  padding: 16px 0;
+}
+.identity-save-bar > div {
+  min-width: 0;
 }
 .identity-save-bar .page-actions {
-  justify-content: flex-start;
+  justify-content: flex-end;
   flex-wrap: wrap;
+  gap: 8px;
 }
 .identity-notice {
   margin-bottom: 20px;
@@ -112,27 +187,58 @@
 }
 .identity-catalog-summary {
   display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  align-items: start;
   gap: 16px;
 }
 .identity-catalog-summary .table-scroll,
 .identity-usage .table-scroll {
   overflow-x: auto;
+  min-width: 0;
 }
 .identity-catalog-summary table {
   min-width: 640px;
 }
-.identity-catalog-summary h3:not(:first-child),
+.identity-catalog-summary h3 {
+  padding-top: 2px;
+}
 .identity-usage h3 {
-  margin-top: 24px;
+  margin-top: 20px;
+}
+.identity-catalog-summary th,
+.identity-catalog-summary td,
+.identity-usage th,
+.identity-usage td {
+  padding: 12px;
 }
 .identity-catalog-summary td,
 .identity-usage td {
   overflow-wrap: anywhere;
 }
 .identity-usage .table-scroll {
-  margin-top: 12px;
+  margin-top: 8px;
+}
+.identity-usage .facts {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin: 16px 0 0;
+  padding: 16px 0;
+  border-block: 1px solid var(--color-border);
+}
+.identity-usage .facts dt {
+  margin-bottom: 6px;
+}
+.identity-usage .facts dd {
+  font-size: 18px;
 }
 @media (max-width: 900px) {
+  .identity-entry > .identity-form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .identity-save-bar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
   .identity-check-row,
   .identity-check-row:has(.identity-field:nth-child(3):last-of-type) {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -140,16 +246,31 @@
 }
 @media (max-width: 600px) {
   .identity-form-grid,
+  .identity-entry > .identity-form-grid,
+  .identity-connection-fields,
   .identity-check-row,
   .identity-check-row:has(.identity-field:nth-child(3):last-of-type) {
     grid-template-columns: minmax(0, 1fr);
   }
   .identity-settings .section-heading {
-    flex-direction: column;
+    align-items: flex-start;
     gap: 12px;
   }
   .identity-entry {
     padding: 12px;
+  }
+  .identity-catalog-summary {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+  .identity-catalog-summary h3:not(:first-child) {
+    margin-top: 12px;
+  }
+  .identity-save-bar .page-actions {
+    justify-content: flex-start;
+  }
+  .identity-usage .facts {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 * {
@@ -407,6 +528,38 @@ input::placeholder,
 textarea::placeholder {
   color: var(--color-muted);
 }
+/* 保留原生选项菜单与键盘操作，仅统一闭合控件及箭头，给文字预留独立空间。 */
+select {
+  padding-block: 10px;
+}
+select:not([multiple]):not([size]),
+select[size='1'] {
+  appearance: none;
+  padding-inline-end: 36px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 20px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--color-muted) 50%),
+    linear-gradient(135deg, var(--color-muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 18px) center,
+    calc(100% - 13px) center;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+  cursor: pointer;
+}
+select:hover:not(:disabled) {
+  border-color: var(--color-muted);
+}
+select:focus-visible {
+  outline: 2px solid var(--color-foreground);
+  outline-offset: 2px;
+}
+select:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
 textarea {
   width: 100%;
   resize: vertical;
@@ -452,6 +605,30 @@ label {
   gap: 8px;
   color: var(--color-muted);
   font-size: 12px;
+}
+.refresh-updated {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.refresh-time {
+  display: inline-block;
+  width: 19ch;
+  flex: none;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+.refresh-bar .text-button {
+  flex: 0 0 52px;
+  width: 52px;
+  height: 32px;
+  padding: 6px 12px;
+}
+/* 自动轮询仍禁止重复请求，但不改变文案和明暗，避免每轮产生闪动。 */
+.refresh-bar .text-button:disabled {
+  opacity: 1;
 }
 .table-scroll {
   overflow-x: auto;
@@ -502,6 +679,29 @@ tbody tr:hover {
 }
 .date-cell {
   white-space: nowrap;
+}
+/* 操作列按完整按钮宽度保留空间，窄屏由表格横向滚动承接，不堆叠操作。 */
+.task-actions-cell {
+  width: 1%;
+}
+.task-list-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  gap: 6px;
+}
+.task-list-actions > * {
+  flex: 0 0 auto;
+}
+.task-list-actions .button {
+  min-height: 32px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+.task-list-actions .task-rerun .error-notice {
+  max-width: 210px;
+  margin: 6px 0 0;
+  white-space: normal;
 }
 .status {
   display: inline-flex;
@@ -910,10 +1110,12 @@ summary {
 .node-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-items: start;
+  align-items: stretch;
   gap: 20px;
 }
 .node-card {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   background: var(--color-surface);
   margin: 0;
@@ -949,7 +1151,7 @@ summary {
   font-size: 11px;
 }
 .node-runtime {
-  margin: 0 0 20px;
+  margin: 0;
 }
 .node-runtime dt {
   color: var(--color-muted);
@@ -1094,6 +1296,8 @@ summary {
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 8px 16px;
+  /* 同行卡片随最长内容等高，剩余空间留在页脚上方，心跳与操作保持底部对齐。 */
+  margin-top: auto;
   padding-top: 12px;
   border-top: 1px solid var(--color-border);
 }
@@ -1513,7 +1717,7 @@ summary {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 22px 22px 0;
+  padding: 20px 22px;
   gap: 12px;
 }
 .comparison-arm-controls {
@@ -1525,35 +1729,68 @@ summary {
   min-width: 0;
 }
 .execution-intervention {
-  padding: 12px;
+  padding: 14px 16px;
   border: 1px solid var(--color-border-strong);
-  border-radius: 10px;
-  background: #fbf3e5;
+  border-radius: 8px;
+  background: var(--color-warning-surface);
   font-size: 13px;
   margin-bottom: 16px;
 }
-.execution-intervention p {
-  margin: 6px 0;
+.execution-intervention-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
 }
-.execution-intervention .note {
-  display: block;
-  margin-top: 6px;
+.execution-intervention-heading > strong {
+  font-size: 13px;
 }
-.comparison-arm-controls .execution-intervention {
+.execution-intervention-link {
+  min-width: 0;
+  max-width: 100%;
+}
+.execution-intervention-link .button {
+  min-height: 32px;
+  padding: 6px 12px;
+  font-size: 12px;
+}
+.execution-intervention-link .error-notice {
   max-width: 280px;
-  margin-bottom: 0;
+  margin: 0 0 8px;
+  padding: 8px;
+}
+.execution-intervention-reason {
+  margin-top: 8px;
+}
+.execution-intervention-reason p {
+  line-height: 1.75;
+  white-space: pre-wrap;
+}
+/* 收起状态只限制可见行数，展开和辅助技术仍可读取完整交接原因。 */
+.execution-intervention-reason [data-collapsed='true'] {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+.execution-intervention-reason .text-button {
+  padding: 4px 0;
+  margin-top: 4px;
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.comparison-arm > .execution-intervention {
+  margin: 0 22px 20px;
 }
 .comparison-arm-heading h3 {
-  margin: 5px 0 0;
+  margin: 0;
   font-size: 23px;
 }
-.comparison-arm-label {
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  color: var(--color-muted);
-}
-.comparison-jev {
-  border-top: 3px solid #66806a;
+/* 与组内摘要和操作栏对齐，保留提示本身的内边距，避免错误背景贴住外框。 */
+.comparison-arm > .error-notice {
+  margin: 12px 22px 20px;
 }
 .comparison-description {
   padding: 0 22px;
@@ -1775,9 +2012,6 @@ summary {
   overflow: hidden;
   scroll-margin-top: 24px;
 }
-.comparison-detail-arm.comparison-jev {
-  border-top: 3px solid #66806a;
-}
 .comparison-detail-heading {
   display: grid;
   gap: 8px;
@@ -1867,10 +2101,10 @@ summary {
   }
 }
 
-/* 验证报告沿用全局语义变量；结论、验收依据、原始证据按阅读顺序呈现。 */
+/* 报告宽度由页面容器统一约束，与标题和任务详情保持左右对齐。 */
 .verification-report {
-  max-width: 1120px;
-  margin-inline: auto;
+  width: 100%;
+  min-width: 0;
 }
 /* 表格贴合卡片边缘，内容间距由单元格负责；窄屏仍在表格容器内横向滚动。 */
 .verification-summary-card {

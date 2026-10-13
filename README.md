@@ -49,22 +49,41 @@ deploy/                部署模板、运行维护和环境验收
 
 API `/health/ready` 检查数据库并返回当前能力，其中 `executionWorkerProtocol: true` 表示支持 worker 协议，不代表模型服务可用。Node doctor 返回 `productionReady: false`；任务校验命令仍返回 `executed: false`。Node 写操作默认关闭，原因与开发测试开关见 [节点说明](crates/browser-node/README.md)。
 
-## 本机启动：Mac 与既有 Docker 开发环境
+## 本机启动：Mac + 本地 PostgreSQL
 
-当前 Mac 的 `proofrun-preview` 环境可在仓库根目录执行：
+需要 Node.js 24、pnpm 10.30.2，以及已启动的本地 PostgreSQL。在仓库根目录执行：
 
 ```sh
+pnpm install --frozen-lockfile
+# 首次创建专用数据库；已有 proofrun 库时跳过。
+createdb -h 127.0.0.1 -p 5432 -U "$(whoami)" proofrun
 pnpm dev:local
-# 原入口仍可使用：bash .proofrun/runtime/start-all.sh
 ```
 
-API、Agent、Console 直接运行在 Mac；PostgreSQL 和 Browser Node 复用已有 Docker 容器。Console 地址为 `http://127.0.0.1:5173`，HTTP API 地址为 `http://127.0.0.1:4101`，数据库沿用 `127.0.0.1:55432`。Docker 原有 4100 端口映射保留，Mac API 使用 4101 避免冲突。节点通过校验证书的本机 TLS 转发连接 API，保留原节点身份与登录状态。
+API、Agent、Console 直接运行在 Mac，默认不依赖 Docker。Console 地址为 `http://127.0.0.1:5173`，HTTP API 地址为 `http://127.0.0.1:4101`。只有 API 连接 PostgreSQL，Agent 通过 API 领取任务，Console 通过 Vite 代理访问 API。API 首次启动自动执行数据库迁移。
+
+启动前准备 `.proofrun/local.env`，数据库连接改为实际本机账号，例如当前机器为 `PROOFRUN_DATABASE_URL=postgresql://mac@127.0.0.1:5432/proofrun`。若数据库要求密码，在连接串中填写经过 URL 编码的密码。还需配置两个不同且至少 32 字符的 `PROOFRUN_ADMIN_TOKEN` / `PROOFRUN_WORKER_TOKEN`，以及 `PROOFRUN_MODEL_BASE_URL`、`PROOFRUN_MODEL_API_KEY`、`PROOFRUN_MODEL`；其余可选项见 [.env.example](.env.example)。不要将本机密钥提交到 Git。
 
 模型、密钥和数据库配置读取 `.proofrun/local.env`；case v2 配置读取 `.proofrun/case-profile.json`，首次缺失时按 `internal` 节点池、双跑模式创建；新 v2 每步独立五分钟、10 次动作、LLM 20 / JEV 40 次模型请求，cleanup 独立三分钟。后续修改这两个文件后重新运行启动命令。启动器固定本地服务地址并注入配置路径，不再读取容器的 `/var/lib/proofrun/environment.json`。
 
-启动器构建最新代码，在后台运行服务，日志为 `.proofrun/runtime/local-{api,agent,console,relay}.log`。重复运行会重启已确认属于本项目的进程，不会因自己的旧 Console 占用 5173 而失败；有运行中的任务时拒绝重启。首次切换会停用容器中的 API/Agent，并复制已有证据到本机 `.proofrun/api-artifacts`，不会清空数据库。`pnpm dev:local --no-agent` 可只验证 HTTP 接入；此时提交后应取消测试 case，再启动 Agent，避免测试任务被执行。
+启动器构建最新代码，在后台运行服务，日志为 `.proofrun/runtime/local-{api,agent,console}.log`，进程信息保存在 `.proofrun/runtime/mac-services.json`。重复运行会重启已确认属于本项目的进程；有运行中的任务时拒绝重启。`pnpm dev:local --no-agent` 可在未配置模型时只启动 API 和 Console。更换数据库不会自动迁移旧任务、报告或节点配对记录。
 
-该命令用于恢复当前已配置的 Mac 环境，需要 Docker Desktop 已运行、既有容器及其配对数据存在。全新安装按下方步骤准备 Linux 节点；服务就绪不代表模型额度可用或业务验收通过。
+浏览器任务仍需要独立的 Linux Browser Node；只启动三个服务可以使用控制台和 API，但没有在线节点时无法执行浏览器任务。既有 `proofrun-preview` Docker 环境可显式使用 `pnpm dev:local --with-preview-node` 恢复节点及 TLS 转发，此模式需要 `.proofrun/runtime/compose.yml`、既有容器和匹配数据库的配对记录；不要直接用旧节点身份连接全新数据库。服务就绪不代表模型额度可用或业务验收通过。
+
+本机节点配对完成后，可在 `.proofrun/local.env` 设置 `PROOFRUN_LOCAL_PREVIEW_NODE=true`，让 `pnpm dev:local` 同时恢复 Docker 节点。当前本地 PG 的节点配置位于 `.proofrun/runtime/local-node.toml`，使用独立 home；`capacity = 4` 与 `.proofrun/local.env` 的 `PROOFRUN_AGENT_CONCURRENCY=4` 配套，最多同时执行四个浏览器会话（双跑每个 case 使用两个会话）。
+
+需要分别在三个终端前台启动并调试时，每个终端先执行 `set -a; . .proofrun/local.env; set +a`，再分别执行：
+
+```sh
+# 终端 A
+pnpm dev:api
+# 终端 B
+pnpm dev:agent
+# 终端 C：代理到本机 API 的 4101 端口。
+PROOFRUN_API_PROXY=http://127.0.0.1:4101 pnpm dev:console
+```
+
+前台方式使用 `.proofrun/local.env` 的 `PROOFRUN_API_PORT=4101`，并将 `PROOFRUN_PUBLIC_URL` 和 `PROOFRUN_CONTROL_URL` 都设为 `http://127.0.0.1:4101`。不要与后台启动方式同时运行。
 
 ## 完整启动：Linux 单机开发环境
 

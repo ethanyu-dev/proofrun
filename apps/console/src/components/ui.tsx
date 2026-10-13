@@ -1,5 +1,16 @@
 import { useEffect, useState, type ReactNode } from 'react';
 
+/** 固定日期位数并使用 24 小时制，刷新栏不随月份、日期或加载状态改变宽度。 */
+const REFRESH_TIME_FORMAT = new Intl.DateTimeFormat('zh-CN', {
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hourCycle: 'h23',
+});
+
 /** 展示文字明确区分执行状态、产品结论和资源清理状态。 */
 const LABELS: Record<string, string> = {
   PENDING: '等待执行',
@@ -108,9 +119,25 @@ export function RefreshBar({
 }) {
   return (
     <div className="refresh-bar">
-      <span>{updatedAt ? `上次读取 ${time(updatedAt)}` : '等待首次读取'}</span>
-      <button className="text-button" disabled={loading} onClick={refresh}>
-        {loading ? '读取中…' : '刷新'}
+      <span className="refresh-updated">
+        <span>上次读取</span>
+        <time
+          className="refresh-time"
+          dateTime={updatedAt?.toISOString()}
+          aria-label={updatedAt ? undefined : '尚未成功读取'}
+        >
+          {updatedAt
+            ? REFRESH_TIME_FORMAT.format(updatedAt)
+            : '----/--/-- --:--:--'}
+        </time>
+      </span>
+      <button
+        className="text-button"
+        disabled={loading}
+        aria-busy={loading}
+        onClick={refresh}
+      >
+        刷新
       </button>
     </div>
   );

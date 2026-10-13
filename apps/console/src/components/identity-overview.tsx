@@ -146,7 +146,7 @@ const STATUSES: Record<string, string> = {
 export function IdentityUsage({ metrics }: { metrics: IdentityMetrics }) {
   return (
     <section
-      className="panel identity-usage"
+      className="identity-section identity-usage"
       aria-labelledby="identity-usage-heading"
     >
       <h2 id="identity-usage-heading">使用情况</h2>

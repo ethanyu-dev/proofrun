@@ -390,12 +390,21 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
           },
         ]);
         assert.equal(submitted.status, 202, JSON.stringify(submitted));
+        // 断言失败时也撤销本用例任务，避免共享队列中的遗留任务被后续用例领取。
+        t.after(async () => {
+          await api('POST', '/v1/tasks/case-v2-identity-preparation/cancel');
+          await cleaned('case-v2-identity-preparation');
+        });
         assert.equal(await claim(true), null);
         node.identityPreparation = true;
         node.heartbeat();
-        await delay(30);
-        const execution = await claim(true);
+        // 心跳需异步提交数据库并更新网关，按实际领取结果等待，不假定 CI 在 30ms 内完成。
+        const execution = await until(
+          () => claim(true),
+          (value) => Boolean(value),
+        );
         assert.ok(execution);
+        assert.equal(execution.task.taskId, 'case-v2-identity-preparation');
         await ready(execution);
         assert.equal(execution.task.sessionPlan.candidates.length, 1);
         const operation = {
@@ -462,8 +471,6 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         const metrics = await api('GET', '/v1/admin/identities/metrics');
         assert.equal(metrics.status, 200);
         assert.equal(metrics.data.automaticReady, 1);
-        await api('POST', '/v1/tasks/case-v2-identity-preparation/cancel');
-        await cleaned('case-v2-identity-preparation');
       },
     );
     // 范围：真实 HTTP 与数据库的默认预算、并发幂等、双组领取和清理；节点为协议夹具，不验证真实模型或业务副作用。
