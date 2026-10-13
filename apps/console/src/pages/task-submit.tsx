@@ -191,7 +191,7 @@ export function TaskSubmitPage({ api }: { api: ApiClient }) {
         <div className="form-footer">
           <p className="muted">
             {version === 'v2'
-              ? '提交后进入任务列表。自动生成的 caseId 会保留在输入框中；同一 ID 只接受同一份定义。'
+              ? '单个 case 提交后进入任务详情，双跑并列展示两组；批量提交后进入任务列表。自动生成的 caseId 会保留在输入框中；同一 ID 只接受同一份定义。'
               : '同一任务 ID 只接受同一份定义。'}
             提交后可能立即开始执行。
           </p>
