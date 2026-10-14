@@ -95,6 +95,104 @@
               "pattern": "\\S",
               "maxLength": 2000
             }
+          },
+          "policyChecks": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "description", "policyIndex", "method"],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,80}$"
+                },
+                "description": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                "policyIndex": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 31
+                },
+                "method": {
+                  "enum": ["networkResponse", "renderedContent"]
+                },
+                "path": {
+                  "type": "string",
+                  "pattern": "^/[^?#]*$",
+                  "maxLength": 2000
+                },
+                "text": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000
+                },
+                "statusMin": {
+                  "type": "integer",
+                  "minimum": 100,
+                  "maximum": 599
+                },
+                "statusMax": {
+                  "type": "integer",
+                  "minimum": 100,
+                  "maximum": 599
+                }
+              },
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "method": {
+                        "const": "networkResponse"
+                      }
+                    }
+                  },
+                  "then": {
+                    "required": ["path", "statusMin", "statusMax"],
+                    "properties": {
+                      "path": {
+                        "type": "string",
+                        "pattern": "^/[^?#]*$",
+                        "maxLength": 2000
+                      },
+                      "statusMin": {
+                        "type": "integer",
+                        "minimum": 100,
+                        "maximum": 599
+                      },
+                      "statusMax": {
+                        "type": "integer",
+                        "minimum": 100,
+                        "maximum": 599
+                      }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "method": {
+                        "const": "renderedContent"
+                      }
+                    }
+                  },
+                  "then": {
+                    "required": ["text"],
+                    "properties": {
+                      "text": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 2000
+                      }
+                    }
+                  }
+                }
+              ]
+            }
           }
         },
         "required": ["url", "exec_order", "description"]

@@ -33,6 +33,8 @@ export class ExecutionControl {
     items?: string[],
     reasonCode = 'GENERAL',
     confirmedItems?: string[],
+    conditionKeys?: string[],
+    confirmedConditionKeys?: string[],
   ) {
     return this.db.transaction(async (client) => {
       const context = await executionContext(client, id);
@@ -95,6 +97,34 @@ export class ExecutionControl {
           'SESSION_BUSY',
           'Wait for the current browser command to finish',
         );
+      if (
+        conditionKeys &&
+        (conditionKeys.length !== (items?.length ?? 0) ||
+          new Set(conditionKeys).size !== conditionKeys.length)
+      )
+        throw new ApiError(
+          422,
+          'INVALID_CONDITION_KEYS',
+          '条件身份必须与待办逐一对应',
+        );
+      if (action === 'resume' && confirmedConditionKeys) {
+        const pending = (
+          await client.query(
+            'SELECT condition_keys FROM pr_interventions WHERE execution_id=$1 AND revision=$2',
+            [id, revision],
+          )
+        ).rows[0]?.condition_keys as string[] | null;
+        if (
+          !pending ||
+          pending.length !== confirmedConditionKeys.length ||
+          pending.some((key) => !confirmedConditionKeys.includes(key))
+        )
+          throw new ApiError(
+            422,
+            'HITL_CONFIRMATION_REQUIRED',
+            '确认必须对应当前交接的完整条件',
+          );
+      }
       const next = revision + (action === 'acknowledge' ? 0 : 1);
       const nextReason =
         action === 'request' ? reason! : context.control_reason;
@@ -120,7 +150,7 @@ export class ExecutionControl {
       if (action === 'request') {
         const interventionId = randomUUID();
         await client.query(
-          'INSERT INTO pr_interventions(id,execution_id,revision,token_hash,items,expires_at,reason_code) VALUES($1,$2,$3,$4,$5,$6,$7)',
+          'INSERT INTO pr_interventions(id,execution_id,revision,token_hash,items,expires_at,reason_code,condition_keys) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
           [
             interventionId,
             id,
@@ -129,6 +159,7 @@ export class ExecutionControl {
             JSON.stringify(items ?? [reason!]),
             new Date(Date.now() + HITL_LINK_MS),
             reasonCode,
+            conditionKeys ? JSON.stringify(conditionKeys) : null,
           ],
         );
       } else if (action === 'resume') {
@@ -147,11 +178,15 @@ export class ExecutionControl {
             ],
           );
         await client.query(
-          'UPDATE pr_interventions SET completed_at=clock_timestamp(),confirmed_items=$3 WHERE execution_id=$1 AND revision=$2',
+          'UPDATE pr_interventions SET completed_at=clock_timestamp(),confirmed_items=$3,confirmed_condition_keys=$4,auth_revision=$5 WHERE execution_id=$1 AND revision=$2',
           [
             id,
             revision,
             confirmedItems ? JSON.stringify(confirmedItems) : null,
+            confirmedConditionKeys
+              ? JSON.stringify(confirmedConditionKeys)
+              : null,
+            context.auth_revision,
           ],
         );
       }

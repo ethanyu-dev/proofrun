@@ -222,6 +222,9 @@
             "profileTabs": {
               "type": "boolean",
               "description": "支持分组标签页及每页独立观察引用。"
+            },
+            "environmentProof": {
+              "type": "boolean"
             }
           },
           "required": [

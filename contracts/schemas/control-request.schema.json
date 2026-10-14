@@ -89,6 +89,9 @@
         },
         "profileTabsVersion": {
           "const": 1
+        },
+        "executionPlanVersion": {
+          "const": 1
         }
       },
       "required": ["type", "workerId"]
@@ -195,6 +198,15 @@
             "LOGIN_CHALLENGE_OR_REJECTED"
           ],
           "description": "稳定的人工介入原因，不依赖自由文本聚合。"
+        },
+        "conditionKeys": {
+          "type": "array",
+          "maxItems": 10,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
         }
       },
       "required": ["type", "reason"]

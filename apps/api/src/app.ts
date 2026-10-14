@@ -469,6 +469,7 @@ export async function buildApp(
       body.stepBudgetVersion,
       body.identityVersion,
       body.profileTabsVersion,
+      body.executionPlanVersion,
     );
   });
   app.get<{ Params: IdParams }>('/v1/executions/:id', (request) =>
@@ -566,6 +567,8 @@ export async function buildApp(
         body.reason,
         body.items,
         body.reasonCode,
+        undefined,
+        body.conditionKeys,
       );
     },
   );
@@ -612,6 +615,8 @@ export async function buildApp(
       body.reason,
       body.items,
       body.reasonCode,
+      undefined,
+      body.conditionKeys,
     );
   });
   app.post<{ Params: IdParams }>('/v1/executions/:id/control', (request) => {

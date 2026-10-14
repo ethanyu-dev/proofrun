@@ -42,17 +42,46 @@ curl --fail-with-body --silent --show-error \
 | expected    | 必填字符串数组；逐项验收标准。setup 可为空，verification 至少一项                                         |
 | wait        | 可选的显式等待配置：`{"durationMs":4200000}`。等待期间占用原会话并计入总预算                              |
 
-文字字段不接受纯空白，说明和数组中的字符串最多 2000 字符，policy/expected 各最多 32 项。每条 expected 的 criterionId 是 `<stepId>-expected-<原始位置+1>`，结果按此身份关联。自然语言 policy 会进入当前步骤的模型上下文；本版没有将其转换成程序强制校验规则。
+文字字段不接受纯空白，说明和数组中的字符串最多 2000 字符，policy/expected 各最多 32 项。每条 expected 的 criterionId 是 `<stepId>-expected-<原始位置+1>`，结果按此身份关联。自然语言 policy 保留原文进入模型上下文。可选 policyChecks 将指定条件绑定到固定检查，不增加 expected 或业务验收项。
 
 新任务的 setup 分为 PREPARING（执行 description 的准备操作）、CHECKING（强制核验原始 policy 与显式身份条件）、READY。准备阶段允许浏览器操作；操作完成声明只触发检查，不直接放行业务。检查不会从 description 增加条件，也不会把被测产品的资格提示当成账号角色矛盾。空 policy 仍经过新观察及显式身份条件校验。
 
-条件未满足、无法确认或准备停滞时，按未解决条件交接人工。同一条件每组只交接一次，每组最多三轮。交接期间暂停整个 profile；只有处理页逐项提交的确认才能作为该条件的人工声明。交还后重新观察，其他正在验证的 tab 先重查本组 policy，管理员直接恢复不代表确认环境。
+新计划第一次缺少完成声明时返回缺项反馈，允许在原预算内修正；再次缺失则记录 SETUP_EVIDENCE_INCOMPLETE。固定检查缺少采集、范围或响应证据时记录 POLICY_EVIDENCE_INCOMPLETE，不自动转 HITL，也不允许人工勾选代替网络事实。需要人工操作的环境问题仍按具体未解决条件交接，每个条件在同一认证版本只交接一次，每组总共最多三轮。交接暂停整个 profile；只有处理页逐项提交才形成确认。纯查看和控制权切换保留身份确认；输入、导航、Cookie 或认证准备改变 authRevision 后重新核实身份及其他 tab 的 policy。管理员直接恢复不代表确认环境。
 
 仍未就绪时记录 BLOCKED / `ENVIRONMENT_NOT_READY`，本组后续 verification 为 SKIPPED，其他 setup 分组继续执行。任一组环境未就绪时禁止 profile 的全部 cleanup；浏览器资源仍由控制面关闭回收。执行故障保留原始分类，准备或环境重查未完成同样不能放行本组验证和 profile 清理。历史冻结任务没有 profilePlan 时保持原来的整链门禁。
 
 步骤的可选 `blockage` 保存具体未解决条件、冻结时刻和当时证据引用；截图不可用时保留 `screenshotError`，不会覆盖原阻塞原因。API 校验证据归属并禁止替换已保存快照。Console 单组及对照组终态优先展示阻塞截图；旧报告只回退到同一步证据，不用 cleanup 最后一帧代替。清理截图在「后续清理」中单独展示。
 
 setup 通过后，普通 verification 步骤的 FAILED/INCONCLUSIVE、BLOCKED 或局部 ERROR 仍会记录后继续尝试独立后续步骤；每一步核实自身必要条件。取消、超时、租约失效或未知写入撤权会停止整个任务。步骤 COMPLETED 表示完成执行和结论交付，不等于普通业务验收项全部通过。
+
+## 冻结环境与证据计划
+
+新提交和重跑的 case 在 session.open 前生成 executionPlan.version=1。显式 session 优先；未指定时，仅从 setup 的 description/policy 识别无否定、无引用、无条件语气的明确访客要求。依据保存在 environment.basis，source 为 explicit / inferred / default。不能明确判断时保留 manual；明确的访客与已登录要求或显式非访客 session 冲突，返回 422 ENVIRONMENT_CONFIG_CONFLICT。此解析是保守规则，不覆盖任意自然语言；需要确定行为时显式写 `"session":{"mode":"guest"}`。
+
+访客会话不恢复也不保存登录槽。节点回执提供绑定 sessionId 的 environmentProof；缺失或显示曾恢复登录状态时，执行器报告 ENVIRONMENT_PROOF_MISSING，模型声明不能替代准备证明。没有 executionPlan 的历史冻结任务保留旧逻辑，读取不会迁移；重跑是按新规则编译的新任务，可能需要解决原定义中的环境冲突。
+
+步骤及 cleanup 可配置 policyChecks，id 在步骤内唯一，policyIndex 是原 policy 的零起始索引。同一 policy 的多个检查必须全部满足。例如：
+
+```json
+{
+  "policy": ["活动接口返回成功"],
+  "policyChecks": [
+    {
+      "id": "invite-response",
+      "description": "邀请活动接口响应成功",
+      "policyIndex": 0,
+      "method": "networkResponse",
+      "path": "/v1/activity/invite-activity-info",
+      "statusMin": 200,
+      "statusMax": 299
+    }
+  ]
+}
+```
+
+networkResponse 只接受步骤 URL 同源、当前 tab 当前主文档导航的指定 path 和状态码；不读取请求或响应正文。跨域接口需另行扩展契约。原要求只需页面呈现时，可明确使用 `method: "renderedContent", text: "原要求中的可见文案"`；不会自动降级接口要求。未观察到请求为 UNCONFIRMED，观察到不匹配状态码才为 UNSATISFIED，两者均不能宣称业务失败。
+
+executionPlan.evidenceKinds 是验收取证配置与全部步骤（含 setup、cleanup）固定检查的并集。调度器只分配给支持计划版本和所需证据的 worker/节点，能力不足继续排队。步骤 environmentHistory 保留处理原因及版本，身份结果记录 source 与 authRevision。
 
 ## 等待与平台配置
 

@@ -1,3 +1,4 @@
+import { taskEvidenceKinds } from '@proofrun/contracts';
 import { taskOutcomes } from '../tasks/outcome.js';
 import { authorizeCookieCleanup } from './cookie-cleanup.js';
 import { identitySummary } from '../identities/metrics.js';
@@ -550,6 +551,7 @@ export class Coordinator {
     stepBudgetVersion?: number,
     identityVersion?: number,
     profileTabsVersion?: number,
+    executionPlanVersion?: number,
   ) {
     const live = this.gateway.live();
     if (!live.length) return { execution: null };
@@ -563,7 +565,7 @@ export class Coordinator {
       const tasks = await client.query<{ id: string }>(
         `SELECT candidate.id FROM unnest($1::text[]) AS pool(name)
         CROSS JOIN LATERAL (SELECT id,created_at FROM pr_tasks WHERE state='QUEUED'
-          AND deadline_at>clock_timestamp() AND definition#>>'{environment,nodePool}'=pool.name AND ($3 OR NOT (definition ? 'steps')) AND ($4 OR NOT (definition ? 'stepBudget')) AND ($5 OR NOT (definition ? 'sessionPlan')) AND ($6 OR NOT (definition ? 'profilePlan'))
+          AND deadline_at>clock_timestamp() AND definition#>>'{environment,nodePool}'=pool.name AND ($3 OR NOT (definition ? 'steps')) AND ($4 OR NOT (definition ? 'stepBudget')) AND ($5 OR NOT (definition ? 'sessionPlan')) AND ($6 OR NOT (definition ? 'profilePlan')) AND ($7 OR NOT (definition ? 'executionPlan'))
           ORDER BY created_at,id LIMIT $2) candidate ORDER BY candidate.created_at,candidate.id`,
         [
           pools,
@@ -572,6 +574,7 @@ export class Coordinator {
           stepBudgetVersion === 1,
           identityVersion === 1,
           profileTabsVersion === 1,
+          executionPlanVersion === 1,
         ],
       );
       for (const candidate of tasks.rows) {
@@ -586,6 +589,7 @@ export class Coordinator {
         ).rows[0];
         if (!row) continue;
         let task = row.definition;
+        if (task.executionPlan && executionPlanVersion !== 1) continue;
         if (task.steps && !structuredSteps) continue;
         if (task.stepBudget && stepBudgetVersion !== 1) continue;
         const routedNode = resolveRoute(
@@ -853,9 +857,7 @@ export class Coordinator {
                   task.environment.allowIntervention === true ||
                   !!task.comparison,
                 ...(auth ? { authState: auth } : {}),
-                networkEvidence: task.acceptanceCriteria.some((c) =>
-                  c.evidenceKinds.includes('NETWORK'),
-                ),
+                networkEvidence: taskEvidenceKinds(task).includes('NETWORK'),
                 leaseRequestId: heartbeat.leaseRequestId,
                 leaseTtlMs: this.leaseTtl(context, heartbeat),
                 maxDurationMs: Math.min(
@@ -890,6 +892,8 @@ export class Coordinator {
   private eligible(heartbeat: Heartbeat, task: VerificationTask): boolean {
     return (
       heartbeat.pool === task.environment.nodePool &&
+      (!task.executionPlan ||
+        heartbeat.capabilities.environmentProof === true) &&
       (!task.profilePlan || heartbeat.capabilities.profileTabs === true) &&
       (!task.steps || heartbeat.limits.maxSessionMs >= sessionBudgetMs(task)) &&
       (!(task.environment.allowIntervention || task.comparison) ||
@@ -899,20 +903,14 @@ export class Coordinator {
       (!sessionAuth(task) || heartbeat.capabilities.authState === true) &&
       (!task.sessionPlan?.candidates.length ||
         heartbeat.capabilities.identityPreparation === true) &&
-      (!task.acceptanceCriteria.some((c) =>
-        c.evidenceKinds.includes('NETWORK'),
-      ) ||
+      (!taskEvidenceKinds(task).includes('NETWORK') ||
         heartbeat.capabilities.networkEvidence === true) &&
-      (!task.acceptanceCriteria.some((c) =>
-        c.evidenceKinds.includes('TRACE'),
-      ) ||
+      (!taskEvidenceKinds(task).includes('TRACE') ||
         heartbeat.capabilities.trace === true) &&
       heartbeat.capabilities.observe &&
       heartbeat.capabilities.writeActions &&
       heartbeat.capabilities.conditionWait &&
-      (!task.acceptanceCriteria.some((c) =>
-        c.evidenceKinds.includes('SCREENSHOT'),
-      ) ||
+      (!taskEvidenceKinds(task).includes('SCREENSHOT') ||
         heartbeat.capabilities.screenshot)
     );
   }
@@ -996,15 +994,37 @@ export class Coordinator {
           [id, context.control_revision - 1],
         )
       ).rows[0];
+      const proof = (
+        await client.query(
+          "SELECT result->'data'->'environmentProof' AS proof FROM pr_commands WHERE execution_id=$1 AND kind='session.open' AND result->>'operationStatus'='SUCCEEDED'",
+          [id],
+        )
+      ).rows[0]?.proof;
+      const confirmations = context.definition.executionPlan
+        ? (
+            await client.query(
+              'SELECT confirmed_condition_keys FROM pr_interventions WHERE execution_id=$1 AND auth_revision=$2 AND completed_at IS NOT NULL AND confirmed_condition_keys IS NOT NULL',
+              [id, context.auth_revision],
+            )
+          ).rows.flatMap((row) => row.confirmed_condition_keys as string[])
+        : [];
       return {
-        ...(confirmation
+        ...(confirmation || confirmations.length
           ? {
               humanConfirmation: {
                 revision: context.control_revision,
-                items: confirmation.confirmed_items,
+                items: confirmation?.confirmed_items ?? [],
+                ...(context.definition.executionPlan
+                  ? {
+                      conditionKeys: [...new Set(confirmations)],
+                      authRevision: context.auth_revision,
+                    }
+                  : {}),
               },
             }
           : {}),
+        ...(proof ? { environmentProof: proof } : {}),
+        authRevision: context.auth_revision,
         id,
         taskId: context.task_id,
         state: context.execution_state,
@@ -1214,6 +1234,22 @@ export class Coordinator {
           executionDeadline(context) - Date.now(),
         ),
       );
+      // 人工点击、输入、导航的身份影响无法可靠推断；只读观察、滚动、保存快照不改变认证版本。
+      const authChanged =
+        [
+          'browser.cookies.set',
+          'browser.cookies.clear',
+          'browser.identity.prepare',
+        ].includes(operation.type) ||
+        (actor === 'HUMAN' &&
+          ((operation.type === 'browser.input' &&
+            operation.action !== 'scroll') ||
+            operation.type === 'browser.act'));
+      if (context.definition.executionPlan && authChanged)
+        await client.query(
+          'UPDATE pr_executions SET auth_revision=auth_revision+1 WHERE id=$1',
+          [id],
+        );
       await insertCommand(
         client,
         id,

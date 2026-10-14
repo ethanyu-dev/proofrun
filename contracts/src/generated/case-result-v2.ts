@@ -569,12 +569,13 @@ export interface StepResult {
     id: string;
     description: string;
     status: 'SATISFIED' | 'UNSATISFIED' | 'UNCONFIRMED';
-    source: 'observation' | 'human';
+    source: 'observation' | 'human' | 'platform';
     /**
      * @maxItems 32
      */
     evidenceRefs: string[];
     controlRevision?: number;
+    authRevision?: number;
   }[];
   /**
    * 阻塞时冻结的条件与页面证据；后续清理不能替换该快照。
@@ -619,6 +620,24 @@ export interface StepResult {
      * @maxItems 24
      */
     evidenceRefs: string[];
+  }[];
+  /**
+   * @maxItems 32
+   */
+  environmentHistory?: {
+    reason: string;
+    /**
+     * @maxItems 128
+     */
+    conditions: {
+      id: string;
+      description: string;
+      summary: string;
+      status: 'UNCONFIRMED' | 'UNSATISFIED';
+    }[];
+    controlRevision: number;
+    authRevision: number;
+    recordedAt: string;
   }[];
 }
 /**

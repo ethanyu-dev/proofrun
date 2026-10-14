@@ -1,5 +1,9 @@
 # 独立人工处理页
 
+带 executionPlan 的新任务分别维护 controlRevision 和 authRevision：前者拒绝交接前的旧动作，后者绑定身份确认。只读画面、滚动、保存快照和请求/恢复控制权不改变认证版本；人工点击、输入、导航、Cookie 变更和身份准备在命令首次获准时增加版本，重复 commandId 不重复增长。
+
+新 Agent 的环境交接提供与待办对应的稳定 conditionKeys。处理页 complete 同时提交序号和 confirmedConditionKeys；服务端核对完整集合，保存确认时的 authRevision。同版本确认可跨交接复用，版本变化后旧确认仅作历史。处理页输入后清空勾选，要求操作完成后重新确认。待办提前包含适用的身份条件及访客复核；固定 policyChecks 不能由人工勾选替代。旧任务继续兼容不带条件键的协议，管理员直接恢复不产生稳定确认。
+
 HITL 从管理员操作面板迁移为任务专属页面。处理者无需登录 ProofRun，只看到本次待办和当前浏览器画面；链接本身是短期操作凭据。没有 Spec Runtime，人工不修改上层验收标准，也不能直接生成 PASSED。
 
 ## 使用流程

@@ -1,5 +1,9 @@
 # 架构与职责
 
+v2 在创建会话前解析环境并冻结 executionPlan，证据能力覆盖验收项和 setup/cleanup 的固定 policyChecks。访客使用空白 profile，节点回传绑定会话的准备证明；调度阶段校验计划版本和所需能力，Agent 不在运行中重选环境。
+
+网络订阅按真实 tab 保持连接，观察不清空初始请求；requestId 关联响应，navigationId 隔离主文档。固定证据检查与模型业务判定分开，缺少网络证据不能由页面渲染或人工完成替代。控制面分别持久化控制权版本和认证版本，稳定条件键决定人工确认的复用；步骤保留环境处理历史及最终阻塞现场。
+
 ## 流程
 
 项目位置与节点内部结构统一维护在 [Browser Node 结构图](browser-node-architecture/README.md)。图中展示目标数据流和当前实现状态；控制面、Rust 节点和可配置模型执行 Agent 已接通，范围见 [测试入口与覆盖边界](../tests/README.md)。

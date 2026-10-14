@@ -1,3 +1,4 @@
+import { resolveExecutionPlan } from './execution-plan.js';
 import { resolveSession, type IdentityCatalog } from '../identities/catalog.js';
 import {
   compileStepBudget,
@@ -80,9 +81,10 @@ export function compileCase(
     cleanupStepIds: cleanupSteps.map((step) => step.stepId!),
     executionMode: profile.executionMode ?? 'parallel',
   });
+  const resolved = resolveExecutionPlan(input, profile.evidenceKinds);
   const sessionPlan = resolveSession(
     identities,
-    input.session,
+    resolved.session,
     input.entry,
     profile.environment,
   );
@@ -108,11 +110,16 @@ export function compileCase(
           );
         checks.set(check.id, check);
       }
-      if (checks.size > 10)
+      if (
+        checks.size > 10 ||
+        [...checks.values()].filter(
+          (check) => (check as { method: string }).method === 'manual',
+        ).length > (resolved.plan.environment.mode === 'guest' ? 8 : 9)
+      )
         throw new ApiError(
           422,
           'IDENTITY_CHECK_LIMIT',
-          '每一步合并后的身份与前置条件最多十项',
+          '身份条件必须为环境交接保留至少一项位置；访客还需保留一项访客复核',
         );
     }
   }
@@ -154,6 +161,7 @@ export function compileCase(
       allowIntervention: profile.environment.allowIntervention ?? true,
     },
     sessionPlan,
+    executionPlan: resolved.plan,
     budget,
     stepBudget,
     profilePlan: {

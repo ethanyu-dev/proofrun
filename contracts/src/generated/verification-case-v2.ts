@@ -43,6 +43,19 @@ export type CaseStep = {
    * @maxItems 32
    */
   preconditions?: IdentityCheck[];
+  /**
+   * @maxItems 32
+   */
+  policyChecks?: {
+    id: string;
+    description: string;
+    policyIndex: number;
+    method: 'networkResponse' | 'renderedContent';
+    path?: string;
+    text?: string;
+    statusMin?: number;
+    statusMax?: number;
+  }[];
 } & {
   /**
    * 步骤身份；省略时按原始数组位置生成，排序不改变身份。
@@ -86,6 +99,19 @@ export type CaseStep = {
    * @maxItems 32
    */
   preconditions?: IdentityCheck[];
+  /**
+   * @maxItems 32
+   */
+  policyChecks?: {
+    id: string;
+    description: string;
+    policyIndex: number;
+    method: 'networkResponse' | 'renderedContent';
+    path?: string;
+    text?: string;
+    statusMin?: number;
+    statusMax?: number;
+  }[];
 };
 /**
  * 显式前置条件；文本检查使用完整观察，人工条件只能由当前会话的人工确认满足。
@@ -154,6 +180,19 @@ export interface VerificationCaseV2 {
      * @maxItems 32
      */
     expected?: string[];
+    /**
+     * @maxItems 32
+     */
+    policyChecks?: {
+      id: string;
+      description: string;
+      policyIndex: number;
+      method: 'networkResponse' | 'renderedContent';
+      path?: string;
+      text?: string;
+      statusMin?: number;
+      statusMax?: number;
+    }[];
   }[];
   session?: SessionRequest;
 }

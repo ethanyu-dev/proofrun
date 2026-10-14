@@ -1,3 +1,4 @@
+import { conditionKey, evaluatePolicyChecks } from './policy-checks.js';
 import { InteractionProgress } from './interaction-progress.js';
 import { executeProfile } from './profile-runner.js';
 import {
@@ -63,6 +64,13 @@ const OBSERVATION_RETRIES = 2;
 const OBSERVATION_RETRY_MS = 300;
 /** 只将近期操作和证据摘要放入上下文，完整事实保留在控制面。 */
 const HISTORY_LIMIT = 8;
+/** 访客人工复核的稳定定义，在交接前列出，不能在交还后追加要求。 */
+const GUEST_CHECK = {
+  id: 'profile-guest',
+  method: 'manual' as const,
+  description:
+    '确认本 profile 已退出登录并清除登录状态，当前为未登录访客；团队或用户图标不能作为证明',
+};
 
 /** 用显式端口测试编排规则，不将模型供应商或传输细节混入执行状态。 */
 export type ExecutionClient = Pick<
@@ -119,6 +127,12 @@ class Execution {
   private feedback: string | null = null;
   /** 人工介入后旧模型回复与旧观察均失效。 */
   private controlRevision = 0;
+  /** 新计划的身份确认跟随认证环境；控制权变化仍拒绝旧动作。 */
+  private authRevision = 0;
+  private environmentProof: import('../client.js').ExecutionView['environmentProof'];
+  private confirmationKeys = new Set<string>();
+  /** 每步只给一次缺项修正反馈，后续仍受原预算和明确阻塞规则约束。 */
+  private readonly incompleteFeedback = new Set<number>();
   /** 人工证明仅绑定当前控制代次；模型不能自行签发。 */
   private readonly confirmedChecks = new Map<string, number>();
   /** 每一步最多一次身份恢复，失败后继续后续独立步骤。 */
@@ -152,7 +166,9 @@ class Execution {
     this.workflow = this.recheck.workflow;
     this.recheck = undefined;
     this.setupPhase = undefined;
-    this.readyRevision = this.controlRevision;
+    this.readyRevision = this.grant.task.executionPlan
+      ? this.authRevision
+      : this.controlRevision;
     this.stepResults[this.stepIndex]!.phase = 'VERIFYING';
     this.current = undefined;
     this.image = undefined;
@@ -199,6 +215,7 @@ class Execution {
     private readonly grant: ExecutionGrant,
     stop: AbortSignal,
   ) {
+    this.environmentMode = grant.task.executionPlan?.environment.mode;
     this.pendingNavigation =
       grant.task.steps?.[0]?.url ?? grant.task.target.url;
     this.guard = new LeaseGuard(client, grant, stop, (view) =>
@@ -513,13 +530,24 @@ class Execution {
         if (!view.stepBudget) this.allowance?.resume();
         const changed = this.controlRevision !== (view.controlRevision ?? 0);
         this.controlRevision = view.controlRevision ?? 0;
+        const authChanged = this.authRevision !== (view.authRevision ?? 0);
+        this.authRevision = view.authRevision ?? 0;
+        this.environmentProof = view.environmentProof;
+        this.confirmationKeys = new Set(
+          view.humanConfirmation?.authRevision === this.authRevision
+            ? (view.humanConfirmation.conditionKeys ?? [])
+            : [],
+        );
         const recheckNeeded =
           !this.recheck &&
           !!this.currentTask &&
           !this.isSetup() &&
           !this.isCleanup() &&
           this.readyRevision !== undefined &&
-          this.readyRevision !== this.controlRevision;
+          this.readyRevision !==
+            (this.grant.task.executionPlan
+              ? this.authRevision
+              : this.controlRevision);
         if (changed || recheckNeeded) {
           if (
             this.grant.task.profilePlan &&
@@ -551,7 +579,8 @@ class Execution {
               await this.client.recordSteps(this.grant, this.stepResults);
             }
           }
-          this.invalidateReadiness();
+          if (!this.grant.task.executionPlan || authChanged)
+            this.invalidateReadiness();
           // 人工交还的是同一会话的当前页面；旧观察失效，但不能用导航覆盖处理结果。
           this.pendingNavigation = undefined;
           this.current = undefined;
@@ -587,12 +616,17 @@ class Execution {
         : this.grant.task.steps?.[this.stepIndex],
       recordedCriteria: this.recheck ? [] : this.criteria.values(),
       cleanup: this.isCleanup(),
-      preconditions: evaluateChecks(
-        this.identityChecks(),
-        this.current!,
-        this.confirmedChecks,
-        this.controlRevision,
-      ),
+      policyChecks: this.policyResults(),
+      preconditions: [
+        ...this.platformChecks(),
+        ...evaluateChecks(
+          this.identityChecks(),
+          this.current!,
+          this.confirmedChecks,
+          this.controlRevision,
+          this.grant.task.executionPlan ? this.authRevision : undefined,
+        ),
+      ],
       workflow: this.workflow.view(),
       interactionProgress: this.interactions.view(),
       budgetRemaining: this.allowance?.available(
@@ -800,6 +834,67 @@ class Execution {
     );
   }
 
+  /** 复核使用原 setup 定义；业务及清理检查始终读取各自冻结条件。 */
+  private policyResults() {
+    const step = this.recheck
+      ? this.grant.task.steps?.find((item) => item.type === 'setup')
+      : this.grant.task.steps?.[this.stepIndex];
+    return this.current && step && this.grant.task.executionPlan
+      ? evaluatePolicyChecks(step, this.current)
+      : [];
+  }
+
+  /** 结构化证据不能被模型完成声明或人工勾选覆盖；原始自由 policy 仍由模型评估。 */
+  private syncPolicyChecks() {
+    const results = this.policyResults();
+    if (!results.length) return;
+    const state = this.stepResults[this.stepIndex]!;
+    const ids = new Set(results.map((result) => result.id));
+    state.preconditions = [
+      ...(state.preconditions ?? []).filter((item) => !ids.has(item.id)),
+      ...results.map(({ policyIndex: _index, reason, ...result }) => ({
+        ...result,
+        description: `${result.description}（${reason}）`,
+      })),
+    ];
+    if (this.setupPhase !== 'CHECKING') return;
+    const steps = this.workflow.view().steps;
+    const assessments = [
+      ...new Set(results.map((result) => result.policyIndex)),
+    ].map((index) => {
+      const group = results.filter((result) => result.policyIndex === index);
+      return {
+        stepId: steps[index]!.id,
+        outcome: group.every((result) => result.status === 'SATISFIED')
+          ? 'complete'
+          : 'incomplete',
+        summary: group
+          .map((result) => `${result.description}: ${result.reason}`)
+          .join('；')
+          .slice(0, 600),
+        evidenceRefs: [
+          ...new Set(group.flatMap((result) => result.evidenceRefs)),
+        ].slice(0, 24),
+      };
+    });
+    this.workflow.apply({ assessments }, new Set(this.evidence.keys()));
+  }
+
+  /** 缺失与明确失败均不能跳过固定条件；先反馈补证据，耗尽后由报告表达原因。 */
+  private assertPolicyChecks() {
+    this.syncPolicyChecks();
+    const missing = this.policyResults().filter(
+      (result) => result.status !== 'SATISFIED',
+    );
+    if (missing.length)
+      throw new AgentFault(
+        'POLICY_EVIDENCE_INCOMPLETE',
+        missing
+          .map((result) => `${result.description}: ${result.reason}`)
+          .join('；'),
+      );
+  }
+
   /** 汇总当前缺失事实，显式前置条件不被模型的自由描述覆盖。 */
   private environmentConditions(): EnvironmentCondition[] {
     const checks = this.current
@@ -808,6 +903,7 @@ class Execution {
           this.current,
           this.confirmedChecks,
           this.controlRevision,
+          this.grant.task.executionPlan ? this.authRevision : undefined,
         )
       : [];
     return [
@@ -836,6 +932,19 @@ class Execution {
     summary: string,
     conditions = this.environmentConditions(),
   ): Promise<VerificationReport | null> {
+    const policyMissing = this.policyResults().filter(
+      (result) => result.status !== 'SATISFIED',
+    );
+    if (
+      this.grant.task.executionPlan &&
+      !conditions.some(
+        (condition) =>
+          condition.id.startsWith('check:') || condition.id === 'session:login',
+      ) &&
+      policyMissing.some((result) => result.status === 'UNCONFIRMED')
+    ) {
+      this.assertPolicyChecks();
+    }
     const unresolved = conditions.length
       ? conditions
       : [
@@ -849,13 +958,72 @@ class Execution {
     const detail = unresolved
       .map((condition) => `${condition.description}：${condition.summary}`)
       .join('；');
-    const requested = this.grant.task.environment.allowIntervention
+    const stateHistory = this.stepResults[this.stepIndex]!;
+    if (this.grant.task.executionPlan) {
+      stateHistory.environmentHistory = [
+        ...(stateHistory.environmentHistory ?? []),
+        {
+          reason: summary,
+          conditions: unresolved,
+          controlRevision: this.controlRevision,
+          authRevision: this.authRevision,
+          recordedAt: new Date().toISOString(),
+        },
+      ].slice(-16) as NonNullable<StepResult['environmentHistory']>;
+      await this.client.recordSteps(this.grant, this.stepResults);
+    }
+    const confirmationVersion = this.grant.task.executionPlan
+      ? this.authRevision
+      : 0;
+    let requested = this.grant.task.environment.allowIntervention
       ? this.environmentHandoffs.claim(
           this.grant.task.steps![this.stepIndex]!.stepId!,
           unresolved,
+          confirmationVersion,
         )
       : [];
     if (requested.length) {
+      // 本轮人工输入可能使身份失效，因此把所有适用的人工身份条件明确列入待办。
+      const manual = this.grant.task.executionPlan
+        ? this.identityChecks(true)
+            .filter((check) => check.method === 'manual')
+            .map((check) => ({
+              id: `check:${check.id}`,
+              description: check.description,
+              summary: '请在本轮操作完成后重新确认',
+              status: 'UNCONFIRMED' as const,
+            }))
+        : [];
+      if (manual.length) {
+        const extra = requested.filter(
+          (item) => !manual.some((check) => check.id === item.id),
+        );
+        const omitted = extra.slice(Math.max(0, 10 - manual.length));
+        if (omitted.length)
+          this.environmentHandoffs.release(
+            this.grant.task.steps![this.stepIndex]!.stepId!,
+            omitted,
+            confirmationVersion,
+            false,
+          );
+        requested = [
+          ...manual,
+          ...extra.slice(0, Math.max(0, 10 - manual.length)),
+        ];
+      }
+      const keys = this.grant.task.executionPlan
+        ? requested.map((item) => {
+            const check = this.identityChecks(true).find(
+              (check) => item.id === `check:${check.id}`,
+            );
+            return check
+              ? conditionKey('identity', check)
+              : conditionKey(this.grant.task.steps![this.stepIndex]!.stepId!, {
+                  id: item.id,
+                  description: item.description,
+                });
+          })
+        : undefined;
       const revision = this.controlRevision;
       try {
         await this.requestIntervention(
@@ -867,12 +1035,14 @@ class Execution {
             `${condition.description}：${condition.summary}`.slice(0, 500),
           ),
           requested.some((condition) => condition.id === 'session:login'),
+          keys,
         );
       } catch (error) {
         if (error instanceof AgentFault && error.code === 'CONTROL_CHANGED')
           this.environmentHandoffs.release(
             this.grant.task.steps![this.stepIndex]!.stepId!,
             requested,
+            confirmationVersion,
           );
         throw error;
       }
@@ -884,9 +1054,13 @@ class Execution {
           (item) =>
             item.id === id &&
             returned?.humanConfirmation?.revision === this.controlRevision &&
-            returned.humanConfirmation.items.includes(
-              `${item.description}：${item.summary}`.slice(0, 500),
-            ),
+            (keys
+              ? returned.humanConfirmation.conditionKeys?.includes(
+                  keys[requested.indexOf(item)]!,
+                )
+              : returned.humanConfirmation.items.includes(
+                  `${item.description}：${item.summary}`.slice(0, 500),
+                )),
         );
       // 新版只接受处理页逐项提交的确认；管理员恢复控制权不能冒充确认账号条件。
       if (this.controlRevision > revision)
@@ -897,14 +1071,24 @@ class Execution {
             (!this.grant.task.profilePlan ||
               explicitlyConfirmed(`check:${check.id}`))
           )
-            this.confirmedChecks.set(check.id, this.controlRevision);
+            this.confirmedChecks.set(
+              check.id,
+              this.grant.task.executionPlan
+                ? this.authRevision
+                : this.controlRevision,
+            );
       if (this.setupPhase === 'CHECKING') {
         const view = await this.client.view(this.grant, this.guard.signal);
         if (view.humanConfirmation?.revision === this.controlRevision) {
-          const confirmed = requested.filter((condition) =>
-            view.humanConfirmation!.items.includes(
-              `${condition.description}：${condition.summary}`.slice(0, 500),
-            ),
+          const confirmed = requested.filter(
+            (condition) =>
+              view.humanConfirmation!.items.includes(
+                `${condition.description}：${condition.summary}`.slice(0, 500),
+              ) ||
+              (!!keys &&
+                view.humanConfirmation!.conditionKeys?.includes(
+                  keys[requested.indexOf(condition)]!,
+                )),
           );
           const assessments = this.workflow
             .view()
@@ -1000,27 +1184,22 @@ class Execution {
   }
 
   /** 显式条件统一驱动登录与角色交接，避免同一步先“登录”再“确认身份”重复 HITL。 */
-  private identityChecks() {
+  private identityChecks(forHandoff = false) {
     const original = this.grant.task;
     const step = original.steps?.[this.stepIndex];
     if (original.cleanupStepIds?.includes(step?.stepId ?? '')) return [];
     const shared = this.client.profileEnvironment?.();
     const guest =
       (this.environmentMode ?? shared?.mode) === 'guest' &&
-      original.sessionPlan?.mode !== 'guest';
-    if (shared?.confirmedRevision === this.controlRevision)
+      (original.sessionPlan?.mode !== 'guest' ||
+        (!!original.executionPlan && (this.authRevision > 0 || forHandoff)));
+    if (
+      !original.executionPlan &&
+      shared?.confirmedRevision === this.controlRevision
+    )
       this.confirmedChecks.set('profile-guest', this.controlRevision);
-    return mergeChecks(
-      guest
-        ? [
-            {
-              id: 'profile-guest',
-              method: 'manual',
-              description:
-                '确认本 profile 已退出登录并清除登录状态，当前为未登录访客；团队或用户图标不能作为证明',
-            },
-          ]
-        : [],
+    const checks = mergeChecks(
+      guest ? [GUEST_CHECK] : [],
       original.sessionPlan?.candidates[0]?.checks ?? [],
       original.sessionPlan?.requirements ?? [],
       step?.preconditions ?? [],
@@ -1031,6 +1210,32 @@ class Execution {
           ]
         : []),
     );
+    if (original.executionPlan)
+      for (const check of checks)
+        if (this.confirmationKeys.has(conditionKey('identity', check)))
+          this.confirmedChecks.set(check.id, this.authRevision);
+        else this.confirmedChecks.delete(check.id);
+    return checks;
+  }
+
+  /** 初始空白 profile 只证明准备来源；认证版本变化后改由明确的人工复核证明。 */
+  private platformChecks(): NonNullable<StepResult['preconditions']> {
+    return this.grant.task.executionPlan?.environment.mode === 'guest' &&
+      this.authRevision === 0 &&
+      this.environmentProof?.sessionId === this.grant.sessionId &&
+      this.environmentProof.initialState === 'empty' &&
+      !this.environmentProof.authRestored
+      ? [
+          {
+            id: 'platform-guest',
+            description: '节点已为本会话准备空白 profile，未恢复登录状态',
+            status: 'SATISFIED',
+            source: 'platform',
+            evidenceRefs: [],
+            authRevision: 0,
+          },
+        ]
+      : [];
   }
 
   /** 当前步骤只采信结构化条件和本会话的人工确认，不把账号显示名解释成角色。 */
@@ -1042,13 +1247,19 @@ class Execution {
     if (!this.current || original.cleanupStepIds?.includes(step?.stepId ?? ''))
       return null;
     const checks = this.identityChecks();
-    if (!checks.length) return null;
+    if (!checks.length) {
+      const state = this.stepResults[this.stepIndex];
+      if (state && this.platformChecks().length)
+        state.preconditions = this.platformChecks();
+      return null;
+    }
     const evaluate = () =>
       evaluateChecks(
         checks,
         this.current!,
         this.confirmedChecks,
         this.controlRevision,
+        this.grant.task.executionPlan ? this.authRevision : undefined,
       );
     let results = evaluate();
     if (this.isSetup() || original.profilePlan) {
@@ -1064,7 +1275,10 @@ class Execution {
                 : '该条件尚未确认',
             status: r.status as 'UNSATISFIED' | 'UNCONFIRMED',
           }));
-        this.stepResults[this.stepIndex]!.preconditions = results;
+        this.stepResults[this.stepIndex]!.preconditions = [
+          ...this.platformChecks(),
+          ...results,
+        ];
         if (!allowIntervention)
           return this.blocked(
             `前置条件未满足：${conditions.map((c) => c.description).join('；')}`,
@@ -1077,7 +1291,10 @@ class Execution {
         if (blocked) return blocked;
         results = evaluate();
       }
-      this.stepResults[this.stepIndex]!.preconditions = results;
+      this.stepResults[this.stepIndex]!.preconditions = [
+        ...this.platformChecks(),
+        ...results,
+      ];
       return null;
     }
     if (
@@ -1102,11 +1319,19 @@ class Execution {
             check.method === 'manual' &&
             requested.some((r) => r.id === check.id)
           )
-            this.confirmedChecks.set(check.id, this.controlRevision);
+            this.confirmedChecks.set(
+              check.id,
+              this.grant.task.executionPlan
+                ? this.authRevision
+                : this.controlRevision,
+            );
       results = evaluate();
     }
     if (this.stepResults[this.stepIndex])
-      this.stepResults[this.stepIndex]!.preconditions = results;
+      this.stepResults[this.stepIndex]!.preconditions = [
+        ...this.platformChecks(),
+        ...results,
+      ];
     const missing = results.filter((r) => r.status !== 'SATISFIED');
     return missing.length
       ? this.blocked(
@@ -1181,6 +1406,18 @@ class Execution {
           this.pendingNavigation = undefined;
         }
         if (!this.current) await this.observe();
+        if (
+          this.grant.task.executionPlan?.environment.mode === 'guest' &&
+          this.authRevision === 0 &&
+          (!this.environmentProof ||
+            this.environmentProof.sessionId !== this.grant.sessionId ||
+            this.environmentProof.authRestored ||
+            this.environmentProof.initialState !== 'empty')
+        )
+          return this.blocked(
+            '节点未交付本会话空白访客准备证明，不能用模型声明代替',
+            'ENVIRONMENT_PROOF_MISSING',
+          );
         if (this.settlePending) {
           this.settlePending = false;
           let retries = 0;
@@ -1274,11 +1511,13 @@ class Execution {
             this.changes?.unchangedRounds === 0)
         ) {
           const summary = '重复操作未取得新的完成证据，无法确认当前步骤已就绪';
-          if (!this.isSetup()) return this.blocked(summary, 'NO_PROGRESS');
+          if (!this.isSetup() || this.grant.task.executionPlan)
+            return this.blocked(summary, 'NO_PROGRESS');
           const blocked = await this.environmentNotReady(summary);
           if (blocked) return blocked;
           continue;
         }
+        this.syncPolicyChecks();
         const input = this.context();
         const decisionIndex = ++this.decisionIndex;
         input.traceRequest = async (request) => {
@@ -1415,6 +1654,11 @@ class Execution {
             '并发前必须先声明共享环境意图，不能用 finish 冒充已完成登录状态准备',
           );
         if (decision.type === 'verification.environment') {
+          if (this.grant.task.executionPlan)
+            throw new AgentFault(
+              'INVALID_MODEL_DECISION',
+              '环境意图已在会话创建前冻结，不能运行中改写',
+            );
           if (
             !this.needsEnvironmentReview() ||
             this.environmentMode ||
@@ -1464,6 +1708,7 @@ class Execution {
             ),
           ),
         );
+        this.syncPolicyChecks();
         this.interactions.record(readings);
         if (
           revision !== this.workflow.view().revision ||
@@ -1551,8 +1796,10 @@ class Execution {
             await this.client.recordSteps(this.grant, this.stepResults);
             continue;
           }
+          this.assertPolicyChecks();
           const identityBlock = await this.checkIdentity(false);
           if (identityBlock) return identityBlock;
+          this.syncPolicyChecks();
           // 准备结论必须先过门禁，不能提前将 FAILED 写成产品验收或保留人工处理前的部分通过。
           if (this.isSetup()) {
             if (decision.type === 'verification.record')
@@ -1562,6 +1809,8 @@ class Execution {
               );
             this.workflow.assertFinish(decision);
             if (decision.criteria.some((c) => c.verdict !== 'PASSED')) {
+              if (this.grant.task.executionPlan)
+                return this.blocked(decision.summary, 'ENVIRONMENT_NOT_READY');
               const blocked = await this.environmentNotReady(decision.summary);
               if (blocked) return blocked;
               continue;
@@ -1638,6 +1887,13 @@ class Execution {
         }
         if (decision.type === 'verification.block') {
           if (this.isSetup()) {
+            if (
+              this.grant.task.executionPlan &&
+              decision.reasonCode === 'OTHER'
+            ) {
+              this.assertPolicyChecks();
+              return this.blocked(decision.summary, 'SETUP_BLOCKED');
+            }
             const blocked = await this.environmentNotReady(
               decision.summary,
               decision.reasonCode === 'LOGIN_REQUIRED'
@@ -1731,13 +1987,34 @@ class Execution {
         if (
           error instanceof AgentFault &&
           [
+            'POLICY_EVIDENCE_INCOMPLETE',
             'WORKFLOW_INCOMPLETE',
             'WORKFLOW_RECOVERY_EXHAUSTED',
             'INTERACTION_RECOVERY_REQUIRED',
             'INTERACTION_ALREADY_RECORDED',
           ].includes(error.code)
         ) {
-          if (this.isSetup()) {
+          if (this.isSetup() || error.code === 'POLICY_EVIDENCE_INCOMPLETE') {
+            if (
+              this.grant.task.executionPlan &&
+              ['WORKFLOW_INCOMPLETE', 'POLICY_EVIDENCE_INCOMPLETE'].includes(
+                error.code,
+              )
+            ) {
+              if (!this.incompleteFeedback.has(this.stepIndex)) {
+                this.incompleteFeedback.add(this.stepIndex);
+                this.feedback = `${error.message}。本次计划的取证类型：${this.grant.task.executionPlan.evidenceKinds.join('、')}；先补充可获得的证据，缺少采集能力不能交给人工冒充证明。仅需人工操作时明确 intervene。`;
+                continue;
+              }
+              return this.blocked(
+                error.message,
+                error.code === 'POLICY_EVIDENCE_INCOMPLETE'
+                  ? 'POLICY_EVIDENCE_INCOMPLETE'
+                  : 'SETUP_EVIDENCE_INCOMPLETE',
+              );
+            }
+            if (this.grant.task.executionPlan)
+              return this.blocked(error.message, error.code);
             const blocked = await this.environmentNotReady(error.message);
             if (blocked) return blocked;
             continue;
@@ -1787,7 +2064,7 @@ class Execution {
           throw error;
         if (++errors >= MAX_DECISION_ERRORS) {
           if (error.code === 'OBSERVATION_STALLED') {
-            if (!this.isSetup())
+            if (!this.isSetup() || this.grant.task.executionPlan)
               return this.blocked(error.message, 'NO_PROGRESS');
             const blocked = await this.environmentNotReady(error.message);
             if (blocked) return blocked;
@@ -1811,6 +2088,7 @@ class Execution {
     reason: string,
     items: string[] | undefined,
     login: boolean,
+    conditionKeys?: string[],
   ) {
     if (login) this.loginInterventions.add(this.stepIndex);
     await this.client.intervene(
@@ -1828,6 +2106,7 @@ class Execution {
               ? 'IDENTITY_CHECK_UNMET'
               : 'LOGIN_REQUIRED'
           : 'GENERAL',
+      conditionKeys,
     );
     // 请求成功即暂停本地时钟，不等待下一轮心跳；后台仍独立续租。
     this.guard.syncTiming({
@@ -2014,7 +2293,7 @@ class Execution {
             (id) => !this.stepEvidence.has(id),
           );
           report =
-            step.expected.length || this.isSetup()
+            step.expected.length || this.isSetup() || step.policyChecks?.length
               ? await this.loop()
               : this.report(
                   'EXECUTED',
@@ -2091,7 +2370,9 @@ class Execution {
       state.status = 'COMPLETED';
       if (this.isSetup() && this.grant.task.profilePlan) {
         state.phase = 'READY';
-        this.readyRevision = this.controlRevision;
+        this.readyRevision = this.grant.task.executionPlan
+          ? this.authRevision
+          : this.controlRevision;
       }
       state.summary = report.summary;
       state.criteria = report.criteria;

@@ -31,6 +31,10 @@ interface Grant {
   revision: number;
   token_hash: string;
   items: string[];
+  /** 稳定身份与显示文案分离，旧交接缺省。 */
+  condition_keys: NonNullable<
+    Extract<HitlServer, { type: 'state' }>['conditionKeys']
+  > | null;
   expires_at: Date;
   /** 与链接有效期独立的本次人工等待截止时间；旧请求可为空。 */
   human_deadline_at: Date | null;
@@ -124,6 +128,9 @@ export class HitlService {
       intervention: {
         id: grant.id,
         items: grant.items,
+        ...(grant.condition_keys
+          ? { conditionKeys: grant.condition_keys }
+          : {}),
         expiresAt: grant.expires_at.toISOString(),
         path,
         url: `${this.config.consoleUrl ?? this.config.publicUrl}${path}`,
@@ -222,6 +229,21 @@ export class HitlService {
           if (message.type === 'complete') {
             const checked = message.confirmedItems;
             if (
+              grant.condition_keys &&
+              (!message.confirmedConditionKeys ||
+                message.confirmedConditionKeys.length !==
+                  grant.condition_keys.length ||
+                grant.condition_keys.some(
+                  (key) =>
+                    !(message.confirmedConditionKeys as string[]).includes(key),
+                ))
+            )
+              throw new ApiError(
+                422,
+                'HITL_CONFIRMATION_REQUIRED',
+                '请使用当前处理页逐项确认条件',
+              );
+            if (
               (grant.profile_plan || checked) &&
               (!checked ||
                 checked.length !== grant.items.length ||
@@ -247,6 +269,8 @@ export class HitlService {
               undefined,
               undefined,
               checked ? checked.map((index) => grant.items[index]!) : undefined,
+              undefined,
+              message.confirmedConditionKeys,
             );
             this.send(socket, { type: 'completed', authStatus });
             this.end(viewer);
@@ -435,6 +459,9 @@ export class HitlService {
         taskId: grant.task_id,
         reason: grant.control_reason,
         items: grant.items,
+        ...(grant.condition_keys
+          ? { conditionKeys: grant.condition_keys }
+          : {}),
         mode: grant.control_mode as 'REQUESTED' | 'HUMAN',
         expiresAt: grant.expires_at.toISOString(),
         canSaveAuth: !!grant.auth,

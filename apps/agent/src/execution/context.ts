@@ -76,6 +76,8 @@ export interface ContextInput {
   cleanup?: boolean;
   /** 当前观察和控制代次下的前置结果；只含业务条件与来源，不含身份配方或凭据。 */
   preconditions: CheckResult[];
+  /** 固定检查的结果及证据缺口，模型不能自行改变检查方法。 */
+  policyChecks?: import('./policy-checks.js').PolicyResult[];
   /** 子项阅读来源与跨轮进度，不等同验收通过。 */
   interactionProgress?: ReturnType<InteractionProgress['view']>;
   /** 公共工作流的只读视图。 */
@@ -128,6 +130,7 @@ export function decisionContext(input: ContextInput): DecisionInput {
       input.task,
     ),
     executionStep: input.executionStep,
+    policyChecks: input.policyChecks,
     setupPhase: input.setupPhase,
     environmentReview: input.environmentReview,
     recordedCriteria: input.recordedCriteria ?? [],

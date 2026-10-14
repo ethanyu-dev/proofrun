@@ -155,7 +155,7 @@
             "enum": ["SATISFIED", "UNSATISFIED", "UNCONFIRMED"]
           },
           "source": {
-            "enum": ["observation", "human"]
+            "enum": ["observation", "human", "platform"]
           },
           "evidenceRefs": {
             "type": "array",
@@ -165,6 +165,10 @@
             "maxItems": 32
           },
           "controlRevision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "authRevision": {
             "type": "integer",
             "minimum": 0
           }
@@ -265,6 +269,65 @@
           }
         },
         "required": ["id", "name", "heading", "status", "evidenceRefs"]
+      }
+    },
+    "environmentHistory": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "reason",
+          "conditions",
+          "controlRevision",
+          "authRevision",
+          "recordedAt"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string"
+          },
+          "conditions": {
+            "type": "array",
+            "maxItems": 128,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "description", "summary", "status"],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "description": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "summary": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "status": {
+                  "enum": ["UNCONFIRMED", "UNSATISFIED"]
+                }
+              }
+            }
+          },
+          "controlRevision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "authRevision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "recordedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
       }
     }
   },

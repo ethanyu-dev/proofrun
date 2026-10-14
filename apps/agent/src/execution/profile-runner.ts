@@ -1,3 +1,4 @@
+import { taskEvidenceKinds } from '@proofrun/contracts';
 import { randomUUID } from 'node:crypto';
 import { validateVerificationReport } from '@proofrun/contracts';
 import type {
@@ -96,7 +97,10 @@ export async function executeProfile(
     releaseEnvironment = resolve;
   });
   let sharedEnvironment:
-    { mode: 'guest' | 'configured'; confirmedRevision?: number } | undefined;
+    { mode: 'guest' | 'configured'; confirmedRevision?: number } | undefined =
+    grant.task.executionPlan
+      ? { mode: grant.task.executionPlan.environment.mode }
+      : undefined;
   if (!gateId) releaseEnvironment(true);
   let preparation: ReturnType<ExecutionClient['command']> | undefined;
   const allSteps = () =>
@@ -224,6 +228,7 @@ export async function executeProfile(
         abortSignal,
         items,
         reasonCode,
+        conditionKeys,
       ) =>
         browser.run(async () => {
           // 请求控制权前切到求助组；切页和暂停之间不允许其他组插入浏览器动作。
@@ -243,6 +248,7 @@ export async function executeProfile(
             abortSignal,
             items,
             reasonCode,
+            conditionKeys,
           );
           // 请求获准立即暂停 profile 时钟，避免根守卫等到下次心跳才知道人工已接管。
           guard.syncTiming({
@@ -282,9 +288,9 @@ export async function executeProfile(
 
   try {
     let next = 0;
-    // 网络/TRACE 采集当前属于整个 profile，避免把重叠时间线冒充某个 tab 的独立证据。
-    const concurrency = grant.task.acceptanceCriteria.some((c) =>
-      c.evidenceKinds.some((k) => ['NETWORK', 'TRACE'].includes(k)),
+    // TRACE 仍属于整个 profile；网络采集已按 tab 隔离，此次保持原有串行预算策略。
+    const concurrency = taskEvidenceKinds(grant.task).some((k) =>
+      ['NETWORK', 'TRACE'].includes(k),
     )
       ? 1
       : plan.maxConcurrency;

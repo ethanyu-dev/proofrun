@@ -330,6 +330,47 @@
         }
       },
       "required": ["version", "maxConcurrency", "groups"]
+    },
+    "executionPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "environment", "evidenceKinds"],
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "environment": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "source", "basis", "resolverVersion"],
+          "properties": {
+            "mode": {
+              "enum": ["guest", "configured"]
+            },
+            "source": {
+              "enum": ["explicit", "inferred", "default"]
+            },
+            "basis": {
+              "type": "array",
+              "maxItems": 64,
+              "items": {
+                "type": "string",
+                "maxLength": 2000
+              }
+            },
+            "resolverVersion": {
+              "const": 1
+            }
+          }
+        },
+        "evidenceKinds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": ["DOM", "SCREENSHOT", "NETWORK", "TRACE"]
+          }
+        }
+      }
     }
   },
   "$schema": "http://json-schema.org/draft-07/schema#",

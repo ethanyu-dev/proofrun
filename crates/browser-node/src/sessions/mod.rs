@@ -405,7 +405,7 @@ async fn start(
     deadline: u64,
     max_ms: Option<u64>,
     session: &Session,
-) -> anyhow::Result<HostIo> {
+) -> anyhow::Result<(HostIo, Value)> {
     let directory = config.home.join("sessions").join(&record.launch_id);
     std::fs::create_dir_all(&directory)?;
     let mut child = process::launch(record, &directory, max_ms).await?;
@@ -448,8 +448,9 @@ async fn start(
     let opened = host.receive().await?;
     anyhow::ensure!(opened["type"] == "host.opened", "invalid open response");
     let result: Result<Value> = serde_json::from_value(opened["result"].clone())?;
-    result?;
-    Ok(host)
+    let mut data = result?;
+    data["environmentProof"]["sessionId"] = json!(record.session_id);
+    Ok((host, data["environmentProof"].clone()))
 }
 /// 统一管理启动、命令执行、租约到期与关闭确认的会话生命周期。
 async fn supervise(
@@ -479,13 +480,13 @@ async fn supervise(
         _ = session.cancel.cancelled() => Err(anyhow::anyhow!("startup cancelled")),
     };
     let mut host = match startup {
-        Ok(host) => {
+        Ok((host, proof)) => {
             record.state = "ACTIVE".into();
             if let Err(error) = store.save_session(record.clone()).await {
                 session.request_close("SESSION_OPERATION_FAILED");
                 let _ = opened.send(Err(Fault::unknown("STORE_FAILED", error.to_string())));
             } else {
-                let _ = opened.send(Ok(json!({"sessionId":record.session_id,"state":"ACTIVE"})));
+                let _ = opened.send(Ok(json!({"sessionId":record.session_id,"state":"ACTIVE","environmentProof":proof})));
             }
             Some(host)
         }

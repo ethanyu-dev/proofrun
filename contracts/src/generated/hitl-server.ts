@@ -13,6 +13,21 @@ export type HitlServer =
        * 任务目标地址，Cookie 写入仅允许该 origin。
        */
       targetUrl?: string;
+      /**
+       * @maxItems 10
+       */
+      conditionKeys?:
+        | []
+        | [string]
+        | [string, string]
+        | [string, string, string]
+        | [string, string, string, string]
+        | [string, string, string, string, string]
+        | [string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string, string];
     }
   | {
       type: 'frame';

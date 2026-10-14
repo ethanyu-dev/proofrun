@@ -43,6 +43,19 @@ export type CaseStep = {
    * @maxItems 32
    */
   preconditions?: IdentityCheck[];
+  /**
+   * @maxItems 32
+   */
+  policyChecks?: {
+    id: string;
+    description: string;
+    policyIndex: number;
+    method: 'networkResponse' | 'renderedContent';
+    path?: string;
+    text?: string;
+    statusMin?: number;
+    statusMax?: number;
+  }[];
 };
 /**
  * 显式前置条件；文本检查使用完整观察，人工条件只能由当前会话的人工确认满足。
