@@ -686,3 +686,279 @@ for (const completed of [false, true])
     );
     assert.equal(report.steps[3].status, 'COMPLETED');
   });
+
+/** 新版控制面夹具，空白证明和网络数据仅用于验证执行器分支，不代表真实节点采集。 */
+class PlannedControl extends HumanControl {
+  authRevision = 0;
+  networkStatus;
+  restoreProof = false;
+  async view(execution) {
+    const view = await super.view(execution);
+    return {
+      ...view,
+      authRevision: this.authRevision,
+      environmentProof: {
+        sessionId: execution.sessionId,
+        initialState: this.restoreProof ? 'restored' : 'empty',
+        authRestored: this.restoreProof,
+      },
+      humanConfirmation: this.confirmation
+        ? {
+            ...this.confirmation,
+            authRevision: this.authRevision,
+            conditionKeys: this.confirmedKeys ?? [],
+          }
+        : undefined,
+    };
+  }
+  async intervene(
+    execution,
+    revision,
+    reason,
+    signal,
+    items,
+    reasonCode,
+    keys,
+  ) {
+    await super.intervene(
+      execution,
+      revision,
+      reason,
+      signal,
+      items,
+      reasonCode,
+    );
+    this.confirmedKeys = [
+      ...new Set([...(this.confirmedKeys ?? []), ...(keys ?? [])]),
+    ];
+  }
+  async command(...args) {
+    const result = await super.command(...args);
+    if (
+      args[2].type === 'browser.observe' &&
+      this.networkStatus !== undefined
+    ) {
+      const artifact = {
+        id: `network-${this.artifacts.length}`,
+        kind: 'NETWORK',
+        sha256: 'b'.repeat(64),
+        state: 'AVAILABLE',
+      };
+      this.artifacts.push(artifact);
+      result.data.artifactRefs.push({
+        artifactId: artifact.id,
+        kind: 'NETWORK',
+        sha256: artifact.sha256,
+      });
+      result.data.network = {
+        scope: 'tab-navigation',
+        navigationId: 'current',
+        requests: [
+          {
+            url: new URL('/api', result.data.url).href,
+            status: this.networkStatus,
+            navigationId: 'current',
+          },
+        ],
+      };
+    }
+    return result;
+  }
+}
+/** 仅为协议测试补齐冻结配置，真实配置编译另由 API 测试覆盖。 */
+function planned(execution, network = false) {
+  execution.task.environment.allowIntervention = true;
+  execution.task.executionPlan = {
+    version: 1,
+    environment: {
+      mode: 'guest',
+      source: 'explicit',
+      basis: [],
+      resolverVersion: 1,
+    },
+    evidenceKinds: network ? ['DOM', 'NETWORK'] : ['DOM'],
+  };
+  execution.task.sessionPlan = {
+    version: 1,
+    mode: 'guest',
+    preparationMs: 120000,
+    requirements: [],
+    candidates: [],
+  };
+  if (network)
+    execution.task.steps[0].policyChecks = [
+      {
+        id: 'response',
+        description: '接口成功',
+        policyIndex: 0,
+        method: 'networkResponse',
+        path: '/api',
+        statusMin: 200,
+        statusMax: 299,
+      },
+    ];
+}
+
+// 范围：新 plan 不再让模型分类访客、空白证明支持免交接、错误证明阻塞；不验收生产登录态。
+for (const restored of [false, true])
+  test(`冻结访客与节点准备证明 ${restored ? '不符' : '一致'}`, async () => {
+    const client = new PlannedControl();
+    client.restoreProof = restored;
+    const { report, seen } = await run(
+      (context) => finish(context),
+      (execution) => planned(execution),
+      client,
+      ['a'],
+    );
+    assert.equal(client.requests.length, 0);
+    assert.equal(
+      report.executionDisposition,
+      restored ? 'BLOCKED' : 'EXECUTED',
+      report.summary,
+    );
+    if (restored) {
+      assert.equal(report.steps[0].reasonCode, 'ENVIRONMENT_PROOF_MISSING');
+      assert.equal(seen.length, 0);
+    }
+  });
+
+// 范围：当前导航接口证据决定固定检查、补证据反馈不触发 HITL，模型 complete 不能绕过；网络由夹具提供。
+for (const available of [true, false])
+  test(`固定接口证据 ${available ? '满足' : '缺失'} 时的完整 setup 流程`, async () => {
+    const client = new PlannedControl();
+    if (available) client.networkStatus = 200;
+    let feedbackSeen = false;
+    const { report } = await run(
+      (context) => {
+        if (context.feedback?.includes('先补充')) feedbackSeen = true;
+        return finish(context);
+      },
+      (execution) => planned(execution, true),
+      client,
+      ['a'],
+    );
+    assert.equal(client.requests.length, 0);
+    assert.equal(
+      report.executionDisposition,
+      available ? 'EXECUTED' : 'BLOCKED',
+      report.summary,
+    );
+    if (!available) {
+      assert(feedbackSeen);
+      assert.equal(report.steps[0].reasonCode, 'POLICY_EVIDENCE_INCOMPLETE');
+    } else
+      assert(
+        report.steps[0].preconditions.some(
+          (item) =>
+            item.id.startsWith('policy-') && item.status === 'SATISFIED',
+        ),
+      );
+  });
+
+// 范围：仅漏交 workflow 声明时返回一次纠正机会，不把格式补齐交给人工；不验证模型泛化表现。
+test('新计划第一次缺项 finish 可以修正后通过', async () => {
+  const client = new PlannedControl();
+  let missing = true;
+  const { report } = await run(
+    (context) => {
+      const result = finish(context);
+      if (context.setupPhase === 'CHECKING' && missing) {
+        missing = false;
+        delete result.workflow;
+      }
+      return result;
+    },
+    (execution) => planned(execution),
+    client,
+    ['a'],
+  );
+  assert.equal(report.executionDisposition, 'EXECUTED', report.summary);
+  assert.equal(client.requests.length, 0);
+});
+
+// 范围：两次交接后身份与原始原因可追溯，第二次纯查看不撤销第一次稳定确认；不保证人工声明真实。
+test('同认证版本的人工确认跨交接保留且待办包含访客复核', async () => {
+  const client = new PlannedControl();
+  let calls = 0;
+  const { report } = await run(
+    (context) => {
+      if (context.setupPhase === 'CHECKING' && calls++ < 2)
+        return {
+          type: 'verification.intervene',
+          reason: '请核实资格',
+          reasonCode: 'IDENTITY_UNCONFIRMED',
+          items: ['确认资格'],
+          workflow: {
+            assessments: context.workflow.steps.map((item, index) => ({
+              stepId: item.id,
+              outcome:
+                index === client.requests.length ? 'blocked' : 'complete',
+              summary: '夹具条件',
+              evidenceRefs: context.observation.artifactRefs.map(
+                (ref) => ref.artifactId,
+              ),
+            })),
+          },
+        };
+      return finish(context);
+    },
+    (execution) => {
+      planned(execution);
+      execution.task.steps[0].policy = ['资格甲', '资格乙'];
+    },
+    client,
+    ['a'],
+  );
+  assert.equal(report.executionDisposition, 'EXECUTED', report.summary);
+  assert.equal(client.requests.length, 2);
+  assert(
+    client.requests.every((request) =>
+      request.items.some((item) => item.includes('未登录访客')),
+    ),
+  );
+  assert.equal(report.steps[0].environmentHistory.length, 2);
+});
+
+// 范围：同一 ID 的不同冻结定义不能复用确认；控制面及人工勾选为夹具，不验证账号资格。
+test('步骤复用条件 ID 但改变定义时必须重新确认', async () => {
+  const client = new PlannedControl();
+  const { report } = await run(
+    (context) => finish(context),
+    (execution) => {
+      planned(execution);
+      execution.task.executionPlan.environment.mode = 'configured';
+      execution.task.sessionPlan.mode = 'manual';
+      execution.task.steps[0].preconditions = [
+        { id: 'qualification', method: 'manual', description: '确认资格甲' },
+      ];
+      execution.task.steps[1].preconditions = [
+        { id: 'qualification', method: 'manual', description: '确认资格乙' },
+      ];
+    },
+    client,
+    ['a'],
+  );
+  assert.equal(report.executionDisposition, 'EXECUTED', report.summary);
+  assert.equal(client.requests.length, 2);
+});
+
+// 范围：无法取证的普通 block 不再自动请求人工，保留原始说明；不评估模型是否正确识别缺口。
+test('新计划普通准备阻塞不自动转成人工确认', async () => {
+  const client = new PlannedControl();
+  const { report } = await run(
+    (context) =>
+      context.setupPhase === 'CHECKING'
+        ? {
+            type: 'verification.block',
+            summary: '当前无法取得所需证据',
+            reasonCode: 'OTHER',
+          }
+        : finish(context),
+    (execution) => planned(execution),
+    client,
+    ['a'],
+  );
+  assert.equal(report.executionDisposition, 'BLOCKED');
+  assert.equal(report.steps[0].reasonCode, 'SETUP_BLOCKED');
+  assert.equal(client.requests.length, 0);
+});

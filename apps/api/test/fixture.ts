@@ -257,6 +257,7 @@ export class SimulatedNode {
       })),
       capabilities: {
         profileTabs: true,
+        environmentProof: true,
         observe: true,
         screenshot: true,
         conditionWait: true,
@@ -293,6 +294,13 @@ export class SimulatedNode {
     const { command: operation, timeoutMs: _, ...identity } = command;
     const data: Record<string, unknown> =
       kind === 'session.close' ? { state: 'CLOSED' } : {};
+    // 空白证明为协议夹具，实际隔离由节点的 Chromium 测试覆盖。
+    if (kind === 'session.open')
+      data.environmentProof = {
+        sessionId: command.sessionId,
+        initialState: 'empty',
+        authRestored: false,
+      };
     if (kind === 'browser.identity.prepare')
       Object.assign(data, {
         status: 'READY',

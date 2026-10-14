@@ -55,6 +55,15 @@
             "maximum": 9
           },
           "description": "人工明确勾选的待办序号，与本次交接绑定。"
+        },
+        "confirmedConditionKeys": {
+          "type": "array",
+          "maxItems": 10,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
         }
       },
       "required": ["type"]

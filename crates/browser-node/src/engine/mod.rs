@@ -72,6 +72,8 @@ pub struct EngineConfig {
 pub struct Engine {
     /// 每个 setup 分组独占一个标签页，数据仍属于同一 profile。
     scopes: HashMap<String, scopes::TabState>,
+    /// 网络连接按真实 target 隔离，独立于每次观察重建的 DOM 连接。
+    networks: HashMap<String, dom::Dom>,
     /// 当前引擎 CLI 所在分组；切换和操作共享同一串行队列。
     active_scope: Option<String>,
     /// CLI、Chrome 和会话目录配置。
@@ -119,6 +121,7 @@ impl Engine {
         )?;
         Ok(Self {
             scopes: HashMap::new(),
+            networks: HashMap::new(),
             active_scope: None,
             config,
             auth_version: None,
@@ -162,6 +165,7 @@ impl Engine {
         let deadline = process::boot_ms() + timeout_ms;
         self.cli(vec!["open".into(), "about:blank".into()], timeout_ms)
             .await?;
+        let mut auth_restored = false;
         if let Some(path) = &self.config.auth_state {
             let snapshot = crate::auth::snapshot(path, self.config.auth_snapshot_id.as_deref())
                 .map_err(|_| {
@@ -190,6 +194,7 @@ impl Engine {
                         deadline.saturating_sub(process::boot_ms()),
                     )
                     .await?;
+                    auth_restored = true;
                 } else if !self.config.restore_auth_if_present {
                     return Err(Fault::rejected(
                         "AUTH_STATE_MISSING",
@@ -237,7 +242,9 @@ impl Engine {
                 .await?;
             }
         }
-        Ok(json!({"opened":true}))
+        Ok(
+            json!({"opened":true,"environmentProof":{"authRestored":auth_restored,"initialState":if auth_restored {"restored"} else {"empty"}}}),
+        )
     }
     /// 尽力请求引擎关闭；最终资源回收仍以 systemd/cgroup 核实为准。
     pub async fn close(&self) {
@@ -299,6 +306,49 @@ impl Engine {
                 ));
             }
             self.activate_scope(scope, remaining()).await?;
+        }
+        let mut network_target = None;
+        if self.config.network_evidence {
+            let endpoint = self
+                .cli(vec!["get".into(), "cdp-url".into()], remaining())
+                .await?;
+            if let Some(endpoint) = endpoint["cdpUrl"].as_str() {
+                let tabs = self
+                    .cli(vec!["tab".into(), "list".into()], remaining())
+                    .await?;
+                // 已关闭 tab 的连接不再保留；认证状态在同一 profile 内共享。
+                self.networks.retain(|id, _| {
+                    tabs["tabs"]
+                        .as_array()
+                        .is_some_and(|items| items.iter().any(|tab| tab["targetId"] == *id))
+                });
+                let target = tabs["tabs"]
+                    .as_array()
+                    .and_then(|tabs| tabs.iter().find(|t| t["active"] == true))
+                    .and_then(|t| t["targetId"].as_str())
+                    .ok_or_else(|| {
+                        Fault::rejected("NETWORK_SCOPE_UNAVAILABLE", "active tab unavailable")
+                    })?
+                    .to_string();
+                if !self.networks.contains_key(&target) {
+                    let mut capture = dom::Dom::connect(endpoint).await?;
+                    capture.network_start(&target).await?;
+                    self.networks.insert(target.clone(), capture);
+                }
+                network_target = Some(target);
+            }
+        }
+        if matches!(
+            operation,
+            BrowserCommand::BrowserIdentityPrepare { .. }
+                | BrowserCommand::BrowserCookiesSet { .. }
+                | BrowserCommand::BrowserCookiesClear { .. }
+        ) || (matches!(operation, BrowserCommand::BrowserInput { .. })
+            && raw["action"] != "scroll")
+        {
+            for capture in self.networks.values_mut() {
+                capture.network_invalidate().await?;
+            }
         }
         match operation {
             BrowserCommand::BrowserIdentityPrepare { .. } => {
@@ -468,15 +518,22 @@ impl Engine {
                 }
                 result["referenceSnapshot"] = reference_snapshot;
                 if self.config.network_evidence {
-                    let network = self
-                        .cli(vec!["network".into(), "requests".into()], remaining())
-                        .await?;
-                    result["network"] = crate::network::sanitize(&network)?;
-                    self.cli(
-                        vec!["network".into(), "requests".into(), "--clear".into()],
-                        remaining(),
-                    )
-                    .await?;
+                    result["network"] = if let Some(target) = network_target {
+                        let mut network = self
+                            .networks
+                            .get_mut(&target)
+                            .unwrap()
+                            .network_snapshot()
+                            .await?;
+                        network["tabScope"] = json!(self.active_scope);
+                        network
+                    } else {
+                        // 旧引擎夹具只提供 profile 日志，不能冒充 tab 定位证据。
+                        let network = self
+                            .cli(vec!["network".into(), "requests".into()], remaining())
+                            .await?;
+                        crate::network::sanitize(&network)?
+                    };
                 }
                 if screenshot.unwrap_or(false) {
                     let path = self

@@ -30,6 +30,21 @@ export type HitlClient =
         | [number, number, number, number, number, number, number, number]
         | [number, number, number, number, number, number, number, number, number]
         | [number, number, number, number, number, number, number, number, number, number];
+      /**
+       * @maxItems 10
+       */
+      confirmedConditionKeys?:
+        | []
+        | [string]
+        | [string, string]
+        | [string, string, string]
+        | [string, string, string, string]
+        | [string, string, string, string, string]
+        | [string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string]
+        | [string, string, string, string, string, string, string, string, string, string];
     };
 /**
  * 节点可执行的封闭命令集合，不包含任意 shell 或 CLI 透传。

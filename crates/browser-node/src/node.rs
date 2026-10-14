@@ -124,7 +124,7 @@ impl Node {
             "sessionId":record.session_id,"state":record.state,"leaseId":record.lease_id,"fence":record.fence
         })).collect();
         Ok(
-            json!({"type":"node.heartbeat","protocolVersion":"0.1","nodeId":self.id,"nodeEpoch":self.epoch,"runtime":crate::version::current(),"leaseRequestId":request,"pool":self.config.pool,"capacity":self.config.capacity,"limits":{"maxLeaseMs":self.config.max_lease_ms,"maxSessionMs":self.config.max_session_ms},"occupied":occupied,"capabilities":{"observe":true,"screenshot":true,"conditionWait":true,"writeActions":self.config.allow_unverified_writes,"engineWritesVerified":false,"networkEvidence":true,"authState":true,"liveView":true,"renewableSessions":true,"identityPreparation":true,"cookieCleanup":true,"profileTabs":true,"trace":true}}),
+            json!({"type":"node.heartbeat","protocolVersion":"0.1","nodeId":self.id,"nodeEpoch":self.epoch,"runtime":crate::version::current(),"leaseRequestId":request,"pool":self.config.pool,"capacity":self.config.capacity,"limits":{"maxLeaseMs":self.config.max_lease_ms,"maxSessionMs":self.config.max_session_ms},"occupied":occupied,"capabilities":{"observe":true,"screenshot":true,"conditionWait":true,"writeActions":self.config.allow_unverified_writes,"engineWritesVerified":false,"networkEvidence":true,"environmentProof":true,"authState":true,"liveView":true,"renewableSessions":true,"identityPreparation":true,"cookieCleanup":true,"profileTabs":true,"trace":true}}),
         )
     }
     /// 将控制面的 TTL 锚定到对应心跳的发出时刻，网络延迟也消耗租约。

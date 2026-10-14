@@ -821,6 +821,87 @@
             "type": "array",
             "items": { "$ref": "#/components/schemas/IdentityCheck" },
             "maxItems": 32
+          },
+          "policyChecks": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "description", "policyIndex", "method"],
+              "properties": {
+                "id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,80}$" },
+                "description": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                "policyIndex": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 31
+                },
+                "method": { "enum": ["networkResponse", "renderedContent"] },
+                "path": {
+                  "type": "string",
+                  "pattern": "^/[^?#]*$",
+                  "maxLength": 2000
+                },
+                "text": { "type": "string", "minLength": 1, "maxLength": 2000 },
+                "statusMin": {
+                  "type": "integer",
+                  "minimum": 100,
+                  "maximum": 599
+                },
+                "statusMax": {
+                  "type": "integer",
+                  "minimum": 100,
+                  "maximum": 599
+                }
+              },
+              "allOf": [
+                {
+                  "if": {
+                    "properties": { "method": { "const": "networkResponse" } }
+                  },
+                  "then": {
+                    "required": ["path", "statusMin", "statusMax"],
+                    "properties": {
+                      "path": {
+                        "type": "string",
+                        "pattern": "^/[^?#]*$",
+                        "maxLength": 2000
+                      },
+                      "statusMin": {
+                        "type": "integer",
+                        "minimum": 100,
+                        "maximum": 599
+                      },
+                      "statusMax": {
+                        "type": "integer",
+                        "minimum": 100,
+                        "maximum": 599
+                      }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "properties": { "method": { "const": "renderedContent" } }
+                  },
+                  "then": {
+                    "required": ["text"],
+                    "properties": {
+                      "text": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 2000
+                      }
+                    }
+                  }
+                }
+              ]
+            }
           }
         },
         "required": [
@@ -957,13 +1038,14 @@
                 "status": {
                   "enum": ["SATISFIED", "UNSATISFIED", "UNCONFIRMED"]
                 },
-                "source": { "enum": ["observation", "human"] },
+                "source": { "enum": ["observation", "human", "platform"] },
                 "evidenceRefs": {
                   "type": "array",
                   "items": { "type": "string" },
                   "maxItems": 32
                 },
-                "controlRevision": { "type": "integer", "minimum": 0 }
+                "controlRevision": { "type": "integer", "minimum": 0 },
+                "authRevision": { "type": "integer", "minimum": 0 }
               },
               "required": [
                 "id",
@@ -1041,6 +1123,46 @@
                 }
               },
               "required": ["id", "name", "heading", "status", "evidenceRefs"]
+            }
+          },
+          "environmentHistory": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "reason",
+                "conditions",
+                "controlRevision",
+                "authRevision",
+                "recordedAt"
+              ],
+              "properties": {
+                "reason": { "type": "string" },
+                "conditions": {
+                  "type": "array",
+                  "maxItems": 128,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["id", "description", "summary", "status"],
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "description": { "type": "string", "minLength": 1 },
+                      "summary": { "type": "string", "minLength": 1 },
+                      "status": { "enum": ["UNCONFIRMED", "UNSATISFIED"] }
+                    }
+                  }
+                },
+                "controlRevision": { "type": "integer", "minimum": 0 },
+                "authRevision": { "type": "integer", "minimum": 0 },
+                "recordedAt": { "type": "string", "format": "date-time" }
+              }
             }
           }
         },
@@ -1142,6 +1264,100 @@
                     "minLength": 1,
                     "pattern": "\\S",
                     "maxLength": 2000
+                  }
+                },
+                "policyChecks": {
+                  "type": "array",
+                  "maxItems": 32,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["id", "description", "policyIndex", "method"],
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9_-]{1,80}$"
+                      },
+                      "description": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      },
+                      "policyIndex": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 31
+                      },
+                      "method": {
+                        "enum": ["networkResponse", "renderedContent"]
+                      },
+                      "path": {
+                        "type": "string",
+                        "pattern": "^/[^?#]*$",
+                        "maxLength": 2000
+                      },
+                      "text": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 2000
+                      },
+                      "statusMin": {
+                        "type": "integer",
+                        "minimum": 100,
+                        "maximum": 599
+                      },
+                      "statusMax": {
+                        "type": "integer",
+                        "minimum": 100,
+                        "maximum": 599
+                      }
+                    },
+                    "allOf": [
+                      {
+                        "if": {
+                          "properties": {
+                            "method": { "const": "networkResponse" }
+                          }
+                        },
+                        "then": {
+                          "required": ["path", "statusMin", "statusMax"],
+                          "properties": {
+                            "path": {
+                              "type": "string",
+                              "pattern": "^/[^?#]*$",
+                              "maxLength": 2000
+                            },
+                            "statusMin": {
+                              "type": "integer",
+                              "minimum": 100,
+                              "maximum": 599
+                            },
+                            "statusMax": {
+                              "type": "integer",
+                              "minimum": 100,
+                              "maximum": 599
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "if": {
+                          "properties": {
+                            "method": { "const": "renderedContent" }
+                          }
+                        },
+                        "then": {
+                          "required": ["text"],
+                          "properties": {
+                            "text": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 2000
+                            }
+                          }
+                        }
+                      }
+                    ]
                   }
                 }
               },

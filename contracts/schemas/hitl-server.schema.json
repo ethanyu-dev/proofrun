@@ -35,6 +35,15 @@
           "type": "string",
           "format": "uri",
           "description": "任务目标地址，Cookie 写入仅允许该 origin。"
+        },
+        "conditionKeys": {
+          "type": "array",
+          "maxItems": 10,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
         }
       },
       "required": [

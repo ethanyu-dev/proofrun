@@ -26,10 +26,11 @@ export function evaluateChecks(
   observation: Observation,
   human: ReadonlyMap<string, number>,
   revision: number,
+  authRevision?: number,
 ): CheckResult[] {
   return checks.map((check) => {
     const manual = check.method === 'manual';
-    const confirmed = human.get(check.id) === revision;
+    const confirmed = human.get(check.id) === (authRevision ?? revision);
     const text = observation.text;
     const complete =
       !observation.truncated &&
@@ -53,7 +54,12 @@ export function evaluateChecks(
       evidenceRefs: manual
         ? []
         : observation.artifactRefs.map((ref) => ref.artifactId),
-      ...(manual && confirmed ? { controlRevision: revision } : {}),
+      ...(manual && confirmed
+        ? {
+            controlRevision: revision,
+            ...(authRevision !== undefined ? { authRevision } : {}),
+          }
+        : {}),
     };
   });
 }

@@ -29,6 +29,7 @@ const MIGRATIONS = [
   '017-node-runtime.sql',
   '018-human-confirmations.sql',
   '019-execution-outcomes.sql',
+  '020-environment-proofs.sql',
 ];
 
 /** 所有业务事务使用同一连接；独占连接单独维护控制面实例锁。 */

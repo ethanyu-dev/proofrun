@@ -126,6 +126,11 @@ export function StepCompletion({
                                 {check.source === 'human' &&
                                 check.status === 'SATISFIED'
                                   ? '（人工确认）'
+                                  : check.source === 'platform'
+                                    ? '（平台准备）'
+                                    : ''}
+                                {check.authRevision !== undefined
+                                  ? ` · 认证版本 ${check.authRevision}`
                                   : ''}
                               </p>
                             ))}

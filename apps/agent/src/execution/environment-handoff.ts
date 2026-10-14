@@ -34,25 +34,35 @@ export class EnvironmentHandoffs {
   private rounds = 0;
 
   /** 控制权竞争导致请求未获准时回滚预占，不消耗该条件的人工机会。 */
-  release(stepId: string, conditions: EnvironmentCondition[]) {
+  release(
+    stepId: string,
+    conditions: EnvironmentCondition[],
+    version = 0,
+    rollbackRound = true,
+  ) {
     for (const condition of conditions)
-      this.requested.delete(`${stepId}/${condition.id}`);
-    if (conditions.length) this.rounds = Math.max(0, this.rounds - 1);
+      this.requested.delete(`${stepId}/${condition.id}/${version}`);
+    if (rollbackRound && conditions.length)
+      this.rounds = Math.max(0, this.rounds - 1);
   }
 
   /** 返回本次可交接事项；空数组表示无新条件或总额度耗尽。 */
   claim(
     stepId: string,
     conditions: EnvironmentCondition[],
+    version = 0,
   ): EnvironmentCondition[] {
     if (this.rounds >= MAX_ENVIRONMENT_HANDOFFS) return [];
     const pending = conditions
-      .filter((condition) => !this.requested.has(`${stepId}/${condition.id}`))
+      .filter(
+        (condition) =>
+          !this.requested.has(`${stepId}/${condition.id}/${version}`),
+      )
       .slice(0, MAX_HANDOFF_ITEMS);
     if (pending.length) {
       this.rounds++;
       for (const condition of pending)
-        this.requested.add(`${stepId}/${condition.id}`);
+        this.requested.add(`${stepId}/${condition.id}/${version}`);
     }
     return pending;
   }

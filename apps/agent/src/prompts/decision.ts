@@ -1,3 +1,4 @@
+import { EXECUTION_PLAN_RULES } from './execution-plan.js';
 import { INTERACTION_RULES } from './interactions.js';
 import { PROFILE_RULES } from './profile.js';
 import { SETUP_RULES } from './setup.js';
@@ -27,6 +28,7 @@ export const SYSTEM_PROMPT = [
   IDENTITY_CONTEXT_RULES,
   SETUP_RULES,
   PROFILE_RULES,
+  EXECUTION_PLAN_RULES,
   PAGE_STATE_RULES,
   VERIFICATION_RULES,
   INTERACTION_RULES,

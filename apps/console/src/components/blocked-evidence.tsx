@@ -49,6 +49,25 @@ export function BlockedEvidence({
           <p>{condition.summary}</p>
         </div>
       ))}
+      {!!step.environmentHistory?.length && (
+        <details>
+          <summary>环境处理历史（{step.environmentHistory.length} 次）</summary>
+          {step.environmentHistory.map((entry, index) => (
+            <div key={`${entry.recordedAt}-${index}`} className="wrap">
+              <p>{entry.reason}</p>
+              <p className="muted">
+                {new Date(entry.recordedAt).toLocaleString('zh-CN')} · 认证版本{' '}
+                {entry.authRevision} · 控制版本 {entry.controlRevision}
+              </p>
+              {entry.conditions.map((condition) => (
+                <p key={condition.id}>
+                  {condition.description}：{condition.summary}
+                </p>
+              ))}
+            </div>
+          ))}
+        </details>
+      )}
       {step.blockage && (
         <p className="muted">
           阻塞记录时间：

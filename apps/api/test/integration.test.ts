@@ -214,6 +214,7 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
                 stepBudgetVersion: 1,
                 identityVersion: 1,
                 profileTabsVersion: 1,
+                executionPlanVersion: 1,
               }
             : {}),
         },
@@ -4315,6 +4316,192 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       );
       await api('POST', `/v1/tasks/${secondId}/cancel`);
       await cleaned(secondId);
+    });
+
+    // 范围：真实 PostgreSQL/HTTP/WebSocket 验证确认身份、跨交接复用及输入失效；账号与画面仍为节点夹具。
+    await suite.test('认证版本独立于控制权且逐项确认跨交接保存', async (t) => {
+      const node = await addNode('versioned-confirmation');
+      const definition: VerificationTask = {
+        ...(task(node.pool) as VerificationTask),
+        environment: {
+          id: 'fixture',
+          nodePool: node.pool,
+          allowIntervention: true,
+          reuseAuth: true,
+        },
+        sessionPlan: {
+          version: 1,
+          mode: 'guest',
+          preparationMs: 120000,
+          requirements: [],
+          candidates: [],
+        },
+        executionPlan: {
+          version: 1,
+          environment: {
+            mode: 'guest',
+            source: 'explicit',
+            basis: [],
+            resolverVersion: 1,
+          },
+          evidenceKinds: ['DOM'],
+        },
+      };
+      await submit(definition);
+      // 新计划不会派给旧 worker；已冻结旧任务的回归仍使用原 claim 分支。
+      assert.equal(await claim(), null);
+      const execution = await claim(true);
+      assert.ok(execution);
+      const worker = new SimulatedWorker(base, execution);
+      t.after(() => worker.close());
+      await ready(execution);
+      const read = async () =>
+        (
+          await api(
+            'GET',
+            `/v1/executions/${execution.id}`,
+            undefined,
+            execution.leaseToken,
+          )
+        ).data;
+      assert.deepEqual((await read()).environmentProof, {
+        sessionId: execution.sessionId,
+        initialState: 'empty',
+        authRestored: false,
+      });
+      assert.equal(
+        node.sessions.get(execution.sessionId)!.command.type,
+        'session.open',
+      );
+      assert.equal(
+        (node.sessions.get(execution.sessionId)!.command as any).authState,
+        undefined,
+      );
+      const adminPath = `/v1/admin/executions/${execution.id}`;
+      const keys = ['a'.repeat(64), 'b'.repeat(64), 'c'.repeat(64)];
+      for (let round = 0; round < 3; round++) {
+        const revision = round * 2;
+        assert.equal(
+          (
+            await api(
+              'POST',
+              `/v1/executions/${execution.id}/intervene`,
+              {
+                type: 'execution.intervene',
+                controlRevision: revision,
+                reason: '确认当前条件',
+                items: ['核实条件'],
+                conditionKeys: [keys[round]],
+              },
+              execution.leaseToken,
+            )
+          ).status,
+          200,
+        );
+        assert.equal(
+          (
+            await api(
+              'POST',
+              `/v1/executions/${execution.id}/control`,
+              {
+                type: 'execution.control',
+                action: 'acknowledge',
+                controlRevision: revision + 1,
+              },
+              execution.leaseToken,
+            )
+          ).status,
+          200,
+        );
+        const link = (await api('GET', `${adminPath}/intervention`)).data
+          .intervention;
+        const messages: any[] = [];
+        const ws = new WebSocket(
+          `${base.replace(/^http/, 'ws')}/v1/hitl/connect`,
+          { origin: base },
+        );
+        ws.on('message', (data) => messages.push(JSON.parse(data.toString())));
+        await new Promise<void>((resolve) => ws.once('open', resolve));
+        ws.send(
+          JSON.stringify({
+            type: 'authenticate',
+            id: link.id,
+            token: link.path.split('/').at(-1),
+          }),
+        );
+        try {
+          await until(
+            () => messages,
+            (rows) =>
+              rows.some((m) => m.type === 'state' && m.mode === 'HUMAN'),
+          );
+          assert.deepEqual(
+            messages.find((m) => m.type === 'state').conditionKeys,
+            [keys[round]],
+          );
+          if (round === 2) {
+            const commandId = randomUUID();
+            const request = {
+              type: 'execution.command',
+              commandId,
+              timeoutMs: 5000,
+              controlRevision: revision + 1,
+              command: { type: 'browser.input', action: 'press', value: 'Tab' },
+            };
+            assert.equal(
+              (await api('POST', `${adminPath}/commands`, request)).status,
+              202,
+            );
+            await until(read, (value) => value.authRevision === 1);
+            await until(
+              async () =>
+                (
+                  await sql.query(
+                    'SELECT result FROM pr_commands WHERE id=$1',
+                    [commandId],
+                  )
+                ).rows[0]?.result,
+              Boolean,
+            );
+            assert.equal(
+              (await api('POST', `${adminPath}/commands`, request)).status,
+              202,
+            );
+            assert.equal((await read()).authRevision, 1);
+            assert.equal((await read()).humanConfirmation, undefined);
+          }
+          ws.send(
+            JSON.stringify({
+              type: 'complete',
+              confirmedItems: [0],
+              confirmedConditionKeys: [keys[round]],
+            }),
+          );
+          await until(
+            () => messages,
+            (rows) => rows.some((m) => m.type === 'completed'),
+          );
+        } finally {
+          ws.close();
+        }
+        const view = await read();
+        assert.equal(view.authRevision, round === 2 ? 1 : 0);
+        assert.deepEqual(
+          view.humanConfirmation.conditionKeys.sort(),
+          (round === 2 ? [keys[2]] : keys.slice(0, round + 1)).sort(),
+        );
+      }
+      assert.equal(
+        (
+          await sql.query(
+            "SELECT count(*) FROM pr_commands WHERE execution_id=$1 AND kind='browser.auth.save'",
+            [execution.id],
+          )
+        ).rows[0].count,
+        '0',
+      );
+      await api('POST', `/v1/tasks/${definition.taskId}/cancel`);
+      await cleaned(definition.taskId);
     });
 
     // 范围：v2 真实提交、节点偏好、双跑初始快照及 HITL 保存后恢复；节点保存回执为夹具，不证明真实 Cookie 或业务登录。

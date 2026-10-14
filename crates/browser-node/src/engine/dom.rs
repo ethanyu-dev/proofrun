@@ -1,6 +1,8 @@
 //! 通过会话私有 CDP 连接读取原生 DOM；元素身份绑定实际 backend node，不按名称重找替代节点。
 #[path = "dom_cookies.rs"]
 mod cookie_cleanup;
+#[path = "dom_network.rs"]
+mod network_capture;
 use crate::error::{Fault, Result};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
@@ -67,6 +69,8 @@ struct Target {
 }
 /// 每份观察独占连接和节点映射；刷新或任何动作后由引擎丢弃。
 pub struct Dom {
+    /// 独立网络连接的有界历史；普通 DOM 连接不启用。
+    network: Option<network_capture::NetworkCapture>,
     /// 仅连接当前隔离浏览器的本机调试端口。
     socket: WebSocketStream<MaybeTlsStream<TcpStream>>,
     /// 当前连接内单调增加的请求身份。
@@ -102,6 +106,7 @@ impl Dom {
             targets: HashMap::new(),
             sessions: Vec::new(),
             trace_complete: None,
+            network: None,
         })
     }
     /// 单会话内串行请求；其他通知不作为命令回复，传输未知不重发。
@@ -121,6 +126,9 @@ impl Dom {
             if let Message::Text(text) = message {
                 let value: Value =
                     serde_json::from_str(&text).map_err(|_| cdp_fault(method, "decode", None))?;
+                if let Some(network) = &mut self.network {
+                    network.event(&value);
+                }
                 if value["method"] == "Tracing.tracingComplete" {
                     self.trace_complete = Some(value["params"].clone());
                 }

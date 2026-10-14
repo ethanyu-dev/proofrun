@@ -17,6 +17,8 @@ interface State {
   reason: string;
   /** 处理者逐项确认的待办。 */
   items: string[];
+  /** 与本轮待办一一对应的稳定身份，旧服务端可缺省。 */
+  conditionKeys?: string[];
   /** REQUESTED 等待交接，HUMAN 才允许输入。 */
   mode: string;
   /** 本轮操作授权的截止时间。 */
@@ -73,6 +75,14 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
     input.current = new HitlInputQueue(
       (item) => {
         if (socket.current?.readyState !== WebSocket.OPEN) return false;
+        // 输入可能改变认证环境，必须在操作完成后重新勾选；纯滚动与保存不清空。
+        if (
+          (item.command.type === 'browser.input' &&
+            item.command.action !== 'scroll') ||
+          item.command.type === 'browser.act' ||
+          item.command.type === 'browser.cookies.set'
+        )
+          setChecked([]);
         socket.current.send(
           JSON.stringify({
             type: 'command',
@@ -515,6 +525,13 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
                     JSON.stringify({
                       type: 'complete',
                       confirmedItems: checked,
+                      ...(state?.conditionKeys
+                        ? {
+                            confirmedConditionKeys: checked.map(
+                              (index) => state.conditionKeys![index]!,
+                            ),
+                          }
+                        : {}),
                     }),
                   );
                   completionTimer.current = setTimeout(() => {

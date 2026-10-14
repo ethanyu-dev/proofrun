@@ -42,7 +42,20 @@ export type CommandResult = Extract<NodeEvent, { type: 'command.result' }>;
 /** 执行视图只用于生命周期控制；节点和会话身份始终来自领取响应。 */
 export interface ExecutionView extends ExecutionTiming {
   /** 仅来自独立人工处理页逐项确认，普通 resume 不会携带此证据。 */
-  humanConfirmation?: { revision: number; items: string[] };
+  humanConfirmation?: {
+    revision: number;
+    items: string[];
+    conditionKeys?: string[];
+    authRevision?: number;
+  };
+  /** 节点实际启动回执，不接受模型声明。 */
+  environmentProof?: {
+    sessionId: string;
+    initialState: string;
+    authRestored: boolean;
+  };
+  /** 认证版本只随可能改变身份的操作增长。 */
+  authRevision?: number;
   /** 任务终态用于撤销模型调用，不依赖模型理解取消文本。 */
   taskState: string;
   /** 操作权与代次独立于任务生命周期，暂停期间仍由原 worker 续租。 */
@@ -119,6 +132,7 @@ export class ControlClient {
         stepBudgetVersion: 1,
         identityVersion: 1,
         profileTabsVersion: 1,
+        executionPlanVersion: 1,
       },
       this.config.requestMs,
       signal,
@@ -283,6 +297,7 @@ export class ControlClient {
       ControlRequest,
       { type: 'execution.intervene' }
     >['reasonCode'],
+    conditionKeys?: string[],
   ): Promise<void> {
     await this.request(
       execution,
@@ -293,6 +308,7 @@ export class ControlClient {
         controlRevision,
         reason,
         ...(items ? { items } : {}),
+        ...(conditionKeys ? { conditionKeys } : {}),
         ...(reasonCode ? { reasonCode } : {}),
       },
       signal,
