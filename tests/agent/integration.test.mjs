@@ -569,72 +569,75 @@ test(
           );
           assert.equal(persisted.cleanup.result.outcome, 'PASSED');
           assert.equal(persisted.cleanup.taskId, partial.grant.task.taskId);
-          // 范围：准备门禁经真实 API 落库与列表分类，网页和角色判断仍由夹具模拟。
-          await api('POST', '/v2/cases', [
-            {
-              caseId: 'v2-environment-gate',
-              platform: '夹具',
-              entry: step.url,
-              steps: [
-                {
-                  ...step,
-                  type: 'setup',
-                  exec_order: 1,
-                  expected: [],
-                  policy: ['指定团队角色必须已确认'],
-                },
-                step,
-              ],
-              cleanup: [
-                { url: step.url, exec_order: 1, description: '清理夹具' },
-              ],
-            },
-          ]);
-          const gated = await executeNext((context) =>
-            context.executionStep.stepId === 'step-1' &&
-            context.setupPhase === 'CHECKING'
-              ? {
-                  type: 'verification.block',
-                  summary: '指定团队角色未确认',
-                  reasonCode: 'OTHER',
-                }
-              : completed(context),
-          );
-          assert.equal(
-            gated.report.executionDetails.reasonCode,
-            'ENVIRONMENT_NOT_READY',
-          );
-          const gatedStored = await api(
-            'GET',
-            `/v1/tasks/${gated.grant.task.taskId}`,
-          );
-          assert.deepEqual(
-            gatedStored.report.steps.map((s) => s.status),
-            ['BLOCKED', 'SKIPPED', 'SKIPPED'],
-          );
-          assert.equal(gatedStored.report.steps[1].startedAt, null);
-          assert.equal(gatedStored.report.criteria[0].verdict, 'SKIPPED');
-          const list = await api('GET', '/v1/tasks?q=v2-environment-gate');
-          assert.equal(
-            list.tasks[0].execution_reason_code,
-            'ENVIRONMENT_NOT_READY',
-          );
-          assert.equal(list.tasks[0].reportStatus, 'INCONCLUSIVE');
-          assert.equal(gatedStored.report.steps[2].startedAt, null);
-          assert.match(gatedStored.report.steps[0].summary, /指定团队角色/);
-          assert.ok(
-            gatedStored.report.steps[0].blockage.conditions.some((c) =>
-              c.description.includes('指定团队角色'),
-            ),
-          );
-          assert.ok(
-            gatedStored.report.steps[0].blockage.evidenceRefs.some((id) =>
-              gatedStored.report.artifacts.some(
-                (a) => a.id === id && a.kind === 'SCREENSHOT',
+          // 范围：显式身份阻塞和普通准备阻塞分别贯通报告、列表及跳过门禁；页面和模型分类为夹具，不验证真实角色。
+          for (const [reasonCode, expectedCode] of [
+            ['IDENTITY_UNCONFIRMED', 'ENVIRONMENT_NOT_READY'],
+            ['OTHER', 'SETUP_BLOCKED'],
+          ]) {
+            const caseId = `v2-environment-gate-${reasonCode.toLowerCase()}`;
+            await api('POST', '/v2/cases', [
+              {
+                caseId,
+                platform: '夹具',
+                entry: step.url,
+                steps: [
+                  {
+                    ...step,
+                    type: 'setup',
+                    exec_order: 1,
+                    expected: [],
+                    policy: ['指定团队角色必须已确认'],
+                  },
+                  step,
+                ],
+                cleanup: [
+                  { url: step.url, exec_order: 1, description: '清理夹具' },
+                ],
+              },
+            ]);
+            const gated = await executeNext((context) =>
+              context.executionStep.stepId === 'step-1' &&
+              context.setupPhase === 'CHECKING'
+                ? {
+                    type: 'verification.block',
+                    summary: '指定团队角色未确认',
+                    reasonCode,
+                  }
+                : completed(context),
+            );
+            assert.equal(
+              gated.report.executionDetails.reasonCode,
+              expectedCode,
+            );
+            const gatedStored = await api(
+              'GET',
+              `/v1/tasks/${gated.grant.task.taskId}`,
+            );
+            assert.deepEqual(
+              gatedStored.report.steps.map((s) => s.status),
+              ['BLOCKED', 'SKIPPED', 'SKIPPED'],
+            );
+            assert.equal(gatedStored.report.steps[1].startedAt, null);
+            assert.equal(gatedStored.report.criteria[0].verdict, 'SKIPPED');
+            const list = await api('GET', `/v1/tasks?q=${caseId}`);
+            assert.equal(list.tasks[0].execution_reason_code, expectedCode);
+            assert.equal(list.tasks[0].reportStatus, 'INCONCLUSIVE');
+            assert.equal(gatedStored.report.steps[2].startedAt, null);
+            assert.match(gatedStored.report.steps[0].summary, /指定团队角色/);
+            assert.ok(
+              gatedStored.report.steps[0].blockage.conditions.some((c) =>
+                c.description.includes('指定团队角色'),
               ),
-            ),
-          );
-          await verifyEvidence(gatedStored.report);
+            );
+            assert.ok(
+              gatedStored.report.steps[0].blockage.evidenceRefs.some((id) =>
+                gatedStored.report.artifacts.some(
+                  (a) => a.id === id && a.kind === 'SCREENSHOT',
+                ),
+              ),
+            );
+            await verifyEvidence(gatedStored.report);
+          }
           await Promise.all(uploads);
           await api('POST', `/v1/nodes/${node.id}/revoke`);
           node.close();

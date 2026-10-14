@@ -39,14 +39,13 @@ impl NetworkCapture {
                 self.entries.pop_front();
                 self.truncated = true;
             }
-        } else if event["method"] == "Network.responseReceived" {
-            if let Some(entry) = self
+        } else if event["method"] == "Network.responseReceived"
+            && let Some(entry) = self
                 .entries
                 .iter_mut()
                 .find(|entry| entry["requestId"] == p["requestId"])
-            {
-                entry["status"] = p["response"]["status"].clone();
-            }
+        {
+            entry["status"] = p["response"]["status"].clone();
         }
     }
 }
