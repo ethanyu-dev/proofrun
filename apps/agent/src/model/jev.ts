@@ -113,7 +113,14 @@ export class JevModel implements DecisionModel {
       executionStep?: { stepId: string };
       cleanup?: boolean;
       environmentReview?: { required: boolean };
-      interactionProgress?: { items: Array<{ status: string }> };
+      interactionProgress?: {
+        items: Array<{ status: string }>;
+        currentTargets?: Array<{
+          target: string;
+          itemId: string;
+          status: string;
+        }>;
+      };
     };
     // 环境意图必须由拥有完整原始约束的文本模型单独声明，不能被动作提案跳过。
     if (context.environmentReview?.required)
@@ -178,7 +185,7 @@ export class JevModel implements DecisionModel {
       : context.cleanup
         ? '后续清理由文本模型核对明确的恢复条件及 Cookie 清理回执，满足后及时结束'
         : typeof context.feedback === 'string' &&
-            /^(WORKFLOW_|INTERACTION_RECOVERY_REQUIRED:|OBSERVATION_STALLED:|BROWSER_TARGET_OBSCURED:|BROWSER_STALE_OBSERVATION:|BROWSER_ACTION_PRECONDITION_FAILED:)/u.test(
+            /^(WORKFLOW_|INTERACTION_RECOVERY_REQUIRED:|INTERACTION_ALREADY_RECORDED:|OBSERVATION_STALLED:|BROWSER_TARGET_OBSCURED:|BROWSER_STALE_OBSERVATION:|BROWSER_ACTION_PRECONDITION_FAILED:)/u.test(
               context.feedback,
             )
           ? '执行器反馈步骤缺口、预算耗尽或动作目标失效；请核对当前状态并改变恢复策略，无法继续时 verification.block'
@@ -191,6 +198,12 @@ export class JevModel implements DecisionModel {
                   !!recovery && recovery.remaining > 0,
                 );
     if (reason) return review(reason);
+    const readings = new Map(
+      context.interactionProgress?.currentTargets?.map((item) => [
+        item.target,
+        item,
+      ]),
+    );
     const available = candidates(
       page.targets,
       objective,
@@ -201,7 +214,16 @@ export class JevModel implements DecisionModel {
               : {}),
           }
         : undefined,
-    );
+    )
+      .map((candidate) => ({
+        ...candidate,
+        field: { ...candidate.field, reading: readings.get(candidate.target) },
+      }))
+      .sort(
+        (a, b) =>
+          Number(a.field.reading?.status === 'recorded') -
+          Number(b.field.reading?.status === 'recorded'),
+      );
     const selected = available.slice(0, ACTION_LIMIT);
     // 变化排序后的动作共享一份简短字段说明，不重复完整 DOM 行。
     const choices: Record<string, unknown> = {
@@ -340,6 +362,12 @@ export class JevModel implements DecisionModel {
         ...(selectedAction ? { target: selectedAction.target } : {}),
       });
     const target = selectedAction!.target;
+    if (operation === 'CLICK' && readings.get(target)?.status === 'recorded') {
+      const output = await review(
+        '所选子项已有读取证据；请选择未读取目标，视口未提供时先滚动。只有原任务要求重查或验证开关行为时才通过 workflow.revisitReason 说明重复操作原因',
+      );
+      return finish(output.decision, output);
+    }
     if (operation === 'CLICK')
       return finish({ type: 'browser.act', action: 'click', target });
     if (operation === 'SELECT')

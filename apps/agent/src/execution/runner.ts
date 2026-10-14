@@ -1450,12 +1450,6 @@ class Execution {
         }
         if (decision.type === 'browser.act') {
           this.operation(decision);
-          if (decision.action === 'click') {
-            const target = this.current!.targets.find(
-              (t) => t.target === decision.target,
-            );
-            if (target) this.interactions.assertClick(this.current!, target);
-          }
         }
         const readings = this.interactions.validate(output.workflow?.readings);
         const readingRevision = this.interactions.view().revision;
@@ -1480,6 +1474,18 @@ class Execution {
         }
 
         this.workflow.assertAction(decision);
+        // 本轮登记的引文也参与防重；有明确重查原因时仍保留失败前置检查和原动作预算。
+        if (decision.type === 'browser.act' && decision.action === 'click') {
+          const target = this.current!.targets.find(
+            (t) => t.target === decision.target,
+          );
+          if (target)
+            this.interactions.assertClick(
+              this.current!,
+              target,
+              output.workflow?.revisitReason,
+            );
+        }
         if (decision.type === 'verification.intervene') {
           if (this.isSetup()) {
             const blocked = await this.environmentNotReady(
@@ -1623,7 +1629,7 @@ class Execution {
             if (!changed) throw this.criteria.invalid('重复登记不是新进展');
             errors = 0;
             this.feedback =
-              '逐项验收已保存，请继续未完成部分；finish 只需补交尚未保存的项目。';
+              '逐项验收已保存，请继续未完成部分；finish 可补交未登记项目，或凭新增证据升级 INCONCLUSIVE/SKIPPED；已确认的通过或失败不可改写。';
             continue;
           }
           this.workflow.assertFinish(decision);
@@ -1728,6 +1734,7 @@ class Execution {
             'WORKFLOW_INCOMPLETE',
             'WORKFLOW_RECOVERY_EXHAUSTED',
             'INTERACTION_RECOVERY_REQUIRED',
+            'INTERACTION_ALREADY_RECORDED',
           ].includes(error.code)
         ) {
           if (this.isSetup()) {
@@ -1740,7 +1747,9 @@ class Execution {
               error.message,
               error.code === 'INTERACTION_RECOVERY_REQUIRED'
                 ? this.interactions.recoveryReason
-                : error.code,
+                : error.code === 'INTERACTION_ALREADY_RECORDED'
+                  ? 'NO_PROGRESS'
+                  : error.code,
             );
           this.feedback = `${error.code}: ${error.message}`;
           continue;

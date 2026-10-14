@@ -1,4 +1,8 @@
-import type { VerificationReport, VerificationTask } from '@proofrun/contracts';
+import {
+  isCriterionUpgrade,
+  type VerificationReport,
+  type VerificationTask,
+} from '@proofrun/contracts';
 import { AgentFault } from '../http.js';
 
 type Criterion = VerificationReport['criteria'][number];
@@ -12,7 +16,7 @@ export class CriteriaLedger {
     private readonly expected: VerificationTask['acceptanceCriteria'],
   ) {}
 
-  /** 整批先校验再提交，重复登记不算进展，已登记结论不可降级或改写。 */
+  /** 整批先校验再提交；暂存结果仅凭新增有效证据升级，重复登记不算进展。 */
   record(
     criteria: Criterion[],
     evidence: Map<string, VerificationReport['artifacts'][number]>,
@@ -33,13 +37,30 @@ export class CriteriaLedger {
       )
         throw this.invalid('缺少该验收项要求的证据类型');
       const previous = this.records.get(actual.criterionId);
-      if (previous && previous.verdict !== actual.verdict)
-        throw this.invalid('已保存的结论不可覆盖，请只提交未登记的验收项');
+      if (previous && previous.verdict !== actual.verdict) {
+        if (!isCriterionUpgrade(previous, actual))
+          throw this.invalid(
+            '已确认的通过或失败不可改写；暂存结果必须引用本步骤新增有效证据才能升级为通过或失败',
+          );
+      }
     }
     let changed = false;
     for (const actual of criteria) {
-      if (!this.records.has(actual.criterionId)) {
-        this.records.set(actual.criterionId, structuredClone(actual));
+      const previous = this.records.get(actual.criterionId);
+      if (!previous || previous.verdict !== actual.verdict) {
+        // 保留补证前的来源；历次声明正文可通过已存档的模型请求与回复追溯。
+        this.records.set(
+          actual.criterionId,
+          structuredClone({
+            ...actual,
+            evidenceRefs: [
+              ...new Set([
+                ...(previous?.evidenceRefs ?? []),
+                ...actual.evidenceRefs,
+              ]),
+            ],
+          }),
+        );
         changed = true;
       }
     }
@@ -51,7 +72,7 @@ export class CriteriaLedger {
     return new AgentFault(
       'INVALID_MODEL_DECISION',
       this.expected.length
-        ? `${reason}。合法 criterionId：${this.expected.map((c) => c.id).join('、')}；只提交未登记项目，引用已提供的 evidenceRefs。`
+        ? `${reason}。合法 criterionId：${this.expected.map((c) => c.id).join('、')}；提交未登记项目，或用新增证据将 INCONCLUSIVE/SKIPPED 升级为 PASSED/FAILED；已确认结果同判定重送为幂等，引用已提供的 evidenceRefs。`
         : '当前 setup 没有独立验收项，criteria 必须是 []；stepId 不是 criterionId。请用 summary 和本步 evidenceRefs 提交执行结果。',
     );
   }

@@ -16,6 +16,8 @@ const TERM_CHARS = 80;
 
 /** 模型提交的是带证据的完成声明；执行器验证来源，不冒充业务语义判定器。 */
 export interface WorkflowUpdate {
+  /** 原任务要求重查或验证开关行为时解释原因，不清空读取证据或恢复额度。 */
+  revisitReason?: string;
   /** 逐项阅读只能引用执行器已观察的关联面板，不增加原验收要求。 */
   readings?: Array<{ itemId: string; quote: string }>;
   /** 已观察事实的逐步骤声明，不能认领待执行动作。 */
@@ -74,6 +76,7 @@ export const WORKFLOW_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {
+    revisitReason: { type: 'string', minLength: 1, maxLength: MAX_NOTE },
     readings: {
       type: 'array',
       maxItems: 32,
@@ -140,6 +143,24 @@ export class Workflow {
   private state: WorkflowView;
   /** 同一步重新评估不反复清空全局循环计数。 */
   private credited = new Set<string>();
+  /** 同一步切换策略再返回旧计划也不能续费；人工交接才清除历史额度。 */
+  private recoveryBudgets = new Map<string, number>();
+
+  /** 计划身份排除预算，词序与首尾空白不构成新策略。 */
+  private recoveryKey(
+    step: string | null,
+    recovery:
+      | NonNullable<WorkflowView['recovery']>
+      | NonNullable<WorkflowUpdate['recovery']>,
+  ) {
+    return JSON.stringify([
+      step,
+      recovery.goal.trim(),
+      recovery.scope.trim(),
+      recovery.successCondition.trim(),
+      [...new Set(recovery.terms.map((term) => term.trim()))].sort(),
+    ]);
+  }
   constructor(
     objective: string,
     structuredStepId?: string,
@@ -202,9 +223,17 @@ export class Workflow {
       !object(update) ||
       Object.keys(update).some(
         (k) =>
-          !['assessments', 'activeStep', 'recovery', 'readings'].includes(k),
+          ![
+            'assessments',
+            'activeStep',
+            'recovery',
+            'readings',
+            'revisitReason',
+          ].includes(k),
       )
     )
+      throw bad();
+    if (update.revisitReason !== undefined && !note(update.revisitReason))
       throw bad();
     const next = this.view();
     const credited = new Set(this.credited);
@@ -300,30 +329,40 @@ export class Workflow {
       )
         throw bad();
       // 同一计划重送不能重置预算，防止每轮重新规划绕过上限。
-      const old = next.recovery;
-      const same =
-        old &&
-        old.goal === r.goal &&
-        old.scope === r.scope &&
-        old.successCondition === r.successCondition &&
-        JSON.stringify(old.terms) === JSON.stringify(r.terms);
+      const oldRemaining = this.recoveryBudgets.get(
+        this.recoveryKey(
+          next.activeStep,
+          r as unknown as NonNullable<WorkflowUpdate['recovery']>,
+        ),
+      );
       next.recovery = {
         ...(r as unknown as NonNullable<WorkflowUpdate['recovery']>),
-        remaining: same
-          ? Math.min(old.remaining, Number(r.maxActions))
-          : Number(r.maxActions),
+        remaining:
+          oldRemaining !== undefined
+            ? Math.min(oldRemaining, Number(r.maxActions))
+            : Number(r.maxActions),
       };
     }
     this.state = next;
     this.credited = credited;
+    if (next.recovery)
+      this.recoveryBudgets.set(
+        this.recoveryKey(next.activeStep, next.recovery),
+        next.recovery.remaining,
+      );
   }
   /** 真正成功执行浏览器动作后扣减；重新观察或重规划不计作恢复成功。 */
   acted() {
-    if (this.state.recovery)
+    if (this.state.recovery) {
       this.state.recovery.remaining = Math.max(
         0,
         this.state.recovery.remaining - 1,
       );
+      this.recoveryBudgets.set(
+        this.recoveryKey(this.state.activeStep, this.state.recovery),
+        this.state.recovery.remaining,
+      );
+    }
   }
   /** 预算耗尽后必须完成取证或更换计划，不能忽略旧计划继续操作。 */
   assertAction(decision: AgentDecision) {
@@ -336,6 +375,7 @@ export class Workflow {
   /** 人工接管改变了页面状态，丢弃恢复策略但保留历史证据记录。 */
   invalidateRecovery() {
     this.state.recovery = null;
+    this.recoveryBudgets.clear();
   }
   /** 人工可能切换账号或环境；原完成声明失效，历史进展额度不重复发放。 */
   invalidateAssessments() {
