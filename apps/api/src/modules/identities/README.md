@@ -1,24 +1,36 @@
 # 测试身份
 
-新建 v2 case 可提供 `session`；省略时创建 `manual` 会话；平台开启 `reuseAuth` 时恢复按环境、节点池和站点隔离的登录状态。历史任务没有 `sessionPlan`，继续使用原冻结规则。
+## 页面与默认任务流程
 
-```json
-{ "session": { "mode": "identity", "identityRef": "team-member" } }
-```
+「测试身份」页面只维护六个字段：测试地址、Cookies、身份名称、身份类型（可选）、身份描述、并发数。系统内部生成唯一引用、版本和账号租约；用户不再配置 `loginRef`、账号池或站点规则。旧的配置来源切换入口不再展示。
 
-模式：`guest` 使用干净 profile 且不保存认证；`manual` 在开启登录复用时使用本站槽，明确关闭复用时仅保存本轮人工登录的私有槽；`identity` 指定身份；`pool` 使用 `poolRef` 分配账号池；`auto` 通过站点规则选择。自动规则按环境、节点池、精确主机/子域通配、路径边界匹配；冲突不会猜测账号。
+Cookies 接受 `name=value; name=value` 或 JSON 数组 `[{"name":"session","value":"REPLACE_LOCALLY","httpOnly":true}]`。当前限定测试地址主机的根路径 Cookie，最多 32 条；不接受跨域或路径配置。留空保留已配置值，新账号留空则由人工准备；`[]` 清空种子。页面只回显是否配置，不回显秘密。修改地址或重新填写 Cookies 创建新版本，原人工基准不再用于新任务；仅修改名称、类型、描述或并发数不丢弃基准。
 
-Web Console 主导航的「测试身份」（`#/identities`）提供以下配置来源：
+省略 `session` 的新 v2 case 会冻结同源身份候选，进入以下流程：
 
-- **外部身份库**：填写元数据接口 URL 与 Bearer 令牌，验证连接后保存。已保存令牌留空保留，更新地址须重新填写。目录、账号池、站点规则由外部提供方维护，页面只读展示并支持手动刷新。
-- **在页面维护**：以表单添加和编辑身份、页面核验条件、账号池及站点规则，一次保存完整目录。可复制已读取的外部目录；修改不回写外部库。
-- **使用部署配置**：恢复服务启动时的文件/环境变量配置，页面配置不再覆盖它。
+1. Worker 领取独立的身份选择工作。薄身份 agent 单次调用模型，只读取 Case 要求和身份摘要，返回一个候选或“无需身份 / 需要人工”。提示词位于 `apps/agent/src/prompts/identity-selector.ts`，不运行浏览器循环。
+2. 同一对照轮次共享选择。控制面获得账号并发租约后，要求支持 `fullProfile` 的 Browser Node 创建独立会话。并发数是账号的全局会话上限，只有浏览器确认关闭才释放。
+3. 节点复制完整、已关闭的 profile 基准。首次使用可复制节点的 `base_profile_directory` 环境模板；未配置则从空 profile 开始。首次准备清除目标站点的旧身份存储、注入 Cookie 并刷新。已有人工基准时直接恢复它，不再注入更旧的种子。
+4. 加载成功只表示状态已注入，执行 Agent 仍根据页面核验登录和 Case 的条件。没有合适身份、缺失 Cookie 或页面身份无效时进入 HITL。没有候选时创建内部待准备身份，人工成功后才出现在身份库。
+5. 普通任务完成、失败和清理都不更新基准。只有 HITL 逐项确认完成，才关闭浏览器、发布完整 profile 副本并重启任务继续执行。浏览器退出可能删除会话 Cookie，因此完整目录同时保存同版本的会话状态补充文件。旧并发任务不能覆盖较新的人工基准。
 
-页面配置优先于部署默认值。元数据与版本保存在 PostgreSQL；保存即时影响新 case 与重跑，已提交的 case 仍沿用冻结计划。后台统计刷新不覆盖编辑草稿，多人保存通过版本校验防止互相覆盖。验证连接只检查元数据协议，不执行网站登录。任务仍需指定 `session.mode` 为 `identity`、`pool` 或 `auto` 才会使用目录。
+完整 profile 包含磁盘中的站点存储与配置（包括 IndexedDB 等），不包含进程内存、未提交表单或 JS 堆。HITL 完成会重启浏览器并重建任务标签页，旧观察句柄作废。基准固定在所属 Browser Node；当前不提供跨节点 profile 迁移。复制拒绝运行中的 profile、符号链接和特殊文件，单份上限 2 GiB / 100,000 文件。不要把正在使用的个人浏览器目录直接设为模板。
 
-页面写入的外部库令牌放在 API 私有目录：默认 `PROOFRUN_ARTIFACT_DIRECTORY/.identity-secrets`，可用 `PROOFRUN_IDENTITY_SECRET_DIRECTORY` 指定持久目录；目录权限 `0700`、文件 `0600`。数据库只存随机文件引用，接口只回显是否配置，不回传令牌或文件路径。该目录不注册为证据，也不属于证据清理范围。备份和迁移需同时保留数据库与私有目录；API 主备应挂载同一持久卷。令牌轮换或切换来源成功后删除被替换的文件，结果未知时保留文件并先重新读取配置核查。
+HITL 可选择“无法处理”，必须填写原因。该操作结束整个 Case 的未完成组，保留已有证据和已完成步骤；结果为“人为判定无法执行”，展示人工原因，验收 verdict 为空。它不保存基准；重新打开原处理链接仍能读取原因。
 
-Web 管理的是外部元数据连接与身份目录。网站密码、Cookie 及 Browser Node 凭据提供方仍在节点私有配置中维护，表单只填写 `loginRef`；不会把密码或 Cookie 写入身份目录、任务或模型上下文。
+## 存储与接口
+
+元数据和修订号在 PostgreSQL。Cookie 存在 API 私有目录 `PROOFRUN_IDENTITY_SECRET_DIRECTORY/library`，未配置时使用 `PROOFRUN_ARTIFACT_DIRECTORY/.identity-secrets/library`；目录 `0700`，文件 `0600`。任务定义、模型上下文、持久命令和报告不包含 Cookie。投递会话创建命令时读取冻结版本，通过节点认证通道下发，并写入节点会话私有文件。
+
+编辑和删除不删除历史种子，已冻结任务继续使用原版本。数据库与私有目录须一起备份，API 主备应挂载同一持久卷。完整 profile 与版本指针保存在 Browser Node 的认证状态目录中；历史 profile 暂不自动回收。
+
+- 管理员：`GET /v1/admin/identity-library`、`POST /v1/admin/identity-library`、`POST /v1/admin/identity-library/remove`。
+- Worker：`POST /v1/worker/identity-selection/claim`、`POST /v1/worker/identity-selection/finish`；领取实际任务声明 `identityVersion: 2`。
+- HITL：`complete` 发布基准并交还；`unable` 提交必填 `reason`。
+
+三端需一起更新：旧 Worker 不领取新身份库任务，未上报 `fullProfile` 的旧节点不能运行它们。原有身份目录不会自动迁移成六字段账号；请在新页面维护账号。显式 `session.mode=guest/manual/identity/pool/auto` 和已冻结历史任务保留旧协议，以下配置仅用于兼容入口。
+
+## 旧协议兼容
 
 `PROOFRUN_IDENTITY_CATALOG_FILE` 指定平台元数据 JSON：
 
@@ -109,10 +121,6 @@ Web 管理的是外部元数据连接与身份目录。网站密码、Cookie 及
 
 任务详情与报告展示实际选中的身份、登录方式、准备耗时、人工处理次数和账号释放情况，JSON 导出同步保留。准备成功与业务验收分开。账号池会跳过忙碌账号及能力不符的节点，只有真正分配节点才冻结身份。同一对照轮次固定相同账号；默认独占时两组依次运行，避免账号互踢污染对比。
 
-部署先更新 API 与 Agent，再升级 Browser Node，最后启用命名身份配置；未声明 `identityPreparation` 的旧节点不会领取命名身份任务。新协议需三端一起升级，普通历史任务保持原行为。首先为一个测试域名配置身份与角色条件，再用 `session.mode=identity` 验证，最后启用域名规则和账号池。
+## 验证
 
-验证命令：`pnpm test:api`（需独立 `PROOFRUN_TEST_DATABASE_URL`）、`pnpm test:agent`、`pnpm test:console`、`cargo test --locked -p proofrun-node`。真实浏览器夹具使用 `PROOFRUN_AGENT_BROWSER_BIN`（固定 0.38.1 原生二进制）、`PROOFRUN_CHROME_BIN` 后运行 `pnpm test:identity:browser`；只验证回环站点的 Cookie、密码、快照、访客隔离与外部提供方协议，不代表生产账号已配置或真实网站验收通过。
-
-身份配置的正向条件应包含能唯一识别账号的页面标记，再追加团队及角色条件；仅有“已登录”或通用团队名称不能证明实际账号与 `accountKey` 一致。不能通过可靠页面标记确认的条件使用 `manual`，不推测角色。
-
-未指定身份的 v2 与旧内部任务使用同一本站登录槽。双跑共享初始快照和所属节点，后续浏览器会话独立；新一轮任务使用新的初始快照。恢复登录不证明账号角色符合当前 case，仍需检查页面或人工确认。
+`pnpm test:api` 使用独立 PostgreSQL 验证版本、选择租约、私密投递和 HITL 终态；`pnpm test:agent` 验证选择工具和执行门禁；`pnpm test:console` 验证六字段表单及原因呈现；`cargo test --locked -p proofrun-node` 验证复制和版本隔离。配置固定版本的 `PROOFRUN_AGENT_BROWSER_BIN` 与 `PROOFRUN_CHROME_BIN` 后运行 `pnpm test:identity:profile`，在真实 Chrome 回环站点验证 Cookie 注入、人工发布与重启、普通任务不污染基准、身份隔离。测试不代表生产站点账号或 Linux 部署已经验收。

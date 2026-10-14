@@ -70,3 +70,9 @@ node tests/browser-node/validate-events.mjs /absolute/path/to/events.jsonl
 页面联调入口、临时凭据和夹具回收见 [Console README](../apps/console/README.md#验证)；独立 Node 调试页见 [调试页 README](browser-node/debug-ui/README.md)。夹具 PNG 和协议状态不构成真实业务界面验收，也不能仅凭下载按钮存在就认定文件落盘。
 
 真实模型回放工具见 [脚本说明](../scripts/README.md)，实际业务验收与 VM 故障演练见 [部署说明](../deploy/README.md#业务验收)。模型输出 PASSED、任务 COMPLETED、证据摘要正确分别代表不同事实，不能互相替代。
+
+## 薄身份库与完整 profile
+
+- `pnpm test:api`：六字段私密存储、版本冻结、选择租约；HTTP/WebSocket 贯通默认身份选择、成功 HITL 发布与“无法处理”整例终态。浏览器结果使用协议夹具。
+- `pnpm test:agent`：单次身份选择工具调用、无凭据模型输入、无效引用与人工分支。
+- `pnpm test:identity:profile`：设置 `PROOFRUN_AGENT_BROWSER_BIN`（0.38.1 原生 CLI）和 `PROOFRUN_CHROME_BIN` 后，真实 Chrome 回环验证完整 profile 的 Cookie 与站点状态复用、HITL 重启、业务修改隔离。此入口不覆盖 Linux 监管、SSO 或生产业务。

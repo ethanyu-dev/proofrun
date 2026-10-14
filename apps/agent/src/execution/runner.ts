@@ -109,6 +109,8 @@ class Execution {
   private identityPrepared = false;
   /** 节点只返回固定诊断，供 HITL 分类使用，不记录原始凭据。 */
   private preparationReason: string | undefined;
+  /** 仅接受本次身份待办的人工确认，普通恢复控制权不能越过登录门禁。 */
+  private libraryIdentityConfirmed = false;
   /** 环境意图不等同身份事实；访客证明由隔离配置或当前人工确认提供。 */
   private environmentMode: 'guest' | 'configured' | undefined;
   /** 每次导航只执行一次有界外壳等待，不在普通决策轮反复等待。 */
@@ -1437,6 +1439,36 @@ class Execution {
           }
           // 被动重采不累计动作循环，也不能清除导航前已经存在的循环记录。
         }
+        const sessionPlan = this.grant.task.sessionPlan;
+        if (
+          !this.isCleanup() &&
+          sessionPlan?.library &&
+          (sessionPlan.selection === 'human' ||
+            this.preparationReason === 'LOGIN_RECIPE_MISSING')
+        ) {
+          const summary = sessionPlan.selectionReason ?? '没有可用的登录状态';
+          const description = '准备符合 Case 要求的账号';
+          const view = await this.client.view(this.grant, this.guard.signal);
+          if (
+            view.humanConfirmation?.revision === this.controlRevision &&
+            view.humanConfirmation.items.includes(
+              `${description}：${summary}`.slice(0, 500),
+            )
+          )
+            this.libraryIdentityConfirmed = true;
+          if (!this.libraryIdentityConfirmed) {
+            const blocked = await this.environmentNotReady(summary, [
+              {
+                id: 'session:login',
+                description,
+                summary,
+                status: 'UNCONFIRMED',
+              },
+            ]);
+            if (blocked) return blocked;
+            continue;
+          }
+        }
         // 登录前置条件需要人工时先交接，不能先进入模型重复观察或长时间等待挑战。
         if (
           !this.grant.task.profilePlan &&
@@ -2440,7 +2472,8 @@ class Execution {
           method: c.method as 'text' | 'absent',
           value: c.value!,
         })),
-      saveSnapshot: checks.every((c) => c.method !== 'manual'),
+      saveSnapshot:
+        !plan!.library && checks.every((c) => c.method !== 'manual'),
     };
     // 发送前固定已尝试标记；即使回执不明，也不能换一个命令 ID 再次提交。
     this.identityPrepared = true;
@@ -2456,6 +2489,7 @@ class Execution {
         error.code !== 'BROWSER_COMMAND_FAILED'
       )
         throw error;
+      if (plan?.library) this.preparationReason = 'LOGIN_RECIPE_MISSING';
       // 明确拒绝的配置故障可继续业务观察/人工处理，未知副作用仍遵循原有停止规则。
     }
   }

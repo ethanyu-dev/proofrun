@@ -377,7 +377,8 @@
               "SERVICE_ERROR",
               "BROWSER_ERROR",
               "CLEANUP_ERROR",
-              "EXECUTION_ERROR"
+              "EXECUTION_ERROR",
+              "HUMAN_UNEXECUTABLE"
             ],
             "description": "面向用户的执行分类，与验收结果分开。"
           },

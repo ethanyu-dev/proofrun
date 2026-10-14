@@ -8,6 +8,7 @@ pub mod network;
 pub mod node;
 pub mod pairing;
 pub mod process;
+pub mod profile_snapshots;
 pub mod protocol;
 pub mod sessions;
 pub mod store;

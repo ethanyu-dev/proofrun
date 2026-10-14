@@ -1,3 +1,5 @@
+import { caseArmIds } from '../cases/structured.js';
+import { recordHumanUnable } from '../hitl/unable.js';
 import { pauseStepBudget } from './step-budget.js';
 import { Database } from '../../db.js';
 import { ApiError, digest } from '../../domain.js';
@@ -195,6 +197,75 @@ export class ExecutionControl {
         controlRevision: next,
         controlReason: nextReason,
       };
+    });
+  }
+
+  /** 人工无法处理直接终止整个 Case，事务内保存原文并撤销所有尚未结束的执行。 */
+  async unable(
+    id: string,
+    revision: number,
+    reason: string,
+    publicUrl: string,
+  ) {
+    if (typeof reason !== 'string' || !reason.trim() || reason.length > 2000)
+      throw new ApiError(
+        422,
+        'HITL_REASON_REQUIRED',
+        '请填写无法处理的具体原因',
+      );
+    return this.db.transaction(async (client) => {
+      // 同例两组同时提交人工终态时先串行整例，避免分别持有组锁后交叉等待。
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended(COALESCE(t.definition#>>'{comparison,id}',t.id),8)) FROM pr_tasks t JOIN pr_executions e ON e.task_id=t.id WHERE e.id=$1",
+        [id],
+      );
+      const context = await executionContext(client, id);
+      const previous = (
+        await client.query<{ unable_reason: string | null }>(
+          'SELECT unable_reason FROM pr_interventions WHERE execution_id=$1 AND revision=$2',
+          [id, revision],
+        )
+      ).rows[0];
+      if (previous?.unable_reason) {
+        if (previous.unable_reason !== reason.trim())
+          throw new ApiError(
+            409,
+            'HITL_RESULT_CONFLICT',
+            '人工处理结果已经保存',
+          );
+        return { reason: previous.unable_reason };
+      }
+      this.active(context);
+      if (
+        context.control_mode !== 'HUMAN' ||
+        context.control_revision !== revision
+      )
+        throw new ApiError(409, 'CONTROL_CHANGED', '人工控制权已变更');
+      if (
+        (
+          await client.query(
+            "SELECT 1 FROM pr_commands WHERE execution_id=$1 AND kind LIKE 'browser.%' AND result IS NULL",
+            [id],
+          )
+        ).rowCount
+      )
+        throw new ApiError(409, 'SESSION_BUSY', '请等待当前浏览器操作完成');
+      const saved = await client.query(
+        'UPDATE pr_interventions SET unable_reason=$3,completed_at=clock_timestamp() WHERE execution_id=$1 AND revision=$2 AND completed_at IS NULL RETURNING id',
+        [id, revision, reason.trim()],
+      );
+      if (!saved.rowCount)
+        throw new ApiError(409, 'HITL_ENDED', '人工处理已结束');
+      await client.query(
+        'UPDATE pr_executions SET control_reason=$2,human_requested_at=NULL,human_deadline_at=NULL WHERE id=$1',
+        [id, reason.trim()],
+      );
+      const ids = context.definition.caseV2Definition
+        ? caseArmIds(context.definition)
+        : [context.task_id];
+      for (const taskId of [...new Set(ids)].sort())
+        await recordHumanUnable(client, taskId, reason.trim(), publicUrl);
+      return { reason: reason.trim() };
     });
   }
 

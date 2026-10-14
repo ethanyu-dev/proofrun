@@ -77,6 +77,12 @@ test(
     );
     const nodes = [];
     const api = async (method, path, body) => {
+      // 本组保持显式旧会话夹具；默认身份选择由 API 身份库集成与 Agent 选择测试覆盖。
+      if (method === 'POST' && path === '/v2/cases' && Array.isArray(body))
+        body = body.map((item) => ({
+          ...item,
+          session: item.session ?? { mode: 'manual' },
+        }));
       const response = await fetch(base + path, {
         method,
         headers: {

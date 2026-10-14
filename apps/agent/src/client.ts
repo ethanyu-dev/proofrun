@@ -130,7 +130,7 @@ export class ControlClient {
         workerId: this.config.workerId,
         structuredSteps: true,
         stepBudgetVersion: 1,
-        identityVersion: 1,
+        identityVersion: 2,
         profileTabsVersion: 1,
         executionPlanVersion: 1,
       },

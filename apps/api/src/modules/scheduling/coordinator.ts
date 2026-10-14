@@ -1,3 +1,5 @@
+import { selectedTask } from '../identities/selection.js';
+import type { IdentityLibrary } from '../identities/library.js';
 import { taskEvidenceKinds } from '@proofrun/contracts';
 import { taskOutcomes } from '../tasks/outcome.js';
 import { authorizeCookieCleanup } from './cookie-cleanup.js';
@@ -81,6 +83,8 @@ const MAX_TASK_MS = 86_400_000;
 export class Coordinator {
   /** 在应用装配时注入唯一网关，避免建立第二套路由状态。 */
   gateway!: NodeGateway;
+  /** 凭据只在向已授权节点投递时读取，不进入持久命令正文。 */
+  identityLibrary?: IdentityLibrary;
   constructor(
     private readonly db: Database,
     private readonly config: ApiConfig,
@@ -572,7 +576,7 @@ export class Coordinator {
           BATCH_SIZE,
           structuredSteps,
           stepBudgetVersion === 1,
-          identityVersion === 1,
+          identityVersion === 1 || identityVersion === 2,
           profileTabsVersion === 1,
           executionPlanVersion === 1,
         ],
@@ -588,7 +592,9 @@ export class Coordinator {
           )
         ).rows[0];
         if (!row) continue;
-        let task = row.definition;
+        const selected = await selectedTask(client, row.definition);
+        if (!selected) continue;
+        let task = selected;
         if (task.executionPlan && executionPlanVersion !== 1) continue;
         if (task.steps && !structuredSteps) continue;
         if (task.stepBudget && stepBudgetVersion !== 1) continue;
@@ -597,7 +603,9 @@ export class Coordinator {
           task.environment.nodePool,
           targetHostname(task.target.url),
         );
-        if (task.sessionPlan && identityVersion !== 1) continue;
+        if (task.sessionPlan && identityVersion !== 1 && identityVersion !== 2)
+          continue;
+        if (task.sessionPlan?.library && identityVersion !== 2) continue;
         if (task.profilePlan && profileTabsVersion !== 1) continue;
         const allocationTask = task;
         // 把尚未出现在心跳中的会话预留也计入，池内其他账号可改用空闲节点。
@@ -866,7 +874,7 @@ export class Coordinator {
                   heartbeat.limits.maxSessionMs,
                 ),
               },
-              Math.min(15_000, remaining),
+              Math.min(task.sessionPlan?.library ? 120_000 : 15_000, remaining),
             ),
           );
           return {
@@ -892,6 +900,8 @@ export class Coordinator {
   private eligible(heartbeat: Heartbeat, task: VerificationTask): boolean {
     return (
       heartbeat.pool === task.environment.nodePool &&
+      (!task.sessionPlan?.library ||
+        heartbeat.capabilities.fullProfile === true) &&
       (!task.executionPlan ||
         heartbeat.capabilities.environmentProof === true) &&
       (!task.profilePlan || heartbeat.capabilities.profileTabs === true) &&
@@ -1055,6 +1065,7 @@ export class Coordinator {
     operation: NodeCommand['command'],
     controlRevision = 0,
     stepId?: string,
+    hitlCompletion = false,
   ) {
     if (!operation.type.startsWith('browser.'))
       throw new ApiError(
@@ -1091,6 +1102,16 @@ export class Coordinator {
     );
     return this.db.transaction(async (client) => {
       const context = await executionContext(client, id);
+      if (
+        operation.type === 'browser.auth.save' &&
+        context.definition.sessionPlan?.library &&
+        !hitlCompletion
+      )
+        throw new ApiError(
+          403,
+          'HITL_COMPLETION_REQUIRED',
+          '完整基准只能在人工处理完成时发布',
+        );
       if (token !== null) this.authorize(context, token, false);
       const existing = (
         await client.query(
@@ -1310,6 +1331,12 @@ export class Coordinator {
     report: VerificationReport,
     controlRevision = 0,
   ) {
+    if (report.humanDecision)
+      throw new ApiError(
+        403,
+        'HUMAN_RESULT_FORBIDDEN',
+        '人工结论只能由人工处理服务提交',
+      );
     await this.db.transaction(async (client) => {
       const context = await executionContext(client, id);
       this.authorize(context, token, false);
@@ -1876,7 +1903,29 @@ export class Coordinator {
         );
         return envelope;
       });
-      if (command) await this.gateway.send(command);
+      if (command) {
+        if (
+          command.command.type === 'session.open' &&
+          command.command.authState?.fullProfile &&
+          this.identityLibrary
+        ) {
+          const assigned = (
+            await this.db.query<{
+              identity: NonNullable<
+                VerificationTask['sessionPlan']
+              >['candidates'][number];
+            }>(
+              'SELECT a.identity FROM pr_identity_assignments a JOIN pr_executions e ON e.task_id=a.task_id WHERE e.id=$1',
+              [row.execution_id],
+            )
+          ).rows[0];
+          if (assigned?.identity.libraryVersion)
+            command.command.identitySeed = await this.identityLibrary.seed(
+              assigned.identity,
+            );
+        }
+        await this.gateway.send(command);
+      }
     }
   }
 }

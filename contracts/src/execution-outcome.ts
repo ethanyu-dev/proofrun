@@ -12,6 +12,8 @@ const ENVIRONMENT_CODES = new Set([
 export interface ExecutionFacts {
   /** 任务生命周期，不等同于产品验收结论。 */
   state: string;
+  /** 人工终止原文优先展示，不由模型转述。 */
+  humanReason?: string | null;
   /** 控制面记录的终止原因。 */
   code?: string | null;
   /** 执行报告提供的稳定原因码。 */
@@ -41,7 +43,12 @@ export function executionOutcome(facts: ExecutionFacts): ExecutionOutcome {
   const environment =
     ENVIRONMENT_CODES.has(facts.blockingCode ?? '') && unresolved;
   let category: ExecutionOutcome['category'];
-  if (facts.state === 'CANCELLED') category = 'CANCELLED';
+  if (
+    facts.reportCode === 'HUMAN_UNEXECUTABLE' ||
+    code === 'HUMAN_UNEXECUTABLE'
+  )
+    category = 'HUMAN_UNEXECUTABLE';
+  else if (facts.state === 'CANCELLED') category = 'CANCELLED';
   else if (facts.state === 'QUEUED') category = 'QUEUED';
   else if (facts.state === 'RUNNING')
     category = unresolved ? 'WAITING_HUMAN' : 'RUNNING';
@@ -96,11 +103,21 @@ export function executionOutcome(facts: ExecutionFacts): ExecutionOutcome {
   else category = 'COMPLETED';
   return {
     category,
-    reasonCode: environment ? facts.blockingCode! : code,
+    reasonCode:
+      category === 'HUMAN_UNEXECUTABLE'
+        ? 'HUMAN_UNEXECUTABLE'
+        : environment
+          ? facts.blockingCode!
+          : code,
     terminationCode: ['QUEUED', 'RUNNING'].includes(facts.state)
       ? null
       : (facts.code ?? null),
-    detail: unresolved ? (facts.blockingReason ?? null) : null,
+    detail:
+      category === 'HUMAN_UNEXECUTABLE'
+        ? (facts.humanReason ?? facts.blockingReason ?? null)
+        : unresolved
+          ? (facts.blockingReason ?? null)
+          : null,
     waitingSince: facts.waitingSince ?? null,
     waitDeadline: facts.waitDeadline ?? null,
   };

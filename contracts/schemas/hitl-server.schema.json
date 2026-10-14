@@ -128,6 +128,19 @@
         }
       },
       "required": ["type"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "unable"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": ["type", "reason"]
     }
   ]
 }

@@ -269,11 +269,12 @@
                 "PENDING",
                 "READY",
                 "NEEDS_HUMAN",
-                "ERROR"
+                "ERROR",
+                "LOADED"
               ]
             },
             "source": {
-              "enum": ["snapshot", "cookies", "password", "none"]
+              "enum": ["snapshot", "cookies", "password", "none", "profile"]
             },
             "reasonCode": {
               "type": ["string", "null"]

@@ -98,6 +98,12 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
     body?: unknown,
     token = ADMIN,
   ) => {
+    // 本组覆盖显式旧会话协议；省略 session 的身份选择流程由 identity-library-http 单独覆盖。
+    if (method === 'POST' && path === '/v2/cases' && Array.isArray(body))
+      body = body.map((item) => ({
+        ...item,
+        session: item.session ?? { mode: 'manual' },
+      }));
     // 旧的单步协议夹具补齐新版身份字段；错误身份、跨组证据和并发行为另有专门回归。
     const executionPath = /^\/v1\/executions\/([^/]+)\//.exec(path);
     if (method === 'POST' && body && executionPath) {
@@ -5147,6 +5153,7 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
           assert.equal(fresh.report, null);
           assert.deepEqual(fresh.definition.caseV2Definition, {
             ...input,
+            session: { mode: 'manual' },
             caseId,
           });
           assert.deepEqual(fresh.definition.cleanupStepIds, ['cleanup-1']);

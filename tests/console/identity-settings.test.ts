@@ -5,7 +5,7 @@ import {
   identityWrite,
   type IdentitySettingsView,
 } from '../../apps/console/src/identity-config.ts';
-import { IdentitySettingsForm } from '../../apps/console/src/pages/identities.tsx';
+import { IdentityForm } from '../../apps/console/src/pages/identities.tsx';
 import { IdentityUsage } from '../../apps/console/src/components/identity-overview.tsx';
 import { ApiClient } from '../../apps/console/src/api.ts';
 
@@ -61,27 +61,34 @@ test('非外部模式不携带表单旧令牌，空令牌表示保留且站点�
   );
 });
 
-// 范围：外部连接故障仍显示可编辑配置、不伪装成空库；不覆盖浏览器控件事件。
-test('外部库不可用仍能编辑连接，令牌仅显示已配置状态', () => {
+// 范围：真实 React 静态渲染六字段表单及敏感值省略；不覆盖浏览器输入与 HTTP 保存。
+test('身份表单只呈现六个账号字段，不要求内部引用', () => {
   const html = renderToStaticMarkup(
-    createElement(IdentitySettingsForm, {
+    createElement(IdentityForm, {
       api: new ApiClient('fixture'),
-      settings,
-      catalog: undefined,
-      catalogLoading: false,
-      catalogError: '外部库不可用',
-      reload() {},
       saved() {},
-      refreshed() {},
+      cancel() {},
     }),
   );
-  assert.match(html, /访问令牌（已配置，留空保留）/);
-  assert.match(html, /type="password"/);
-  assert.match(html, /外部库不可用/);
-  assert.match(html, /目录暂不可用/);
-  assert.doesNotMatch(html, /目录中没有身份/);
-  assert.match(html, /验证连接/);
-  assert.match(html, /保存配置/);
+  for (const label of [
+    '测试地址',
+    '身份名称',
+    '身份类型（可选）',
+    '并发数',
+    '身份描述',
+    'Cookies',
+  ])
+    assert.ok(html.includes(label));
+  assert.equal((html.match(/<label/g) ?? []).length, 6);
+  for (const label of [
+    '账号键',
+    '登录配方引用',
+    '节点 ID',
+    '快照 ID',
+    '站点规则',
+    '配置来源',
+  ])
+    assert.ok(!html.includes(label));
 });
 
 // 范围：无准备回执显示暂无数据，账号占用和等待分别表达；不验证统计 SQL。

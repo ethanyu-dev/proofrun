@@ -8,7 +8,8 @@ export async function taskOutcomes(db: Database, ids: string[]) {
   const rows = await db.query<ExecutionFacts & { id: string }>(
     `
     SELECT t.id,t.state,t.error->>'code' AS code,
-      t.report#>>'{executionDetails,reasonCode}' AS "reportCode",
+      CASE WHEN t.report ? 'humanDecision' THEN 'HUMAN_UNEXECUTABLE' ELSE t.report#>>'{executionDetails,reasonCode}' END AS "reportCode",
+      t.report#>>'{humanDecision,reason}' AS "humanReason",
       t.report->>'executionDisposition' AS disposition,
       e.control_mode AS "controlMode",e.control_reason AS "blockingReason",
       h.reason_code AS "blockingCode",

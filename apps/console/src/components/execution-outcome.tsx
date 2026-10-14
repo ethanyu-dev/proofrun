@@ -97,7 +97,10 @@ export function ExecutionOutcomeDetails({
           </div>
         )}
       </dl>
-      {outcome.detail && (
+      {outcome.category === 'HUMAN_UNEXECUTABLE' && outcome.detail && (
+        <p className="error-notice">{outcome.detail}</p>
+      )}
+      {outcome.detail && outcome.category !== 'HUMAN_UNEXECUTABLE' && (
         <details>
           <summary>原始阻塞原因</summary>
           <p>{outcome.detail}</p>

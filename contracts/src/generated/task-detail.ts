@@ -464,6 +464,14 @@ export type VerificationReport = {
    * @maxItems 64
    */
   steps?: [StepResult, ...StepResult[]];
+  /**
+   * 仅由人工处理服务写入；执行器不能伪造人为无法执行的结论。
+   */
+  humanDecision?: {
+    outcome: 'UNEXECUTABLE';
+    reason: string;
+    decidedAt: string;
+  };
 };
 
 /**
@@ -556,8 +564,8 @@ export interface TaskDetail {
     label: string | null;
     leaseState: 'NOT_REQUIRED' | 'WAITING' | 'OCCUPIED' | 'RELEASED';
     preparation: {
-      status: 'NOT_REQUESTED' | 'PENDING' | 'READY' | 'NEEDS_HUMAN' | 'ERROR';
-      source: 'snapshot' | 'cookies' | 'password' | 'none';
+      status: 'NOT_REQUESTED' | 'PENDING' | 'READY' | 'NEEDS_HUMAN' | 'ERROR' | 'LOADED';
+      source: 'snapshot' | 'cookies' | 'password' | 'none' | 'profile';
       reasonCode: string | null;
       durationMs: number | null;
     };
@@ -700,7 +708,7 @@ export interface SessionPlan {
   version: 1;
   mode: 'guest' | 'manual' | 'identity' | 'pool';
   /**
-   * @maxItems 32
+   * @maxItems 256
    */
   candidates: {
     id: string;
@@ -768,12 +776,22 @@ export interface SessionPlan {
     checks: IdentityCheck[];
     loginRef?: string;
     maxConcurrent: number;
+    libraryVersion?: string;
+    description?: string;
+    identityType?: string;
+    url?: string;
   }[];
   /**
    * @maxItems 32
    */
   requirements: IdentityCheck[];
   preparationMs: number;
+  /**
+   * 使用页面身份库和完整 profile；选择由独立身份 Agent 完成。
+   */
+  library?: boolean;
+  selection?: 'pending' | 'selected' | 'human';
+  selectionReason?: string;
 }
 export interface ExecutionDetails {
   /**
@@ -1011,7 +1029,8 @@ export interface ExecutionOutcome {
     | 'SERVICE_ERROR'
     | 'BROWSER_ERROR'
     | 'CLEANUP_ERROR'
-    | 'EXECUTION_ERROR';
+    | 'EXECUTION_ERROR'
+    | 'HUMAN_UNEXECUTABLE';
   /**
    * 主要原因；旧 AGENT_ERROR 可由报告具体原因细分。
    */

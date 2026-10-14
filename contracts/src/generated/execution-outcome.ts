@@ -26,7 +26,8 @@ export interface ExecutionOutcome {
     | 'SERVICE_ERROR'
     | 'BROWSER_ERROR'
     | 'CLEANUP_ERROR'
-    | 'EXECUTION_ERROR';
+    | 'EXECUTION_ERROR'
+    | 'HUMAN_UNEXECUTABLE';
   /**
    * 主要原因；旧 AGENT_ERROR 可由报告具体原因细分。
    */

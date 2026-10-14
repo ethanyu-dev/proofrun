@@ -84,6 +84,10 @@
                   "type": "string",
                   "pattern": "^[A-Za-z0-9_-]{1,128}$",
                   "description": "本轮不可变初始快照身份；并行两组必须相同。"
+                },
+                "fullProfile": {
+                  "type": "boolean",
+                  "description": "复制完整磁盘 profile，仅人工成功交还后允许发布新版本。"
                 }
               },
               "required": ["stateId", "restore"]
@@ -99,6 +103,44 @@
             "renewable": {
               "type": "boolean",
               "description": "仅人工介入会话允许持续续期；不固定初始总时长，仍由独立短租约撤权。"
+            },
+            "identitySeed": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "url": {
+                  "type": "string",
+                  "format": "uri",
+                  "maxLength": 2000
+                },
+                "cookies": {
+                  "type": "array",
+                  "maxItems": 32,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256,
+                        "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"
+                      },
+                      "value": {
+                        "type": "string",
+                        "maxLength": 4096,
+                        "pattern": "^[\\x21\\x23-\\x2B\\x2D-\\x3A\\x3C-\\x5B\\x5D-\\x7E]*$"
+                      },
+                      "httpOnly": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": ["name", "value", "httpOnly"]
+                  }
+                }
+              },
+              "required": ["url", "cookies"],
+              "description": "控制面仅在私有节点传输时注入，不写入任务、模型或命令账本。"
             }
           },
           "required": ["type", "leaseRequestId", "leaseTtlMs", "maxDurationMs"],

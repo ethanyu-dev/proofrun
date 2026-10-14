@@ -62,6 +62,10 @@ pub struct Session {
     pub hard_deadline: u64,
     /// 登录槽与网络采集只在创建时绑定，恢复不复用旧会话。
     auth_state: Option<std::path::PathBuf>,
+    /// 控制面私有种子只在节点内存与会话目录中使用。
+    identity_seed: Option<serde_json::Value>,
+    /// 新身份任务复制完整 profile，历史任务保留存储状态语义。
+    full_profile: bool,
     restore_auth: bool,
     /// 首次自动复用允许无快照，显式恢复仍要求文件存在。
     restore_auth_if_present: bool,
@@ -281,11 +285,14 @@ impl Sessions {
         let (work, rx) = mpsc::channel(1);
         let (renew, renew_rx) = watch::channel(deadline.min(hard_deadline));
         let (closed_tx, closed) = watch::channel(None);
+        let raw = serde_json::to_value(&command.command).unwrap();
         let session = Arc::new(Session {
             lease_id,
             fence,
             deadline: AtomicU64::new(deadline.min(hard_deadline)),
             hard_deadline,
+            identity_seed: raw.get("identitySeed").cloned(),
+            full_profile: raw["authState"]["fullProfile"] == true,
             auth_state,
             restore_auth,
             restore_auth_if_present,
@@ -427,11 +434,21 @@ async fn start(
     anyhow::ensure!(ready["type"] == "host.ready", "invalid host greeting");
     process::identify(record).await?;
     store.save_session(record.clone()).await?;
+    let seed_path = if let Some(seed) = &session.identity_seed {
+        let path = directory.join("identity-seed.json");
+        crate::auth::private_write(&path, &serde_json::to_vec(seed)?)?;
+        Some(path)
+    } else {
+        None
+    };
     host.send(host::Input::Init {
         config: EngineConfig {
             binary: config.agent_browser_bin.clone(),
             chrome: config.chrome_bin.clone(),
             identity_library_file: config.identity_library_file.clone(),
+            identity_seed_file: seed_path,
+            full_profile: session.full_profile,
+            base_profile_directory: config.base_profile_directory.clone(),
             session: record.launch_id.clone(),
             directory,
             allow_unverified_writes: config.allow_unverified_writes,

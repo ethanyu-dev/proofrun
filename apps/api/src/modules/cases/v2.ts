@@ -115,11 +115,11 @@ export class CaseV2Service {
             '平台未配置 case 执行环境',
           );
         if (
-          !resolved &&
           typeof this.identities === 'function' &&
-          ['identity', 'pool', 'auto'].includes(item.session?.mode ?? 'manual')
+          (!item.session ||
+            ['identity', 'pool', 'auto'].includes(item.session.mode))
         )
-          resolved = await this.identities();
+          resolved = await this.identities(item.session);
         const compiled = compileCase(
           item,
           validateCaseProfile(this.profile),
@@ -210,8 +210,13 @@ export class CaseV2Service {
         };
       }),
     );
+    const humanOutcome = arms.find(
+      (arm) => arm.executionOutcome?.category === 'HUMAN_UNEXECUTABLE',
+    )?.executionOutcome;
     return {
       ...primary,
+      // 人工无法执行属于整例结果；已完成组的原始验收与证据仍保留在各组中。
+      ...(humanOutcome ? { executionOutcome: humanOutcome } : {}),
       comparison: {
         id: task.definition.comparison.id,
         arms: [arms[0]!, arms[1]!],

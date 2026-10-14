@@ -201,6 +201,26 @@
         "$ref": "step-result.schema.json"
       },
       "description": "结构化任务的逐步执行事实；异常终止仍保留已完成验收。"
+    },
+    "humanDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "outcome": {
+          "const": "UNEXECUTABLE"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "decidedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["outcome", "reason", "decidedAt"],
+      "description": "仅由人工处理服务写入；执行器不能伪造人为无法执行的结论。"
     }
   },
   "$schema": "http://json-schema.org/draft-07/schema#",

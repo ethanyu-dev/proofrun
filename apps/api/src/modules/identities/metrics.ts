@@ -32,6 +32,7 @@ export async function identitySummary(
   const data = prep?.result?.data;
   const source: IdentitySummary['preparation']['source'] = [
     'snapshot',
+    'profile',
     'cookies',
     'password',
   ].includes(data?.source)
@@ -43,9 +44,11 @@ export async function identitySummary(
       ? 'PENDING'
       : prep.result.operationStatus !== 'SUCCEEDED'
         ? 'ERROR'
-        : data?.status === 'READY'
-          ? 'READY'
-          : 'NEEDS_HUMAN';
+        : data?.status === 'LOADED'
+          ? 'LOADED'
+          : data?.status === 'READY'
+            ? 'READY'
+            : 'NEEDS_HUMAN';
   return {
     mode: plan.mode,
     identityRef: identity?.id ?? null,

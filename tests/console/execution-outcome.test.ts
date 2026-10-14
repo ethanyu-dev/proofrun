@@ -68,3 +68,19 @@ test('非法决策显示校验失败，服务请求错误保留服务异常文�
     }
   }
 });
+
+// 范围：人工原因原文与专属终态静态展示；不运行 HITL 输入页面或浏览器。
+test('人为判定无法执行展示原因且不被后续清理错误覆盖', () => {
+  const outcome = executionOutcome({
+    state: 'COMPLETED',
+    code: 'CLOSURE_UNVERIFIED',
+    reportCode: 'HUMAN_UNEXECUTABLE',
+    humanReason: '没有团队邀请权限',
+  });
+  assert.equal(outcome.category, 'HUMAN_UNEXECUTABLE');
+  const html = renderToStaticMarkup(
+    createElement(ExecutionOutcomeDetails, { outcome }),
+  );
+  assert.match(html, /人为判定无法执行/);
+  assert.match(html, /没有团队邀请权限/);
+});

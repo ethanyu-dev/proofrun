@@ -7,7 +7,7 @@ import { HitlNavigation, remainingTime } from './hitl-navigation';
 import { HitlCookies } from './hitl-cookies';
 
 /** 完成前包含登录快照落盘，等待窗口应覆盖服务端保存命令和结果确认。 */
-const COMPLETION_ACK_MS = 30_000;
+const COMPLETION_ACK_MS = 150_000;
 
 /** 当前介入的授权与待办，只通过认证连接获得。 */
 interface State {
@@ -55,6 +55,9 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<State>();
   const [authResult, setAuthResult] = useState('');
+  const [unable, setUnable] = useState(false);
+  const [unableReason, setUnableReason] = useState('');
+  const [unableResult, setUnableResult] = useState('');
   const [frame, setFrame] = useState<{
     data: string;
     width: number;
@@ -171,6 +174,18 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
         completing.current = false;
       } else if (message.type === 'result') {
         if (input.current!.acknowledge(message)) setError('');
+      } else if (message.type === 'unable') {
+        completed.current = true;
+        completing.current = false;
+        setUnableResult(message.reason);
+        setDone(true);
+        setConnected(false);
+        setFrame(undefined);
+        setText('');
+        setError('');
+        input.current!.reset();
+        clearTimeout(completionTimer.current);
+        ws.close();
       } else if (message.type === 'completed') {
         setAuthResult(
           message.authStatus === 'saved'
@@ -244,8 +259,10 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
     <main className="hitl-page">
       {done ? (
         <section className="panel hitl-done">
-          <h1>处理已完成</h1>
-          <p>浏览器已交还 Agent。{authResult}可以关闭此页。</p>
+          <h1>{unableResult ? '人为判定无法执行' : '处理已完成'}</h1>
+          <p>
+            {unableResult || `浏览器已交还 Agent。${authResult}可以关闭此页。`}
+          </p>
           <button
             className="button button-primary"
             onClick={() => window.close()}
@@ -434,18 +451,6 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
                     {key}
                   </button>
                 ))}
-                {state?.canSaveAuth && (
-                  <button
-                    className="button button-secondary button-small"
-                    disabled={!interactive || busy}
-                    onClick={() => {
-                      flush();
-                      enqueue({ type: 'browser.auth.save' });
-                    }}
-                  >
-                    保存登录状态
-                  </button>
-                )}
               </div>
               <p className="muted note">
                 可直接点击画面、输入和滚动；中文可使用下方输入框。输入内容不会显示在操作摘要中。
@@ -542,12 +547,67 @@ export function HitlPage({ id, token }: { id: string; token: string }) {
                 }}
               >
                 {state?.canSaveAuth
-                  ? '保存登录状态并继续任务'
+                  ? '处理完成，保存基准并继续'
                   : '完成，继续任务'}
               </button>
+              <button
+                className="button button-secondary"
+                disabled={
+                  !connected ||
+                  state?.mode !== 'HUMAN' ||
+                  busy ||
+                  typingPending ||
+                  expired
+                }
+                onClick={() => setUnable((value) => !value)}
+              >
+                无法处理
+              </button>
+              {unable && (
+                <div className="identity-field">
+                  <label htmlFor="unable-reason">无法处理的具体原因</label>
+                  <textarea
+                    id="unable-reason"
+                    required
+                    rows={3}
+                    maxLength={2000}
+                    value={unableReason}
+                    onChange={(event) => setUnableReason(event.target.value)}
+                    placeholder="例如：无法取得符合要求的团队权限"
+                  />
+                  <button
+                    className="button button-primary"
+                    disabled={
+                      !connected ||
+                      state?.mode !== 'HUMAN' ||
+                      busy ||
+                      typingPending ||
+                      expired ||
+                      !unableReason.trim()
+                    }
+                    onClick={() => {
+                      completing.current = true;
+                      setBusy(true);
+                      socket.current?.send(
+                        JSON.stringify({
+                          type: 'unable',
+                          reason: unableReason.trim(),
+                        }),
+                      );
+                      completionTimer.current = setTimeout(() => {
+                        setError('结果未确认，请重新连接核查人工处理结果。');
+                        setConnected(false);
+                        socket.current?.close();
+                      }, COMPLETION_ACK_MS);
+                    }}
+                  >
+                    确认无法执行
+                  </button>
+                </div>
+              )}
               <p className="muted note">
                 {state?.canSaveAuth &&
-                  '完成时保存登录状态；其他会话已更新时保留较新的快照。'}
+                  '处理成功后保存浏览器基准，浏览器可能短暂重启；无法处理时不保存。'}
                 完成后自动关闭此页。直接离开只会断开画面，任务继续等待人工处理。链接过期后请从任务详情重新打开处理页。
               </p>
             </aside>

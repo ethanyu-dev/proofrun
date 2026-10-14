@@ -100,6 +100,7 @@ export type NodeEvent =
          */
         profileTabs?: boolean;
         environmentProof?: boolean;
+        fullProfile?: boolean;
       };
       /**
        * 节点接受的租约和会话硬期限上限，控制面不得超额授权。
