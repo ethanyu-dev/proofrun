@@ -1,5 +1,5 @@
 //! 人工交还是唯一发布完整 profile 的入口；重启后清空旧观察并重建分组标签页。
-use super::{Engine, cookies, dom::Dom};
+use super::{Engine, cookies, dom::Dom, socket_directory};
 use crate::{
     auth,
     error::{Fault, Result},
@@ -7,10 +7,46 @@ use crate::{
 };
 use serde_json::{Value, json};
 
-/// 关闭后的进程协调文件应在短时间内消失，否则不复制仍可能写入的数据库。
+/// 关闭后的浏览器锁和后台通信文件应在短时间内消失，否则不发布或重启。
 const CLOSE_WAIT_MS: u64 = 5000;
+/// 固定版本 agent-browser 退出时清理的运行文件；config 会保留，不作为退出依据。
+const DAEMON_FILES: &[&str] = &[
+    "sock",
+    "port",
+    "pid",
+    "version",
+    "stream",
+    "engine",
+    "provider",
+    "extensions",
+];
 /// 多次人工交接的 trace 分段总量有界，合并不能吞掉前段业务证据。
 const TRACE_BYTES: u64 = 64 * 1024 * 1024;
+
+/// close 响应先于 daemon 退出；仅等待 Chromium 锁会让新命令误连仍在退出的旧进程。
+/// 不探测或删除 socket，以免触发旧进程工作或掩盖关闭失败；读取异常也按未关闭处理。
+async fn wait_profile_closed(
+    profile: &std::path::Path,
+    socket: &std::path::Path,
+    session: &str,
+    deadline: u64,
+) -> Result<()> {
+    loop {
+        let daemon_closed = DAEMON_FILES.iter().all(|extension| {
+            matches!(std::fs::symlink_metadata(socket.join(format!("{session}.{extension}"))), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
+        });
+        if daemon_closed && profile_snapshots::quiescent(profile) {
+            return Ok(());
+        }
+        if process::boot_ms() >= deadline {
+            return Err(Fault::unknown(
+                "PROFILE_CLOSE_UNVERIFIED",
+                "浏览器或引擎后台进程尚未确认关闭，未发布基准",
+            ));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
 
 impl Engine {
     /// 初始种子只用于新身份；已恢复的人工基准永不被旧 Cookie 覆盖。
@@ -158,15 +194,13 @@ impl Engine {
         .await?;
         let profile = self.config.directory.join("profile");
         let until = deadline.min(process::boot_ms() + CLOSE_WAIT_MS);
-        while !profile_snapshots::quiescent(&profile) {
-            if process::boot_ms() >= until {
-                return Err(Fault::unknown(
-                    "PROFILE_CLOSE_UNVERIFIED",
-                    "浏览器尚未确认关闭，未发布基准",
-                ));
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        }
+        wait_profile_closed(
+            &profile,
+            &socket_directory(&self.config.session),
+            &self.config.session,
+            until,
+        )
+        .await?;
         let saved = profile_snapshots::publish(&state, &profile, &mut self.auth_version)
             .map_err(|_| Fault::unknown("PROFILE_SAVE_FAILED", "完整浏览器基准保存结果未确认"))?;
         self.scopes.clear();
@@ -257,5 +291,55 @@ impl Engine {
         .map_err(|_| Fault::unknown("TRACE_SAVE_FAILED", "取证分段写入失败"))?;
         self.trace_segments.clear();
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 范围：模拟 Chromium 已解锁但 daemon 延迟清理，确认等待后可继续；真实重启由浏览器回归覆盖。
+    #[tokio::test]
+    async fn waits_for_daemon_cleanup_after_profile_unlock() {
+        let root = tempfile::tempdir().unwrap();
+        let profile = root.path().join("profile");
+        let socket = root.path().join("socket");
+        std::fs::create_dir_all(&profile).unwrap();
+        std::fs::create_dir_all(&socket).unwrap();
+        let marker = socket.join("fixture.sock");
+        std::fs::write(&marker, []).unwrap();
+        std::fs::write(socket.join("fixture.config"), []).unwrap();
+        let waiting = wait_profile_closed(&profile, &socket, "fixture", process::boot_ms() + 5000);
+        tokio::pin!(waiting);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(100), &mut waiting)
+                .await
+                .is_err()
+        );
+        std::fs::remove_file(marker).unwrap();
+        waiting.await.unwrap();
+    }
+
+    /// 范围：任一退出标记残留或浏览器仍持锁时必须超时失败，不删除文件；不模拟真实进程退出。
+    #[tokio::test]
+    async fn refuses_restart_while_close_is_unverified() {
+        let root = tempfile::tempdir().unwrap();
+        let profile = root.path().join("profile");
+        let socket = root.path().join("socket");
+        std::fs::create_dir_all(&profile).unwrap();
+        std::fs::create_dir_all(&socket).unwrap();
+        let markers = DAEMON_FILES
+            .iter()
+            .map(|extension| socket.join(format!("fixture.{extension}")))
+            .chain(std::iter::once(profile.join("SingletonLock")));
+        for marker in markers {
+            std::fs::write(&marker, []).unwrap();
+            let error = wait_profile_closed(&profile, &socket, "fixture", process::boot_ms())
+                .await
+                .unwrap_err();
+            assert_eq!(error.code, "PROFILE_CLOSE_UNVERIFIED");
+            assert!(marker.exists());
+            std::fs::remove_file(marker).unwrap();
+        }
     }
 }
