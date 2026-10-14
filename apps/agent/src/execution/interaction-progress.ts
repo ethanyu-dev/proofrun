@@ -6,6 +6,23 @@ import { AgentFault } from '../http.js';
 const ITEM_LIMIT = 32;
 /** 同一目标最多两次真实前置失败；观察编号变化不能重置额度。 */
 const FAILURE_LIMIT = 2;
+/** 引文边界与工具协议一致；空白归一化不能绕过原文长度上限。 */
+const QUOTE_LIMIT = 600;
+/** 仅空白可等价匹配，字词、标点与正则特殊字符均按原文处理。 */
+const QUOTE_WHITESPACE = /\s+/u;
+const REGEXP_LITERAL = /[.*+?^${}()|[\]\\]/g;
+
+/** 返回真实原文片段；容忍排版空白差异，但不接受改写，也不把归一化文本写入报告。 */
+function originalQuote(text: string, quote: string): string | undefined {
+  if (text.includes(quote)) return quote;
+  const pattern = quote
+    .trim()
+    .split(QUOTE_WHITESPACE)
+    .map((part) => part.replace(REGEXP_LITERAL, '\\$&'))
+    .join('\\s+');
+  const match = text.match(new RegExp(pattern, 'u'))?.[0];
+  return match && match.length <= QUOTE_LIMIT ? match : undefined;
+}
 
 /** 页面身份与稳定 DOM 比较键只用于进度归属，绝不能作为浏览器动作 target。 */
 function key(page: Observation, target: ObservedTarget) {
@@ -102,13 +119,18 @@ export class InteractionProgress {
         Object.keys(value).some((k) => !['itemId', 'quote'].includes(k)) ||
         typeof value.quote !== 'string' ||
         !value.quote.trim() ||
-        value.quote.length > 600 ||
-        !item.text.includes(value.quote) ||
+        value.quote.length > QUOTE_LIMIT ||
         !item.evidenceRefs.length
       )
         throw invalid();
+      const quote = originalQuote(item.text, value.quote);
+      if (!quote)
+        throw new AgentFault(
+          'INVALID_MODEL_DECISION',
+          `子项 ${item.id} 的引文与已观察原文不一致；只允许空白排版差异，已登记子项无需重复提交`,
+        );
       seen.add(item.id);
-      return { item, quote: value.quote };
+      return { item, quote };
     });
   }
 
@@ -168,6 +190,10 @@ export class InteractionProgress {
   view() {
     return {
       revision: this.revision,
+      // 完整身份列表最多 32 项；正文裁剪后仍能知道哪些子项已完成，避免反复开关。
+      recordedItemIds: [...this.items.values()]
+        .filter((item) => item.status === 'recorded')
+        .map((item) => item.id),
       // 优先展示已展开但未登记的内容，裁剪不能让后面的新问题永远不可见。
       items: [...this.items.values()]
         .sort(

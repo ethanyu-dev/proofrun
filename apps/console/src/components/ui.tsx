@@ -31,6 +31,7 @@ const LABELS: Record<string, string> = {
   NODE_ERROR: '节点异常',
   SESSION_ERROR: '浏览器会话异常',
   MODEL_ERROR: '模型服务异常',
+  INVALID_MODEL_DECISION: '模型决策校验失败',
   SERVICE_ERROR: '服务请求异常',
   BROWSER_ERROR: '浏览器操作异常',
   CLEANUP_ERROR: '资源清理异常',
@@ -59,7 +60,10 @@ export function Status({ value }: { value: string | null | undefined }) {
       data-tone={
         value === 'PASSED'
           ? 'success'
-          : value === 'FAILED' || value === 'ERROR' || value?.endsWith('_ERROR')
+          : value === 'FAILED' ||
+              value === 'ERROR' ||
+              value === 'INVALID_MODEL_DECISION' ||
+              value?.endsWith('_ERROR')
             ? 'danger'
             : [
                   'WAITING_HUMAN',

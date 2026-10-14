@@ -86,7 +86,7 @@ export interface ContextInput {
   current: Observation;
   /** 原始观察的跨轮变化，不包含推断的因果。 */
   changes: ObservationChanges | undefined;
-  /** 当前执行已登记的完整证据集合。 */
+  /** 当前步骤及准备阶段允许引用的证据集合，与执行器提交校验一致。 */
   evidence: VerificationReport['artifacts'];
   /** 已执行操作的近期摘要。 */
   history: RecentOperation[];
@@ -121,6 +121,7 @@ export function rememberObservation(
 /** 标准保持完整；仅裁剪事实副本并声明缺口，无法容纳固定定义时明确失败。 */
 export function decisionContext(input: ContextInput): DecisionInput {
   const current = input.current;
+  const evidenceIds = new Set(input.evidence.map((artifact) => artifact.id));
   const context = {
     // 模型只需业务定义；节点配方引用、账号池和登录槽不参与决策上下文。
     task: (({ sessionPlan: _sessionPlan, ...business }) => business)(
@@ -133,7 +134,9 @@ export function decisionContext(input: ContextInput): DecisionInput {
     cleanup: input.cleanup === true,
     preconditions: structuredClone(input.preconditions),
     workflow: input.workflow,
-    interactionProgress: input.interactionProgress,
+    interactionProgress: input.interactionProgress
+      ? structuredClone(input.interactionProgress)
+      : undefined,
     budgetRemaining: {
       actions: input.budgetRemaining.actions,
       modelCalls: input.budgetRemaining.modelCalls,
@@ -158,7 +161,13 @@ export function decisionContext(input: ContextInput): DecisionInput {
       .slice(-EVIDENCE_LIMIT)
       .map(({ id, kind }) => ({ id, kind })),
     recentOperations: [...input.history],
-    previousObservations: [...input.previousObservations],
+    // 历史正文可帮助保持页面连续性，但不能把已失效的引用重新提供给模型。
+    previousObservations: input.previousObservations.map((observation) => ({
+      ...observation,
+      artifactRefs: observation.artifactRefs.filter((ref) =>
+        evidenceIds.has(ref.artifactId),
+      ),
+    })),
     feedback:
       [
         input.feedback,
@@ -176,7 +185,10 @@ export function decisionContext(input: ContextInput): DecisionInput {
   let text = JSON.stringify(context);
   while (text.length > input.maxContextChars) {
     context.truncated = true;
-    if (
+    // 优先丢弃重复的历史正文，保留当前待登记面板原文与已登记身份。
+    if (context.previousObservations.length > 0)
+      context.previousObservations.shift();
+    else if (
       context.interactionProgress?.items.some((item) => item.text.length > 80)
     )
       context.interactionProgress.items = context.interactionProgress.items.map(
@@ -188,9 +200,7 @@ export function decisionContext(input: ContextInput): DecisionInput {
       const count = Math.ceil(progress.items.length / 2);
       progress.omittedItems += progress.items.length - count;
       progress.items = progress.items.slice(0, count);
-    } else if (context.previousObservations.length > 0)
-      context.previousObservations.shift();
-    else if (
+    } else if (
       context.observation.network &&
       typeof context.observation.network === 'object' &&
       Array.isArray(

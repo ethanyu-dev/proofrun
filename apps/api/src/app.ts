@@ -158,7 +158,11 @@ export async function buildApp(
       );
   });
   registerPublicDocs(app);
-  await app.register(websocket, { options: { maxPayload: MAX_MESSAGE_BYTES } });
+  await app.register(websocket, {
+    options: { maxPayload: MAX_MESSAGE_BYTES },
+    // 统一接管退出顺序，避免默认关闭握手留下业务连接表之外的旧连接。
+    preClose: closeTransports,
+  });
   app.get('/health/live', async () => ({
     service: 'proofrun-api',
     status: 'alive',
@@ -689,15 +693,25 @@ export async function buildApp(
       });
   }, config.tickMs);
   timer.unref();
-  // 提前终止 socket，避免 Fastify 等待长连接时无法进入最终清理钩子。
-  app.addHook('preClose', async () => {
+  /** 停止调度后终止全部 WS，包括被替换的旧连接；事件落库完成后才能释放数据库。 */
+  async function closeTransports() {
     stopped = true;
     clearInterval(timer);
     await ticking;
     hitl.close();
     live.close();
-    await gateway.close();
-  });
+    // 先取得网关在途事件的等待对象，连接关闭事件随后可能移除业务路由记录。
+    const draining = gateway.close();
+    for (const socket of app.websocketServer.clients) socket.terminate();
+    await Promise.all([
+      draining,
+      new Promise<void>((resolve, reject) => {
+        app.websocketServer.close((error) =>
+          error ? reject(error) : resolve(),
+        );
+      }),
+    ]);
+  }
   app.addHook('onClose', async () => {
     await db.close();
   });

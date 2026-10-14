@@ -232,6 +232,12 @@ test('当前步骤逐项保存不能引用先前步骤的证据', async () => {
       return finish(context);
     }
     if (context.executionStep.stepId === 'step-2') {
+      assert(!context.evidence.some((artifact) => artifact.id === previous));
+      assert(
+        !context.previousObservations.some((observation) =>
+          observation.artifactRefs.some((ref) => ref.artifactId === previous),
+        ),
+      );
       const decision = record(context);
       decision.criteria[0].evidenceRefs = [previous];
       return decision;
@@ -247,6 +253,23 @@ test('当前步骤逐项保存不能引用先前步骤的证据', async () => {
   );
   assert.equal(report.steps[1].reasonCode, 'INVALID_MODEL_DECISION');
   assert.equal(report.steps[2].status, 'COMPLETED');
+});
+
+// 范围：步骤切换后模型仅引用平台提供的 evidence 即可完成验收；不模拟真实模型选择和业务语义。
+test('提供给模型的证据列表与当前步骤提交边界一致', async () => {
+  const seen = new Set();
+  const report = await run(execution(), new FakeControl(), (context) => {
+    const ids = context.evidence.map((artifact) => artifact.id);
+    assert(ids.length > 0);
+    assert(ids.every((id) => !seen.has(id)));
+    ids.forEach((id) => seen.add(id));
+    const decision = finish(context);
+    decision.evidenceRefs = ids;
+    for (const criterion of decision.criteria) criterion.evidenceRefs = ids;
+    return decision;
+  });
+  assert.equal(report.verdict, 'PASSED');
+  assert(report.steps.every((step) => step.status === 'COMPLETED'));
 });
 
 // 范围：缺少清理确认回执时不能把成功传输当作清理完成，业务结论保留；不覆盖真实节点删除逻辑。

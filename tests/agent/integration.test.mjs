@@ -1003,13 +1003,34 @@ test(
         '活动节点长连接不阻止控制面退出',
         { timeout: 5000 },
         async () => {
-          assert(nodes.some((node) => node.socket?.readyState === 1));
-          await app.close();
-          await until(
-            () => nodes.every((node) => node.socket?.readyState !== 1),
-            Boolean,
-            2000,
-          );
+          const node = nodes.find((node) => node.socket?.readyState === 1);
+          assert(node);
+          // 模拟重连后旧连接无法回应关闭握手；业务连接表只保留新 socket。
+          const previous = node.socket;
+          previous.pause();
+          await node.connect();
+          let closing;
+          let timeout;
+          try {
+            closing = app.close();
+            const completed = await Promise.race([
+              closing.then(() => true),
+              new Promise((resolve) => {
+                timeout = setTimeout(() => resolve(false), 2000);
+              }),
+            ]);
+            assert(completed, '关闭不能等待被替换连接的握手超时');
+            await until(
+              () => nodes.every((node) => node.socket?.readyState !== 1),
+              Boolean,
+              2000,
+            );
+          } finally {
+            clearTimeout(timeout);
+            previous.terminate();
+            previous.resume();
+            await closing;
+          }
         },
       );
     } finally {
