@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { InteractionProgress } from '../../apps/agent/dist/execution/interaction-progress.js';
+import { execute } from '../../apps/agent/dist/execution/runner.js';
+import { JevModel } from '../../apps/agent/dist/model/jev.js';
+import { config, grant, FakeControl, finish } from './fixture.mjs';
 
 /** 用独立面板和悬浮控件构造观察，不代表真实站点 DOM。 */
 function page() {
@@ -78,6 +81,59 @@ test('逐项读取必须关联已观察原文，重复登记不推进且关闭�
   assert.equal(ledger.results()[0].status, 'recorded');
   assert.deepEqual(ledger.results()[0].evidenceRefs, ['dom-1']);
   assert.equal(ledger.results()[1].status, 'pending');
+});
+
+// 范围：目标编号复用、移出视口及重查例外；仅使用观察夹具，不验证真实页面滚动和控件行为。
+test('阅读进度只绑定当前目标，已读点击必须说明重查原因', () => {
+  const ledger = new InteractionProgress();
+  const observation = page();
+  ledger.observe(observation);
+  ledger.record(
+    ledger.validate([{ itemId: 'item-1', quote: '第一个问题的答案' }]),
+  );
+  assert.throws(() => ledger.assertClick(observation, observation.targets[0]), {
+    code: 'INTERACTION_ALREADY_RECORDED',
+  });
+  ledger.assertClick(
+    observation,
+    observation.targets[0],
+    '原任务要求核对收起行为',
+  );
+  const unread = structuredClone(observation.targets[1]);
+  unread.target = '@a';
+  observation.targets = [unread];
+  ledger.observe(observation);
+  assert.deepEqual(ledger.view().currentTargets, [
+    { target: '@a', itemId: 'item-2', status: 'pending' },
+  ]);
+  ledger.assertClick(observation, unread);
+  observation.targets = [];
+  ledger.observe(observation);
+  assert.deepEqual(ledger.view().currentTargets, []);
+  assert.deepEqual(ledger.view().recordedItemIds, ['item-1']);
+});
+
+// 范围：重查声明不绕过点击失败围栏，非法理由不修改工作流；不验证自然语言理由是否符合业务要求。
+test('重查理由仍须经过工作流与浏览器前置校验', async () => {
+  const { Workflow } =
+    await import('../../apps/agent/dist/execution/workflow.js');
+  const workflow = new Workflow('核对展开和收起');
+  for (const revisitReason of ['', '   ', 123, '长'.repeat(601)])
+    assert.throws(() => workflow.apply({ revisitReason }, new Set()), {
+      code: 'INVALID_MODEL_DECISION',
+    });
+  workflow.apply({ revisitReason: '原任务要求核对收起行为' }, new Set());
+  const ledger = new InteractionProgress();
+  const observation = page();
+  ledger.observe(observation);
+  ledger.record(
+    ledger.validate([{ itemId: 'item-1', quote: '第一个问题的答案' }]),
+  );
+  ledger.failedClick(observation, observation.targets[0]);
+  assert.throws(
+    () => ledger.assertClick(observation, observation.targets[0], '核对收起'),
+    { code: 'INTERACTION_RECOVERY_REQUIRED' },
+  );
 });
 
 // 范围：裁剪内容不得完成读取；不覆盖节点是否准确标记裁剪。
@@ -246,4 +302,152 @@ test('裁剪保留全部已登记身份且不污染输入进度', async () => {
   assert.throws(() => bounded.validate([{ itemId: 'item-1', quote: 'A B' }]), {
     code: 'INVALID_MODEL_DECISION',
   });
+});
+
+// 范围：复现登记后误点已读题、纠正滚动、编号复用到新题的执行链路；所有页面和模型响应均为夹具。
+test('执行器阻止已读题重点击，滚动后用新目标继续读取', async () => {
+  const client = new FakeControl();
+  const command = client.command.bind(client);
+  let scrolled = false;
+  let opened = false;
+  client.command = async (...args) => {
+    const operation = args[2];
+    if (operation.type === 'browser.act' && operation.action === 'scroll')
+      scrolled = true;
+    if (operation.type === 'browser.act' && operation.action === 'click')
+      opened = true;
+    const result = await command(...args);
+    if (operation.type === 'browser.observe') {
+      const target = structuredClone(page().targets[scrolled ? 1 : 0]);
+      target.target = '@a';
+      if (scrolled && opened)
+        target.disclosure = {
+          ...target.disclosure,
+          visible: true,
+          expanded: true,
+          text: '第二题答案',
+        };
+      result.data.targets = [target];
+      result.data.text = scrolled
+        ? opened
+          ? '第二题答案'
+          : '第二题待展开'
+        : '第一题答案已显示';
+    }
+    return result;
+  };
+  let turn = 0;
+  const report = await execute(
+    { ...config, maxTurns: 10 },
+    client,
+    {
+      async decide(input) {
+        const context = JSON.parse(input.text);
+        let decision, workflow;
+        if (++turn === 1) {
+          decision = { type: 'browser.act', action: 'click', target: '@a' };
+          workflow = {
+            readings: [{ itemId: 'item-1', quote: '第一个问题的答案' }],
+          };
+        } else if (turn === 2) {
+          assert.match(context.feedback, /INTERACTION_ALREADY_RECORDED/);
+          assert.equal(
+            client.calls.filter((c) => c.operation.action === 'click').length,
+            0,
+          );
+          decision = { type: 'browser.act', action: 'scroll', value: 'down' };
+        } else if (turn === 3) {
+          assert.equal(
+            context.interactionProgress.currentTargets[0].itemId,
+            'item-2',
+          );
+          decision = { type: 'browser.act', action: 'click', target: '@a' };
+        } else {
+          decision = finish(context);
+          workflow = { readings: [{ itemId: 'item-2', quote: '第二题答案' }] };
+        }
+        return { decision, workflow, promptTokens: 0, completionTokens: 0 };
+      },
+    },
+    grant(),
+  );
+  assert.equal(report.verdict, 'PASSED');
+  // 启动导航也计入动作；被拦截的重复点击不能进入节点或消耗动作额度。
+  assert.equal(report.executionDetails.actions, 3);
+  assert.equal(
+    client.calls.filter((c) => c.operation.action === 'scroll').length,
+    1,
+  );
+  assert.equal(
+    client.calls.filter((c) => c.operation.action === 'click').length,
+    1,
+  );
+});
+
+// 范围：JEV 候选携带稳定阅读状态，误选已读题进入文本恢复且保留重查元数据；不调用真实 JEV。
+test('JEV 不直接执行已读题候选，交回文本模型定位后续内容', async () => {
+  const observation = {
+    ...page(),
+    title: 'FAQ',
+    text: '逐条阅读问题',
+    atomic: false,
+  };
+  observation.targets = [observation.targets[0]];
+  let reviews = 0;
+  const model = new JevModel(
+    config,
+    'fixture',
+    'jev-test',
+    async (_url, _key, _method, body) => {
+      const choices = body.questions.next.criteria;
+      const [choice, candidate] = Object.entries(choices).find(
+        ([, item]) => item.operation === 'CLICK',
+      );
+      assert.equal(candidate.field.reading.status, 'recorded');
+      return {
+        answers: {
+          next: {
+            choice,
+            confidence: 1,
+            probabilities: Object.fromEntries(
+              Object.keys(choices).map((id) => [id, Number(id === choice)]),
+            ),
+          },
+        },
+      };
+    },
+    {
+      async decide(input) {
+        reviews++;
+        assert.match(JSON.parse(input.text).feedback, /已有读取证据/);
+        return {
+          decision: { type: 'browser.act', action: 'scroll', value: 'down' },
+          workflow: { revisitReason: '原任务另有收起检查，本轮先定位后续题' },
+          promptTokens: 0,
+          completionTokens: 0,
+        };
+      },
+    },
+  );
+  const output = await model.decide(
+    {
+      text: JSON.stringify({
+        task: grant().task,
+        observation,
+        recentOperations: [],
+        feedback: null,
+        budgetRemaining: { actions: 10 },
+        interactionProgress: {
+          items: [{ status: 'recorded' }],
+          currentTargets: [
+            { target: '@a', itemId: 'item-1', status: 'recorded' },
+          ],
+        },
+      }),
+    },
+    new AbortController().signal,
+  );
+  assert.equal(reviews, 1);
+  assert.equal(output.decision.action, 'scroll');
+  assert.match(output.workflow.revisitReason, /收起检查/);
 });

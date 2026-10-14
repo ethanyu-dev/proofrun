@@ -187,3 +187,4 @@ export {
 
 export { executionOutcome, type ExecutionFacts } from './execution-outcome.js';
 export type { ExecutionOutcome } from './generated/execution-outcome.js';
+export { isCriterionUpgrade } from './criteria.js';

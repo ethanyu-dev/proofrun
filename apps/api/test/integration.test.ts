@@ -851,7 +851,7 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       node.close();
     });
 
-    // 范围：真实事务保留运行中的部分结论，拒绝覆盖，失败后后续步骤继续；节点仍为协议夹具，不证明网页验收。
+    // 范围：真实事务保留部分结论、允许新增证据升级暂存项并拒绝改写确定结论；节点仍为协议夹具，不证明网页验收。
     await suite.test(
       '逐项结果保存后不可丢失，清理受阻不改写业务报告',
       async () => {
@@ -980,6 +980,7 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
                 evidenceRefs: [artifact.id],
               }));
             if (i === 0 && partial) state.criteria.pop();
+            if (i === 0 && !partial) state.criteria[1].verdict = 'INCONCLUSIVE';
             state.evidenceRefs = [artifact.id];
             assert.equal((await save()).status, 200);
             if (i === 0) {
@@ -996,6 +997,27 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
                 persisted.stepResults[0].criteria,
                 state.criteria,
               );
+              if (!partial) {
+                const unsupported = structuredClone(steps);
+                unsupported[0].criteria[1].verdict = 'PASSED';
+                assert.equal((await save(unsupported)).status, 422);
+                await command(execution, { type: 'browser.observe' });
+                const supplemented = (
+                  await api('GET', path, undefined, execution.leaseToken)
+                ).data.artifacts.at(-1);
+                state.criteria[1] = {
+                  ...state.criteria[1],
+                  verdict: 'PASSED',
+                  summary: '补证后覆盖完整',
+                  evidenceRefs: [artifact.id, supplemented.id],
+                };
+                state.evidenceRefs.push(supplemented.id);
+                assert.equal((await save()).status, 200);
+                const saved = (
+                  await api('GET', `/v1/tasks/${execution.task.taskId}`)
+                ).data;
+                assert.deepEqual(saved.stepResults[0].criteria, state.criteria);
+              }
             }
             state.status =
               i === 2 || (partial && i === 0) ? 'BLOCKED' : 'COMPLETED';

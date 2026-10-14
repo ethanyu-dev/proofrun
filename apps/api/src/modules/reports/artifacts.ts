@@ -7,6 +7,7 @@ import { pipeline } from 'node:stream/promises';
 import type { PoolClient } from 'pg';
 import {
   validateStepResults,
+  isCriterionUpgrade,
   profileGroup,
   type StepResult,
   type VerificationReport,
@@ -434,16 +435,20 @@ export class ArtifactStore {
         throw invalid();
       if (old?.status === 'COMPLETED' && canonical(old) !== canonical(step))
         throw invalid();
-      // RUNNING 阶段已保存的逐项结论同样不可丢失或改写。
+      // 仅运行中的暂存结果可补证升级；原证据保留，终态及明确判定仍不可改写。
       if (
-        old?.criteria.some(
-          (criterion) =>
-            canonical(
-              step.criteria.find(
-                (c) => c.criterionId === criterion.criterionId,
-              ),
-            ) !== canonical(criterion),
-        )
+        old?.criteria.some((criterion) => {
+          const next = step.criteria.find(
+            (c) => c.criterionId === criterion.criterionId,
+          );
+          if (canonical(next) === canonical(criterion)) return false;
+          return (
+            !next ||
+            old.status !== 'RUNNING' ||
+            !isCriterionUpgrade(criterion, next) ||
+            criterion.evidenceRefs.some((id) => !next.evidenceRefs.includes(id))
+          );
+        })
       )
         throw invalid();
       if (old?.startedAt && old.startedAt !== step.startedAt) throw invalid();

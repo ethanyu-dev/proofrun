@@ -221,6 +221,100 @@ test('逐项账本批次校验原子化且已保存结论不可降级', () => {
   assert.deepEqual(ledger.values(), [item]);
 });
 
+// 范围：补证升级的批次原子性、证据类型和幂等性；新增附件不代表真实业务语义已验收。
+test('暂存验收须有新增有效证据才能升级，确定判定保持不可改写', () => {
+  for (const provisional of ['INCONCLUSIVE', 'SKIPPED']) {
+    for (const verdict of ['PASSED', 'FAILED']) {
+      const ledger = new CriteriaLedger(
+        execution().task.acceptanceCriteria.slice(0, 2),
+      );
+      const evidence = new Map([
+        ['old', { id: 'old', kind: 'DOM' }],
+        ['new', { id: 'new', kind: 'DOM' }],
+        ['image', { id: 'image', kind: 'SCREENSHOT' }],
+      ]);
+      const original = {
+        criterionId: 'step-1-0',
+        verdict: provisional,
+        summary: '尚缺 FAQ 答案',
+        evidenceRefs: ['old'],
+      };
+      ledger.record([original], evidence);
+      for (const evidenceRefs of [['old'], ['invented'], ['image']]) {
+        assert.throws(() =>
+          ledger.record([{ ...original, verdict, evidenceRefs }], evidence),
+        );
+        assert.deepEqual(ledger.values(), [original]);
+      }
+      const upgraded = {
+        ...original,
+        verdict,
+        summary: '新证据补齐缺口',
+        evidenceRefs: ['new'],
+      };
+      assert.throws(() =>
+        ledger.record(
+          [upgraded, { ...upgraded, criterionId: 'unknown' }],
+          evidence,
+        ),
+      );
+      assert.deepEqual(ledger.values(), [original]);
+      assert.equal(ledger.record([upgraded], evidence), true);
+      assert.deepEqual(ledger.values()[0], {
+        ...upgraded,
+        evidenceRefs: ['old', 'new'],
+      });
+      assert.equal(ledger.record([upgraded], evidence), false);
+      assert.throws(() =>
+        ledger.record(
+          [
+            {
+              ...upgraded,
+              verdict: verdict === 'PASSED' ? 'FAILED' : 'PASSED',
+            },
+          ],
+          evidence,
+        ),
+      );
+      assert.throws(() => ledger.record([original], evidence));
+    }
+  }
+});
+
+// 范围：复现先暂存再取证、finish 全量重送的协议链路和快照保存；浏览器及语言判定均为夹具。
+test('补齐证据后的 finish 可升级暂存项并幂等合并已通过项', async () => {
+  const client = new FakeControl();
+  let stage = 0;
+  let initialEvidence;
+  const report = await run(execution(), client, (context) => {
+    if (context.executionStep.stepId !== 'step-1')
+      return {
+        ...finish(context),
+        evidenceRefs: context.observation.artifactRefs.map((a) => a.artifactId),
+      };
+    const decision = finish(context);
+    if (stage++ === 0) {
+      initialEvidence = decision.criteria[1].evidenceRefs[0];
+      decision.type = 'verification.record';
+      decision.criteria[1].verdict = 'INCONCLUSIVE';
+      return decision;
+    }
+    if (stage === 2)
+      return { type: 'browser.act', action: 'scroll', value: 'down' };
+    assert.notEqual(decision.criteria[1].evidenceRefs[0], initialEvidence);
+    return decision;
+  });
+  assert.equal(report.verdict, 'PASSED');
+  assert.equal(report.steps[0].status, 'COMPLETED');
+  assert(
+    client.stepSnapshots.some(
+      (steps) => steps[0].criteria[1]?.verdict === 'INCONCLUSIVE',
+    ),
+  );
+  assert.equal(report.criteria[1].evidenceRefs.length, 2);
+  assert(report.criteria[1].evidenceRefs.includes(initialEvidence));
+});
+
 // 范围：保留先前步骤结论，但当前步不可借旧证据伪装已验收；仅测试引用边界，不判断真实页面语义。
 test('当前步骤逐项保存不能引用先前步骤的证据', async () => {
   const g = execution(),

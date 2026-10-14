@@ -61,12 +61,15 @@ export class InteractionProgress {
   private items = new Map<string, Reading>();
   private failures = new Map<string, { count: number; state: string }>();
   private nextId = 1;
+  /** 每次观察重新绑定当前动作身份，绝不把历史 target 带到新快照。 */
+  private currentTargets = new Map<string, string>();
   /** 最终阻塞保留原始浏览器故障分类，不用恢复策略名称覆盖根因。 */
   recoveryReason = 'BROWSER_ACTION_PRECONDITION_FAILED';
   private revision = 0;
 
   /** 即使面板后来关闭或移出视口，也保留之前的读取证据，避免重复点击。 */
   observe(page: Observation) {
+    this.currentTargets.clear();
     for (const target of page.targets) {
       if (!target.disclosure) continue;
       const identity = key(page, target);
@@ -82,7 +85,9 @@ export class InteractionProgress {
         };
         this.items.set(identity, item);
       }
-      if (!item || item.status === 'recorded') continue;
+      if (!item) continue;
+      this.currentTargets.set(target.target, identity);
+      if (item.status === 'recorded') continue;
       const panel = target.disclosure;
       if (
         panel.visible &&
@@ -156,7 +161,17 @@ export class InteractionProgress {
   }
 
   /** 失败后必须改变目标或其操作条件，且不能无界重试同一目标。 */
-  assertClick(page: Observation, target: ObservedTarget) {
+  assertClick(
+    page: Observation,
+    target: ObservedTarget,
+    revisitReason?: string,
+  ) {
+    const item = this.items.get(key(page, target));
+    if (item?.status === 'recorded' && !revisitReason)
+      throw new AgentFault(
+        'INTERACTION_ALREADY_RECORDED',
+        `子项 ${item.id}「${item.name}」已有读取证据，不应重复开关。请选择未读取子项；目标不在当前视口时滚动后重新定位，不把可见的旧问题当作下一题。原任务确实要求重复操作时，使用 workflow.revisitReason 说明具体原因。`,
+      );
     const failed = this.failures.get(key(page, target));
     if (
       failed &&
@@ -190,6 +205,12 @@ export class InteractionProgress {
   view() {
     return {
       revision: this.revision,
+      // 与 items 的裁剪独立，JEV 与文本模型均可识别当前控件对应的历史阅读状态。
+      currentTargets: [...this.currentTargets].map(([target, identity]) => ({
+        target,
+        itemId: this.items.get(identity)!.id,
+        status: this.items.get(identity)!.status,
+      })),
       // 完整身份列表最多 32 项；正文裁剪后仍能知道哪些子项已完成，避免反复开关。
       recordedItemIds: [...this.items.values()]
         .filter((item) => item.status === 'recorded')

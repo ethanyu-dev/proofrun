@@ -1865,6 +1865,17 @@ test('恢复预算和循环记录不能被重规划或被动等待绕过', async
     () => workflow.assertAction({ type: 'browser.act', action: 'click' }),
     { code: 'WORKFLOW_RECOVERY_EXHAUSTED' },
   );
+  // 切换策略后返回耗尽计划、改预算或词序也不能续费；人工交接后才允许新恢复。
+  workflow.apply({ recovery: { ...recovery, goal: '滚动定位' } }, new Set());
+  assert.equal(workflow.view().recovery.remaining, 1);
+  workflow.apply(
+    { recovery: { ...recovery, goal: ' 展开 ', maxActions: 6 } },
+    new Set(),
+  );
+  assert.equal(workflow.view().recovery.remaining, 0);
+  workflow.invalidateRecovery();
+  workflow.apply({ recovery }, new Set());
+  assert.equal(workflow.view().recovery.remaining, 1);
   const progress = new JevProgress();
   for (let i = 0; i < 3; i++)
     progress.observe(
