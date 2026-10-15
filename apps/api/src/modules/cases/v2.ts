@@ -1,8 +1,10 @@
+import type { CaseBindingWrite } from '../integrations/binding.js';
 import type { CatalogSource } from '../identities/provider.js';
 import {
   summarizeReport,
   validateVerificationCaseV2,
   type CaseResultV2,
+  type VerificationCaseV2,
   type StepResult,
   type VerificationReport,
   type VerificationTask,
@@ -54,6 +56,49 @@ export class CaseV2Service {
     return task;
   }
 
+  /** 只编译计划和读取身份元数据，不创建任务、占用身份或执行浏览器动作。 */
+  async validate(input: unknown): Promise<{
+    valid: true;
+    executed: false;
+    caseId: string;
+    plan: Record<string, unknown>;
+  }> {
+    if (!validateVerificationCaseV2(input))
+      throw new ApiError(400, 'INVALID_CASE', 'Case 不符合 v2 契约');
+    if (!this.profile)
+      throw new ApiError(
+        503,
+        'CASE_NOT_CONFIGURED',
+        '平台未配置 case 执行环境',
+      );
+    const value = input as VerificationCaseV2;
+    const catalog =
+      typeof this.identities === 'function'
+        ? await this.identities(value.session)
+        : this.identities;
+    const compiled = compileCase(
+      value,
+      validateCaseProfile(this.profile),
+      catalog,
+    );
+    return {
+      valid: true,
+      executed: false,
+      caseId: value.caseId,
+      plan: {
+        executionMode: compiled.comparison
+          ? 'parallel'
+          : (compiled.executionMode ?? 'llm'),
+        steps: compiled.steps,
+        budget: compiled.budget,
+        evidenceKinds: this.profile.evidenceKinds,
+        ...(compiled.profilePlan
+          ? { groups: compiled.profilePlan.groups }
+          : {}),
+      },
+    };
+  }
+
   /** 报告只映射公开结果；证据链接仍需验证主任务或关联清理任务归属。 */
   private result(
     id: string,
@@ -78,7 +123,10 @@ export class CaseV2Service {
   }
 
   /** 先校验整批，再由调度器事务接收；配置改变后重提仍复用首次冻结的快照。 */
-  async submit(input: unknown): Promise<CaseResultV2[]> {
+  async submit(
+    input: unknown,
+    binding?: CaseBindingWrite,
+  ): Promise<CaseResultV2[]> {
     if (
       !Array.isArray(input) ||
       !input.length ||
@@ -136,7 +184,7 @@ export class CaseV2Service {
         definitions.push(compiled);
       }
     }
-    await this.tasks.submitCaseBatch(definitions);
+    await this.tasks.submitCaseBatch(definitions, binding);
     return Promise.all(input.map((item) => this.get(item.caseId)));
   }
 
@@ -145,6 +193,7 @@ export class CaseV2Service {
     id: string,
     caseId: unknown,
     budgetMode: 'current' | 'original' = 'current',
+    binding?: CaseBindingWrite,
   ): Promise<CaseResultV2> {
     if (
       typeof caseId !== 'string' ||
@@ -184,9 +233,10 @@ export class CaseV2Service {
           }
         : undefined,
     );
-    const [result] = await service.submit([
-      { ...structuredClone(definition.caseV2Definition!), caseId },
-    ]);
+    const [result] = await service.submit(
+      [{ ...structuredClone(definition.caseV2Definition!), caseId }],
+      binding,
+    );
     return result!;
   }
 

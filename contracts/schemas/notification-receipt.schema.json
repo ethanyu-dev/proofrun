@@ -1,0 +1,46 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://proofrun.invalid/contracts/0.1/notification-receipt.schema.json",
+  "title": "NotificationReceipt",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "eventId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "receiptId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "status": {
+      "enum": [
+        "accepted",
+        "retrying",
+        "delivered",
+        "unknown",
+        "failed",
+        "superseded"
+      ]
+    },
+    "attempts": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "nextAttemptAt": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "error": {
+      "type": ["string", "null"],
+      "maxLength": 2000
+    },
+    "messageRef": {
+      "type": ["string", "null"],
+      "maxLength": 1000
+    }
+  },
+  "required": ["eventId", "receiptId", "status"]
+}

@@ -1,0 +1,474 @@
+{
+  "proofrun_capabilities_get": {
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {},
+      "required": []
+    },
+    "outputSchema": {
+      "type": "object",
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "caseProtocol": {
+              "const": "v2"
+            },
+            "notificationProtocol": {
+              "const": "proofrun.notification.v1"
+            },
+            "configured": {
+              "type": "boolean"
+            },
+            "bindingRefs": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              }
+            },
+            "defaultBindingRef": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "executionModes": {
+              "type": "array",
+              "items": {
+                "enum": ["llm", "jev", "parallel"]
+              }
+            },
+            "limits": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "casesPerSubmit": {
+                  "const": 1
+                },
+                "evidenceBytes": {
+                  "type": "integer"
+                }
+              },
+              "required": ["casesPerSubmit", "evidenceBytes"]
+            },
+            "bindingReadiness": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "bindingRef": {
+                    "type": "string"
+                  },
+                  "version": {
+                    "type": "integer"
+                  },
+                  "ready": {
+                    "type": "boolean"
+                  }
+                },
+                "required": ["bindingRef", "version", "ready"]
+              }
+            }
+          },
+          "required": [
+            "caseProtocol",
+            "notificationProtocol",
+            "configured",
+            "bindingRefs",
+            "defaultBindingRef",
+            "executionModes",
+            "limits",
+            "bindingReadiness"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "effect": {
+              "enum": ["none", "committed", "unknown"]
+            },
+            "caseId": {
+              "type": "string"
+            }
+          },
+          "required": ["code", "message", "retryable", "effect"]
+        }
+      ]
+    }
+  },
+  "proofrun_case_validate": {
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "case": {
+          "$ref": "verification-case-v2.schema.json"
+        }
+      },
+      "required": ["case"]
+    },
+    "outputSchema": {
+      "type": "object",
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "valid": {
+              "const": true
+            },
+            "executed": {
+              "const": false
+            },
+            "caseId": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,80}$"
+            },
+            "plan": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "required": ["valid", "executed", "caseId", "plan"]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "effect": {
+              "enum": ["none", "committed", "unknown"]
+            },
+            "caseId": {
+              "type": "string"
+            }
+          },
+          "required": ["code", "message", "retryable", "effect"]
+        }
+      ]
+    }
+  },
+  "proofrun_case_submit": {
+    "inputSchema": {
+      "$ref": "integration-submit.schema.json"
+    },
+    "outputSchema": {
+      "type": "object",
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "accepted": {
+              "const": true
+            },
+            "deduplicated": {
+              "type": "boolean"
+            },
+            "caseId": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,80}$"
+            },
+            "definitionDigest": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "bindingRef": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "result": {
+              "$ref": "case-result-v2.schema.json"
+            }
+          },
+          "required": [
+            "accepted",
+            "deduplicated",
+            "caseId",
+            "definitionDigest",
+            "bindingRef",
+            "result"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "effect": {
+              "enum": ["none", "committed", "unknown"]
+            },
+            "caseId": {
+              "type": "string"
+            }
+          },
+          "required": ["code", "message", "retryable", "effect"]
+        }
+      ]
+    }
+  },
+  "proofrun_case_get": {
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "caseId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,80}$"
+        }
+      },
+      "required": ["caseId"]
+    },
+    "outputSchema": {
+      "type": "object",
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "result": {
+              "$ref": "case-result-v2.schema.json"
+            },
+            "interventions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            },
+            "notificationDeliveries": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          },
+          "required": ["result", "interventions", "notificationDeliveries"]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "effect": {
+              "enum": ["none", "committed", "unknown"]
+            },
+            "caseId": {
+              "type": "string"
+            }
+          },
+          "required": ["code", "message", "retryable", "effect"]
+        }
+      ]
+    }
+  },
+  "proofrun_case_cancel": {
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "caseId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,80}$"
+        }
+      },
+      "required": ["caseId"]
+    },
+    "outputSchema": {
+      "type": "object",
+      "anyOf": [
+        {
+          "$ref": "case-result-v2.schema.json"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "effect": {
+              "enum": ["none", "committed", "unknown"]
+            },
+            "caseId": {
+              "type": "string"
+            }
+          },
+          "required": ["code", "message", "retryable", "effect"]
+        }
+      ]
+    }
+  },
+  "proofrun_case_rerun": {
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "caseId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,80}$"
+        },
+        "newCaseId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,80}$"
+        },
+        "budgetMode": {
+          "enum": ["current", "original"]
+        }
+      },
+      "required": ["caseId", "newCaseId"]
+    },
+    "outputSchema": {
+      "type": "object",
+      "anyOf": [
+        {
+          "$ref": "case-result-v2.schema.json"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "effect": {
+              "enum": ["none", "committed", "unknown"]
+            },
+            "caseId": {
+              "type": "string"
+            }
+          },
+          "required": ["code", "message", "retryable", "effect"]
+        }
+      ]
+    }
+  },
+  "proofrun_evidence_read": {
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "caseId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,80}$"
+        },
+        "artifactId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "required": ["caseId", "artifactId"]
+    },
+    "outputSchema": {
+      "type": "object",
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "caseId": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,80}$"
+            },
+            "artifactId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "mimeType": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "sha256": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "size": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": ["caseId", "artifactId", "mimeType", "sha256", "size"]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "effect": {
+              "enum": ["none", "committed", "unknown"]
+            },
+            "caseId": {
+              "type": "string"
+            }
+          },
+          "required": ["code", "message", "retryable", "effect"]
+        }
+      ]
+    }
+  }
+}

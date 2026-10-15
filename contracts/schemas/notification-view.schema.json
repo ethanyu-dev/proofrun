@@ -1,0 +1,95 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://proofrun.invalid/contracts/0.1/notification-view.schema.json",
+  "title": "NotificationView",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "const": "proofrun.notification-view.v1"
+    },
+    "eventId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "caseId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,80}$"
+    },
+    "aggregate": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": ["hitl", "case"]
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": ["kind", "id", "sequence"]
+    },
+    "state": {
+      "enum": ["REQUESTED", "HUMAN", "RESOLVED", "CLOSED", "FINISHED"]
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 2000
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "reason": {
+      "type": ["string", "null"]
+    },
+    "action": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "open_url"
+            },
+            "url": {
+              "type": "string",
+              "format": "uri"
+            },
+            "expiresAt": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "required": ["type", "url", "expiresAt"]
+        }
+      ]
+    },
+    "result": {
+      "$ref": "case-result-v2.schema.json"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "eventId",
+    "caseId",
+    "aggregate",
+    "state",
+    "title",
+    "items",
+    "reason",
+    "action"
+  ]
+}

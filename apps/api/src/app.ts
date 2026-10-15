@@ -1,3 +1,6 @@
+import { validateIntegrationConfig } from './modules/integrations/config.js';
+import { NotificationService } from './modules/notifications/service.js';
+import { registerIntegrationRoutes } from './modules/mcp/routes.js';
 import { IdentityLibrary } from './modules/identities/library.js';
 import { IdentitySelection } from './modules/identities/selection.js';
 import { identityMetrics } from './modules/identities/metrics.js';
@@ -43,6 +46,10 @@ export async function buildApp(
   config: ApiConfig = loadConfig(),
   options: { logger?: boolean } = {},
 ) {
+  validateIntegrationConfig(config.integrations, [
+    config.adminToken,
+    config.workerToken,
+  ]);
   const app = Fastify({
     logger:
       options.logger === false
@@ -102,6 +109,22 @@ export async function buildApp(
     gateway,
     library,
   );
+  const notifications = config.integrations
+    ? new NotificationService(db, config.integrations, casesV2, hitl, control)
+    : undefined;
+  if (notifications) {
+    registerIntegrationRoutes(
+      app,
+      config,
+      db,
+      casesV2,
+      artifacts,
+      notifications,
+    );
+    app.addHook('onReady', async () => {
+      notifications.start(() => app.log.error('通知扫描失败'));
+    });
+  }
   const live = new LiveService(db, gateway, config.adminToken);
   const modelCalls = new ModelCalls(db);
   const authenticatedNodes = new WeakMap<
@@ -212,6 +235,8 @@ export async function buildApp(
         persistentQueue: true,
         executionWorkerProtocol: true,
         structuredCaseProtocol: true,
+        mcp: !!config.integrations,
+        hitlNotifications: !!config.integrations,
       },
     };
   });
@@ -737,6 +762,7 @@ export async function buildApp(
     stopped = true;
     clearInterval(timer);
     await ticking;
+    await notifications?.close();
     hitl.close();
     live.close();
     // 先取得网关在途事件的等待对象，连接关闭事件随后可能移除业务路由记录。

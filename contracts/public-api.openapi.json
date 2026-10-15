@@ -28,6 +28,79 @@
     }
   ],
   "paths": {
+    "/v1/integrations/cases": {
+      "post": {
+        "operationId": "submitIntegratedCase",
+        "tags": ["Integration API"],
+        "summary": "带冻结通知绑定接收单个 v2 case",
+        "responses": {
+          "202": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "accepted",
+                    "deduplicated",
+                    "caseId",
+                    "definitionDigest",
+                    "bindingRef",
+                    "result"
+                  ],
+                  "properties": {
+                    "accepted": { "const": true },
+                    "deduplicated": { "type": "boolean" },
+                    "caseId": { "type": "string" },
+                    "definitionDigest": { "type": "string" },
+                    "bindingRef": { "type": "string" },
+                    "result": { "$ref": "#/components/schemas/CaseResultV2" }
+                  }
+                }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "IntegrationBearer": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/IntegrationSubmit" }
+            }
+          }
+        }
+      }
+    },
+    "/v1/integrations/notifications/{id}/view": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string" }
+        }
+      ],
+      "get": {
+        "operationId": "getNotificationView",
+        "tags": ["Integration API"],
+        "summary": "只读最新通知视图；处理链接仅向绑定服务签发",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/NotificationView" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "NotificationViewBearer": [] }]
+      }
+    },
     "/v2/cases": {
       "post": {
         "operationId": "submitCasesV2",
@@ -326,6 +399,16 @@
   },
   "components": {
     "securitySchemes": {
+      "IntegrationBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "PROOFRUN_INTEGRATIONS_FILE 中客户端的独立凭据；同时用于 /mcp。"
+      },
+      "NotificationViewBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "通知服务的独立回读凭据，仅允许所属集成事件。"
+      },
       "AdminBearer": {
         "type": "http",
         "scheme": "bearer",
@@ -343,6 +426,214 @@
       }
     },
     "schemas": {
+      "IntegrationSubmit": {
+        "title": "IntegrationSubmit",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "case": { "$ref": "#/components/schemas/VerificationCaseV2" },
+          "source": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "kind": { "type": "string", "minLength": 1, "maxLength": 1000 },
+              "reference": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              },
+              "revision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              },
+              "acceptanceRef": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              }
+            },
+            "required": ["kind", "reference"]
+          },
+          "notification": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "bindingRef": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "events": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 2,
+                "uniqueItems": true,
+                "items": { "enum": ["hitl", "case.finished"] },
+                "contains": { "const": "hitl" }
+              }
+            },
+            "required": ["bindingRef"]
+          }
+        },
+        "required": ["case"]
+      },
+      "NotificationEvent": {
+        "title": "NotificationEvent",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "schemaVersion": { "const": "proofrun.notification.v1" },
+          "eventId": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "type": {
+            "enum": [
+              "hitl.requested",
+              "hitl.updated",
+              "hitl.resolved",
+              "hitl.closed",
+              "case.finished"
+            ]
+          },
+          "occurredAt": { "type": "string", "format": "date-time" },
+          "integrationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "bindingRef": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "bindingVersion": { "type": "integer", "minimum": 1 },
+          "caseId": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,80}$" },
+          "taskId": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "executionId": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "arm": { "enum": ["llm", "jev"] },
+          "aggregate": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "kind": { "enum": ["hitl", "case"] },
+              "id": { "type": "string", "minLength": 1, "maxLength": 200 },
+              "sequence": { "type": "integer", "minimum": 1 }
+            },
+            "required": ["kind", "id", "sequence"]
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "eventId",
+          "type",
+          "occurredAt",
+          "integrationId",
+          "bindingRef",
+          "bindingVersion",
+          "caseId",
+          "aggregate"
+        ],
+        "allOf": [
+          {
+            "if": { "properties": { "type": { "const": "case.finished" } } },
+            "then": {
+              "properties": {
+                "taskId": false,
+                "executionId": false,
+                "arm": false,
+                "aggregate": {
+                  "type": "object",
+                  "properties": { "kind": { "const": "case" } }
+                }
+              }
+            },
+            "else": {
+              "required": ["taskId", "executionId", "arm"],
+              "properties": {
+                "aggregate": {
+                  "type": "object",
+                  "properties": { "kind": { "const": "hitl" } }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "NotificationView": {
+        "title": "NotificationView",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "schemaVersion": { "const": "proofrun.notification-view.v1" },
+          "eventId": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "caseId": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,80}$" },
+          "aggregate": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "kind": { "enum": ["hitl", "case"] },
+              "id": { "type": "string", "minLength": 1, "maxLength": 200 },
+              "sequence": { "type": "integer", "minimum": 1 }
+            },
+            "required": ["kind", "id", "sequence"]
+          },
+          "state": {
+            "enum": ["REQUESTED", "HUMAN", "RESOLVED", "CLOSED", "FINISHED"]
+          },
+          "title": { "type": "string", "maxLength": 2000 },
+          "items": { "type": "array", "items": { "type": "string" } },
+          "reason": { "type": ["string", "null"] },
+          "action": {
+            "anyOf": [
+              { "type": "null" },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "type": { "const": "open_url" },
+                  "url": { "type": "string", "format": "uri" },
+                  "expiresAt": { "type": "string", "format": "date-time" }
+                },
+                "required": ["type", "url", "expiresAt"]
+              }
+            ]
+          },
+          "result": { "$ref": "#/components/schemas/CaseResultV2" }
+        },
+        "required": [
+          "schemaVersion",
+          "eventId",
+          "caseId",
+          "aggregate",
+          "state",
+          "title",
+          "items",
+          "reason",
+          "action"
+        ]
+      },
+      "NotificationReceipt": {
+        "title": "NotificationReceipt",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "eventId": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "receiptId": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "status": {
+            "enum": [
+              "accepted",
+              "retrying",
+              "delivered",
+              "unknown",
+              "failed",
+              "superseded"
+            ]
+          },
+          "attempts": { "type": "integer", "minimum": 0 },
+          "nextAttemptAt": {
+            "type": ["string", "null"],
+            "format": "date-time"
+          },
+          "error": { "type": ["string", "null"], "maxLength": 2000 },
+          "messageRef": { "type": ["string", "null"], "maxLength": 1000 }
+        },
+        "required": ["eventId", "receiptId", "status"]
+      },
       "ExecutionOutcome": {
         "title": "ExecutionOutcome",
         "type": "object",

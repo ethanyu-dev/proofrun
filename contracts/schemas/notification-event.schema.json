@@ -1,0 +1,130 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://proofrun.invalid/contracts/0.1/notification-event.schema.json",
+  "title": "NotificationEvent",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "const": "proofrun.notification.v1"
+    },
+    "eventId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "type": {
+      "enum": [
+        "hitl.requested",
+        "hitl.updated",
+        "hitl.resolved",
+        "hitl.closed",
+        "case.finished"
+      ]
+    },
+    "occurredAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "integrationId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "bindingRef": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "bindingVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "caseId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,80}$"
+    },
+    "taskId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "executionId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "arm": {
+      "enum": ["llm", "jev"]
+    },
+    "aggregate": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": ["hitl", "case"]
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": ["kind", "id", "sequence"]
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "eventId",
+    "type",
+    "occurredAt",
+    "integrationId",
+    "bindingRef",
+    "bindingVersion",
+    "caseId",
+    "aggregate"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "case.finished"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "taskId": false,
+          "executionId": false,
+          "arm": false,
+          "aggregate": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "case"
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "required": ["taskId", "executionId", "arm"],
+        "properties": {
+          "aggregate": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "hitl"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

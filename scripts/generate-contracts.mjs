@@ -5,6 +5,10 @@ import { compile } from 'json-schema-to-typescript';
 const check = process.argv.includes('--check');
 const destination = new URL('../contracts/src/generated/', import.meta.url);
 const names = [
+  'integration-submit',
+  'notification-event',
+  'notification-receipt',
+  'notification-view',
   'execution-outcome',
   'node-runtime',
   'identity-check',

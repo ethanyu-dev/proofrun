@@ -40,7 +40,8 @@
     "test:acceptance": "pnpm --filter @proofrun/contracts build && node --test tests/acceptance/*.test.mjs",
     "dev:local": "node scripts/dev-local.mjs",
     "test:identity:browser": "cargo build --locked -p proofrun-node && python3 tests/browser-node/identity_smoke.py",
-    "test:identity:profile": "cargo build --locked -p proofrun-node && python3 tests/browser-node/profile_identity_smoke.py"
+    "test:identity:profile": "cargo build --locked -p proofrun-node && python3 tests/browser-node/profile_identity_smoke.py",
+    "test:mcp": "pnpm --filter @proofrun/contracts build && pnpm --filter @proofrun/api exec tsx --test test/mcp-notifications.test.ts"
   },
   "devDependencies": {
     "@types/node": "24.13.6",

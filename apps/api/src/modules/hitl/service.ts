@@ -123,7 +123,16 @@ export class HitlService {
   async current(executionId: string) {
     const id = await this.control.currentInterventionId(executionId);
     if (!id) return { intervention: null };
-    const grant = await this.grant(id);
+    return this.readCurrent(id);
+  }
+  /** 通知回读只检查当前授权，不延长期限或轮换链接。 */
+  async readCurrent(id: string) {
+    const grant = await this.grant(id).catch((error: unknown) => {
+      if (error instanceof ApiError && error.code === 'HITL_INVALID')
+        return null;
+      throw error;
+    });
+    if (!grant) return { intervention: null };
     try {
       this.active(grant);
     } catch {

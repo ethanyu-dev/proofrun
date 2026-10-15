@@ -3,6 +3,10 @@ import { format } from 'prettier';
 
 /** 对外文档仅包含上层调用入口；业务对象结构始终从共享 Schema 生成。 */
 const SCHEMAS = {
+  'integration-submit': 'IntegrationSubmit',
+  'notification-event': 'NotificationEvent',
+  'notification-view': 'NotificationView',
+  'notification-receipt': 'NotificationReceipt',
   'execution-outcome': 'ExecutionOutcome',
   'identity-check': 'IdentityCheck',
   'session-request': 'SessionRequest',
@@ -122,6 +126,38 @@ const document = {
     },
   ],
   paths: {
+    '/v1/integrations/cases': {
+      post: operation(
+        'submitIntegratedCase',
+        '带冻结通知绑定接收单个 v2 case',
+        object({
+          accepted: { const: true },
+          deduplicated: { type: 'boolean' },
+          caseId: { type: 'string' },
+          definitionDigest: { type: 'string' },
+          bindingRef: { type: 'string' },
+          result: ref('CaseResultV2'),
+        }),
+        {
+          status: '202',
+          tags: ['Integration API'],
+          security: [{ IntegrationBearer: [] }],
+          requestBody: body(ref('IntegrationSubmit')),
+        },
+      ),
+    },
+    '/v1/integrations/notifications/{id}/view': {
+      parameters: [pathId],
+      get: operation(
+        'getNotificationView',
+        '只读最新通知视图；处理链接仅向绑定服务签发',
+        ref('NotificationView'),
+        {
+          tags: ['Integration API'],
+          security: [{ NotificationViewBearer: [] }],
+        },
+      ),
+    },
     '/v2/cases': {
       post: operation(
         'submitCasesV2',
@@ -256,6 +292,17 @@ const document = {
   },
   components: {
     securitySchemes: {
+      IntegrationBearer: {
+        type: 'http',
+        scheme: 'bearer',
+        description:
+          'PROOFRUN_INTEGRATIONS_FILE 中客户端的独立凭据；同时用于 /mcp。',
+      },
+      NotificationViewBearer: {
+        type: 'http',
+        scheme: 'bearer',
+        description: '通知服务的独立回读凭据，仅允许所属集成事件。',
+      },
       AdminBearer: {
         type: 'http',
         scheme: 'bearer',

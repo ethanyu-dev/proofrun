@@ -1,0 +1,64 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://proofrun.invalid/contracts/0.1/integration-submit.schema.json",
+  "title": "IntegrationSubmit",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "case": {
+      "$ref": "verification-case-v2.schema.json"
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "reference": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "acceptanceRef": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        }
+      },
+      "required": ["kind", "reference"]
+    },
+    "notification": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "bindingRef": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "events": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "enum": ["hitl", "case.finished"]
+          },
+          "contains": {
+            "const": "hitl"
+          }
+        }
+      },
+      "required": ["bindingRef"]
+    }
+  },
+  "required": ["case"]
+}

@@ -167,3 +167,7 @@ Console 与 API 通过同源部署或开发代理通信，本批不开放跨源�
 `PROOFRUN_HUMAN_WAIT_MS` 默认 1800000 毫秒（30 分钟），范围 1000–86400000。每次进入 REQUESTED 时持久化开始/截止时间，重复请求、acknowledge 和人工链接轮换不延长截止时间；恢复成功会清空本轮时钟。到期关闭会话并记录 `HUMAN_INTERVENTION_TIMEOUT`，未验收内容不能视为产品失败。旧人工请求没有独立截止时间时不回填、不追溯判超时。业务与清理预算、执行器及节点租约仍独立生效。
 
 升级顺序：先部署带 019 迁移与可选 `closeReason` 接收能力的 API，再更新 Console 和 Browser Node。新节点将首个关闭触发原因写入 SQLite 和关闭事件；旧节点或旧记录缺失时显示未知，不根据最后一次清理命令的错误倒推关闭原因。新增分类不要求修改旧报告或任务状态枚举。
+
+## MCP 与 HITL 通知
+
+设置 `PROOFRUN_INTEGRATIONS_FILE` 后，同一 API 提供 `/mcp`、带通知绑定的单 case 提交和专用通知回读。配置示例、cc-connect 待接端点、持久投递语义及模拟验证命令见 [接入说明](src/modules/integrations/README.md)。

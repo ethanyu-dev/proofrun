@@ -229,6 +229,8 @@ pnpm accept:task /absolute/path/to/verification-task.json
 
 - [Agent 运行与模型配置](apps/agent/README.md)
 - [整体架构](docs/architecture.md)
+- [MCP 接入配置与模拟通知测试](apps/api/src/modules/integrations/README.md)
+- [MCP 与 cc-connect HITL 通知接口设计](docs/mcp-hitl-integration-design.md)
 - [Console 运行与业务页面](apps/console/README.md)
 - [Console 视觉规范与 x.ai 样式研究](docs/console-design.md)
 - [控制面运行与协议](apps/api/README.md)

@@ -1,3 +1,7 @@
+import {
+  bindIntegratedCase,
+  type CaseBindingWrite,
+} from '../integrations/binding.js';
 import { selectedTask } from '../identities/selection.js';
 import type { IdentityLibrary } from '../identities/library.js';
 import { taskEvidenceKinds } from '@proofrun/contracts';
@@ -191,7 +195,7 @@ export class Coordinator {
   }
 
   /** 整批原子入队；锁按身份排序，交叉批次不会因请求顺序形成死锁。 */
-  async submitCaseBatch(tasks: VerificationTask[]) {
+  async submitCaseBatch(tasks: VerificationTask[], binding?: CaseBindingWrite) {
     await this.db.transaction(async (client) => {
       for (const task of [...tasks].sort((a, b) =>
         a.taskId.localeCompare(b.taskId),
@@ -214,6 +218,8 @@ export class Coordinator {
             task.taskId,
           ])
         ).rows[0];
+        if (binding)
+          await bindIntegratedCase(client, task, binding, !!existing);
         if (existing) {
           if (
             canonical(existing.definition.caseV2Definition) !==
