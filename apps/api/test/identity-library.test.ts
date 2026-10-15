@@ -278,6 +278,48 @@ test('薄身份库冻结种子、版本冲突、共享选择及人工无法执�
       ).rows[0]!.n,
       1,
     );
+    // 范围：保留和清空的数据库版本及展示状态，旧任务种子不受影响；不运行浏览器。
+    await suite.test('清空 Cookies 显示未配置并保留历史种子', async () => {
+      const before = (await library.list()).identities.find(
+        (item) => item.id === entry.id,
+      )!;
+      const frozen = (await library.catalog()).identities.find(
+        (item) => item.id === entry.id,
+      )!;
+      const kept = await library.save({
+        ...fields,
+        id: before.id,
+        revision: before.revision,
+      });
+      const retained = kept.identities.find((item) => item.id === entry.id)!;
+      assert.equal(retained.cookiesConfigured, true);
+      assert.equal(
+        (await library.catalog()).identities.find(
+          (item) => item.id === entry.id,
+        )!.libraryVersion,
+        frozen.libraryVersion,
+      );
+      const cleared = await library.save({
+        ...fields,
+        id: retained.id,
+        revision: retained.revision,
+        cookies: '[]',
+      });
+      assert.equal(
+        cleared.identities.find((item) => item.id === entry.id)!
+          .cookiesConfigured,
+        false,
+      );
+      const empty = (await library.catalog()).identities.find(
+        (item) => item.id === entry.id,
+      )!;
+      assert.notEqual(empty.libraryVersion, frozen.libraryVersion);
+      assert.deepEqual((await library.seed(empty)).cookies, []);
+      assert.equal(
+        (await library.seed(frozen)).cookies[0]!.value,
+        'replacement',
+      );
+    });
   } finally {
     await db.close();
     await until(

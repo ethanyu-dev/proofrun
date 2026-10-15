@@ -13,6 +13,7 @@ import { HitlPage } from './pages/hitl';
 import { suspendCredentialRestore } from './credential-storage';
 import './tokens.css';
 import './style.css';
+import './identity-library.css';
 
 /** 路由只接受协议允许的任务身份，未知路径显示明确的缺失页面。 */
 const TASK_ROUTE = /^\/tasks\/([A-Za-z0-9_-]{1,128})$/;

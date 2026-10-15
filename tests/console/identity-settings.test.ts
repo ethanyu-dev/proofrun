@@ -79,7 +79,9 @@ test('身份表单只呈现六个账号字段，不要求内部引用', () => {
     'Cookies',
   ])
     assert.ok(html.includes(label));
-  assert.equal((html.match(/<label/g) ?? []).length, 6);
+  assert.match(html, /Cookie 1 Name/);
+  assert.match(html, /Cookie 1 Value/);
+  assert.match(html, /role="switch" aria-checked="true"/);
   for (const label of [
     '账号键',
     '登录配方引用',

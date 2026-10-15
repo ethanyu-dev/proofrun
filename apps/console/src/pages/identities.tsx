@@ -3,6 +3,12 @@ import { ApiClient, errorMessage } from '../api';
 import { useResource } from '../use-resource';
 import { Empty, ErrorNotice, PageHeader } from '../components/ui';
 import { IdentityField } from '../components/identity-catalog-editor';
+import { IdentityCookieEditor } from '../components/identity-cookie-editor';
+import {
+  identityCookiePayload,
+  newCookieDraft,
+  type CookieDraft,
+} from '../identity-cookies';
 
 /** 用户只编辑六个业务字段；内部引用与修订号仅用于安全保存，不作为表单字段。 */
 export interface LibraryEntry {
@@ -57,7 +63,7 @@ export function IdentitiesPage({ api }: { api: ApiClient }) {
     <div className="identities-page">
       <PageHeader
         title="测试身份"
-        description="维护测试账号，Agent 根据 Case 选择身份。每个任务使用独立浏览器副本，只有人工处理成功后更新基准。"
+        description="Agent 根据 Case 选择账号，每个任务使用独立浏览器副本。"
       />
       <ErrorNotice message={resource.error ?? error} />
       {notice && <p role="status">{notice}</p>}
@@ -75,22 +81,35 @@ export function IdentitiesPage({ api }: { api: ApiClient }) {
         />
       ) : (
         <>
-          <div className="page-actions">
-            <button
-              className="button button-primary"
-              onClick={() => {
-                setNotice('');
-                setEditing('new');
-              }}
-            >
-              添加测试身份
-            </button>
-            <button
-              className="button button-secondary"
-              onClick={resource.refresh}
-            >
-              刷新
-            </button>
+          <div className="library-toolbar">
+            <div>
+              <h2>
+                身份库{' '}
+                <span className="library-count">
+                  {resource.data?.identities.length ?? '—'}
+                </span>
+              </h2>
+              <p className="muted">
+                维护账号信息；只有人工处理成功后才更新浏览器基准。
+              </p>
+            </div>
+            <div className="page-actions">
+              <button
+                className="button button-primary"
+                onClick={() => {
+                  setNotice('');
+                  setEditing('new');
+                }}
+              >
+                添加测试身份
+              </button>
+              <button
+                className="button button-secondary"
+                onClick={resource.refresh}
+              >
+                刷新
+              </button>
+            </div>
           </div>
           {!resource.data ? (
             <Empty
@@ -101,10 +120,13 @@ export function IdentitiesPage({ api }: { api: ApiClient }) {
               添加账号信息和 Cookies；无法自动准备的身份会交给人工处理。
             </Empty>
           ) : (
-            <div className="identity-editor">
+            <div className="library-cards">
               {resource.data.identities.map((entry) => (
-                <section className="identity-entry" key={entry.id}>
-                  <h2>{entry.name}</h2>
+                <section className="library-card" key={entry.id}>
+                  <div className="library-card-heading">
+                    <h2>{entry.name}</h2>
+                    <span className="status">{entry.type || '未指定类型'}</span>
+                  </div>
                   <dl className="facts">
                     <div>
                       <dt>测试地址</dt>
@@ -136,7 +158,10 @@ export function IdentitiesPage({ api }: { api: ApiClient }) {
                     <button
                       className="button button-secondary"
                       disabled={pending}
-                      onClick={() => setEditing(entry)}
+                      onClick={() => {
+                        setNotice('');
+                        setEditing(entry);
+                      }}
                     >
                       编辑
                     </button>
@@ -158,7 +183,7 @@ export function IdentitiesPage({ api }: { api: ApiClient }) {
   );
 }
 
-/** Cookie 不回显；留空保留原种子，显式输入 [] 清空，修改地址或 Cookie 创建新基准版本。 */
+/** Cookie 不回显；通过明确的编辑状态区分保留、替换与清空，修改后创建新基准版本。 */
 export function IdentityForm({
   api,
   entry,
@@ -175,7 +200,9 @@ export function IdentityForm({
   const [type, setType] = useState(entry?.type ?? '');
   const [description, setDescription] = useState(entry?.description ?? '');
   const [concurrency, setConcurrency] = useState(entry?.concurrency ?? 1);
-  const [cookies, setCookies] = useState('');
+  const [cookies, setCookies] = useState<CookieDraft[] | null>(() =>
+    entry ? null : [newCookieDraft()],
+  );
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState(false);
   const active = useRef<AbortController | null>(null);
@@ -185,6 +212,7 @@ export function IdentityForm({
     setPending(true);
     setError(undefined);
     try {
+      const cookiePayload = identityCookiePayload(cookies, !!entry);
       await api.json('/v1/admin/identity-library', active.current.signal, {
         ...(entry ? { id: entry.id, revision: entry.revision } : {}),
         url,
@@ -192,10 +220,10 @@ export function IdentityForm({
         type,
         description,
         concurrency,
-        ...(cookies.trim() ? { cookies } : {}),
+        ...(cookiePayload === undefined ? {} : { cookies: cookiePayload }),
       });
       if (!active.current.signal.aborted) {
-        setCookies('');
+        setCookies(null);
         saved();
       }
     } catch (error) {
@@ -206,95 +234,99 @@ export function IdentityForm({
   };
   return (
     <form
-      className="identity-settings"
+      className="library-form"
       onSubmit={(event) => {
         event.preventDefault();
         void save();
       }}
     >
-      <fieldset className="task-editor" disabled={pending}>
-        <div className="identity-form-grid">
-          <IdentityField label="测试地址">
-            <input
-              type="url"
-              required
-              maxLength={2000}
-              value={url}
-              onChange={(event) => setUrl(event.target.value)}
-              placeholder="https://example.com/app"
-            />
-          </IdentityField>
-          <IdentityField label="身份名称">
-            <input
-              required
-              maxLength={160}
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              placeholder="测试团队普通成员"
-            />
-          </IdentityField>
-          <IdentityField label="身份类型（可选）">
-            <input
-              maxLength={100}
-              value={type}
-              onChange={(event) => setType(event.target.value)}
-              placeholder="成员 / 管理员"
-            />
-          </IdentityField>
-          <IdentityField label="并发数">
-            <input
-              type="number"
-              required
-              min={1}
-              max={32}
-              value={concurrency}
-              onChange={(event) => setConcurrency(Number(event.target.value))}
-            />
-          </IdentityField>
+      <div className="library-form-heading">
+        <div>
+          <h2>{entry ? '编辑测试身份' : '添加测试身份'}</h2>
+          <p className="muted">填写账号信息，帮助 Agent 选择合适的测试身份。</p>
         </div>
-        <IdentityField label="身份描述">
-          <textarea
-            required
-            rows={3}
-            maxLength={2000}
-            value={description}
-            onChange={(event) => setDescription(event.target.value)}
-            placeholder="所属团队、权限、已开通能力及其他与测试有关的账号条件"
-          />
-        </IdentityField>
-        <IdentityField label="Cookies">
-          <textarea
-            rows={4}
-            maxLength={150000}
-            autoComplete="off"
-            spellCheck={false}
-            value={cookies}
-            onChange={(event) => setCookies(event.target.value)}
-            placeholder={
-              entry?.cookiesConfigured
-                ? '已配置，留空保留；输入 [] 清空'
-                : '[{"name":"session","value":"...","httpOnly":true}]'
-            }
-          />
-        </IdentityField>
-        <p className="muted note">
-          支持 JSON 数组（name、value、httpOnly）或 name=value;
-          name=value。Cookie
-          仅用于测试地址所在主机的根路径。留空可由人工登录准备；人工确认后的浏览器基准优先复用。重新填写
-          Cookie 会替换原基准。
-        </p>
-        <ErrorNotice message={error} />
-        <div className="page-actions">
-          <button className="button button-primary" type="submit">
-            {pending ? '保存中…' : '保存身份'}
-          </button>
-          <button
-            className="button button-secondary"
-            type="button"
-            onClick={cancel}
-          >
-            取消
-          </button>
+      </div>
+      <fieldset className="task-editor" disabled={pending}>
+        <section
+          className="library-section"
+          aria-labelledby="identity-basics-heading"
+        >
+          <div className="library-section-heading">
+            <div>
+              <h2 id="identity-basics-heading">基本信息</h2>
+              <p>描述账号用途、权限和可同时执行的任务数量。</p>
+            </div>
+          </div>
+          <div className="identity-form-grid">
+            <IdentityField label="测试地址">
+              <input
+                type="url"
+                required
+                maxLength={2000}
+                value={url}
+                onChange={(event) => setUrl(event.target.value)}
+                placeholder="https://example.com/app"
+              />
+            </IdentityField>
+            <IdentityField label="身份名称">
+              <input
+                required
+                maxLength={160}
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                placeholder="测试团队普通成员"
+              />
+            </IdentityField>
+            <IdentityField label="身份类型（可选）">
+              <input
+                maxLength={100}
+                value={type}
+                onChange={(event) => setType(event.target.value)}
+                placeholder="成员 / 管理员"
+              />
+            </IdentityField>
+            <IdentityField label="并发数">
+              <input
+                type="number"
+                required
+                min={1}
+                max={32}
+                value={concurrency}
+                onChange={(event) => setConcurrency(Number(event.target.value))}
+              />
+            </IdentityField>
+          </div>
+          <IdentityField label="身份描述">
+            <textarea
+              required
+              rows={3}
+              maxLength={2000}
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+              placeholder="所属团队、权限、已开通能力及其他与测试有关的账号条件"
+            />
+          </IdentityField>
+        </section>
+        <IdentityCookieEditor
+          rows={cookies}
+          change={setCookies}
+          editing={!!entry}
+          configured={entry?.cookiesConfigured ?? false}
+        />
+        <div className="library-form-footer">
+          <ErrorNotice message={error} />
+          <div className="page-actions">
+            <button className="button button-primary" type="submit">
+              {pending ? '保存中…' : '保存身份'}
+            </button>
+            <button
+              className="button button-secondary"
+              type="button"
+              onClick={cancel}
+            >
+              取消
+            </button>
+          </div>
         </div>
       </fieldset>
     </form>

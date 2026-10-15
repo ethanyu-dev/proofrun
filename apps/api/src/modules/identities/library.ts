@@ -218,7 +218,7 @@ export class IdentityLibrary {
       input.cookies === undefined || input.cookies === ''
         ? undefined
         : parseIdentityCookies(input.cookies);
-    const file = cookies ? randomUUID() : null;
+    const file = cookies?.length ? randomUUID() : null;
     if (file) {
       await mkdir(this.directory, { recursive: true, mode: 0o700 });
       await writeFile(join(this.directory, file), JSON.stringify(cookies), {
@@ -249,9 +249,11 @@ export class IdentityLibrary {
         ).rowCount
       )
         throw new ApiError(422, 'IDENTITY_LIMIT', '最多维护 256 个身份');
-      const changed = !old || !!file || old.url !== url.href;
+      // 显式空数组也创建新版本并清除旧种子；省略字段才表示保留，不能用文件是否存在区分。
+      const changed = !old || cookies !== undefined || old.url !== url.href;
       const version = changed ? randomUUID() : old.version;
-      const cookieFile = file ?? old?.cookie_file ?? null;
+      const cookieFile =
+        cookies === undefined ? (old?.cookie_file ?? null) : file;
       if (changed)
         await client.query(
           'INSERT INTO pr_identity_seeds(version,cookie_file) VALUES($1,$2)',
