@@ -55,6 +55,8 @@ import {
 const MAX_DECISION_ERRORS = 3;
 /** 每完成四次动作提醒保存独立结论，仍计入原模型与时间预算。 */
 const CRITERIA_REVIEW_ACTIONS = 4;
+/** 停滞终止前允许一次只读整理，仍保留真实阻塞原因。 */
+const STALLED_SUMMARY = '重复操作未取得新的完成证据，无法确认当前步骤已就绪';
 /** 任务进度不足有独立恢复额度，不归类为模型格式错误。 */
 const MAX_WORKFLOW_RECOVERIES = 3;
 /** 证据上传与浏览器状态轮询不会占用新的模型调用。 */
@@ -609,7 +611,7 @@ class Execution {
     }
   }
   /** 在统一安全点取得预算快照并登记有界审查提示；裁剪只影响发给模型的副本。 */
-  private context(): DecisionInput {
+  private context(finalReview = false): DecisionInput {
     const savedCriteria = this.criteria.values();
     const pendingCriterionIds = this.task.acceptanceCriteria
       .filter(
@@ -626,8 +628,10 @@ class Execution {
       !this.isCleanup() &&
       !!this.grant.task.steps &&
       pendingCriterionIds.length > 0 &&
-      this.details.actions - this.lastCriteriaReview >= CRITERIA_REVIEW_ACTIONS
-        ? { pendingCriterionIds }
+      (finalReview ||
+        this.details.actions - this.lastCriteriaReview >=
+          CRITERIA_REVIEW_ACTIONS)
+        ? { pendingCriterionIds, ...(finalReview ? { final: true } : {}) }
         : undefined;
     if (verificationReview) this.lastCriteriaReview = this.details.actions;
     return decisionContext({
@@ -1393,10 +1397,13 @@ class Execution {
     }
     let errors = 0;
     let workflowRecoveries = 0;
+    // 每次步骤循环最多一次；无模型额度、准备/清理阶段和已有全部确定结论时不触发。
+    let finalReview = false;
     // 连续遮挡只允许有限次重新规划；仍消耗原动作与模型预算。
     let obscured = 0;
     while (this.allowance || this.details.modelCalls < this.config.maxTurns) {
       this.guard.signal.throwIfAborted();
+      if (finalReview) return this.blocked(STALLED_SUMMARY, 'NO_PROGRESS');
       try {
         if (await this.checkpoint()) {
           this.current = undefined;
@@ -1570,15 +1577,31 @@ class Execution {
           ((this.changes?.repeatedStateVisits ?? 0) >= CYCLIC_VISITS &&
             this.changes?.unchangedRounds === 0)
         ) {
-          const summary = '重复操作未取得新的完成证据，无法确认当前步骤已就绪';
-          if (!this.isSetup() || this.grant.task.executionPlan)
-            return this.blocked(summary, 'NO_PROGRESS');
-          const blocked = await this.environmentNotReady(summary);
-          if (blocked) return blocked;
-          continue;
+          const saved = this.criteria.values();
+          if (
+            !this.isSetup() &&
+            !this.isCleanup() &&
+            this.grant.task.steps &&
+            this.task.acceptanceCriteria.some(
+              (criterion) =>
+                !saved.some(
+                  (item) =>
+                    item.criterionId === criterion.id &&
+                    ['PASSED', 'FAILED'].includes(item.verdict),
+                ),
+            )
+          ) {
+            finalReview = true;
+          } else {
+            if (!this.isSetup() || this.grant.task.executionPlan)
+              return this.blocked(STALLED_SUMMARY, 'NO_PROGRESS');
+            const blocked = await this.environmentNotReady(STALLED_SUMMARY);
+            if (blocked) return blocked;
+            continue;
+          }
         }
         this.syncPolicyChecks();
-        const input = this.context();
+        const input = this.context(finalReview);
         const remainingActions = JSON.parse(input.text).budgetRemaining.actions;
         const decisionIndex = ++this.decisionIndex;
         input.traceRequest = async (request) => {
@@ -1697,6 +1720,9 @@ class Execution {
         const decision = output.decision;
         if (!validateAgentDecision(decision))
           throw new AgentFault('INVALID_MODEL_DECISION', '决定不满足工具协议');
+        // 工具 schema 不能代替执行端围栏，忽略只读限制的动作绝不派发。
+        if (finalReview && decision.type !== 'verification.record')
+          return this.blocked(STALLED_SUMMARY, 'NO_PROGRESS');
         if (
           decision.type === 'browser.observe' &&
           (this.changes?.unchangedRounds ?? 0) >= OBSERVATION_REVIEW_ROUNDS
@@ -1944,6 +1970,7 @@ class Execution {
             state.summary = decision.summary;
             await this.client.recordSteps(this.grant, this.stepResults);
           }
+          if (finalReview) return this.blocked(STALLED_SUMMARY, 'NO_PROGRESS');
           if (changed) {
             this.lastCriteriaReview = this.details.actions;
             this.tracker.reset();
@@ -2059,6 +2086,17 @@ class Execution {
           await this.observe();
         }
       } catch (error) {
+        // 收尾不是新的恢复循环；无效引用仍拒绝，不能凭错误回复补造结论。
+        if (
+          finalReview &&
+          error instanceof AgentFault &&
+          [
+            'INVALID_MODEL_DECISION',
+            'WORKFLOW_INCOMPLETE',
+            'WORKFLOW_RECOVERY_EXHAUSTED',
+          ].includes(error.code)
+        )
+          return this.blocked(STALLED_SUMMARY, 'NO_PROGRESS');
         if (
           error instanceof AgentFault &&
           [

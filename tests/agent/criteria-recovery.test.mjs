@@ -53,6 +53,186 @@ function record(context) {
   };
 }
 
+// 范围：停滞后仅一次只读整理，合法结论持久化但不冒充整步完成；模型和浏览器均为夹具。
+test('停滞终止前保存独立验收，保持阻塞原因并继续后续步骤', async () => {
+  const client = new FakeControl();
+  let finalCalls = 0,
+    actionsAtReview;
+  const report = await run(execution(), client, (context, _turn, body) => {
+    if (context.executionStep.stepId !== 'step-1')
+      return {
+        ...finish(context),
+        evidenceRefs: context.observation.artifactRefs.map((a) => a.artifactId),
+      };
+    if (context.verificationReview?.final) {
+      finalCalls++;
+      actionsAtReview = client.calls.filter(
+        (c) => c.operation.type === 'browser.act',
+      ).length;
+      assert.deepEqual(body.tools.map((t) => t.function.name).sort(), [
+        'verification_block',
+        'verification_record',
+      ]);
+      return record(context);
+    }
+    return { type: 'browser.act', action: 'scroll', value: 'down' };
+  });
+  assert.equal(finalCalls, 1);
+  assert.equal(
+    client.calls.filter((c) => c.operation.type === 'browser.act').length,
+    actionsAtReview,
+  );
+  assert.deepEqual(
+    report.criteria.map((c) => c.verdict),
+    ['PASSED', 'SKIPPED', 'PASSED'],
+  );
+  assert.equal(report.steps[0].reasonCode, 'NO_PROGRESS');
+  assert.equal(report.steps[0].status, 'BLOCKED');
+  assert.deepEqual(
+    report.steps.slice(1).map((s) => s.status),
+    ['COMPLETED', 'COMPLETED'],
+  );
+});
+
+// 范围：忽略只读工具、伪造证据和模型额度耗尽均不能延长执行或编造通过；不验证真实模型纠错能力。
+test('停滞收尾拒绝动作与伪造引用，且不突破模型预算', async (t) => {
+  for (const mode of ['action', 'invalidRef', 'noBudget'])
+    await t.test(mode, async () => {
+      const g = execution(),
+        client = new FakeControl();
+      if (mode === 'noBudget') g.task.stepBudget.steps[0].maxModelCalls = 6;
+      let finalCalls = 0,
+        actionsAtReview;
+      const report = await run(g, client, (context) => {
+        if (context.executionStep.stepId !== 'step-1')
+          return {
+            ...finish(context),
+            evidenceRefs: context.observation.artifactRefs.map(
+              (a) => a.artifactId,
+            ),
+          };
+        if (context.verificationReview?.final) {
+          finalCalls++;
+          actionsAtReview = client.calls.filter(
+            (c) => c.operation.type === 'browser.act',
+          ).length;
+          if (mode === 'action')
+            return { type: 'browser.act', action: 'click', target: '@e2' };
+          const output = record(context);
+          output.criteria[0].evidenceRefs = [context.observation.observationId];
+          return output;
+        }
+        return { type: 'browser.act', action: 'scroll', value: 'down' };
+      });
+      assert.equal(finalCalls, mode === 'noBudget' ? 0 : 1);
+      assert(!client.calls.some((c) => c.operation.action === 'click'));
+      if (mode !== 'noBudget')
+        assert.equal(
+          client.calls.filter((c) => c.operation.type === 'browser.act').length,
+          actionsAtReview,
+        );
+      assert.deepEqual(
+        report.criteria.map((c) => c.verdict),
+        ['SKIPPED', 'SKIPPED', 'PASSED'],
+      );
+      assert.equal(
+        report.steps[0].reasonCode,
+        mode === 'noBudget' ? 'STEP_MODEL_BUDGET_EXCEEDED' : 'NO_PROGRESS',
+      );
+    });
+});
+
+// 范围：真实请求 schema 限定附件身份；错误引用有明确反馈且整批不落库，修正后正常完成；不代表生产模型必定遵从。
+test('误用观察编号或抄错附件 ID 后可按精确反馈纠正', async () => {
+  const client = new FakeControl();
+  let attempts = 0;
+  const report = await run(execution(), client, (context, _turn, body) => {
+    if (context.executionStep.stepId !== 'step-1')
+      return {
+        ...finish(context),
+        evidenceRefs: context.observation.artifactRefs.map((a) => a.artifactId),
+      };
+    const output = finish(context);
+    const tool = body.tools.find(
+      (t) => t.function.name === 'verification_finish',
+    ).function.parameters;
+    const ids =
+      tool.properties.criteria.items.properties.evidenceRefs.items.enum;
+    assert(ids.includes(context.observation.artifactRefs[0].artifactId));
+    assert(!ids.includes(context.observation.observationId));
+    assert.deepEqual(
+      tool.properties.workflow.properties.assessments.items.properties
+        .evidenceRefs.items.enum,
+      ids,
+    );
+    attempts++;
+    if (attempts === 1)
+      output.workflow = {
+        assessments: [
+          {
+            stepId: 'step-1',
+            outcome: 'complete',
+            summary: '夹具文案',
+            evidenceRefs: [context.observation.observationId],
+          },
+        ],
+      };
+    else if (attempts === 2) {
+      assert.match(
+        context.feedback,
+        /workflow.assessments\[step-1\].evidenceRefs/,
+      );
+      assert(context.feedback.includes(context.observation.observationId));
+      assert.deepEqual(context.recordedCriteria, []);
+      output.criteria[0].evidenceRefs = ['typo-artifact'];
+    } else {
+      assert.match(context.feedback, /step-1-0.*typo-artifact/);
+      assert.deepEqual(context.recordedCriteria, []);
+    }
+    return output;
+  });
+  assert.equal(attempts, 3);
+  assert.equal(report.verdict, 'PASSED', report.summary);
+});
+
+// 范围：上下文裁剪后的历史附件仍可选，空证据不允许任意字符串；不校验浏览器采集内容的业务语义。
+test('证据约束保留历史与已读来源且不污染共享 schema', async () => {
+  const { decisionTools } =
+    await import('../../apps/agent/dist/model/tools.js');
+  const schema = {
+    properties: { evidenceRefs: { type: 'array', items: { type: 'string' } } },
+  };
+  const tools = [
+    {
+      type: 'verification.block',
+      name: 'verification_block',
+      description: '',
+      parameters: schema,
+    },
+  ];
+  const context = {
+    evidence: [{ id: 'current' }],
+    previousObservations: [
+      {
+        observationId: 'observation-only',
+        artifactRefs: [{ artifactId: 'historical' }],
+      },
+    ],
+    interactionProgress: { items: [{ evidenceRefs: ['read-panel'] }] },
+    recordedCriteria: [{ evidenceRefs: ['saved'] }],
+  };
+  assert.deepEqual(
+    decisionTools(JSON.stringify(context), tools)[0].parameters.properties
+      .evidenceRefs.items.enum,
+    ['current', 'historical', 'saved', 'read-panel'],
+  );
+  assert.equal(
+    decisionTools('{}', tools)[0].parameters.properties.evidenceRefs.maxItems,
+    0,
+  );
+  assert.equal(schema.properties.evidenceRefs.items.enum, undefined);
+});
+
 // 范围：finish 内合法部分结论在工作流完整性失败前保存，不能让未完成步骤通过；模型和浏览器均为夹具。
 test('FAQ 未完成的 finish 仍先持久化独立文案结论', async () => {
   const client = new FakeControl();

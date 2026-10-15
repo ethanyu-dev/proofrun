@@ -73,7 +73,8 @@ export interface ContextInput {
   /** 已持久化的逐项结论，后续失败不能覆盖。 */
   recordedCriteria?: VerificationReport['criteria'];
   /** 有界周期提示核对独立验收项，不将阅读进度自动判为通过。 */
-  verificationReview?: { pendingCriterionIds: string[] } | undefined;
+  verificationReview?:
+    { pendingCriterionIds: string[]; final?: boolean } | undefined;
   /** 只在平台编排的后续清理步骤提供 Cookie 清理工具。 */
   cleanup?: boolean;
   /** 当前观察和控制代次下的前置结果；只含业务条件与来源，不含身份配方或凭据。 */

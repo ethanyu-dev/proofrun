@@ -264,11 +264,17 @@ export class Workflow {
           ) ||
           (item.outcome === 'complete' && !item.evidenceRefs.length) ||
           item.evidenceRefs.length > MAX_EVIDENCE_REFS ||
-          item.evidenceRefs.some(
-            (r) => typeof r !== 'string' || !evidence.has(r),
-          )
+          item.evidenceRefs.some((r) => typeof r !== 'string')
         )
           throw bad();
+        const unknownRefs = item.evidenceRefs.filter(
+          (ref) => !evidence.has(ref),
+        );
+        if (unknownRefs.length)
+          throw new AgentFault(
+            'INVALID_MODEL_DECISION',
+            `workflow.assessments[${step.id}].evidenceRefs 引用了未登记附件：${JSON.stringify(unknownRefs)}。observationId 不是附件 ID；请从 evidence 或 artifactRefs 逐字复制实际支持本项的附件，不能猜测或改写 UUID。`,
+          );
         seen.add(step.id);
 
         Object.assign(step, {
