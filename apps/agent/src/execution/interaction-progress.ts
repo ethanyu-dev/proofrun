@@ -153,6 +153,7 @@ export class InteractionProgress {
   private state(page: Observation, target: ObservedTarget) {
     return JSON.stringify([
       page.viewport,
+      target.clip,
       targetState(target),
       target.context,
       target.disclosure,
@@ -210,7 +211,13 @@ export class InteractionProgress {
         target,
         itemId: this.items.get(identity)!.id,
         status: this.items.get(identity)!.status,
+        failedAttempts: this.failures.get(identity)?.count ?? 0,
       })),
+      // 数量与未读身份不随正文裁剪消失；只反映已发现子项，不宣称整页已枚举完整。
+      discovered: this.items.size,
+      unreadItemIds: [...this.items.values()]
+        .filter((item) => item.status !== 'recorded')
+        .map((item) => item.id),
       // 完整身份列表最多 32 项；正文裁剪后仍能知道哪些子项已完成，避免反复开关。
       recordedItemIds: [...this.items.values()]
         .filter((item) => item.status === 'recorded')

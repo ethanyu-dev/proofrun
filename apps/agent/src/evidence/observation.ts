@@ -30,6 +30,8 @@ export interface ObservedTarget {
   } | null;
   /** 邻近标题与浮窗位置来自实际 DOM；缺省表示旧节点未提供。 */
   context?: { heading: string; fixed: boolean };
+  /** 当前 frame 视口内的可见矩形，用于确认滚动后的定位变化，不提供点击授权。 */
+  clip?: { left: number; top: number; right: number; bottom: number } | null;
   /** 面板关联及可见正文只表示结构事实，不证明该子项已完成业务验收。 */
   disclosure?: {
     relation: 'aria-controls' | 'details' | 'adjacent';
@@ -117,6 +119,12 @@ export function observation(result: CommandResult): Observation {
         (t.comparisonKey !== undefined &&
           typeof t.comparisonKey !== 'string') ||
         (t.frame !== undefined && typeof t.frame !== 'string') ||
+        (t.clip != null &&
+          !['left', 'top', 'right', 'bottom'].every((key) =>
+            Number.isFinite(
+              t.clip![key as keyof NonNullable<ObservedTarget['clip']>],
+            ),
+          )) ||
         (t.context !== undefined &&
           (!t.context ||
             typeof t.context.heading !== 'string' ||

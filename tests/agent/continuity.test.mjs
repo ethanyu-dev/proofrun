@@ -4,6 +4,7 @@ import { compileStepBudget } from '../../contracts/dist/index.js';
 import { execute } from '../../apps/agent/dist/execution/runner.js';
 import { ChatModel } from '../../apps/agent/dist/model/chat.js';
 import { JevModel } from '../../apps/agent/dist/model/jev.js';
+import { ActionMemory } from '../../apps/agent/dist/execution/action-memory.js';
 import { config, grant, FakeControl, finish, modelServer } from './fixture.mjs';
 
 /** 构造已规范化的连续步骤；测试不连接业务网站或真实身份服务。 */
@@ -91,6 +92,105 @@ function scripted(decide = finish) {
     },
   };
 }
+
+// 范围：关键填写回执不会被观察/滚动挤掉，不保留输入值且超限标记省略；不验证真实字段值或业务提示。
+test('关键动作记忆独立于近期窗口且不保留输入值', () => {
+  const memory = new ActionMemory();
+  memory.record({
+    commandId: 'fill',
+    operation: 'browser.act',
+    action: 'fill',
+    targetName: '邀请码',
+    value: 'private-fixture-value',
+    operationStatus: 'SUCCEEDED',
+    effect: 'COMPLETED',
+  });
+  for (let i = 0; i < 40; i++) {
+    memory.record({
+      commandId: `observe-${i}`,
+      operation: 'browser.observe',
+      operationStatus: 'SUCCEEDED',
+      effect: 'COMPLETED',
+    });
+    memory.record({
+      commandId: `scroll-${i}`,
+      operation: 'browser.act',
+      action: 'scroll',
+      value: 'down',
+      operationStatus: 'SUCCEEDED',
+      effect: 'COMPLETED',
+    });
+  }
+  assert.equal(memory.view().items[0].commandId, 'fill');
+  assert.equal(memory.view().items.length, 1);
+  assert(!JSON.stringify(memory.view()).includes('private-fixture-value'));
+  for (let i = 0; i < 30; i++)
+    memory.record({
+      commandId: `click-${i}`,
+      operation: 'browser.act',
+      action: 'click',
+      operationStatus: 'FAILED',
+      effect: 'NOT_STARTED',
+    });
+  assert.equal(memory.view().items.length, 24);
+  assert.equal(memory.view().omitted, 7);
+  assert(
+    memory.view().items.every((item) => item.operationStatus === 'FAILED'),
+  );
+});
+
+// 范围：执行器传递关键动作并在下一步骤清空；多次滚动模拟新的正文，不代表真实站点验收。
+test('填写后跨多轮阅读仍保留动作事实，下一步骤不沿用', async () => {
+  const g = caseGrant(Array(2).fill('http://intranet.test/form'));
+  g.task.budget.maxActions = 20;
+  g.task.stepBudget.steps[0].maxActions = 16;
+  g.task.stepBudget.steps[0].maxModelCalls = 30;
+  const client = new FakeControl();
+  const command = client.command.bind(client);
+  client.command = async (...args) => {
+    const result = await command(...args);
+    if (args[2].type === 'browser.observe')
+      result.data.text += ` 阅读区域 ${client.calls.length}`;
+    return result;
+  };
+  let turns = 0;
+  const report = await execute(
+    config,
+    client,
+    scripted((context) => {
+      if (context.executionStep.stepId === 'step-2') {
+        assert.deepEqual(context.actionMemory, { items: [], omitted: 0 });
+        return finish(context);
+      }
+      turns++;
+      if (turns === 1)
+        return {
+          type: 'browser.act',
+          action: 'fill',
+          target: '@e1',
+          value: 'invalid-fixture',
+        };
+      if (turns <= 6)
+        return { type: 'browser.act', action: 'scroll', value: 'down' };
+      assert(
+        !context.recentOperations.some(
+          (operation) => operation.action === 'fill',
+        ),
+      );
+      assert(
+        context.actionMemory.items.some(
+          (operation) =>
+            operation.action === 'fill' &&
+            operation.operationStatus === 'SUCCEEDED',
+        ),
+      );
+      return finish(context);
+    }),
+    g,
+  );
+  assert.equal(report.executionDisposition, 'EXECUTED', report.summary);
+  assert.equal(turns, 7);
+});
 
 // 范围：真实模型 HTTP 正文携带人工确认，交接与同入口步骤保留页面；不验证真实 Cookie 或角色。
 test('人工完成后保留团队与语言，后续步骤收到确认事实但仍独立验收', async () => {

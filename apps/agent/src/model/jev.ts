@@ -1,5 +1,6 @@
 import {
   FIELD_VALUE_PROMPT,
+  FIELD_RESULT_REVIEW,
   fieldValueRecovery,
   JEV_SELECTION_RULES,
   reviewFeedback,
@@ -11,6 +12,7 @@ import type { AgentDecision } from '@proofrun/contracts';
 import { DEFAULT_JEV_MODEL, type AgentConfig } from '../config.js';
 import type { WorkflowView } from '../execution/workflow.js';
 import type { Observation } from '../evidence/observation.js';
+import type { RecentOperation } from '../execution/context.js';
 import { AgentFault, jsonRequest } from '../http.js';
 import { modelRequest } from './request.js';
 import { candidates, estimatedTokens, type Candidate } from './candidates.js';
@@ -85,6 +87,8 @@ export class JevModel implements DecisionModel {
   private revision = 0;
   /** 结构化步骤身份只能由执行器推进，切换后允许重新访问相同业务页面。 */
   private structuredStep: string | undefined;
+  /** 填写后的第一轮核对真实提示；同一回执不会重复触发文本审查。 */
+  private reviewedFieldCommand: string | undefined;
   constructor(
     /** 共用超时与文本模型设置。 */
     private readonly config: AgentConfig,
@@ -119,7 +123,8 @@ export class JevModel implements DecisionModel {
     const context = JSON.parse(input.text) as {
       task: { taskId: string; objective: string };
       observation: Observation;
-      recentOperations: unknown[];
+      recentOperations: RecentOperation[];
+      actionMemory?: { items: Array<{ commandId: string }>; omitted: number };
       budgetRemaining: { actions: number };
       feedback: unknown;
       workflow?: WorkflowView;
@@ -145,6 +150,7 @@ export class JevModel implements DecisionModel {
     ) {
       this.progress.advanced();
       this.structuredStep = context.executionStep.stepId;
+      this.reviewedFieldCommand = undefined;
     }
     const page = context.observation;
     const stage = context.workflow?.steps.find(
@@ -192,32 +198,52 @@ export class JevModel implements DecisionModel {
       this.progress.reviewed();
       return output;
     };
+    const lastAction = context.recentOperations?.findLast(
+      (operation) => operation.operation === 'browser.act',
+    );
+    const fieldChanged =
+      lastAction &&
+      ['fill', 'type'].includes(lastAction.action ?? '') &&
+      lastAction.operationStatus === 'SUCCEEDED' &&
+      lastAction.effect === 'COMPLETED' &&
+      (!context.actionMemory ||
+        context.actionMemory.items.some(
+          (item) => item.commandId === lastAction.commandId,
+        )) &&
+      lastAction.commandId !== this.reviewedFieldCommand;
     const reason = context.verificationReview?.final
       ? FINAL_REVIEW_REASON
       : context.budgetRemaining.actions <= 0
         ? ACTIONS_EXHAUSTED_REASON
-        : context.interactionProgress?.items.some(
-              (item) => item.status === 'observed',
-            )
-          ? '新展开的面板已取得原文，请先通过 workflow.readings 登记子项，再继续尚未读取的问题；记录不等于验收通过'
-          : context.cleanup
-            ? '后续清理由文本模型核对明确的恢复条件及 Cookie 清理回执，满足后及时结束'
-            : context.verificationReview
-              ? '阶段性核对尚未登记的验收项：先用 verification_record 保存已有充分证据的独立结论，再处理剩余交互；没有充分证据不能编造通过'
-              : typeof context.feedback === 'string' &&
-                  /^(PREPARATION_REVIEW:|WORKFLOW_|INTERACTION_RECOVERY_REQUIRED:|INTERACTION_ALREADY_RECORDED:|OBSERVATION_STALLED:|BROWSER_TARGET_OBSCURED:|BROWSER_STALE_OBSERVATION:|BROWSER_ACTION_PRECONDITION_FAILED:)/u.test(
-                    context.feedback,
-                  )
-                ? '执行器反馈步骤缺口、预算耗尽或动作目标失效；请核对当前状态并改变恢复策略，无法继续时 verification.block'
-                : context.workflow?.activeStep === null
-                  ? '全部原始步骤已登记证据，请按原 criterionId 整理最终结论，避免继续浏览'
-                  : recovery?.remaining === 0
-                    ? '恢复计划动作预算耗尽，核对成功条件；未成功时改变策略或停止，不能重复同一计划'
-                    : this.progress.reviewReason(
-                        context.budgetRemaining.actions,
-                        !!recovery && recovery.remaining > 0,
-                      );
-    if (reason) return review(reason);
+        : fieldChanged
+          ? FIELD_RESULT_REVIEW
+          : context.interactionProgress?.items.some(
+                (item) => item.status === 'observed',
+              )
+            ? '新展开的面板已取得原文，请先通过 workflow.readings 登记子项，再继续尚未读取的问题；记录不等于验收通过'
+            : context.cleanup
+              ? '后续清理由文本模型核对明确的恢复条件及 Cookie 清理回执，满足后及时结束'
+              : context.verificationReview
+                ? '阶段性核对尚未登记的验收项：先用 verification_record 保存已有充分证据的独立结论，再处理剩余交互；没有充分证据不能编造通过'
+                : typeof context.feedback === 'string' &&
+                    /^(CRITERIA_ALREADY_RECORDED:|PREPARATION_REVIEW:|WORKFLOW_|INTERACTION_RECOVERY_REQUIRED:|INTERACTION_ALREADY_RECORDED:|OBSERVATION_STALLED:|BROWSER_TARGET_OBSCURED:|BROWSER_STALE_OBSERVATION:|BROWSER_ACTION_PRECONDITION_FAILED:)/u.test(
+                      context.feedback,
+                    )
+                  ? '执行器反馈步骤缺口、预算耗尽或动作目标失效；请核对当前状态并改变恢复策略，无法继续时 verification.block'
+                  : context.workflow?.activeStep === null
+                    ? '全部原始步骤已登记证据，请按原 criterionId 整理最终结论，避免继续浏览'
+                    : recovery?.remaining === 0
+                      ? '恢复计划动作预算耗尽，核对成功条件；未成功时改变策略或停止，不能重复同一计划'
+                      : this.progress.reviewReason(
+                          context.budgetRemaining.actions,
+                          !!recovery && recovery.remaining > 0,
+                        );
+    if (reason) {
+      const output = await review(reason);
+      // 请求失败不能吞掉填写后的核对机会；下一轮仍需要检查提示。
+      if (fieldChanged) this.reviewedFieldCommand = lastAction.commandId;
+      return output;
+    }
     const readings = new Map(
       context.interactionProgress?.currentTargets?.map((item) => [
         item.target,

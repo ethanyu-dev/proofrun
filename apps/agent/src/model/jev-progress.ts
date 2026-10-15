@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { Observation } from '../evidence/observation.js';
 import { targetState } from '../evidence/changes.js';
+import { lowActionBudgetReview } from '../prompts/jev.js';
 
 /** 有界证据记忆保留不同页面，不能将元素编号变化当成新信息。 */
 const PAGE_LIMIT = 8;
@@ -115,7 +116,7 @@ export class JevProgress {
   }
   /** 低预算、信息停滞、返回旧页面与定期检查均交给 LLM，不等动作耗尽。 */
   reviewReason(actions: number, recovering = false): string | undefined {
-    if (actions <= 3) return '动作预算即将耗尽，请整理已有证据并给出保守结论';
+    if (actions <= 3) return lowActionBudgetReview(actions);
     if (recovering) return;
     if (this.unchanged >= 2)
       return '连续两次观察没有新增正文，检查是否重复滚动或等待';

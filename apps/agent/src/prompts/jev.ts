@@ -8,6 +8,15 @@ export const FINAL_REVIEW_REASON =
 export const ACTIONS_EXHAUSTED_REASON =
   '步骤动作预算已耗尽，不能再选择浏览器动作；整理已有读取和独立验收证据，使用 verification_record、verification_finish 或 verification_block，不把剩余模型额度当作动作额度';
 
+/** 填写后先核对提示，避免候选分类器直接切换到其他检查区域。 */
+export const FIELD_RESULT_REVIEW =
+  '字段填写已成功，先核对最新观察中的字段值和校验提示，再继续其他区域；没有提示时在原约束内选择失焦等必要触发，不能把填写当作校验完成，也不能越过禁止提交或注册的限制';
+
+/** 低预算仍可使用实际剩余额度，验收登记不会消耗浏览器动作。 */
+export function lowActionBudgetReview(actions: number): string {
+  return `动作预算仅剩 ${actions} 次；登记结论不消耗动作。可在剩余额度内完成一个具体取证动作，无法补齐时 block 说明缺口；已保存的结论不要重复 record`;
+}
+
 /** 悬浮控件仍可用于任务要求的导航，但不能只凭泛化的展开文案充当正文面板。 */
 export function unassociatedTargetReview(target: string, name: string): string {
   return `JEV 选择的 ${JSON.stringify({ target, name })} 是 fixed=true、没有标题关联且没有 disclosure 的悬浮控件。先核对它是否确实服务于当前任务，不得把通用展开/收起按钮当作 FAQ；正文目标不可见时定位未读内容。若原任务确实要求此控件，可由文本模型据当前观察决定操作。`;
