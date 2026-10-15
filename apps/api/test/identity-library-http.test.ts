@@ -258,6 +258,9 @@ test(
       );
       const second = await intervene(executions[1]);
       const reason = '团队没有可用成员席位，无法执行此 case';
+      // 无法处理会同时结束两组执行；先停止夹具续租，避免预期的租约撤销被误报为后台故障。
+      // 此处验证人工终止协议，真实 Agent 对租约撤销的响应由 Agent 测试覆盖。
+      await Promise.all(workers.map((worker) => worker.close()));
       second.socket.send(JSON.stringify({ type: 'unable', reason }));
       await until(
         async () => second.messages,
@@ -311,13 +314,18 @@ test(
       );
     } finally {
       for (const socket of sockets) socket.terminate();
-      for (const worker of workers) worker.close();
+      // 等待所有后台循环收尾；即使续租失败也先释放服务和独立数据库，再报告错误。
+      const stopped = await Promise.allSettled(
+        workers.map((worker) => worker.close()),
+      );
       node.close();
       await app.close();
       await sql.end();
       await admin.query(`DROP DATABASE ${name}`);
       await admin.end();
       await rm(root, { recursive: true, force: true });
+      for (const result of stopped)
+        if (result.status === 'rejected') throw result.reason;
     }
   },
 );
