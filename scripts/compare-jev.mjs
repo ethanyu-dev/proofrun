@@ -228,7 +228,7 @@ async function main() {
     !process.env.PROOFRUN_MODEL
   )
     throw new Error('MISSING_MODEL_CONFIGURATION');
-  const model = process.env.TYPESAFE_MODEL || 'jev-latest';
+  const model = process.env.TYPESAFE_MODEL || 'jev-1.14.0';
   const cases = await buildCases(model);
   const directory = resolve(
     '.proofrun/jev-comparisons',

@@ -176,7 +176,7 @@ async function main() {
     throw new Error('只支持 --prepare；不传参数时执行真实 JEV 调用');
   const prepare = process.argv.includes('--prepare');
   const source = resolve(process.env.PROOFRUN_JEV_SOURCE_DIR ?? DEFAULT_SOURCE);
-  const model = process.env.TYPESAFE_MODEL || 'jev-latest';
+  const model = process.env.TYPESAFE_MODEL || 'jev-1.14.0';
   const key = process.env.TYPESAFE_API_KEY;
   const task = JSON.parse(await readFile(join(source, 'task.json'), 'utf8'));
   const report = JSON.parse(

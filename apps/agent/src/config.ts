@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { validateControlRequest } from '@proofrun/contracts';
 
+/** 固定已核对的版本，避免 jev-latest 别名延迟切换或后续静默升级。 */
+export const DEFAULT_JEV_MODEL = 'jev-1.14.0';
+
 /** 默认限制约束单 worker 的成本；任务预算和控制面租约仍是更硬的边界。 */
 const DEFAULTS = {
   pollMs: 1000,
@@ -27,6 +30,8 @@ export interface AgentConfig {
   model: string;
   /** 是否向模型发送已核实摘要的截图；纯文本模型保持 false。 */
   vision: boolean;
+  /** 显式允许 Jev 扩展文本预算；实验请求头只在估算超过默认 token 预算时发送。 */
+  jevLongContext?: boolean;
   /** 不同 Chat Completions 服务使用的输出预算参数。 */
   tokenParameter: 'max_tokens' | 'max_completion_tokens';
   /** 未设置时沿用供应商默认；显式模式仅传给配置的 Chat Completions 服务。 */
@@ -100,7 +105,11 @@ export function loadConfig(): AgentConfig {
   const vision = process.env.PROOFRUN_MODEL_VISION ?? 'false';
   if (!['true', 'false'].includes(vision))
     throw new Error('PROOFRUN_MODEL_VISION must be true or false');
+  const jevLongContext = process.env.PROOFRUN_JEV_LONG_CONTEXT ?? 'false';
+  if (!['true', 'false'].includes(jevLongContext))
+    throw new Error('PROOFRUN_JEV_LONG_CONTEXT must be true or false');
   return {
+    jevLongContext: jevLongContext === 'true',
     apiUrl: endpoint('PROOFRUN_CONTROL_URL', 'http://127.0.0.1:4100'),
     workerToken,
     workerId,

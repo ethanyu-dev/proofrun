@@ -48,7 +48,7 @@ export async function readBytes(
     await reader.cancel().catch(() => {});
   }
 }
-/** 每次调用只发出一次请求；是否重试由知道幂等性的调用方决定。 */
+/** 每次调用只发出一次请求；附加头由可信调用方提供，认证与正文类型仍由本函数确定。 */
 export async function jsonRequest(
   url: string,
   token: string,
@@ -56,6 +56,7 @@ export async function jsonRequest(
   body: unknown,
   timeoutMs: number,
   signal?: AbortSignal,
+  extraHeaders?: Record<string, string>,
 ): Promise<unknown> {
   const timeout = AbortSignal.timeout(Math.max(1, Math.floor(timeoutMs)));
   try {
@@ -63,6 +64,7 @@ export async function jsonRequest(
       method,
       redirect: 'error',
       headers: {
+        ...extraHeaders,
         authorization: `Bearer ${token}`,
         ...(body === undefined ? {} : { 'content-type': 'application/json' }),
       },

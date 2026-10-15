@@ -3,8 +3,8 @@ import type { ModelCall } from '@proofrun/contracts';
 import type { DecisionInput } from './chat.js';
 import { AgentFault } from '../http.js';
 
-/** 回复只保留供应商决定与用量字段，不保存传输头、认证配置或供应商诊断附属数据。 */
-const RESPONSE_FIELDS = ['choices', 'answers', 'usage'] as const;
+/** 回复只保留供应商模型版本、决定与用量字段，不保存传输头、认证配置或供应商诊断附属数据。 */
+const RESPONSE_FIELDS = ['model', 'choices', 'answers', 'usage'] as const;
 /** 只传播稳定错误码，禁止把底层异常正文、URL 或凭据带入报告。 */
 const ERROR_CODE = /^[A-Z_]{1,80}$/;
 

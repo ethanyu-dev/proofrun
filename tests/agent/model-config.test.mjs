@@ -14,6 +14,7 @@ function configure(t) {
     PROOFRUN_MODEL: config.model,
     PROOFRUN_MODEL_BASE_URL: 'http://127.0.0.1:4101/v1',
     PROOFRUN_MODEL_THINKING: undefined,
+    PROOFRUN_JEV_LONG_CONTEXT: undefined,
     PROOFRUN_AGENT_COMMAND_MS: undefined,
     PROOFRUN_AGENT_EVIDENCE_MS: undefined,
   };
@@ -161,5 +162,19 @@ test('证据预算独立于命令预算并拒绝非法时限', (t) => {
   for (const value of ['', '0', '99', '300001', '1.5', 'invalid']) {
     process.env.PROOFRUN_AGENT_EVIDENCE_MS = value;
     assert.throws(() => loadConfig(), /PROOFRUN_AGENT_EVIDENCE_MS/);
+  }
+});
+
+// 范围：实验上下文必须显式开启且拒绝拼写错误；不证明供应商接受更大上下文。
+test('JEV 长上下文默认关闭并严格解析开关', (t) => {
+  configure(t);
+  assert.equal(loadConfig().jevLongContext, false);
+  for (const value of ['true', 'false']) {
+    process.env.PROOFRUN_JEV_LONG_CONTEXT = value;
+    assert.equal(loadConfig().jevLongContext, value === 'true');
+  }
+  for (const value of ['', '1', 'TRUE', 'enabled']) {
+    process.env.PROOFRUN_JEV_LONG_CONTEXT = value;
+    assert.throws(() => loadConfig(), /PROOFRUN_JEV_LONG_CONTEXT/);
   }
 });

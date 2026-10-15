@@ -96,6 +96,16 @@ worker 根据 `task.executionMode` 选择纯 LLM（`llm`）或 LLM + JEV（`jev`
 
 Linux Chromium 在容器内渲染截图和实时画面，不能使用宿主机字体。`tests/agent/Dockerfile` 显式安装 `fonts-noto-cjk` 和 `fontconfig`；普通节点用户运行 `fc-match 'sans-serif:lang=zh-cn'` 应匹配中文字体。已有容器须补装字体或重建；已生成的截图不会改变，新的浏览器会话才可可靠使用更新后的字体缓存。
 
+## Jev 版本与实验长上下文
+
+默认固定 `jev-1.14.0`；可用 `TYPESAFE_MODEL` 显式回退到 `jev-1.13.0`。已有环境若配置 `jev-latest`，需要主动改成版本号：截至 2026-10-15，[TypeSafe 官方模型说明](https://docs.typesafe.ai/models)仍将 `jev-latest` 指向 1.13、`jev-preview` 指向 1.14。模型调用回执保存供应商返回的 `model` 字段，便于核对别名实际解析版本。
+
+1.14 的普通文本 Choice 沿用原端点和协议，默认上限仍为每请求 64k、每问题 32k token。1.13 和 1.14 都支持通过 `TypeSafe-Danger-Zone-Long-Context: true` 把两项上限提升到 262k token；这是实验能力，官方说明其延迟和准确率可能劣于短上下文。
+
+`PROOFRUN_JEV_LONG_CONTEXT=true` 允许适配器保留更多当前正文：请求字符保护从 64000 提升到 256000，保守 token 预算从 28000 提升到 224000，当前页正文从 14000 提升到 64000 字符。只有最终请求估算超过普通 token 预算时才发送实验头；短请求、文本填写和验收请求不带该头。开关默认关闭，关闭即可恢复原 Jev 裁剪策略。候选仍最多 200 个动作加 5 个控制选项，历史片段与执行预算不变；本地超限或服务端上下文拒绝仍交给文本模型审查。
+
+公共 `PROOFRUN_AGENT_CONTEXT_CHARS` 仍先裁剪输入，默认 64000 字符。若需要更大的整体输入，可在确认文本审查模型容量后将它设为 128000（最高 256000）；此值同时影响纯 LLM 和混合模式，不能仅凭 Jev 扩窗而直接调高。实验头不会补回上游已经截断的正文。本次不启用图片或 Box 协议。
+
 ## 提示词与上下文边界
 
 `src/prompts/decision.ts` 独立维护执行系统提示，`src/prompts/jev.ts` 维护候选选择、字段填写与文本审查提示；适配器只负责组装请求与解析协议。
