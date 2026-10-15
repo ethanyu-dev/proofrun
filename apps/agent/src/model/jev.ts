@@ -112,6 +112,7 @@ export class JevModel implements DecisionModel {
       workflow?: WorkflowView;
       executionStep?: { stepId: string };
       cleanup?: boolean;
+      verificationReview?: { pendingCriterionIds: string[] };
       environmentReview?: { required: boolean };
       interactionProgress?: {
         items: Array<{ status: string }>;
@@ -184,19 +185,21 @@ export class JevModel implements DecisionModel {
       ? '新展开的面板已取得原文，请先通过 workflow.readings 登记子项，再继续尚未读取的问题；记录不等于验收通过'
       : context.cleanup
         ? '后续清理由文本模型核对明确的恢复条件及 Cookie 清理回执，满足后及时结束'
-        : typeof context.feedback === 'string' &&
-            /^(WORKFLOW_|INTERACTION_RECOVERY_REQUIRED:|INTERACTION_ALREADY_RECORDED:|OBSERVATION_STALLED:|BROWSER_TARGET_OBSCURED:|BROWSER_STALE_OBSERVATION:|BROWSER_ACTION_PRECONDITION_FAILED:)/u.test(
-              context.feedback,
-            )
-          ? '执行器反馈步骤缺口、预算耗尽或动作目标失效；请核对当前状态并改变恢复策略，无法继续时 verification.block'
-          : context.workflow?.activeStep === null
-            ? '全部原始步骤已登记证据，请按原 criterionId 整理最终结论，避免继续浏览'
-            : recovery?.remaining === 0
-              ? '恢复计划动作预算耗尽，核对成功条件；未成功时改变策略或停止，不能重复同一计划'
-              : this.progress.reviewReason(
-                  context.budgetRemaining.actions,
-                  !!recovery && recovery.remaining > 0,
-                );
+        : context.verificationReview
+          ? '阶段性核对尚未登记的验收项：先用 verification_record 保存已有充分证据的独立结论，再处理剩余交互；没有充分证据不能编造通过'
+          : typeof context.feedback === 'string' &&
+              /^(PREPARATION_REVIEW:|WORKFLOW_|INTERACTION_RECOVERY_REQUIRED:|INTERACTION_ALREADY_RECORDED:|OBSERVATION_STALLED:|BROWSER_TARGET_OBSCURED:|BROWSER_STALE_OBSERVATION:|BROWSER_ACTION_PRECONDITION_FAILED:)/u.test(
+                context.feedback,
+              )
+            ? '执行器反馈步骤缺口、预算耗尽或动作目标失效；请核对当前状态并改变恢复策略，无法继续时 verification.block'
+            : context.workflow?.activeStep === null
+              ? '全部原始步骤已登记证据，请按原 criterionId 整理最终结论，避免继续浏览'
+              : recovery?.remaining === 0
+                ? '恢复计划动作预算耗尽，核对成功条件；未成功时改变策略或停止，不能重复同一计划'
+                : this.progress.reviewReason(
+                    context.budgetRemaining.actions,
+                    !!recovery && recovery.remaining > 0,
+                  );
     if (reason) return review(reason);
     const readings = new Map(
       context.interactionProgress?.currentTargets?.map((item) => [
@@ -215,6 +218,12 @@ export class JevModel implements DecisionModel {
           }
         : undefined,
     )
+      // 已读控件不再作为普通点击候选竞争；必要重访只能经 REPLAN 由文本模型说明原因。
+      .filter(
+        (candidate) =>
+          candidate.operation !== 'CLICK' ||
+          readings.get(candidate.target)?.status !== 'recorded',
+      )
       .map((candidate) => ({
         ...candidate,
         field: { ...candidate.field, reading: readings.get(candidate.target) },

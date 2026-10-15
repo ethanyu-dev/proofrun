@@ -10,7 +10,7 @@ import {
 import type { AgentConfig } from '../config.js';
 import { AgentFault, jsonRequest } from '../http.js';
 import { modelRequest } from './request.js';
-import { WORKFLOW_SCHEMA, type WorkflowUpdate } from '../execution/workflow.js';
+import type { WorkflowUpdate } from '../execution/workflow.js';
 
 /** 将封闭协议的各分支映射成独立工具，避免供应商遗漏嵌套联合对象的外层字段。 */
 const MODEL_TOOLS = agentDecisionSchema.oneOf.map(
@@ -79,7 +79,8 @@ export class ChatModel implements DecisionModel {
     signal: AbortSignal,
   ): Promise<DecisionOutput> {
     const availableTools = decisionTools(input.text, MODEL_TOOLS);
-    const hasWorkflow = !!JSON.parse(input.text).workflow;
+    const context = JSON.parse(input.text);
+    const hasWorkflow = !!context.workflow;
     const content = input.image
       ? [
           { type: 'text', text: input.text },
@@ -105,15 +106,7 @@ export class ChatModel implements DecisionModel {
           name,
           description,
           strict: false,
-          parameters: hasWorkflow
-            ? {
-                ...parameters,
-                properties: {
-                  ...(parameters as { properties: object }).properties,
-                  workflow: WORKFLOW_SCHEMA,
-                },
-              }
-            : parameters,
+          parameters,
         },
       })),
       tool_choice: 'required',
@@ -152,6 +145,17 @@ export class ChatModel implements DecisionModel {
         : 0;
     const choice = raw?.choices?.[0];
     const calls = choice?.message?.tool_calls;
+    if (
+      calls?.length === 1 &&
+      calls[0]?.function?.name === 'browser_act' &&
+      context.budgetRemaining?.actions === 0
+    )
+      throw new AgentFault(
+        context.executionStep
+          ? 'STEP_ACTION_BUDGET_EXCEEDED'
+          : 'ACTION_BUDGET_EXCEEDED',
+        '动作预算已耗尽，只能保存已有证据或明确阻塞，不能继续浏览器动作',
+      );
     if (
       calls?.length === 1 &&
       calls[0]?.function?.name === 'browser_observe' &&
@@ -203,7 +207,7 @@ export class ChatModel implements DecisionModel {
     // setup 误填 stepId 时优先给出任务语义反馈，避免模型反复修补无关证据字段。
     if (
       decision.type === 'verification.finish' &&
-      JSON.parse(input.text).task?.acceptanceCriteria?.length === 0 &&
+      context.task?.acceptanceCriteria?.length === 0 &&
       Array.isArray(args.criteria) &&
       args.criteria.length
     )

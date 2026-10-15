@@ -3491,7 +3491,13 @@ test('JEV profile tab 实例隔离跨轮历史', async () => {
 });
 
 // 范围：JEV 不能绕过共享环境声明、面板读取或失败恢复审查；模型端口均为夹具。
-for (const kind of ['environment', 'reading', 'recovery'])
+for (const kind of [
+  'environment',
+  'reading',
+  'recovery',
+  'preparation',
+  'criteria',
+])
   test(`JEV 将 ${kind} 交由文本模型核实`, async () => {
     const { JevModel } = await import('../../apps/agent/dist/model/jev.js');
     let reviews = 0;
@@ -3507,6 +3513,13 @@ for (const kind of ['environment', 'reading', 'recovery'])
           reviews++;
           if (kind === 'reading')
             assert.match(JSON.parse(input.text).feedback, /workflow.readings/);
+          if (kind === 'preparation')
+            assert.match(JSON.parse(input.text).feedback, /PREPARATION_REVIEW/);
+          if (kind === 'criteria')
+            assert.match(
+              JSON.parse(input.text).feedback,
+              /verification_record/,
+            );
           return { decision: { type: 'browser.observe' } };
         },
       },
@@ -3518,6 +3531,10 @@ for (const kind of ['environment', 'reading', 'recovery'])
       context.interactionProgress = { items: [{ status: 'observed' }] };
     if (kind === 'recovery')
       context.feedback = 'INTERACTION_RECOVERY_REQUIRED: 遮挡条件未改变';
+    if (kind === 'preparation')
+      context.feedback = 'PREPARATION_REVIEW: 复核指定语言准备操作';
+    if (kind === 'criteria')
+      context.verificationReview = { pendingCriterionIds: ['submitted'] };
     await model.decide(
       { text: JSON.stringify(context) },
       new AbortController().signal,

@@ -208,7 +208,7 @@ export class Workflow {
     return structuredClone(this.state);
   }
   /** 元数据仅描述本次决定之前已观察到的事实，禁止预先认领即将执行的动作。 */
-  apply(update: unknown, evidence: Set<string>) {
+  apply(update: unknown, evidence: Set<string>, remainingActions = Infinity) {
     if (update === undefined) return;
     const bad = () =>
       new AgentFault(
@@ -328,6 +328,11 @@ export class Workflow {
         Number(r.maxActions) > MAX_RECOVERY_ACTIONS
       )
         throw bad();
+      if (Number(r.maxActions) > remainingActions)
+        throw new AgentFault(
+          'INVALID_MODEL_DECISION',
+          `恢复计划最多可用 ${Math.max(0, remainingActions)} 次步骤动作；缩小到一个具体缺口，额度不足时先保存已有结论并明确阻塞`,
+        );
       // 同一计划重送不能重置预算，防止每轮重新规划绕过上限。
       const oldRemaining = this.recoveryBudgets.get(
         this.recoveryKey(
