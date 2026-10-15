@@ -66,6 +66,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: 下载固定版本的 Linux 原生引擎并校验摘要
         run: node scripts/download-test-engine.mjs x64 .proofrun/bin/agent-browser-linux-x64
+      # 用真实临时数据库验证初始化竞态，不连接生产数据库。
+      - name: PostgreSQL 正式实例就绪回归
+        run: node --test tests/control-plane/postgres-readiness.test.mjs
       # 写入只发生于临时回环页面；模型为脚本夹具，不证明供应商质量或生产部署通过。
       - name: Linux 浏览器、人工介入与故障回归
         run: pnpm test:agent:linux

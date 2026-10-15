@@ -51,11 +51,7 @@ fi
 docker network create --label proofrun.test=control-plane "$network_name" >/dev/null
 docker run -d --name "$postgres_name" --network "$network_name" --label proofrun.test=control-plane \
   -e POSTGRES_PASSWORD=proofrun-isolated-test -e POSTGRES_DB=proofrun postgres:17 >/dev/null
-for attempt in {1..30}; do
-  if docker exec "$postgres_name" pg_isready -U postgres -d proofrun >/dev/null; then break; fi
-  sleep 1
-done
-docker exec "$postgres_name" pg_isready -U postgres -d proofrun >/dev/null
+bash tests/control-plane/wait-postgres.sh "$postgres_name"
 # privileged 只供一次性测试容器中的 systemd/cgroup 使用；真实 VM 使用普通用户服务。
 docker run -d --name "$node_name" --network "$network_name" --label proofrun.test=control-plane \
   --privileged --cgroupns=private --tmpfs /run --tmpfs /run/lock \
