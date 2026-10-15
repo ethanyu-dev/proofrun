@@ -88,6 +88,16 @@ export async function authPlacement(
       )
     ).rows[0]?.node_id;
   }
+  if (task.sessionPlan?.library && placement.preferredNode)
+    placement.requiredNode ??= placement.preferredNode;
+  if (
+    routedNode &&
+    placement.requiredNode &&
+    routedNode !== placement.requiredNode
+  ) {
+    placement.conflict = 'AUTH_NODE_ROUTE_CONFLICT';
+    return placement;
+  }
   if (task.comparison) {
     // 快照文件只在节点本机；另一组即使尚未领取，也必须沿用本轮首次分配的节点。
     const lock = await client.query(

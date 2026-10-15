@@ -84,7 +84,11 @@ export function compileCase(
   const resolved = resolveExecutionPlan(input, profile.evidenceKinds);
   const sessionPlan = resolveSession(
     identities,
-    resolved.session,
+    identities.selectionEnabled &&
+      !input.session &&
+      resolved.session.mode !== 'guest'
+      ? undefined
+      : resolved.session,
     input.entry,
     profile.environment,
   );
@@ -126,7 +130,9 @@ export function compileCase(
   const budget = businessBudget(stepBudget);
   if (
     budget.timeoutMs +
-      (sessionPlan.candidates.length ? sessionPlan.preparationMs : 0) +
+      (sessionPlan.candidates.length || sessionPlan.library
+        ? sessionPlan.preparationMs
+        : 0) +
       stepBudget.settleMs * businessSteps.length +
       (cleanupSteps.length ? stepBudget.cleanup.timeoutMs : 0) >
       CASE_MAX_MS ||

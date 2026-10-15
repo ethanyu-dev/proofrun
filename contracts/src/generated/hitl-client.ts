@@ -45,6 +45,10 @@ export type HitlClient =
         | [string, string, string, string, string, string, string, string]
         | [string, string, string, string, string, string, string, string, string]
         | [string, string, string, string, string, string, string, string, string, string];
+    }
+  | {
+      type: 'unable';
+      reason: string;
     };
 /**
  * 节点可执行的封闭命令集合，不包含任意 shell 或 CLI 透传。
@@ -274,6 +278,10 @@ export interface OpenSession {
      * 本轮不可变初始快照身份；并行两组必须相同。
      */
     snapshotId?: string;
+    /**
+     * 复制完整磁盘 profile，仅人工成功交还后允许发布新版本。
+     */
+    fullProfile?: boolean;
   };
   /**
    * 在首次业务导航前启用网络元数据采集。
@@ -287,6 +295,20 @@ export interface OpenSession {
    * 仅人工介入会话允许持续续期；不固定初始总时长，仍由独立短租约撤权。
    */
   renewable?: boolean;
+  /**
+   * 控制面仅在私有节点传输时注入，不写入任务、模型或命令账本。
+   */
+  identitySeed?: {
+    url: string;
+    /**
+     * @maxItems 32
+     */
+    cookies: {
+      name: string;
+      value: string;
+      httpOnly: boolean;
+    }[];
+  };
 }
 /**
  * 延长仍然有效的会话租约，不排在浏览器操作队列后。

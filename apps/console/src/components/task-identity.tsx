@@ -12,6 +12,7 @@ export function TaskIdentity({ task }: { task: TaskDetail }) {
   }[identity.mode];
   const source = {
     snapshot: '已保存登录态',
+    profile: '完整浏览器基准',
     cookies: 'Cookie 登录',
     password: '账号密码登录',
     none: '未自动登录',
@@ -20,6 +21,7 @@ export function TaskIdentity({ task }: { task: TaskDetail }) {
     NOT_REQUESTED: '尚未自动准备',
     PENDING: '正在准备',
     READY: '身份自动核验通过',
+    LOADED: '身份已装载，实际资格由执行时检查',
     NEEDS_HUMAN: '需要人工确认',
     ERROR: '自动准备异常',
   }[identity.preparation.status];

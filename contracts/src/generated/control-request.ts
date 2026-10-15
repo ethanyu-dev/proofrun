@@ -292,6 +292,14 @@ export type VerificationReport = {
    * @maxItems 64
    */
   steps?: [StepResult, ...StepResult[]];
+  /**
+   * 仅由人工处理服务写入；执行器不能伪造人为无法执行的结论。
+   */
+  humanDecision?: {
+    outcome: 'UNEXECUTABLE';
+    reason: string;
+    decidedAt: string;
+  };
 };
 
 export interface EnrollNode {
@@ -343,7 +351,7 @@ export interface ClaimExecution {
    * 只将逐步预算任务派给能隔离并继续后续步骤的 worker。
    */
   stepBudgetVersion?: 1;
-  identityVersion?: 1;
+  identityVersion?: 1 | 2;
   profileTabsVersion?: 1;
   executionPlanVersion?: 1;
 }
@@ -401,6 +409,10 @@ export interface OpenSession {
      * 本轮不可变初始快照身份；并行两组必须相同。
      */
     snapshotId?: string;
+    /**
+     * 复制完整磁盘 profile，仅人工成功交还后允许发布新版本。
+     */
+    fullProfile?: boolean;
   };
   /**
    * 在首次业务导航前启用网络元数据采集。
@@ -414,6 +426,20 @@ export interface OpenSession {
    * 仅人工介入会话允许持续续期；不固定初始总时长，仍由独立短租约撤权。
    */
   renewable?: boolean;
+  /**
+   * 控制面仅在私有节点传输时注入，不写入任务、模型或命令账本。
+   */
+  identitySeed?: {
+    url: string;
+    /**
+     * @maxItems 32
+     */
+    cookies: {
+      name: string;
+      value: string;
+      httpOnly: boolean;
+    }[];
+  };
 }
 /**
  * 延长仍然有效的会话租约，不排在浏览器操作队列后。

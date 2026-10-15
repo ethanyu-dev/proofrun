@@ -23,6 +23,8 @@ export interface SiteRule {
 }
 /** 身份别名共享 accountKey 时仍受同一底层账号的并发上限约束。 */
 export interface IdentityCatalog {
+  /** 页面身份库允许执行前由身份 Agent 按任务语义选择。 */
+  selectionEnabled?: boolean;
   identities: TestIdentity[];
   pools: Array<{ id: string; identityRefs: string[] }>;
   sites: SiteRule[];
@@ -180,6 +182,23 @@ export function resolveSession(
 ): SessionPlan {
   let selection = request ?? { mode: 'manual' as const };
   const target = new URL(entry);
+  if (catalog.selectionEnabled && !request) {
+    return {
+      version: 1,
+      mode: 'pool',
+      library: true,
+      selection: 'pending',
+      candidates: structuredClone(
+        catalog.identities.filter(
+          (identity) =>
+            identity.libraryVersion &&
+            (identity.origins as readonly string[]).includes(target.origin),
+        ),
+      ),
+      requirements: [],
+      preparationMs: PREPARATION_MS,
+    };
+  }
   if (selection.mode === 'auto') {
     const rules = catalog.sites
       .filter(

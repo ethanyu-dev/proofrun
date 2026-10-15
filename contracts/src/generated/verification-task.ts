@@ -565,7 +565,7 @@ export interface SessionPlan {
   version: 1;
   mode: 'guest' | 'manual' | 'identity' | 'pool';
   /**
-   * @maxItems 32
+   * @maxItems 256
    */
   candidates: {
     id: string;
@@ -633,10 +633,20 @@ export interface SessionPlan {
     checks: IdentityCheck[];
     loginRef?: string;
     maxConcurrent: number;
+    libraryVersion?: string;
+    description?: string;
+    identityType?: string;
+    url?: string;
   }[];
   /**
    * @maxItems 32
    */
   requirements: IdentityCheck[];
   preparationMs: number;
+  /**
+   * 使用页面身份库和完整 profile；选择由独立身份 Agent 完成。
+   */
+  library?: boolean;
+  selection?: 'pending' | 'selected' | 'human';
+  selectionReason?: string;
 }

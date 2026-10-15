@@ -34,6 +34,12 @@ target/release/proofrun-node --config deploy/node.example.toml serve
 
 需要在浏览器中手动验证导航、观察、截图、target、点击和填写时，可运行[本地调试页](../../tests/browser-node/debug-ui/README.md)。调试页启动同一二进制的内部 `session-host`，适合 macOS 上的真实 Chrome 适配测试；它不覆盖正式节点的网关与 systemd 路径。
 
+## 完整身份 profile
+
+新身份库任务声明 `authState.fullProfile`，节点在启动前复制身份的完整磁盘基准。可在 TOML 中配置 `base_profile_directory = "/private/closed-template"`，作为首次身份准备时的环境模板；目录必须属于节点用户、浏览器已关闭。未配置则使用空 profile。模板不在任务完成后回写。
+
+只有 HITL 完成命令发布新的不可变版本，先关闭浏览器并保存会话 Cookie 补充状态，再复制目录、原子切换版本指针，最后重启当前任务并重建标签页。对照组固定同一个初始版本；普通任务产生的状态随副本丢弃。profile 包含磁盘存储，不包含浏览器进程内存。版本默认留在本节点，不自动跨节点迁移或回收；并发人工发布使用版本比较保护较新的基准。详见[测试身份](../../apps/api/src/modules/identities/README.md)。
+
 ## 模块
 
 | 模块                       | 职责                                               |

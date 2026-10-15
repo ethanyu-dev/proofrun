@@ -120,6 +120,8 @@ export class SimulatedNode {
   renewableSessions = true;
   /** 默认模拟旧节点，身份测试显式启用新准备协议。 */
   identityPreparation = false;
+  /** 完整 profile 能力仅用于新版控制面协议测试，磁盘复制由真实浏览器用例覆盖。 */
+  fullProfile = false;
   /** 清理能力默认关闭，相关回归显式模拟升级后的节点。 */
   cookieCleanup = false;
   readonly id = randomUUID();
@@ -150,6 +152,8 @@ export class SimulatedNode {
   authState = true;
   /** 模拟确定未写入的保存故障，供人工完成流程回归使用。 */
   authSaveFailure = false;
+  /** 模拟保存完整 profile 时浏览器画面流随重启断开。 */
+  restartOnAuthSave = false;
   /** 测试显式开启 TRACE 能力，验证调度不会向旧节点下发新操作。 */
   trace = false;
   /** 只用于验证画面协议和通道清理，不代表真实浏览器画面。 */
@@ -269,6 +273,7 @@ export class SimulatedNode {
         renewableSessions: this.renewableSessions,
         trace: this.trace,
         identityPreparation: this.identityPreparation,
+        fullProfile: this.fullProfile,
         cookieCleanup: this.cookieCleanup,
       },
     });
@@ -286,6 +291,8 @@ export class SimulatedNode {
     );
     const kind = command.command.type;
     if (kind === 'session.open') this.sessions.set(command.sessionId, command);
+    if (kind === 'browser.auth.save' && this.restartOnAuthSave)
+      for (const relay of this.relays) relay.close();
     if (kind === 'browser.wait') return;
     if (kind === 'session.close') {
       if (this.ignoreClose) return;

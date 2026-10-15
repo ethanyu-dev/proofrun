@@ -1,3 +1,5 @@
+import { IdentityLibrary } from './modules/identities/library.js';
+import { IdentitySelection } from './modules/identities/selection.js';
 import { identityMetrics } from './modules/identities/metrics.js';
 import { IdentitySettings } from './modules/identities/settings.js';
 import Fastify, { type FastifyRequest } from 'fastify';
@@ -70,11 +72,17 @@ export async function buildApp(
     config.publicUrl,
   );
   const identities = new IdentitySettings(db, config);
+  const library = new IdentityLibrary(db, config);
+  const selection = new IdentitySelection(db);
+  coordinator.identityLibrary = library;
   const casesV2 = new CaseV2Service(
     coordinator,
     config.caseProfile,
     config.publicUrl,
-    () => identities.catalog(),
+    async (request) =>
+      request && ['identity', 'pool', 'auto'].includes(request.mode)
+        ? identities.catalog()
+        : library.catalog(),
   );
   const control = new ExecutionControl(
     db,
@@ -86,7 +94,14 @@ export async function buildApp(
     app.log,
   );
   coordinator.gateway = gateway;
-  const hitl = new HitlService(db, config, control, coordinator, gateway);
+  const hitl = new HitlService(
+    db,
+    config,
+    control,
+    coordinator,
+    gateway,
+    library,
+  );
   const live = new LiveService(db, gateway, config.adminToken);
   const modelCalls = new ModelCalls(db);
   const authenticatedNodes = new WeakMap<
@@ -124,8 +139,27 @@ export async function buildApp(
       sites: catalog.sites.length,
     };
   });
+  app.get('/v1/admin/identity-library', { preHandler: admin }, () =>
+    library.list(),
+  );
+  app.post('/v1/admin/identity-library', { preHandler: admin }, (request) =>
+    library.save(request.body),
+  );
+  app.post(
+    '/v1/admin/identity-library/remove',
+    { preHandler: admin },
+    (request) => library.remove(request.body),
+  );
   const worker = async (request: FastifyRequest) =>
     requireToken(request.headers.authorization, config.workerToken);
+  app.post('/v1/worker/identity-selection/claim', { preHandler: worker }, () =>
+    selection.claim(),
+  );
+  app.post(
+    '/v1/worker/identity-selection/finish',
+    { preHandler: worker },
+    (request) => selection.finish(request.body),
+  );
   const node = async (request: FastifyRequest) => {
     authenticatedNodes.set(
       request,

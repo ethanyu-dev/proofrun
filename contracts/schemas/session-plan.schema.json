@@ -58,6 +58,23 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 32
+          },
+          "libraryVersion": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,80}$"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "identityType": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 2000
           }
         },
         "required": [
@@ -69,7 +86,7 @@
           "maxConcurrent"
         ]
       },
-      "maxItems": 32
+      "maxItems": 256
     },
     "requirements": {
       "type": "array",
@@ -82,6 +99,17 @@
       "type": "integer",
       "minimum": 1000,
       "maximum": 300000
+    },
+    "library": {
+      "type": "boolean",
+      "description": "使用页面身份库和完整 profile；选择由独立身份 Agent 完成。"
+    },
+    "selection": {
+      "enum": ["pending", "selected", "human"]
+    },
+    "selectionReason": {
+      "type": "string",
+      "maxLength": 1000
     }
   },
   "required": [

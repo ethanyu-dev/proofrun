@@ -1,3 +1,4 @@
+import { selectedTask } from '../identities/selection.js';
 import type { BudgetState } from './step-budget.js';
 import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
@@ -77,7 +78,10 @@ export async function executionContext(
   );
   if (!result.rows[0])
     throw new ApiError(404, 'EXECUTION_MISSING', 'Execution not found');
-  return result.rows[0];
+  const context = result.rows[0];
+  context.definition =
+    (await selectedTask(client, context.definition)) ?? context.definition;
+  return context;
 }
 
 /** 从持久会话身份构造命令；worker 无权指定节点、租约或栅栏值。 */

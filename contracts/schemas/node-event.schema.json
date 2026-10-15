@@ -225,6 +225,9 @@
             },
             "environmentProof": {
               "type": "boolean"
+            },
+            "fullProfile": {
+              "type": "boolean"
             }
           },
           "required": [

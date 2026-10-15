@@ -101,3 +101,7 @@ Linux Chromium 在容器内渲染截图和实时画面，不能使用宿主机�
 `src/prompts/decision.ts` 独立维护执行系统提示，`src/prompts/jev.ts` 维护候选选择、字段填写与文本审查提示；适配器只负责组装请求与解析协议。
 
 `src/execution/context.ts` 负责历史正文去除旧元素编号、上下文预算裁剪和覆盖标记。`runner.ts` 负责租约安全点、当前步骤与执行状态，传入事实快照；裁剪不能修改原始观察、任务或报告证据。
+
+## 身份选择
+
+主循环先领取身份选择工作，再领取浏览器任务。身份选择 Agent 使用独立提示词 `src/prompts/identity-selector.ts`，单次工具调用根据 Case 与同源候选摘要选取账号；模型不接触 Cookie、profile 或内部凭据文件。选取失败或没有适用账号转人工。选取和状态加载不证明账号角色有效，执行器仍检查页面条件。新版身份库不自动保存认证状态，只有 HITL 成功后由控制面发布完整 profile 基准。详见[测试身份](../api/src/modules/identities/README.md)。

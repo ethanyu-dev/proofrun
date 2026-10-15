@@ -1,3 +1,4 @@
+import type { IdentityLibrary } from '../identities/library.js';
 import { randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
 import {
@@ -20,6 +21,8 @@ const FRAME_LIMIT = 2 * 1024 * 1024;
 const AUTH_MS = 5000;
 const CHECK_MS = 500;
 const COMMAND_MS = 15000;
+/** 完整 profile 的关闭、落盘、复制和重启拥有独立的人工交还期限。 */
+const PROFILE_SAVE_MS = 120_000;
 const INPUT_LIMIT = 8;
 /** 允许 4096 字符的 JSON 转义文本；画面仍使用独立的单帧上限。 */
 const INPUT_MESSAGE_BYTES = 32 * 1024;
@@ -39,6 +42,7 @@ interface Grant {
   /** 与链接有效期独立的本次人工等待截止时间；旧请求可为空。 */
   human_deadline_at: Date | null;
   completed_at: Date | null;
+  unable_reason: string | null;
   control_mode: string;
   control_revision: number;
   control_reason: string;
@@ -67,6 +71,8 @@ interface Viewer {
   relay?: WebSocket;
   pending: number;
   checking: boolean;
+  /** 完整 profile 发布会重启浏览器，期间画面断开不代表交还失败。 */
+  finalizing: boolean;
   timer: ReturnType<typeof setInterval>;
 }
 
@@ -81,6 +87,7 @@ export class HitlService {
     private readonly control: ExecutionControl,
     private readonly coordinator: Coordinator,
     private readonly gateway: NodeGateway,
+    private readonly library?: IdentityLibrary,
   ) {}
 
   private async grant(id: string): Promise<Grant> {
@@ -145,7 +152,9 @@ export class HitlService {
     if (this.viewers.get(viewer.grant.id) === viewer)
       this.viewers.delete(viewer.grant.id);
     if (viewer.streamId) this.streams.delete(viewer.streamId);
-    viewer.relay?.terminate();
+    const relay = viewer.relay;
+    delete viewer.relay;
+    relay?.terminate();
     viewer.socket.close(1000);
   }
   private tracked(socket: WebSocket): void {
@@ -195,6 +204,14 @@ export class HitlService {
             const grant = await this.grant(message.id);
             if (digest(message.token) !== grant.token_hash)
               throw new ApiError(401, 'HITL_INVALID', '处理链接无效');
+            if (grant.unable_reason) {
+              this.send(socket, {
+                type: 'unable',
+                reason: grant.unable_reason,
+              });
+              socket.close(1000);
+              return;
+            }
             if (grant.completed_at) {
               this.send(socket, { type: 'completed' });
               socket.close();
@@ -213,6 +230,7 @@ export class HitlService {
               grant,
               pending: 0,
               checking: false,
+              finalizing: false,
               timer: setInterval(() => {
                 if (viewer) void this.refresh(viewer);
               }, CHECK_MS),
@@ -226,7 +244,16 @@ export class HitlService {
           this.active(grant);
           if (grant.control_mode !== 'HUMAN')
             throw new ApiError(409, 'HITL_WAIT', '正在等待 Agent 完成交接');
-          if (message.type === 'complete') {
+          if (message.type === 'unable') {
+            const result = await this.control.unable(
+              grant.execution_id,
+              grant.revision,
+              message.reason,
+              this.config.publicUrl,
+            );
+            this.send(socket, { type: 'unable', reason: result.reason });
+            this.end(viewer);
+          } else if (message.type === 'complete') {
             const checked = message.confirmedItems;
             if (
               grant.condition_keys &&
@@ -255,34 +282,40 @@ export class HitlService {
                 '请逐项确认本次交接待办',
               );
 
-            const authStatus = grant.auth
-              ? await this.saveAuth(grant, socket)
-              : 'disabled';
-            // 保存有确定回执后才恢复；失败或断线保留人工控制权。
-            if (socket.readyState !== WebSocket.OPEN) return;
-            await this.control.change(
-              grant.execution_id,
-              null,
-              'resume',
-              grant.revision,
-              undefined,
-              undefined,
-              undefined,
-              checked ? checked.map((index) => grant.items[index]!) : undefined,
-              undefined,
-              message.confirmedConditionKeys,
-            );
-            this.send(socket, { type: 'completed', authStatus });
-            this.end(viewer);
+            viewer.finalizing = true;
+            try {
+              const authStatus = grant.auth
+                ? await this.saveAuth(grant, socket)
+                : 'disabled';
+              if (authStatus === 'saved' || authStatus === 'newer')
+                await this.library?.published(grant.task_id, grant.node_id);
+              // 保存有确定回执后才恢复；失败或断线保留人工控制权。
+              if (socket.readyState !== WebSocket.OPEN) return;
+              await this.control.change(
+                grant.execution_id,
+                null,
+                'resume',
+                grant.revision,
+                undefined,
+                undefined,
+                undefined,
+                checked
+                  ? checked.map((index) => grant.items[index]!)
+                  : undefined,
+                undefined,
+                message.confirmedConditionKeys,
+              );
+              this.send(socket, { type: 'completed', authStatus });
+              this.end(viewer);
+            } finally {
+              viewer.finalizing = false;
+            }
           } else if (message.type === 'command') {
             const operation = message.command;
             if (
-              ![
-                'browser.input',
-                'browser.auth.save',
-                'browser.cookies.set',
-                'browser.act',
-              ].includes(operation.type) ||
+              !['browser.input', 'browser.cookies.set', 'browser.act'].includes(
+                operation.type,
+              ) ||
               (operation.type === 'browser.auth.save' && !grant.auth)
             )
               throw new ApiError(403, 'HITL_COMMAND', '此处理页不允许该操作');
@@ -372,12 +405,14 @@ export class HitlService {
       grant.execution_id,
       null,
       commandId,
-      COMMAND_MS,
+      PROFILE_SAVE_MS,
       { type: 'browser.auth.save' },
       grant.revision,
+      undefined,
+      true,
     );
     let result = receipt.result;
-    const deadline = Date.now() + COMMAND_MS + 5000;
+    const deadline = Date.now() + PROFILE_SAVE_MS + 5000;
     while (
       !result &&
       Date.now() < deadline &&
@@ -442,13 +477,23 @@ export class HitlService {
   }
   /** 持续核对原任务权限；取消、过期、管理员恢复后立即关闭处理连接。 */
   private async refresh(viewer: Viewer): Promise<void> {
-    if (viewer.checking || viewer.socket.readyState !== WebSocket.OPEN) return;
+    if (
+      viewer.checking ||
+      viewer.finalizing ||
+      viewer.socket.readyState !== WebSocket.OPEN
+    )
+      return;
     viewer.checking = true;
     try {
       const grant = await this.grant(viewer.grant.id);
       if (viewer.socket.readyState !== WebSocket.OPEN) return;
       if (grant.completed_at) {
-        this.send(viewer.socket, { type: 'completed' });
+        this.send(
+          viewer.socket,
+          grant.unable_reason
+            ? { type: 'unable', reason: grant.unable_reason }
+            : { type: 'completed' },
+        );
         this.end(viewer);
         return;
       }
@@ -512,6 +557,12 @@ export class HitlService {
     socket.on('close', () => {
       clearTimeout(timer);
       if (viewer && viewer.relay === socket) {
+        delete viewer.relay;
+        if (viewer.finalizing) {
+          if (viewer.streamId) this.streams.delete(viewer.streamId);
+          delete viewer.streamId;
+          return;
+        }
         this.error(
           viewer.socket,
           new ApiError(503, 'HITL_STREAM', '浏览器画面已断开，请重新连接'),

@@ -22,6 +22,7 @@ const LABELS: Record<string, string> = {
   ERROR: '执行错误',
   WAITING_HUMAN: '等待人工处理',
   HUMAN_TIMEOUT: '人工处理超时',
+  HUMAN_UNEXECUTABLE: '人为判定无法执行',
   ENVIRONMENT_BLOCKED: '环境阻塞',
   EXECUTION_BLOCKED: '执行受阻',
   QUEUE_TIMEOUT: '排队超时',

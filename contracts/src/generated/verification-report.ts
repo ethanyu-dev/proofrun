@@ -30,6 +30,14 @@ export type VerificationReport = {
    * @maxItems 64
    */
   steps?: [StepResult, ...StepResult[]];
+  /**
+   * 仅由人工处理服务写入；执行器不能伪造人为无法执行的结论。
+   */
+  humanDecision?: {
+    outcome: 'UNEXECUTABLE';
+    reason: string;
+    decidedAt: string;
+  };
 };
 
 export interface ExecutionDetails {

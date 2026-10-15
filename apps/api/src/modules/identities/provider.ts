@@ -1,4 +1,5 @@
 import { readFileSync, lstatSync } from 'node:fs';
+import type { SessionRequest } from '@proofrun/contracts';
 import { ApiError } from '../../domain.js';
 import { validateCatalog, type IdentityCatalog } from './catalog.js';
 
@@ -16,7 +17,8 @@ export interface CatalogProviderConfig {
   tokenFile: string;
 }
 /** API 配置可注入本地库或受控外部提供方，两者均返回相同的无秘密元数据。 */
-export type CatalogSource = IdentityCatalog | (() => Promise<IdentityCatalog>);
+export type CatalogSource =
+  IdentityCatalog | ((request?: SessionRequest) => Promise<IdentityCatalog>);
 
 /** HTTPS 为默认边界，仅回环允许 HTTP，测试和本机代理也遵守相同规则。 */
 export function providerUrl(value: string): string {

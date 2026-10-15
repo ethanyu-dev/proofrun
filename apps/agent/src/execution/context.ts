@@ -129,6 +129,15 @@ export function decisionContext(input: ContextInput): DecisionInput {
     task: (({ sessionPlan: _sessionPlan, ...business }) => business)(
       input.task,
     ),
+    identity: input.task.sessionPlan?.library
+      ? {
+          name: input.task.sessionPlan.candidates[0]?.label ?? null,
+          description: input.task.sessionPlan.candidates[0]?.description ?? '',
+          selectionReason: input.task.sessionPlan.selectionReason,
+          instruction:
+            '这是候选账号描述，不是已验证事实。先依据当前页面确认登录和 Case 所需资格；不符合时请求人工处理。身份库不提供密码，不要自行注册或切换到其他账号。',
+        }
+      : undefined,
     executionStep: input.executionStep,
     policyChecks: input.policyChecks,
     setupPhase: input.setupPhase,

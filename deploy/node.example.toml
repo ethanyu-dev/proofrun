@@ -12,3 +12,6 @@ artifact_limit_bytes = 268435456
 artifact_upload_url = "https://proofrun.example.com/v1/artifacts"
 # 仅供开发联调启用：节点去重不能证明引擎内部不会重试写入。
 allow_unverified_writes = false
+
+# 可选：新身份首次准备时复制完整环境模板；必须是已关闭浏览器的独立目录。
+# base_profile_directory = "/var/lib/proofrun/closed-template"

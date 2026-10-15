@@ -1,3 +1,4 @@
+import { fallbackLibraryIdentity } from '../identities/slot.js';
 import type { NodeCommand, VerificationTask } from '@proofrun/contracts';
 import { digest } from '../../domain.js';
 
@@ -11,6 +12,16 @@ export function sessionAuth(task: VerificationTask): SessionAuth | null {
   if (task.sessionPlan) {
     if (task.sessionPlan.mode === 'guest') return null;
     const identity = task.sessionPlan.candidates[0];
+    if (task.sessionPlan.library) {
+      const selected = identity ?? fallbackLibraryIdentity(task);
+      return {
+        stateId: `lib-${selected.id}-${selected.libraryVersion}`,
+        fullProfile: true,
+        restore: true,
+        restoreIfPresent: true,
+        snapshotId: digest(task.comparison?.id ?? task.taskId),
+      };
+    }
     if (identity)
       return {
         stateId:

@@ -3,6 +3,7 @@
 mod cookies;
 mod dom;
 mod identity;
+mod profile;
 
 mod scopes;
 use crate::{
@@ -43,6 +44,15 @@ pub struct EngineConfig {
     /// 私有登录配置路径；会话命令仅可引用其中的封闭标识。
     #[serde(default)]
     pub identity_library_file: Option<PathBuf>,
+    /// 完整基准使用节点生成路径，秘密种子只存会话私有文件。
+    #[serde(default)]
+    pub identity_seed_file: Option<PathBuf>,
+    /// 是否启用完整 profile 版本，旧存储状态任务保持兼容。
+    #[serde(default)]
+    pub full_profile: bool,
+    /// 首次身份准备时复制的已关闭环境基准。
+    #[serde(default)]
+    pub base_profile_directory: Option<PathBuf>,
     /// 随本次会话生成的引擎 session 名，隔离 daemon 和 socket。
     pub session: String,
     /// profile、配置及临时截图的私有目录。
@@ -80,6 +90,10 @@ pub struct Engine {
     config: EngineConfig,
     /// 当前会话允许更新的共享快照版本；并发会话更新后不得覆盖。
     auth_version: Option<String>,
+    /// 初始化只执行一次，人工交还重启不能重新覆盖任务目录。
+    profile_initialized: bool,
+    /// 恢复身份基准时不能再注入较旧的初始 Cookie。
+    profile_restored: bool,
     /// 当前有效观察身份；执行动作后清空。
     observation: Option<String>,
     /// 平台 target 到引擎短期 ref 的映射，不能作为公共协议暴露。
@@ -88,6 +102,8 @@ pub struct Engine {
     dom: Option<dom::Dom>,
     /// Trace 使用独立连接，观察刷新不能中断采集。
     trace: Option<dom::Dom>,
+    /// 人工交还重启产生的取证分段，停止取证时统一交付。
+    trace_segments: Vec<PathBuf>,
     /// 最近截图的视口身份和采集时间，视觉输入必须匹配。
     visual: Option<(Value, u64)>,
     /// 只有当前观察列出的标签页才能切换或关闭。
@@ -125,10 +141,13 @@ impl Engine {
             active_scope: None,
             config,
             auth_version: None,
+            profile_initialized: false,
+            profile_restored: false,
             observation: None,
             targets: HashMap::new(),
             dom: None,
             trace: None,
+            trace_segments: Vec::new(),
             visual: None,
             tabs: Vec::new(),
             frame: None,
@@ -163,50 +182,89 @@ impl Engine {
     /// 创建本会话独立浏览器，并打开内部空白页作为初始状态。
     pub async fn open(&mut self, timeout_ms: u64) -> Result<Value> {
         let deadline = process::boot_ms() + timeout_ms;
+        if self.config.full_profile && !self.profile_initialized {
+            let state = self
+                .config
+                .auth_state
+                .as_ref()
+                .ok_or_else(|| Fault::rejected("PROFILE_BASELINE_MISSING", "身份基准未绑定"))?;
+            self.auth_version = crate::profile_snapshots::restore(
+                state,
+                self.config.auth_snapshot_id.as_deref(),
+                &self.config.directory.join("profile"),
+                self.config.base_profile_directory.as_deref(),
+            )
+            .map_err(|_| Fault::rejected("PROFILE_COPY_FAILED", "完整浏览器基准无法复制"))?;
+            self.profile_restored = self.auth_version.is_some();
+            self.profile_initialized = true;
+        }
         self.cli(vec!["open".into(), "about:blank".into()], timeout_ms)
             .await?;
-        let mut auth_restored = false;
-        if let Some(path) = &self.config.auth_state {
-            let snapshot = crate::auth::snapshot(path, self.config.auth_snapshot_id.as_deref())
-                .map_err(|_| {
-                    Fault::rejected(
-                        "AUTH_STATE_UNAVAILABLE",
-                        "private authentication snapshot is unavailable",
-                    )
+        if self.config.full_profile {
+            let state = self
+                .config
+                .directory
+                .join("profile")
+                .join(".proofrun-session-state.json");
+            if state.exists() {
+                crate::auth::check_state(&state).map_err(|_| {
+                    Fault::rejected("PROFILE_STATE_INVALID", "完整基准的会话状态无效")
                 })?;
-            self.auth_version = snapshot.version;
-            if self.config.restore_auth {
-                if let Some(state) = snapshot.state {
-                    let local = self.config.directory.join("home").join("auth-start.json");
-                    crate::auth::private_write(&local, &serde_json::to_vec(&state).unwrap())
-                        .map_err(|_| {
-                            Fault::rejected(
-                                "AUTH_STATE_UNAVAILABLE",
-                                "cannot prepare private authentication snapshot",
-                            )
-                        })?;
-                    self.cli(
-                        vec![
-                            "state".into(),
-                            "load".into(),
-                            local.to_string_lossy().into(),
-                        ],
-                        deadline.saturating_sub(process::boot_ms()),
-                    )
-                    .await?;
-                    auth_restored = true;
-                } else if !self.config.restore_auth_if_present {
-                    return Err(Fault::rejected(
-                        "AUTH_STATE_MISSING",
-                        "private authentication state is unavailable",
-                    ));
-                }
+                self.cli(
+                    vec![
+                        "state".into(),
+                        "load".into(),
+                        state.to_string_lossy().into_owned(),
+                    ],
+                    deadline.saturating_sub(process::boot_ms()),
+                )
+                .await?;
             }
-        } else if self.config.restore_auth {
-            return Err(Fault::rejected(
-                "AUTH_STATE_MISSING",
-                "authentication state is not configured",
-            ));
+        }
+        let mut auth_restored = self.profile_restored;
+        if !self.config.full_profile {
+            if let Some(path) = &self.config.auth_state {
+                let snapshot = crate::auth::snapshot(path, self.config.auth_snapshot_id.as_deref())
+                    .map_err(|_| {
+                        Fault::rejected(
+                            "AUTH_STATE_UNAVAILABLE",
+                            "private authentication snapshot is unavailable",
+                        )
+                    })?;
+                self.auth_version = snapshot.version;
+                if self.config.restore_auth {
+                    if let Some(state) = snapshot.state {
+                        let local = self.config.directory.join("home").join("auth-start.json");
+                        crate::auth::private_write(&local, &serde_json::to_vec(&state).unwrap())
+                            .map_err(|_| {
+                                Fault::rejected(
+                                    "AUTH_STATE_UNAVAILABLE",
+                                    "cannot prepare private authentication snapshot",
+                                )
+                            })?;
+                        self.cli(
+                            vec![
+                                "state".into(),
+                                "load".into(),
+                                local.to_string_lossy().into(),
+                            ],
+                            deadline.saturating_sub(process::boot_ms()),
+                        )
+                        .await?;
+                        auth_restored = true;
+                    } else if !self.config.restore_auth_if_present {
+                        return Err(Fault::rejected(
+                            "AUTH_STATE_MISSING",
+                            "private authentication state is unavailable",
+                        ));
+                    }
+                }
+            } else if self.config.restore_auth {
+                return Err(Fault::rejected(
+                    "AUTH_STATE_MISSING",
+                    "authentication state is not configured",
+                ));
+            }
         }
         if self.config.network_evidence {
             self.cli(
@@ -252,6 +310,9 @@ impl Engine {
     }
     /// 保存前由调用方核验身份；CAS 防止旧会话覆盖新状态。
     async fn save_auth(&mut self, timeout_ms: u64) -> Result<Value> {
+        if self.config.full_profile {
+            return self.save_profile(timeout_ms).await;
+        }
         let destination = self.config.auth_state.clone().ok_or_else(|| {
             Fault::rejected("AUTH_STATE_MISSING", "task has no authentication slot")
         })?;
@@ -761,6 +822,7 @@ impl Engine {
                         Fault::rejected("TRACE_INACTIVE", "trace was not started")
                     })?;
                     trace.trace_stop(&path).await?;
+                    self.merge_trace_segments(&path)?;
                     Ok(json!({"localTrace":path}))
                 }
             }

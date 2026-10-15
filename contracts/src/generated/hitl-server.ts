@@ -52,4 +52,8 @@ export type HitlServer =
        * 已保存、保留其他会话更新的快照、或未启用登录复用。
        */
       authStatus?: 'saved' | 'newer' | 'disabled';
+    }
+  | {
+      type: 'unable';
+      reason: string;
     };

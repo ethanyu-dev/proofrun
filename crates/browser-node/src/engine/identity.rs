@@ -188,7 +188,7 @@ fn validate_profile(profile: &Profile, origin: &str) -> Result<()> {
 
 impl Engine {
     /// 获取当前页的私有连接；任何导航后都重新取 active target，避免旧 target 写入。
-    async fn identity_dom(&self, deadline: u64) -> Result<(Dom, String)> {
+    pub(super) async fn identity_dom(&self, deadline: u64) -> Result<(Dom, String)> {
         let endpoint = self
             .cli(
                 vec!["get".into(), "cdp-url".into()],
@@ -228,6 +228,9 @@ impl Engine {
     }
     /// 首先核验恢复状态，失败后最多执行一次登录；结果不明不能自动重放提交。
     pub(super) async fn prepare_identity(&mut self, raw: &Value, deadline: u64) -> Result<Value> {
+        if self.config.full_profile {
+            return self.prepare_profile(raw, deadline).await;
+        }
         if self.trace.is_some() {
             return Err(Fault::rejected(
                 "IDENTITY_TRACE_ACTIVE",
