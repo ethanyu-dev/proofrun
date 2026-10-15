@@ -1,4 +1,5 @@
 import type { InteractionProgress } from './interaction-progress.js';
+import type { ActionMemory } from './action-memory.js';
 import type { VerificationReport, VerificationTask } from '@proofrun/contracts';
 import type { BrowserOperation } from '../client.js';
 import type { Observation } from '../evidence/observation.js';
@@ -95,6 +96,8 @@ export interface ContextInput {
   evidence: VerificationReport['artifacts'];
   /** 已执行操作的近期摘要。 */
   history: RecentOperation[];
+  /** 本步骤关键动作回执，不受观察和滚动挤出近期窗口的影响。 */
+  actionMemory?: ReturnType<ActionMemory['view']>;
   /** 有来源的历史页面正文。 */
   previousObservations: PreviousObservation[];
   /** 上轮执行错误或恢复提示。 */
@@ -177,6 +180,9 @@ export function decisionContext(input: ContextInput): DecisionInput {
       .slice(-EVIDENCE_LIMIT)
       .map(({ id, kind }) => ({ id, kind })),
     recentOperations: [...input.history],
+    actionMemory: input.actionMemory
+      ? structuredClone(input.actionMemory)
+      : undefined,
     // 历史正文可帮助保持页面连续性，但不能把已失效的引用重新提供给模型。
     previousObservations: input.previousObservations.map((observation) => ({
       ...observation,
@@ -264,7 +270,10 @@ export function decisionContext(input: ContextInput): DecisionInput {
       context.changes.refsTruncated = true;
     } else if (context.recentOperations.length > 0)
       context.recentOperations.shift();
-    else if (context.evidence.length > 0) context.evidence.shift();
+    else if ((context.actionMemory?.items.length ?? 0) > 0) {
+      context.actionMemory!.items.shift();
+      context.actionMemory!.omitted++;
+    } else if (context.evidence.length > 0) context.evidence.shift();
     else
       throw new AgentFault(
         'CONTEXT_BUDGET_EXCEEDED',

@@ -235,7 +235,7 @@ test('阅读进度只绑定当前目标，已读点击必须说明重查原因',
   observation.targets = [unread];
   ledger.observe(observation);
   assert.deepEqual(ledger.view().currentTargets, [
-    { target: '@a', itemId: 'item-2', status: 'pending' },
+    { target: '@a', itemId: 'item-2', status: 'pending', failedAttempts: 0 },
   ]);
   ledger.assertClick(observation, unread);
   observation.targets = [];
@@ -302,6 +302,28 @@ test('失败目标只有条件变化才可重试，同目标最多两次前置�
   ledger.assertClick(observation, observation.targets[1]);
 });
 
+// 范围：同一批控件滚动后位置改变可重试，单纯更新观察编号仍拒绝；不模拟实际遮罩或点击成功率。
+test('滚动改变可见矩形后允许有界点击恢复', () => {
+  const ledger = new InteractionProgress();
+  const observation = page();
+  const target = observation.targets[1];
+  target.clip = { left: 0, top: 0, right: 600, bottom: 20 };
+  ledger.observe(observation);
+  ledger.failedClick(observation, target, 'TARGET_OBSCURED');
+  observation.observationId = 'new-observation';
+  assert.throws(() => ledger.assertClick(observation, target), {
+    code: 'INTERACTION_RECOVERY_REQUIRED',
+  });
+  target.clip = { left: 0, top: 200, right: 600, bottom: 240 };
+  ledger.assertClick(observation, target);
+  assert.equal(ledger.view().currentTargets[1].failedAttempts, 1);
+  ledger.failedClick(observation, target);
+  target.clip.top = 300;
+  assert.throws(() => ledger.assertClick(observation, target), {
+    code: 'INTERACTION_RECOVERY_REQUIRED',
+  });
+});
+
 // 范围：大量子项不会挤爆模型上下文，裁剪只作用于副本；不模拟供应商 token 计费。
 test('子项进度可裁剪但执行器保留完整报告来源', async () => {
   const { decisionContext } =
@@ -338,6 +360,11 @@ test('子项进度可裁剪但执行器保留完整报告来源', async () => {
   const context = decisionContext(input);
   assert(context.text.length <= 4000);
   assert(JSON.parse(context.text).interactionProgress.omittedItems > 0);
+  assert.equal(JSON.parse(context.text).interactionProgress.discovered, 32);
+  assert.equal(
+    JSON.parse(context.text).interactionProgress.unreadItemIds.length,
+    32,
+  );
   assert.equal(ledger.results().length, 32);
   assert.equal(ledger.view().items[0].text.length, 400);
 });

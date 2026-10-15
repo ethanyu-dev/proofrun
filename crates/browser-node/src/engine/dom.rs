@@ -729,7 +729,7 @@ impl Dom {
                         let descriptor = json!({"target":id,"role":role,"name":name,"tag":tag,"value":value,"options":options,
                             "comparisonKey":comparison_key,"visible":true,"visibilityScope":"frame", "visibilityReason":facts["visibilityReason"],"ariaHidden":facts["ariaHidden"],"inert":facts["inert"],"operations":operations,
                             "disabled":facts["disabled"],"expanded":facts["expanded"],"checked":facts["checked"],
-                            "context":facts["context"],"disclosure":facts["disclosure"],"selected":facts["selected"],"activeRegion":facts["activeRegion"],"scroll":facts["scroll"],"region":facts["region"],"frame":string(&doc["frameId"])});
+                            "context":facts["context"],"clip":facts["clip"],"disclosure":facts["disclosure"],"selected":facts["selected"],"activeRegion":facts["activeRegion"],"scroll":facts["scroll"],"region":facts["region"],"frame":string(&doc["frameId"])});
                         let bytes = descriptor.to_string().len();
                         if descriptor_bytes + bytes > TARGET_BYTES {
                             omitted_controls += 1;

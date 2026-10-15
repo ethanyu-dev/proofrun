@@ -11,7 +11,10 @@ import { evaluateChecks, mergeChecks } from './identity.js';
 import { stepLimit } from '@proofrun/contracts';
 import { StepAllowance } from './step-budget.js';
 import { stepObjective } from '../prompts/step.js';
-import { PREPARATION_BLOCK_REVIEW } from '../prompts/recovery.js';
+import {
+  PREPARATION_BLOCK_REVIEW,
+  REPEATED_RECORD_FEEDBACK,
+} from '../prompts/recovery.js';
 import { randomUUID } from 'node:crypto';
 import {
   validateAgentDecision,
@@ -43,6 +46,7 @@ import {
   type RecentOperation,
   type PreviousObservation,
 } from './context.js';
+import { ActionMemory } from './action-memory.js';
 import {
   ObservationTracker,
   STALLED_ROUNDS,
@@ -59,6 +63,8 @@ const CRITERIA_REVIEW_ACTIONS = 4;
 const STALLED_SUMMARY = '重复操作未取得新的完成证据，无法确认当前步骤已就绪';
 /** 任务进度不足有独立恢复额度，不归类为模型格式错误。 */
 const MAX_WORKFLOW_RECOVERIES = 3;
+/** 连续幂等登记不属于格式错误；给两次纠正机会后以无进展保留已有结论。 */
+const MAX_REPEATED_RECORDS = 3;
 /** 证据上传与浏览器状态轮询不会占用新的模型调用。 */
 const POLL_MS = 150;
 /** 导航后只有外壳菜单时最多补采两次，不把无关导航交给模型猜测；不是业务就绪保证。 */
@@ -107,6 +113,8 @@ class Execution {
   >();
   /** 已执行操作的有界摘要，供上下文读取。 */
   private readonly history: RecentOperation[] = [];
+  /** 关键动作仅属于当前步骤和控制代次，不混入前序步骤的填写事实。 */
+  private actionMemory = new ActionMemory();
   private readonly details: NonNullable<VerificationReport['executionDetails']>;
   /** 仅初次进入或步骤明确更换网址时安排导航；人工交还页面后取消待导航。 */
   private pendingNavigation: string | undefined;
@@ -399,6 +407,7 @@ class Execution {
       operationStatus: result.operationStatus,
       effect: result.effect,
     });
+    this.actionMemory.record(this.history.at(-1)!);
     if (this.history.length > HISTORY_LIMIT) this.history.shift();
     if (
       clicked &&
@@ -590,6 +599,7 @@ class Execution {
               await this.client.recordSteps(this.grant, this.stepResults);
             }
           }
+          this.actionMemory = new ActionMemory();
           if (!this.grant.task.executionPlan || authChanged)
             this.invalidateReadiness();
           // 人工交还的是同一会话的当前页面；旧观察失效，但不能用导航覆盖处理结果。
@@ -675,6 +685,7 @@ class Execution {
       changes: this.changes,
       evidence: [...this.currentEvidence().values()],
       history: this.history,
+      actionMemory: this.actionMemory.view(),
       previousObservations: this.previousObservations,
       feedback: this.feedback,
       image: this.image,
@@ -1212,6 +1223,7 @@ class Execution {
   /** 控制权变化时撤销全部准备声明，避免沿用另一账号或旧环境的证据。 */
   private invalidateReadiness() {
     this.interactions = new InteractionProgress();
+    this.actionMemory = new ActionMemory();
     if (!this.isSetup()) return;
     this.workflow.invalidateAssessments();
     this.readinessEvidence = new Set(this.evidence.keys());
@@ -1397,6 +1409,7 @@ class Execution {
     }
     let errors = 0;
     let workflowRecoveries = 0;
+    let repeatedRecords = 0;
     // 每次步骤循环最多一次；无模型额度、准备/清理阶段和已有全部确定结论时不触发。
     let finalReview = false;
     // 连续遮挡只允许有限次重新规划；仍消耗原动作与模型预算。
@@ -1816,6 +1829,7 @@ class Execution {
         ) {
           this.tracker.reset();
           workflowRecoveries = 0;
+          repeatedRecords = 0;
         }
 
         this.workflow.assertAction(decision);
@@ -1972,13 +1986,22 @@ class Execution {
           }
           if (finalReview) return this.blocked(STALLED_SUMMARY, 'NO_PROGRESS');
           if (changed) {
+            repeatedRecords = 0;
             this.lastCriteriaReview = this.details.actions;
             this.tracker.reset();
             this.changes = undefined;
           }
           if (decision.type === 'verification.record') {
-            if (!changed) throw this.criteria.invalid('重复登记不是新进展');
             errors = 0;
+            if (!changed) {
+              if (++repeatedRecords >= MAX_REPEATED_RECORDS)
+                return this.blocked(
+                  '已保存的验收结论被重复提交，未取得新的取证进展；保留已有结果，剩余缺口尚未解决',
+                  'NO_PROGRESS',
+                );
+              this.feedback = REPEATED_RECORD_FEEDBACK;
+              continue;
+            }
             this.feedback =
               '逐项验收已保存，请继续未完成部分；finish 可补交未登记项目，或凭新增证据升级 INCONCLUSIVE/SKIPPED；已确认的通过或失败不可改写。';
             continue;
@@ -2064,6 +2087,7 @@ class Execution {
         else {
           await this.command(operation);
           if (operation.type === 'browser.act') {
+            repeatedRecords = 0;
             this.workflow.acted();
             workflowRecoveries = 0;
           }
@@ -2362,6 +2386,7 @@ class Execution {
       this.image = undefined;
       this.feedback = null;
       this.interactions = new InteractionProgress();
+      this.actionMemory = new ActionMemory();
       this.lastCriteriaReview = this.details.actions;
       this.settlePending = false;
       this.tracker.reset();

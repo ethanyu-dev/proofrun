@@ -59,6 +59,65 @@ function requestWith(content) {
   };
 }
 
+// 范围：填写回执后先核对提示且不重复审查同一回执；仅模拟选择失焦动作，不证明真实页面会出现提示。
+test('JEV 填写后先交给文本模型核对校验状态', async () => {
+  let selections = 0,
+    reviews = 0;
+  const request = requestWith('{"text":"fixture-invalid"}');
+  const model = new JevModel(
+    config,
+    'fixture',
+    'jev-test',
+    async (...args) => {
+      selections++;
+      return request(...args);
+    },
+    {
+      async decide(input) {
+        reviews++;
+        const context = JSON.parse(input.text);
+        assert.match(context.feedback, /字段填写已成功/);
+        assert.equal(context.observation.targets[0].value, 'fixture-invalid');
+        return {
+          decision: { type: 'browser.act', action: 'press', value: 'Tab' },
+          promptTokens: 1,
+          completionTokens: 1,
+        };
+      },
+    },
+  );
+  const context = JSON.parse(input().text);
+  context.observation.targets[0].value = 'fixture-invalid';
+  context.recentOperations = [
+    {
+      commandId: 'fill-1',
+      operation: 'browser.act',
+      action: 'fill',
+      operationStatus: 'SUCCEEDED',
+      effect: 'COMPLETED',
+    },
+    {
+      commandId: 'observe-1',
+      operation: 'browser.observe',
+      operationStatus: 'SUCCEEDED',
+      effect: 'COMPLETED',
+    },
+  ];
+  const output = await model.decide(
+    { text: JSON.stringify(context) },
+    new AbortController().signal,
+  );
+  assert.equal(output.decision.value, 'Tab');
+  assert.equal(selections, 0);
+  assert.equal(reviews, 1);
+  await model.decide(
+    { text: JSON.stringify(context) },
+    new AbortController().signal,
+  );
+  assert.equal(reviews, 1);
+  assert(selections > 0);
+});
+
 // 范围：null 转入完整文本决策，可生成测试输入或明确阻塞，所有请求及用量可追踪；不验证真实模型生成质量。
 test('JEV 字段缺少信息时重新规划，并保留模型调用预算和回执', async (t) => {
   for (const result of ['fill', 'block'])

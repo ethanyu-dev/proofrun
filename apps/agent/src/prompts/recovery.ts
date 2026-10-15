@@ -6,6 +6,10 @@ export const PREPARATION_BLOCK_REVIEW =
 export const EXHAUSTED_RECOVERY_TOOL =
   '旧恢复计划已耗尽，必须同时提交针对剩余缺口的新 workflow.recovery，不能重送原计划。';
 
+/** 幂等重送已保存结论不能推进执行；保留补证机会，也给模型明确的退出路径。 */
+export const REPEATED_RECORD_FEEDBACK =
+  'CRITERIA_ALREADY_RECORDED: 本批结论已保存，同判定重送不会更新说明或增加动作消耗。请继续具体未完成的取证；若已有充分证据完成全部步骤，使用 verification_finish（criteria 可以为空）；若缺口无法补齐，使用 verification_block 说明已尝试动作、现有证据和缺失前提。不要再次重送相同结论。';
+
 /** 恢复预算属于局部计划；取证和验收登记不应被混成一次全页恢复。 */
 export const RECOVERY_RULES = [
   'workflow.recovery 只覆盖一个具体剩余缺口，例如滚动定位下一题或展开一个未读答案，不把整页静态文案、全部 FAQ 和表单校验塞进一个恢复计划。先保存已有可独立判定的验收项，再处理交互缺口。',

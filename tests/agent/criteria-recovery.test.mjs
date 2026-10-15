@@ -53,6 +53,41 @@ function record(context) {
   };
 }
 
+// 范围：重复暂存可纠正为补证或明确受阻，持续重送有界停止；不模拟真实模型遵从率或业务结果。
+test('重复登记保留已有结论并给出可恢复的收尾路径', async (t) => {
+  for (const mode of ['recover', 'repeat'])
+    await t.test(mode, async () => {
+      let calls = 0;
+      const client = new FakeControl();
+      const report = await run(execution(), client, (context) => {
+        if (context.executionStep.stepId !== 'step-1') return finish(context);
+        calls++;
+        if (calls >= 3)
+          assert.match(context.feedback, /CRITERIA_ALREADY_RECORDED/);
+        if (mode === 'recover' && calls === 3)
+          return {
+            type: 'verification.block',
+            summary: '已尝试填写但未出现错误提示，不允许提交',
+          };
+        return {
+          type: 'verification.record',
+          summary: '第一项缺少提示证据',
+          criteria: [
+            { ...finish(context).criteria[0], verdict: 'INCONCLUSIVE' },
+          ],
+        };
+      });
+      assert.equal(calls, mode === 'recover' ? 3 : 4);
+      assert.equal(report.steps[0].status, 'BLOCKED');
+      assert.equal(
+        report.steps[0].reasonCode,
+        mode === 'recover' ? 'MODEL_BLOCKED' : 'NO_PROGRESS',
+      );
+      assert.equal(report.criteria[0].verdict, 'INCONCLUSIVE');
+      assert.equal(report.steps[1].status, 'COMPLETED');
+    });
+});
+
 // 范围：停滞后仅一次只读整理，合法结论持久化但不冒充整步完成；模型和浏览器均为夹具。
 test('停滞终止前保存独立验收，保持阻塞原因并继续后续步骤', async () => {
   const client = new FakeControl();

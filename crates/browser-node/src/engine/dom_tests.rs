@@ -307,6 +307,9 @@ async fn native_dom_preserves_language_and_clicks_visible_portion() {
     assert_eq!(faq["context"]["heading"], "FAQ");
     assert_eq!(faq["disclosure"]["visible"], false);
     assert_eq!(faq["disclosure"]["text"], "");
+    // 可见矩形随观察交付，供 Agent 比较滚动恢复条件，不代表命中检查已通过。
+    assert!(faq["clip"]["bottom"].as_f64().unwrap() > faq["clip"]["top"].as_f64().unwrap());
+    assert!(faq["clip"]["right"].as_f64().unwrap() > faq["clip"]["left"].as_f64().unwrap());
     let floating = targets
         .iter()
         .find(|t| t["name"] == "Contact toggle")
