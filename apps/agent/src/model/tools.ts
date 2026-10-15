@@ -2,6 +2,7 @@ import { OBSERVATION_REVIEW_ROUNDS } from '../evidence/changes.js';
 import type { AgentDecision } from '@proofrun/contracts';
 import { WORKFLOW_SCHEMA } from '../execution/workflow.js';
 import { EXHAUSTED_RECOVERY_TOOL } from '../prompts/recovery.js';
+import { constrainEvidenceRefs, visibleEvidenceIds } from './evidence-refs.js';
 
 /** 供应商工具描述；动态约束只收紧平台已有协议，不增加执行权限。 */
 export interface DecisionTool {
@@ -21,12 +22,15 @@ export function decisionTools(
   tools: DecisionTool[],
 ): DecisionTool[] {
   const context = JSON.parse(text);
+  const evidenceIds = visibleEvidenceIds(context);
   const ids: string[] | undefined = context.task?.acceptanceCriteria?.map(
     (c: { id: string }) => c.id,
   );
   return tools
     .filter(
       (tool) =>
+        (!context.verificationReview?.final ||
+          ['verification.record', 'verification.block'].includes(tool.type)) &&
         (context.environmentReview?.required
           ? tool.type === 'verification.environment'
           : tool.type !== 'verification.environment') &&
@@ -116,6 +120,7 @@ export function decisionTools(
           },
         ];
       }
+      constrainEvidenceRefs(parameters, evidenceIds);
       return {
         ...tool,
         ...(tool.type === 'browser.act' &&

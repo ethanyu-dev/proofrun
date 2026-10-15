@@ -3,6 +3,9 @@ import {
   fieldValueRecovery,
   JEV_SELECTION_RULES,
   reviewFeedback,
+  FINAL_REVIEW_REASON,
+  ACTIONS_EXHAUSTED_REASON,
+  unassociatedTargetReview,
 } from '../prompts/jev.js';
 import type { AgentDecision } from '@proofrun/contracts';
 import type { AgentConfig } from '../config.js';
@@ -110,9 +113,9 @@ export class JevModel implements DecisionModel {
       budgetRemaining: { actions: number };
       feedback: unknown;
       workflow?: WorkflowView;
-      executionStep?: { stepId: string };
+      executionStep?: { stepId: string; type?: string };
       cleanup?: boolean;
-      verificationReview?: { pendingCriterionIds: string[] };
+      verificationReview?: { pendingCriterionIds: string[]; final?: boolean };
       environmentReview?: { required: boolean };
       interactionProgress?: {
         items: Array<{ status: string }>;
@@ -179,27 +182,31 @@ export class JevModel implements DecisionModel {
       this.progress.reviewed();
       return output;
     };
-    const reason = context.interactionProgress?.items.some(
-      (item) => item.status === 'observed',
-    )
-      ? '新展开的面板已取得原文，请先通过 workflow.readings 登记子项，再继续尚未读取的问题；记录不等于验收通过'
-      : context.cleanup
-        ? '后续清理由文本模型核对明确的恢复条件及 Cookie 清理回执，满足后及时结束'
-        : context.verificationReview
-          ? '阶段性核对尚未登记的验收项：先用 verification_record 保存已有充分证据的独立结论，再处理剩余交互；没有充分证据不能编造通过'
-          : typeof context.feedback === 'string' &&
-              /^(PREPARATION_REVIEW:|WORKFLOW_|INTERACTION_RECOVERY_REQUIRED:|INTERACTION_ALREADY_RECORDED:|OBSERVATION_STALLED:|BROWSER_TARGET_OBSCURED:|BROWSER_STALE_OBSERVATION:|BROWSER_ACTION_PRECONDITION_FAILED:)/u.test(
-                context.feedback,
-              )
-            ? '执行器反馈步骤缺口、预算耗尽或动作目标失效；请核对当前状态并改变恢复策略，无法继续时 verification.block'
-            : context.workflow?.activeStep === null
-              ? '全部原始步骤已登记证据，请按原 criterionId 整理最终结论，避免继续浏览'
-              : recovery?.remaining === 0
-                ? '恢复计划动作预算耗尽，核对成功条件；未成功时改变策略或停止，不能重复同一计划'
-                : this.progress.reviewReason(
-                    context.budgetRemaining.actions,
-                    !!recovery && recovery.remaining > 0,
-                  );
+    const reason = context.verificationReview?.final
+      ? FINAL_REVIEW_REASON
+      : context.budgetRemaining.actions <= 0
+        ? ACTIONS_EXHAUSTED_REASON
+        : context.interactionProgress?.items.some(
+              (item) => item.status === 'observed',
+            )
+          ? '新展开的面板已取得原文，请先通过 workflow.readings 登记子项，再继续尚未读取的问题；记录不等于验收通过'
+          : context.cleanup
+            ? '后续清理由文本模型核对明确的恢复条件及 Cookie 清理回执，满足后及时结束'
+            : context.verificationReview
+              ? '阶段性核对尚未登记的验收项：先用 verification_record 保存已有充分证据的独立结论，再处理剩余交互；没有充分证据不能编造通过'
+              : typeof context.feedback === 'string' &&
+                  /^(PREPARATION_REVIEW:|WORKFLOW_|INTERACTION_RECOVERY_REQUIRED:|INTERACTION_ALREADY_RECORDED:|OBSERVATION_STALLED:|BROWSER_TARGET_OBSCURED:|BROWSER_STALE_OBSERVATION:|BROWSER_ACTION_PRECONDITION_FAILED:)/u.test(
+                    context.feedback,
+                  )
+                ? '执行器反馈步骤缺口、预算耗尽或动作目标失效；请核对当前状态并改变恢复策略，无法继续时 verification.block'
+                : context.workflow?.activeStep === null
+                  ? '全部原始步骤已登记证据，请按原 criterionId 整理最终结论，避免继续浏览'
+                  : recovery?.remaining === 0
+                    ? '恢复计划动作预算耗尽，核对成功条件；未成功时改变策略或停止，不能重复同一计划'
+                    : this.progress.reviewReason(
+                        context.budgetRemaining.actions,
+                        !!recovery && recovery.remaining > 0,
+                      );
     if (reason) return review(reason);
     const readings = new Map(
       context.interactionProgress?.currentTargets?.map((item) => [
@@ -371,6 +378,20 @@ export class JevModel implements DecisionModel {
         ...(selectedAction ? { target: selectedAction.target } : {}),
       });
     const target = selectedAction!.target;
+    const observedTarget = page.targets.find((item) => item.target === target);
+    // 保留全局控件候选，只把缺少正文关联的业务点击转交完整上下文审查。
+    if (
+      operation === 'CLICK' &&
+      context.executionStep?.type === 'verification' &&
+      observedTarget?.context?.fixed &&
+      !observedTarget.context.heading &&
+      !observedTarget.disclosure
+    ) {
+      const output = await review(
+        unassociatedTargetReview(target, observedTarget.name),
+      );
+      return finish(output.decision, output);
+    }
     if (operation === 'CLICK' && readings.get(target)?.status === 'recorded') {
       const output = await review(
         '所选子项已有读取证据；请选择未读取目标，视口未提供时先滚动。只有原任务要求重查或验证开关行为时才通过 workflow.revisitReason 说明重复操作原因',

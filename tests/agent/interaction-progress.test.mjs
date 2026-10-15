@@ -53,6 +53,137 @@ function page() {
   };
 }
 
+// 范围：动作额度耗尽和停滞收尾直接进入文本验收，不调用 JEV 或发起候选动作；供应商与页面均为夹具。
+test('JEV 在动作耗尽或只读收尾时不再派发候选请求', async () => {
+  for (const final of [false, true]) {
+    let reviewed = 0;
+    const model = new JevModel(
+      config,
+      'fixture',
+      'jev-test',
+      async () => {
+        assert.fail('只读收尾不能再请求动作候选');
+      },
+      {
+        async decide(input) {
+          reviewed++;
+          const context = JSON.parse(input.text);
+          assert.match(
+            context.feedback,
+            final ? /最后一次只读验收整理/ : /动作预算已耗尽/,
+          );
+          return {
+            decision: { type: 'verification.block', summary: '剩余项目缺证' },
+            promptTokens: 1,
+            completionTokens: 1,
+          };
+        },
+      },
+    );
+    const output = await model.decide(
+      {
+        text: JSON.stringify({
+          task: grant().task,
+          observation: {
+            ...page(),
+            text: '答案已展开',
+            title: 'FAQ',
+            atomic: false,
+          },
+          recentOperations: [],
+          feedback: null,
+          budgetRemaining: { actions: final ? 5 : 0 },
+          ...(final
+            ? {
+                verificationReview: {
+                  pendingCriterionIds: ['c1'],
+                  final: true,
+                },
+              }
+            : {}),
+          interactionProgress: { items: [{ status: 'observed' }] },
+        }),
+      },
+      new AbortController().signal,
+    );
+    assert.equal(reviewed, 1);
+    assert.equal(output.decision.type, 'verification.block');
+  }
+});
+
+// 范围：无正文关联的悬浮按钮交回审查，普通按钮、关联面板和准备操作不受影响；不识别真实站点的 FAQ 语义。
+test('JEV 不把孤立悬浮按钮直接当作业务面板点击', async () => {
+  for (const mode of ['floating', 'ordinary', 'disclosure', 'setup']) {
+    const target = structuredClone(page().targets[2]);
+    if (mode === 'ordinary') target.context.fixed = false;
+    if (mode === 'disclosure')
+      target.disclosure = structuredClone(page().targets[1].disclosure);
+    let reviews = 0;
+    const model = new JevModel(
+      config,
+      'fixture',
+      'jev-test',
+      async (_url, _key, _method, body) => {
+        const choices = body.questions.next.criteria;
+        const choice = Object.entries(choices).find(
+          ([, item]) => item.operation === 'CLICK',
+        )[0];
+        return {
+          answers: {
+            next: {
+              choice,
+              confidence: 1,
+              probabilities: Object.fromEntries(
+                Object.keys(choices).map((id) => [id, Number(id === choice)]),
+              ),
+            },
+          },
+          usage: { input_tokens: 2, output_tokens: 1 },
+        };
+      },
+      {
+        async decide(input) {
+          reviews++;
+          assert.match(JSON.parse(input.text).feedback, /悬浮控件/);
+          return {
+            decision: { type: 'browser.act', action: 'scroll', value: 'down' },
+            promptTokens: 3,
+            completionTokens: 2,
+          };
+        },
+      },
+    );
+    const output = await model.decide(
+      {
+        text: JSON.stringify({
+          task: grant().task,
+          executionStep: {
+            stepId: 'step-1',
+            type: mode === 'setup' ? 'setup' : 'verification',
+          },
+          observation: {
+            ...page(),
+            targets: [target],
+            text: '当前页面',
+            title: '页面',
+            atomic: false,
+          },
+          recentOperations: [],
+          feedback: null,
+          budgetRemaining: { actions: 10 },
+        }),
+      },
+      new AbortController().signal,
+    );
+    assert.equal(reviews, mode === 'floating' ? 1 : 0);
+    assert.equal(
+      output.decision.action,
+      mode === 'floating' ? 'scroll' : 'click',
+    );
+    assert.equal(output.promptTokens, mode === 'floating' ? 5 : 2);
+  }
+});
+
 // 范围：引用必须来自本面板，隐藏内容/未知 ID 不可登记；不判断语言和业务验收是否通过。
 test('逐项读取必须关联已观察原文，重复登记不推进且关闭后保留证据', () => {
   const ledger = new InteractionProgress();

@@ -26,8 +26,11 @@ export class CriteriaLedger {
       const source = this.expected.find((c) => c.id === actual.criterionId);
       if (!source || seen.has(actual.criterionId)) throw this.invalid();
       seen.add(actual.criterionId);
-      if (actual.evidenceRefs.some((id) => !evidence.has(id)))
-        throw this.invalid('引用了未登记的证据');
+      const unknownRefs = actual.evidenceRefs.filter((id) => !evidence.has(id));
+      if (unknownRefs.length)
+        throw this.invalid(
+          `验收项 ${actual.criterionId} 引用了未登记附件 ${JSON.stringify(unknownRefs)}；observationId 不是附件 ID，请从 evidence 或 artifactRefs 逐字复制有效附件`,
+        );
       if (
         ['PASSED', 'FAILED'].includes(actual.verdict) &&
         source.evidenceKinds.some(
