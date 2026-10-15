@@ -53,6 +53,175 @@ function record(context) {
   };
 }
 
+// 范围：finish 内合法部分结论在工作流完整性失败前保存，不能让未完成步骤通过；模型和浏览器均为夹具。
+test('FAQ 未完成的 finish 仍先持久化独立文案结论', async () => {
+  const client = new FakeControl();
+  let attempted = false;
+  const report = await run(execution(), client, (context) => {
+    if (context.executionStep.stepId !== 'step-1')
+      return {
+        ...finish(context),
+        evidenceRefs: context.observation.artifactRefs.map((a) => a.artifactId),
+      };
+    if (!attempted) {
+      attempted = true;
+      return {
+        ...record(context),
+        type: 'verification.finish',
+        workflow: {
+          assessments: [
+            {
+              stepId: 'step-1',
+              outcome: 'incomplete',
+              summary: '文案已核对，FAQ 后两题未展开',
+              evidenceRefs: [],
+            },
+          ],
+        },
+      };
+    }
+    assert.match(context.feedback, /WORKFLOW_INCOMPLETE/);
+    assert.equal(context.recordedCriteria[0].verdict, 'PASSED');
+    assert(
+      client.stepSnapshots.some(
+        (steps) =>
+          steps[0].status === 'RUNNING' &&
+          steps[0].criteria[0]?.verdict === 'PASSED',
+      ),
+    );
+    return { type: 'verification.block', summary: '剩余 FAQ 无法取证' };
+  });
+  assert.deepEqual(
+    report.criteria.map((c) => c.verdict),
+    ['PASSED', 'SKIPPED', 'PASSED'],
+  );
+  assert.equal(report.steps[0].status, 'BLOCKED');
+});
+
+// 范围：局部恢复耗尽后工具要求新计划，忽略约束的动作不派发，新策略仍占原步骤预算；不验证真实模型规划能力。
+test('恢复耗尽必须重新规划，剩余步骤预算不能给旧计划续费', async () => {
+  const client = new FakeControl();
+  const recovery = {
+    goal: '定位第一题',
+    scope: 'FAQ',
+    terms: ['第一题'],
+    successCondition: '第一题可见',
+    maxActions: 1,
+  };
+  let turn = 0;
+  const report = await run(execution(), client, (context, _turn, body) => {
+    if (context.executionStep.stepId !== 'step-1')
+      return {
+        ...finish(context),
+        evidenceRefs: context.observation.artifactRefs.map((a) => a.artifactId),
+      };
+    turn++;
+    if (turn === 1)
+      return {
+        type: 'browser.act',
+        action: 'fill',
+        target: '@e1',
+        value: '不同状态',
+        workflow: { recovery },
+      };
+    if (turn === 2 || turn === 3) {
+      const parameters = body.tools.find(
+        (t) => t.function.name === 'browser_act',
+      ).function.parameters;
+      assert(parameters.required.includes('workflow'));
+      assert.deepEqual(parameters.properties.workflow.required, ['recovery']);
+      assert.equal(context.workflow.recovery.remaining, 0);
+      if (turn === 2)
+        return { type: 'browser.act', action: 'click', target: '@e2' };
+      assert.match(context.feedback, /WORKFLOW_RECOVERY_EXHAUSTED/);
+      assert(!client.calls.some((call) => call.operation.action === 'click'));
+      return {
+        type: 'browser.act',
+        action: 'scroll',
+        value: 'down',
+        workflow: {
+          recovery: { ...recovery, goal: '定位未读第二题', terms: ['第二题'] },
+        },
+      };
+    }
+    return finish(context);
+  });
+  assert.equal(report.verdict, 'PASSED', report.summary);
+  assert.equal(
+    client.calls.filter((call) => call.operation.action === 'scroll').length,
+    1,
+  );
+});
+
+// 范围：连续动作产生有界保存提示，保存后不会每轮反复提示，后续阻塞不丢结论；不替模型判定业务语义。
+test('长步骤定期提示保存独立验收项', async () => {
+  const client = new FakeControl();
+  let actions = 0;
+  let reviewed = false;
+  const report = await run(execution(), client, (context) => {
+    if (context.executionStep.stepId !== 'step-1')
+      return {
+        ...finish(context),
+        evidenceRefs: context.observation.artifactRefs.map((a) => a.artifactId),
+      };
+    if (context.verificationReview) {
+      assert.deepEqual(context.verificationReview.pendingCriterionIds, [
+        'step-1-0',
+        'step-1-1',
+      ]);
+      assert.equal(reviewed, false);
+      reviewed = true;
+      return record(context);
+    }
+    if (reviewed)
+      return {
+        type: 'verification.block',
+        summary: '保留文案结论，FAQ 尚有缺口',
+      };
+    return {
+      type: 'browser.act',
+      action: 'fill',
+      target: '@e1',
+      value: `第${++actions}次新输入`,
+    };
+  });
+  assert.equal(reviewed, true);
+  assert.deepEqual(
+    report.criteria.map((c) => c.verdict),
+    ['PASSED', 'SKIPPED', 'PASSED'],
+  );
+  assert(actions <= 4);
+});
+
+// 范围：新计划不得超过步骤余额，非法更新保持原状态且重送旧计划不续费；不执行真实浏览器动作。
+test('恢复计划受剩余步骤额度限制且失败更新原子化', async () => {
+  const { Workflow } =
+    await import('../../apps/agent/dist/execution/workflow.js');
+  const workflow = new Workflow('读取剩余 FAQ');
+  const recovery = {
+    goal: '展开下一题',
+    scope: 'FAQ',
+    terms: [],
+    successCondition: '答案可见',
+    maxActions: 1,
+  };
+  workflow.apply({ recovery }, new Set(), 2);
+  workflow.acted();
+  const before = workflow.view();
+  assert.throws(
+    () =>
+      workflow.apply(
+        { recovery: { ...recovery, goal: '定位剩余题', maxActions: 4 } },
+        new Set(),
+        1,
+      ),
+    { code: 'INVALID_MODEL_DECISION' },
+  );
+  assert.deepEqual(workflow.view(), before);
+  workflow.apply({ recovery }, new Set(), 1);
+  assert.equal(workflow.view().recovery.remaining, 0);
+});
+
 // 范围：明确受阻、模型错误、动作/模型/时间预算耗尽均保留部分结论并继续后续步骤；浏览器和模型回复为夹具。
 test('部分验收持久化后发生单步故障，结果不丢且后续业务与清理继续', async (t) => {
   for (const reason of ['blocked', 'invalid', 'actions', 'modelCalls', 'time'])

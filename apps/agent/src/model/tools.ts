@@ -1,5 +1,7 @@
 import { OBSERVATION_REVIEW_ROUNDS } from '../evidence/changes.js';
 import type { AgentDecision } from '@proofrun/contracts';
+import { WORKFLOW_SCHEMA } from '../execution/workflow.js';
+import { EXHAUSTED_RECOVERY_TOOL } from '../prompts/recovery.js';
 
 /** 供应商工具描述；动态约束只收紧平台已有协议，不增加执行权限。 */
 export interface DecisionTool {
@@ -29,6 +31,8 @@ export function decisionTools(
           ? tool.type === 'verification.environment'
           : tool.type !== 'verification.environment') &&
         (tool.type !== 'browser.cookies.clear' || context.cleanup === true) &&
+        (tool.type !== 'browser.act' ||
+          context.budgetRemaining?.actions !== 0) &&
         (tool.type !== 'browser.observe' ||
           (context.changes?.unchangedRounds ?? 0) <
             OBSERVATION_REVIEW_ROUNDS) &&
@@ -44,6 +48,8 @@ export function decisionTools(
         allOf?: object[];
         required?: string[];
       };
+      if (context.workflow)
+        parameters.properties.workflow = structuredClone(WORKFLOW_SCHEMA);
       if (
         ids &&
         ['verification.finish', 'verification.record'].includes(tool.type)
@@ -75,6 +81,23 @@ export function decisionTools(
       )
         parameters.required = [...(parameters.required ?? []), 'workflow'];
       if (tool.type === 'browser.act') {
+        if (context.workflow) {
+          const workflow = parameters.properties
+            .workflow as typeof WORKFLOW_SCHEMA & {
+            required?: string[];
+          };
+          // 恢复耗尽时明确要求新策略，不能继续生成必定被执行器拒绝的孤立动作。
+          if (context.workflow.recovery?.remaining === 0) {
+            parameters.required = [...(parameters.required ?? []), 'workflow'];
+            workflow.required = ['recovery'];
+          }
+          if (Number.isInteger(context.budgetRemaining?.actions))
+            workflow.properties.recovery.properties.maxActions.maximum =
+              Math.min(
+                workflow.properties.recovery.properties.maxActions.maximum,
+                context.budgetRemaining.actions,
+              );
+        }
         const scrollTargets =
           context.observation?.targets
             ?.filter((t: { operations?: string[] }) =>
@@ -93,6 +116,13 @@ export function decisionTools(
           },
         ];
       }
-      return { ...tool, parameters };
+      return {
+        ...tool,
+        ...(tool.type === 'browser.act' &&
+        context.workflow?.recovery?.remaining === 0
+          ? { description: `${tool.description}；${EXHAUSTED_RECOVERY_TOOL}` }
+          : {}),
+        parameters,
+      };
     });
 }

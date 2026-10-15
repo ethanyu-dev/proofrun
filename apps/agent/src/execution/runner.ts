@@ -11,6 +11,7 @@ import { evaluateChecks, mergeChecks } from './identity.js';
 import { stepLimit } from '@proofrun/contracts';
 import { StepAllowance } from './step-budget.js';
 import { stepObjective } from '../prompts/step.js';
+import { PREPARATION_BLOCK_REVIEW } from '../prompts/recovery.js';
 import { randomUUID } from 'node:crypto';
 import {
   validateAgentDecision,
@@ -52,6 +53,8 @@ import {
 
 /** 连续格式错误或暂时模型故障至多修复三次，且计入总模型轮数。 */
 const MAX_DECISION_ERRORS = 3;
+/** 每完成四次动作提醒保存独立结论，仍计入原模型与时间预算。 */
+const CRITERIA_REVIEW_ACTIONS = 4;
 /** 任务进度不足有独立恢复额度，不归类为模型格式错误。 */
 const MAX_WORKFLOW_RECOVERIES = 3;
 /** 证据上传与浏览器状态轮询不会占用新的模型调用。 */
@@ -135,6 +138,10 @@ class Execution {
   private confirmationKeys = new Set<string>();
   /** 每步只给一次缺项修正反馈，后续仍受原预算和明确阻塞规则约束。 */
   private readonly incompleteFeedback = new Set<number>();
+  /** 每步准备仅复核一次 OTHER 阻塞，真实身份问题不延迟交接。 */
+  private readonly preparationReviewed = new Set<number>();
+  /** 两次阶段性验收提示之间的动作基线；切步和保存结论后重新计数。 */
+  private lastCriteriaReview = 0;
   /** 人工证明仅绑定当前控制代次；模型不能自行签发。 */
   private readonly confirmedChecks = new Map<string, number>();
   /** 每一步最多一次身份恢复，失败后继续后续独立步骤。 */
@@ -601,8 +608,28 @@ class Execution {
       await pause(POLL_MS, this.guard.signal);
     }
   }
-  /** 在统一安全点取得预算快照；裁剪只影响发给模型的副本。 */
+  /** 在统一安全点取得预算快照并登记有界审查提示；裁剪只影响发给模型的副本。 */
   private context(): DecisionInput {
+    const savedCriteria = this.criteria.values();
+    const pendingCriterionIds = this.task.acceptanceCriteria
+      .filter(
+        (criterion) =>
+          !savedCriteria.some(
+            (saved) =>
+              saved.criterionId === criterion.id &&
+              ['PASSED', 'FAILED'].includes(saved.verdict),
+          ),
+      )
+      .map((criterion) => criterion.id);
+    const verificationReview =
+      !this.isSetup() &&
+      !this.isCleanup() &&
+      !!this.grant.task.steps &&
+      pendingCriterionIds.length > 0 &&
+      this.details.actions - this.lastCriteriaReview >= CRITERIA_REVIEW_ACTIONS
+        ? { pendingCriterionIds }
+        : undefined;
+    if (verificationReview) this.lastCriteriaReview = this.details.actions;
     return decisionContext({
       task: this.task,
       setupPhase: this.setupPhase,
@@ -616,7 +643,8 @@ class Execution {
       executionStep: this.recheck
         ? this.grant.task.steps?.find((step) => step.type === 'setup')
         : this.grant.task.steps?.[this.stepIndex],
-      recordedCriteria: this.recheck ? [] : this.criteria.values(),
+      recordedCriteria: this.recheck ? [] : savedCriteria,
+      verificationReview,
       cleanup: this.isCleanup(),
       policyChecks: this.policyResults(),
       preconditions: [
@@ -1551,6 +1579,7 @@ class Execution {
         }
         this.syncPolicyChecks();
         const input = this.context();
+        const remainingActions = JSON.parse(input.text).budgetRemaining.actions;
         const decisionIndex = ++this.decisionIndex;
         input.traceRequest = async (request) => {
           traced = true;
@@ -1727,6 +1756,18 @@ class Execution {
         if (decision.type === 'browser.act') {
           this.operation(decision);
         }
+        if (
+          decision.type === 'verification.block' &&
+          decision.reasonCode === 'OTHER' &&
+          this.setupPhase === 'PREPARING' &&
+          !this.preparationReviewed.has(this.stepIndex) &&
+          remainingActions > 0 &&
+          this.current!.targets.some((target) => target.operations?.length)
+        ) {
+          this.preparationReviewed.add(this.stepIndex);
+          this.feedback = PREPARATION_BLOCK_REVIEW;
+          continue;
+        }
         const readings = this.interactions.validate(output.workflow?.readings);
         const readingRevision = this.interactions.view().revision;
         const revision = this.workflow.view().revision;
@@ -1739,6 +1780,7 @@ class Execution {
                 (!this.stepEvidence.has(id) && !this.readinessEvidence.has(id)),
             ),
           ),
+          remainingActions,
         );
         this.syncPolicyChecks();
         this.interactions.record(readings);
@@ -1847,7 +1889,7 @@ class Execution {
               if (blocked) return blocked;
               continue;
             }
-          } else this.workflow.assertFinish(decision);
+          }
           // TRACE 先落地再校验引用；逐项提交也必须有真实交付的证据。
           if (
             decision.criteria.some((c) =>
@@ -1903,6 +1945,7 @@ class Execution {
             await this.client.recordSteps(this.grant, this.stepResults);
           }
           if (changed) {
+            this.lastCriteriaReview = this.details.actions;
             this.tracker.reset();
             this.changes = undefined;
           }
@@ -2281,6 +2324,7 @@ class Execution {
       this.image = undefined;
       this.feedback = null;
       this.interactions = new InteractionProgress();
+      this.lastCriteriaReview = this.details.actions;
       this.settlePending = false;
       this.tracker.reset();
       this.changes = undefined;

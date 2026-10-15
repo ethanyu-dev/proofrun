@@ -799,6 +799,108 @@ function planned(execution, network = false) {
     ];
 }
 
+// 范围：错误的权限阻塞得到一次复核，语言操作仍由模型选择并经过两阶段门禁；页面、账号和模型均为夹具。
+test('准备阶段可以自行切换指定语言，过早 OTHER 阻塞只复核一次', async () => {
+  const client = new PlannedControl();
+  const command = client.command.bind(client);
+  let chinese = false;
+  client.command = async (...args) => {
+    if (args[2].action === 'click' && args[2].target === '@language')
+      chinese = true;
+    const result = await command(...args);
+    if (args[2].type === 'browser.observe') {
+      result.data.text = chinese ? '简体中文活动页' : 'English activity page';
+      result.data.targets = [
+        {
+          target: '@language',
+          role: 'button',
+          name: '简体中文',
+          operations: ['click'],
+        },
+      ];
+      result.data.documents = [
+        {
+          url: result.data.url,
+          isMainFrame: true,
+          frameId: 'main',
+          lang: chinese ? 'zh-CN' : 'en',
+        },
+      ];
+    }
+    return result;
+  };
+  let reviews = 0;
+  let blockedOnce = false;
+  const { report, seen } = await run(
+    (context) => {
+      if (context.setupPhase === 'PREPARING' && !chinese) {
+        if (!blockedOnce) {
+          blockedOnce = true;
+          return {
+            type: 'verification.block',
+            reasonCode: 'OTHER',
+            summary: '语言不符，担心切换越权',
+          };
+        }
+        assert.match(context.feedback, /PREPARATION_REVIEW/);
+        assert(
+          context.preconditions.some(
+            (p) => p.id === 'platform-guest' && p.status === 'SATISFIED',
+          ),
+        );
+        reviews++;
+        return { type: 'browser.act', action: 'click', target: '@language' };
+      }
+      return finish(context);
+    },
+    (execution) => {
+      planned(execution);
+      execution.task.steps[0].description =
+        '以未登录访客打开页面，切换简体中文并核对 html lang=zh-CN';
+    },
+    client,
+    ['a'],
+  );
+  assert.equal(report.verdict, 'PASSED', report.summary);
+  assert.equal(reviews, 1);
+  assert.equal(client.requests.length, 0);
+  assert(seen.some(([, phase]) => phase === 'CHECKING'));
+  assert.equal(
+    client.calls.filter((call) => call.operation.action === 'click').length,
+    1,
+  );
+});
+
+// 范围：复核后仍无法准备必须停止，不无限重试或放行业务；不验证真实站点故障分类。
+test('准备阻塞复核不把真实缺口变成自动通过', async () => {
+  const client = new PlannedControl();
+  const command = client.command.bind(client);
+  client.command = async (...args) => {
+    const result = await command(...args);
+    if (args[2].type === 'browser.observe')
+      result.data.targets[0].operations = ['fill'];
+    return result;
+  };
+  let calls = 0;
+  const { report, seen } = await run(
+    () => {
+      calls++;
+      return {
+        type: 'verification.block',
+        reasonCode: 'OTHER',
+        summary: '目标语言入口不可用',
+      };
+    },
+    (execution) => planned(execution),
+    client,
+    ['a'],
+  );
+  assert.equal(calls, 2);
+  assert.equal(report.steps[0].reasonCode, 'SETUP_BLOCKED');
+  assert(!seen.some(([step]) => step === 'a-verify'));
+  assert.equal(client.requests.length, 0);
+});
+
 // 范围：新 plan 不再让模型分类访客、空白证明支持免交接、错误证明阻塞；不验收生产登录态。
 for (const restored of [false, true])
   test(`冻结访客与节点准备证明 ${restored ? '不符' : '一致'}`, async () => {

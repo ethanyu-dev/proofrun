@@ -384,8 +384,8 @@ test('执行器阻止已读题重点击，滚动后用新目标继续读取', as
   );
 });
 
-// 范围：JEV 候选携带稳定阅读状态，误选已读题进入文本恢复且保留重查元数据；不调用真实 JEV。
-test('JEV 不直接执行已读题候选，交回文本模型定位后续内容', async () => {
+// 范围：JEV 不再暴露已读点击候选，必要重访仍经文本恢复且保留元数据；不调用真实 JEV。
+test('JEV 移除已读题候选，重规划时交回文本模型定位后续内容', async () => {
   const observation = {
     ...page(),
     title: 'FAQ',
@@ -400,10 +400,10 @@ test('JEV 不直接执行已读题候选，交回文本模型定位后续内容'
     'jev-test',
     async (_url, _key, _method, body) => {
       const choices = body.questions.next.criteria;
-      const [choice, candidate] = Object.entries(choices).find(
-        ([, item]) => item.operation === 'CLICK',
+      assert(
+        !Object.values(choices).some((item) => item.operation === 'CLICK'),
       );
-      assert.equal(candidate.field.reading.status, 'recorded');
+      const choice = 'REPLAN';
       return {
         answers: {
           next: {
@@ -419,7 +419,7 @@ test('JEV 不直接执行已读题候选，交回文本模型定位后续内容'
     {
       async decide(input) {
         reviews++;
-        assert.match(JSON.parse(input.text).feedback, /已有读取证据/);
+        assert.match(JSON.parse(input.text).feedback, /REPLAN/);
         return {
           decision: { type: 'browser.act', action: 'scroll', value: 'down' },
           workflow: { revisitReason: '原任务另有收起检查，本轮先定位后续题' },
@@ -450,4 +450,69 @@ test('JEV 不直接执行已读题候选，交回文本模型定位后续内容'
   assert.equal(reviews, 1);
   assert.equal(output.decision.action, 'scroll');
   assert.match(output.workflow.revisitReason, /收起检查/);
+});
+
+// 范围：排除已读候选后仍保留未读点击与滚动，当前编号对应真实候选；不测试供应商选题质量或实际 DOM。
+test('JEV 在已读与未读题并存时只提供未读题的普通点击', async () => {
+  const observation = {
+    ...page(),
+    title: 'FAQ',
+    text: '第一题已读，第二题未读',
+    atomic: false,
+  };
+  observation.targets = observation.targets.slice(0, 2);
+  observation.targets[0].name = '第一题';
+  observation.targets[1].name = '第二题';
+  const model = new JevModel(
+    config,
+    'fixture',
+    'jev-test',
+    async (_url, _key, _method, body) => {
+      const choices = body.questions.next.criteria;
+      const clicks = Object.entries(choices).filter(
+        ([, candidate]) => candidate.operation === 'CLICK',
+      );
+      assert.equal(clicks.length, 1);
+      assert.equal(clicks[0][1].field.reading.itemId, 'item-2');
+      assert(choices.SCROLL_DOWN);
+      const choice = clicks[0][0];
+      return {
+        answers: {
+          next: {
+            choice,
+            confidence: 1,
+            probabilities: Object.fromEntries(
+              Object.keys(choices).map((id) => [id, Number(id === choice)]),
+            ),
+          },
+        },
+      };
+    },
+    {
+      async decide() {
+        throw new Error('当前存在未读目标，不应反复审查已读题');
+      },
+    },
+  );
+  const output = await model.decide(
+    {
+      text: JSON.stringify({
+        task: grant().task,
+        observation,
+        recentOperations: [],
+        feedback: null,
+        budgetRemaining: { actions: 10 },
+        interactionProgress: {
+          items: [{ status: 'recorded' }, { status: 'pending' }],
+          currentTargets: [
+            { target: '@a', itemId: 'item-1', status: 'recorded' },
+            { target: '@b', itemId: 'item-2', status: 'pending' },
+          ],
+        },
+      }),
+    },
+    new AbortController().signal,
+  );
+  assert.equal(output.decision.action, 'click');
+  assert.equal(output.decision.target, '@b');
 });
