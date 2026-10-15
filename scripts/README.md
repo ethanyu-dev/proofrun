@@ -48,7 +48,7 @@ pnpm test:jev:agent-baseline
 
 ```dotenv
 TYPESAFE_API_KEY=你的真实密钥
-TYPESAFE_MODEL=jev-latest
+TYPESAFE_MODEL=jev-1.14.0
 ```
 
 使用 `pnpm dev:local` 时，若 JEV 需要本机 HTTP 代理，可在同一文件中追加以下配置（端口按本机代理修改）。启动脚本将这些设置传给 Agent；Node 24 的 `fetch` 需要 `NODE_USE_ENV_PROXY=1` 才会使用代理。`NO_PROXY` 中列出控制面及需要直连的文本模型域名，Docker 中的浏览器代理由节点单独配置。修改后需重启 Agent 才能生效。
@@ -94,3 +94,5 @@ node --env-file=/absolute/path/to/jev.env scripts/test-jev.mjs
 - `result.json`：输入证据摘要、实际模型、延迟、用量、选择概率、置信度、目标和预期匹配结果。
 
 `MATCHED_EXPECTATION` 仅表示定向建议匹配，`EXPLORATORY_ONLY` 仅表示探索性调用完成。HTTP 错误、非法响应或网络错误会单独记录；不将服务失败计作建议错误。完整任务是否通过，需要后续接入执行循环并核验实际证据。
+
+Jev 离线证据建议与对照脚本默认固定 `jev-1.14.0`，已有 `.proofrun/local.env` 中的 `TYPESAFE_MODEL` 会覆盖默认值。脚本继续使用各自的短上下文；worker 的实验长上下文配置见 [Agent README](../apps/agent/README.md#jev-版本与实验长上下文)。

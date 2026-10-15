@@ -2,7 +2,7 @@ import { prepareIdentitySelection } from './model/identity-selector.js';
 import { readFile } from 'node:fs/promises';
 import { validateVerificationTask } from '@proofrun/contracts';
 import { ControlClient } from './client.js';
-import { loadConfig } from './config.js';
+import { DEFAULT_JEV_MODEL, loadConfig } from './config.js';
 import { execute } from './execution/runner.js';
 import { AgentFault, pause } from './http.js';
 import { ChatModel } from './model/chat.js';
@@ -43,7 +43,7 @@ async function worker(once: boolean, slot: number): Promise<void> {
             {
               ...config,
               model: jev
-                ? `JEV (${process.env.TYPESAFE_MODEL ?? 'jev-latest'}) + ${config.model}`
+                ? `JEV (${process.env.TYPESAFE_MODEL ?? DEFAULT_JEV_MODEL}) + ${config.model}`
                 : config.model,
             },
             client,

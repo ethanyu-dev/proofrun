@@ -8,7 +8,7 @@ import {
   unassociatedTargetReview,
 } from '../prompts/jev.js';
 import type { AgentDecision } from '@proofrun/contracts';
-import type { AgentConfig } from '../config.js';
+import { DEFAULT_JEV_MODEL, type AgentConfig } from '../config.js';
 import type { WorkflowView } from '../execution/workflow.js';
 import type { Observation } from '../evidence/observation.js';
 import { AgentFault, jsonRequest } from '../http.js';
@@ -27,10 +27,20 @@ const ENDPOINT = 'https://api.typesafe.ai/v1/systemone';
 
 /** 单 Choice 最多 255 项；200 个动作给五个控制选项和后续扩展留余量。 */
 const ACTION_LIMIT = 200;
-/** 字符限额只是传输保护，单问题 token 预算另外保守估计并预留模型开销。 */
-const JEV_REQUEST_CHARS = 64000;
-const JEV_TOKEN_BUDGET = 28000;
-const JEV_PAGE_CHARS = 14000;
+/** 默认单问题上限为 32k token；字符保护与保守估算独立，预留服务端模板开销。 */
+const DEFAULT_CONTEXT = {
+  requestChars: 64_000,
+  tokens: 28_000,
+  pageChars: 14_000,
+};
+/** 实验模式低于官方 262k token 上限，只放宽请求和当前页；共享上下文上限仍先执行。 */
+const LONG_CONTEXT = {
+  requestChars: 256_000,
+  tokens: 224_000,
+  pageChars: 64_000,
+};
+/** 仅 TypeSafe 决策请求需要此实验头，不能传播到填写或验收模型。 */
+const LONG_CONTEXT_HEADER = 'TypeSafe-Danger-Zone-Long-Context';
 
 /** 选择必须属于本轮候选，概率不可缺项、越界或与最大概率冲突。 */
 export function jevChoice(
@@ -81,7 +91,7 @@ export class JevModel implements DecisionModel {
     /** 仅发往固定 TypeSafe 端点的服务凭据。 */
     private readonly key: string,
     /** TypeSafe 模型名，报告按真实请求分别计数。 */
-    private readonly model = 'jev-latest',
+    private readonly model = DEFAULT_JEV_MODEL,
     /** 测试可注入请求端口；生产固定使用 TypeSafe 地址。 */
     private readonly request: typeof jsonRequest = jsonRequest,
     /** 测试替换审查器，不影响生产模型配置。 */
@@ -271,7 +281,8 @@ export class JevModel implements DecisionModel {
       text: evidenceExcerpt(p.text, objective, 2000),
       truncated: p.truncated || p.text.length > 2000,
     }));
-    const compactText = evidenceExcerpt(page.text, objective, JEV_PAGE_CHARS);
+    const budget = this.config.jevLongContext ? LONG_CONTEXT : DEFAULT_CONTEXT;
+    const compactText = evidenceExcerpt(page.text, objective, budget.pageChars);
     const body = {
       model: this.model,
       state: {
@@ -280,7 +291,7 @@ export class JevModel implements DecisionModel {
         observation: {
           ...page,
           text: compactText,
-          textTruncated: compactText !== page.text,
+          textTruncated: page.truncated === true || compactText !== page.text,
           targets: undefined,
         },
         omittedTargets:
@@ -297,14 +308,14 @@ export class JevModel implements DecisionModel {
     };
     while (
       compactHistory.length &&
-      (JSON.stringify(body).length > JEV_REQUEST_CHARS ||
-        estimatedTokens(body) > JEV_TOKEN_BUDGET)
+      (JSON.stringify(body).length > budget.requestChars ||
+        estimatedTokens(body) > budget.tokens)
     )
       compactHistory.shift();
     // 先移除低优先级候选，再转交审查；新增弹层候选排在前面，不因页尾位置被裁剪。
     while (
-      (JSON.stringify(body).length > JEV_REQUEST_CHARS ||
-        estimatedTokens(body) > JEV_TOKEN_BUDGET) &&
+      (JSON.stringify(body).length > budget.requestChars ||
+        estimatedTokens(body) > budget.tokens) &&
       actions.size > 1
     ) {
       const last = [...actions.keys()].at(-1)!;
@@ -319,8 +330,8 @@ export class JevModel implements DecisionModel {
         new Set([...actions.values()].map((a) => a.target)).size;
     }
     if (
-      JSON.stringify(body).length > JEV_REQUEST_CHARS ||
-      estimatedTokens(body) > JEV_TOKEN_BUDGET
+      JSON.stringify(body).length > budget.requestChars ||
+      estimatedTokens(body) > budget.tokens
     )
       return review(
         '当前页面候选与任务定义超过 JEV 请求预算，使用完整上下文核对下一步',
@@ -338,6 +349,10 @@ export class JevModel implements DecisionModel {
           body,
           this.config.modelMs,
           signal,
+          this.config.jevLongContext &&
+            estimatedTokens(body) > DEFAULT_CONTEXT.tokens
+            ? { [LONG_CONTEXT_HEADER]: 'true' }
+            : undefined,
         ),
       )) as typeof raw;
     } catch (error) {
