@@ -214,6 +214,8 @@ async fn empty_engine_binary_is_not_reported_as_success() {
         identity_library_file: None,
         identity_seed_file: None,
         full_profile: false,
+        node_template: false,
+        template_state: None,
         base_profile_directory: None,
         session: uuid::Uuid::new_v4().to_string(),
         directory: home.path().into(),

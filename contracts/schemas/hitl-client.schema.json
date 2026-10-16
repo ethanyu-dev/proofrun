@@ -16,7 +16,8 @@
         "token": {
           "type": "string",
           "minLength": 32,
-          "maxLength": 256
+          "maxLength": 512,
+          "description": "任务入口使用专属令牌；节点模板入口接受 Console 管理员凭据。"
         }
       },
       "required": ["type", "id", "token"]

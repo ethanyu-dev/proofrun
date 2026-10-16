@@ -7,6 +7,7 @@ import { TaskListPage } from './pages/task-list';
 import { ReportDetailPage } from './pages/report-detail';
 import { TaskDetailPage } from './pages/task-detail';
 import { TaskSubmitPage } from './pages/task-submit';
+import { NodeProfilePage } from './pages/node-profile';
 import { NodesPage } from './pages/nodes';
 import { IdentitiesPage } from './pages/identities';
 import { HitlPage } from './pages/hitl';
@@ -63,6 +64,9 @@ function App() {
         </section>
       </main>
     );
+  const nodeProfileId = /^\/node-profiles\/([A-Za-z0-9_-]{1,128})$/.exec(
+    path,
+  )?.[1];
   const taskId = TASK_ROUTE.exec(path)?.[1];
   const reportId = REPORT_ROUTE.exec(path)?.[1];
   let page;
@@ -73,6 +77,8 @@ function App() {
   else if (reportId)
     page = <ReportDetailPage key={reportId} api={api} id={reportId} />;
   else if (taskId) page = <TaskDetailPage key={taskId} api={api} id={taskId} />;
+  else if (nodeProfileId)
+    page = <NodeProfilePage key={nodeProfileId} api={api} id={nodeProfileId} />;
   else if (path === '/nodes') page = <NodesPage api={api} />;
   else if (path === '/identities') page = <IdentitiesPage api={api} />;
   else
@@ -105,6 +111,7 @@ function App() {
                 key={href}
                 aria-current={
                   path === href ||
+                  (href === '/nodes' && !!nodeProfileId) ||
                   ((href === '/tasks' || href === '/reports') &&
                     path.startsWith(`${href}/`))
                     ? 'page'

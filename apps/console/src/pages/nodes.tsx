@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { NodeProfileStart } from '../components/node-profile-start';
 import { NodeEnrollment } from '../components/node-enrollment';
 import { NodeVersion } from '../components/node-version';
 import {
@@ -32,6 +33,8 @@ export function NodesPage({ api }: { api: ApiClient }) {
   const resource = useResource<
     Omit<NodeList, 'nodes'> & { nodes: ConsoleNode[] }
   >(api, '/v1/nodes');
+  const [profileNode, setProfileNode] =
+    useState<Pick<NodeSummary, 'id' | 'name'>>();
   const [routingNode, setRoutingNode] = useState<NodeSummary>();
   const [savedRouting, setSavedRouting] = useState(false);
   const [rotation, setRotation] = useState<string>();
@@ -76,6 +79,15 @@ export function NodesPage({ api }: { api: ApiClient }) {
           注册节点
         </button>
       </PageHeader>
+      {profileNode && (
+        <NodeProfileStart
+          key={profileNode.id}
+          api={api}
+          nodeId={profileNode.id}
+          name={profileNode.name}
+          close={() => setProfileNode(undefined)}
+        />
+      )}
       {rotation && (
         <NodeEnrollment
           key={rotation}
@@ -247,6 +259,12 @@ export function NodesPage({ api }: { api: ApiClient }) {
                       role="group"
                       aria-label={`${node.name} 管理操作`}
                     >
+                      <button
+                        className="text-button"
+                        onClick={() => setProfileNode(node)}
+                      >
+                        默认 profile
+                      </button>
                       {node.occupied === 0 && (
                         <button
                           className="text-button"

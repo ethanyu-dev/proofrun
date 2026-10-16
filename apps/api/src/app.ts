@@ -26,6 +26,7 @@ import { NodeGateway } from './modules/nodes/gateway.js';
 import { ArtifactStore } from './modules/reports/artifacts.js';
 import { Coordinator } from './modules/scheduling/coordinator.js';
 import { ExecutionControl } from './modules/scheduling/control.js';
+import { NodeProfiles } from './modules/nodes/profiles.js';
 import { HitlService } from './modules/hitl/service.js';
 import { TaskReader } from './modules/tasks/reader.js';
 import { LiveService } from './modules/hitl/live.js';
@@ -94,6 +95,7 @@ export async function buildApp(
     app.log,
   );
   coordinator.gateway = gateway;
+  const nodeProfiles = new NodeProfiles(db, config, coordinator);
   const hitl = new HitlService(
     db,
     config,
@@ -101,6 +103,7 @@ export async function buildApp(
     coordinator,
     gateway,
     library,
+    nodeProfiles,
   );
   const live = new LiveService(db, gateway, config.adminToken);
   const modelCalls = new ModelCalls(db);
@@ -240,6 +243,29 @@ export async function buildApp(
     (socket) => hitl.accept(socket),
   );
   app.get(
+    '/v1/node-profiles/connect',
+    {
+      websocket: true,
+      preValidation: async (request) => {
+        const origin = request.headers.origin;
+        const local =
+          origin &&
+          /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) &&
+          new URL(origin).host === request.headers.host;
+        if (
+          origin !== new URL(config.consoleUrl ?? config.publicUrl).origin &&
+          !local
+        )
+          throw new ApiError(
+            403,
+            'HITL_ORIGIN',
+            'Invalid handling page origin',
+          );
+      },
+    },
+    (socket) => hitl.accept(socket, true),
+  );
+  app.get(
     '/v1/hitl/relay',
     { websocket: true, preValidation: node },
     (socket, request) =>
@@ -317,6 +343,30 @@ export async function buildApp(
       if (!validateNodeRoutingWrite(request.body))
         throw new ApiError(400, 'INVALID_ROUTING', '域名配置格式无效');
       return routing.save(request.params.id, request.body);
+    },
+  );
+  // 模板维护的创建、恢复和关闭都需要 Console 鉴权，地址不携带可分享的处理令牌。
+  app.post<{ Params: { id: string } }>(
+    '/v1/nodes/:id/profile',
+    { preHandler: admin },
+    (request) => nodeProfiles.create(request.params.id, request.body),
+  );
+  app.get<{ Params: { id: string } }>(
+    '/v1/nodes/:id/profile',
+    { preHandler: admin },
+    (request) => nodeProfiles.current(request.params.id),
+  );
+  app.get<{ Params: { id: string } }>(
+    '/v1/node-profiles/:id',
+    { preHandler: admin },
+    (request) => nodeProfiles.status(request.params.id),
+  );
+  app.post<{ Params: { id: string } }>(
+    '/v1/node-profiles/:id/close',
+    { preHandler: admin },
+    async (request) => {
+      await nodeProfiles.finish(request.params.id, undefined, false);
+      return { closing: true };
     },
   );
   app.get('/v1/nodes', { preHandler: admin }, async () => {
@@ -723,6 +773,7 @@ export async function buildApp(
     if (stopped || ticking) return;
     ticking = coordinator
       .tick()
+      .then(() => nodeProfiles.tick())
       .catch((error) => {
         app.log.error({ err: error }, '调度扫描失败');
         if (!db.healthy) void app.close();

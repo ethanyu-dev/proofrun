@@ -66,6 +66,8 @@ pub struct Session {
     identity_seed: Option<serde_json::Value>,
     /// 新身份任务复制完整 profile，历史任务保留存储状态语义。
     full_profile: bool,
+    /// Console 模板维护使用节点保留槽位，保存后由控制面关闭会话。
+    node_template: bool,
     restore_auth: bool,
     /// 首次自动复用允许无快照，显式恢复仍要求文件存在。
     restore_auth_if_present: bool,
@@ -286,6 +288,16 @@ impl Sessions {
         let (renew, renew_rx) = watch::channel(deadline.min(hard_deadline));
         let (closed_tx, closed) = watch::channel(None);
         let raw = serde_json::to_value(&command.command).unwrap();
+        let node_template = raw["authState"]["nodeTemplate"] == true;
+        if node_template
+            && (raw["authState"]["fullProfile"] != true
+                || raw["authState"]["stateId"] != crate::profile_snapshots::NODE_TEMPLATE_ID)
+        {
+            return Err(Fault::rejected(
+                "INVALID_NODE_TEMPLATE",
+                "节点模板必须使用完整 profile 保留槽位",
+            ));
+        }
         let session = Arc::new(Session {
             lease_id,
             fence,
@@ -293,6 +305,7 @@ impl Sessions {
             hard_deadline,
             identity_seed: raw.get("identitySeed").cloned(),
             full_profile: raw["authState"]["fullProfile"] == true,
+            node_template,
             auth_state,
             restore_auth,
             restore_auth_if_present,
@@ -448,6 +461,11 @@ async fn start(
             identity_library_file: config.identity_library_file.clone(),
             identity_seed_file: seed_path,
             full_profile: session.full_profile,
+            node_template: session.node_template,
+            template_state: Some(crate::auth::state_path(
+                &config.home,
+                crate::profile_snapshots::NODE_TEMPLATE_ID,
+            )?),
             base_profile_directory: config.base_profile_directory.clone(),
             session: record.launch_id.clone(),
             directory,

@@ -101,6 +101,10 @@ export type NodeEvent =
         profileTabs?: boolean;
         environmentProof?: boolean;
         fullProfile?: boolean;
+        /**
+         * 支持 Console 维护节点默认 profile，并供新身份复制。
+         */
+        nodeProfileManagement?: boolean;
       };
       /**
        * 节点接受的租约和会话硬期限上限，控制面不得超额授权。

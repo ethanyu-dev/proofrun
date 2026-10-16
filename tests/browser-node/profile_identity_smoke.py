@@ -91,7 +91,35 @@ def run():
         with host(root, root / 'auth' / 'other.json', True, optional=True, full_profile=True) as command:
             assert prepare(command)['reasonCode'] == 'LOGIN_RECIPE_MISSING'
             assert 'guest' in command(type='browser.observe')['text']
-        print('full profile smoke: Cookie loading, HITL publish/restart, IndexedDB, tab restoration, trace continuity, immutable baseline and identity isolation passed')
+        # 范围：节点模板保存后不重启；新身份无种子时保留会话 Cookie、localStorage 与 IndexedDB。
+        # 真实 Chrome 回环测试不经过 Console 鉴权，也不代表生产 SSO 或 Linux 进程监管验收。
+        template = root / 'auth' / 'node-default-template.json'
+        with host(root, template, True, optional=True, full_profile=True, node_template=True) as command:
+            command(type='browser.act', action='navigate', target=origin + '/human')
+            command(type='browser.cookies.set', url=origin, name='session', value='fixture-secret', httpOnly=True)
+            command(type='browser.act', action='reload')
+            observe(command, 'indexed-human')
+            result = command(type='browser.auth.save')
+            assert result['saved'] and not result['profileRestarted'], result
+        empty_seed = root / 'empty-seed.json'
+        empty_seed.write_text(json.dumps({'url': origin, 'cookies': []}))
+        empty_seed.chmod(0o600)
+        inherited_state = root / 'auth' / 'inherited.json'
+        with host(root, inherited_state, True, optional=True, full_profile=True, seed=empty_seed, template_state=template) as command:
+            assert prepare(command)['reasonCode'] == 'NODE_TEMPLATE_LOADED'
+            observed = observe(command, 'indexed-human')
+            assert 'member' in observed and 'confirmed-team' in observed, observed
+            command(type='browser.act', action='navigate', target=origin + '/business')
+            observe(command, 'indexed-business')
+        # 范围：任务副本不回写模板，显式 Cookie 种子覆盖目标源登录；不测试跨站 Cookie 属性组合。
+        with host(root, root / 'auth' / 'inherited-next.json', True, optional=True, full_profile=True, template_state=template) as command:
+            assert prepare(command)['reasonCode'] == 'NODE_TEMPLATE_LOADED'
+            assert 'confirmed-team' in observe(command, 'indexed-human')
+        with host(root, root / 'auth' / 'seed-override.json', True, optional=True, full_profile=True, seed=seed, template_state=template) as command:
+            assert prepare(command)['source'] == 'cookies'
+            observed = observe(command, 'guest')
+            assert 'confirmed-team' not in observed, observed
+        print('full profile smoke: Cookie loading, HITL publish/restart, IndexedDB, tab restoration, trace continuity, immutable baseline, node template inheritance and identity isolation passed')
     finally:
         server.shutdown()
         server.server_close()

@@ -228,6 +228,10 @@
             },
             "fullProfile": {
               "type": "boolean"
+            },
+            "nodeProfileManagement": {
+              "type": "boolean",
+              "description": "支持 Console 维护节点默认 profile，并供新身份复制。"
             }
           },
           "required": [

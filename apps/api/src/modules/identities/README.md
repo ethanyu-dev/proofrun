@@ -10,7 +10,7 @@ Cookies 接受 `name=value; name=value` 或 JSON 数组 `[{"name":"session","val
 
 1. Worker 领取独立的身份选择工作。薄身份 agent 单次调用模型，只读取 Case 要求和身份摘要，返回一个候选或“无需身份 / 需要人工”。提示词位于 `apps/agent/src/prompts/identity-selector.ts`，不运行浏览器循环。
 2. 同一对照轮次共享选择。控制面获得账号并发租约后，要求支持 `fullProfile` 的 Browser Node 创建独立会话。并发数是账号的全局会话上限，只有浏览器确认关闭才释放。
-3. 节点复制完整、已关闭的 profile 基准。首次使用可复制节点的 `base_profile_directory` 环境模板；未配置则从空 profile 开始。首次准备清除目标站点的旧身份存储、注入 Cookie 并刷新。已有人工基准时直接恢复它，不再注入更旧的种子。
+3. 节点复制完整、已关闭的 profile 基准。首次使用优先复制 Console 节点管理保存的默认模板，再回退到 `base_profile_directory` 环境模板或空 profile。有 Cookie 种子时清除目标站点的旧身份存储、注入 Cookie 并刷新；没有种子时保留托管默认模板中的登录。已有身份人工基准时直接恢复它，不再注入更旧的种子。
 4. 加载成功只表示状态已注入，执行 Agent 仍根据页面核验登录和 Case 的条件。没有合适身份、缺失 Cookie 或页面身份无效时进入 HITL。没有候选时创建内部待准备身份，人工成功后才出现在身份库。
 5. 普通任务完成、失败和清理都不更新基准。只有 HITL 逐项确认完成，才关闭浏览器、发布完整 profile 副本并重启任务继续执行。浏览器退出可能删除会话 Cookie，因此完整目录同时保存同版本的会话状态补充文件。旧并发任务不能覆盖较新的人工基准。
 
