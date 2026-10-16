@@ -1,6 +1,14 @@
 import type { AgentConfig } from '../config.js';
 import { AgentFault, jsonRequest } from '../http.js';
 import { IDENTITY_SELECTOR_PROMPT } from '../prompts/identity-selector.js';
+import {
+  reasoningParameters,
+  thinkingEnabled,
+  toolChoice,
+} from './reasoning.js';
+
+/** 身份选择租约为 120 秒，思考模式仍预留 10 秒供结果回写与传输。 */
+const IDENTITY_REASONING_MS = 110_000;
 
 /** 输入只包含原始要求和目录摘要，不接收浏览器状态或凭据。 */
 export interface IdentitySelectionInput {
@@ -37,10 +45,13 @@ export async function selectIdentity(
 ): Promise<IdentityChoice> {
   const body = {
     model: config.model,
-    ...(config.thinking ? { thinking: { type: config.thinking } } : {}),
+    ...reasoningParameters(config),
     stream: false,
     parallel_tool_calls: false,
-    [config.tokenParameter]: Math.min(config.maxTokens, 2000),
+    // 思考 token 与最终工具参数共享输出额度，避免沿用短 JSON 的 2000 token 限制。
+    [config.tokenParameter]: thinkingEnabled(config)
+      ? config.maxTokens
+      : Math.min(config.maxTokens, 2000),
     messages: [
       { role: 'system', content: IDENTITY_SELECTOR_PROMPT },
       {
@@ -70,14 +81,17 @@ export async function selectIdentity(
         },
       },
     ],
-    tool_choice: 'required',
+    tool_choice: toolChoice(config),
   };
   const raw = (await jsonRequest(
     `${config.modelUrl}/chat/completions`,
     config.modelKey,
     'POST',
     body,
-    Math.min(config.modelMs, 60_000),
+    Math.min(
+      config.modelMs,
+      thinkingEnabled(config) ? IDENTITY_REASONING_MS : 60_000,
+    ),
     signal,
   )) as {
     choices?: Array<{

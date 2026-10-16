@@ -11,6 +11,11 @@ import { ApiError, canonical } from '../../domain.js';
 import type { Coordinator } from '../scheduling/coordinator.js';
 import { validateCaseProfile, type CaseProfile } from './profile.js';
 import {
+  extendRerunTimeBudget,
+  parseRerunTimeBudget,
+  type RerunTimeBudget,
+} from './rerun-budget.js';
+import {
   caseArmIds,
   compileCase,
   MAX_CASE_BATCH,
@@ -36,6 +41,8 @@ export class CaseV2Service {
       VerificationTask,
       'budget' | 'stepBudget'
     >,
+    /** 仅作用于新身份；相同 caseId 重提仍返回首次冻结的预算。 */
+    private readonly timeBudget?: RerunTimeBudget,
   ) {}
 
   /** 身份不是任意内部任务路径；清理结果也只通过所属 case 读取。 */
@@ -133,6 +140,7 @@ export class CaseV2Service {
             );
           else delete compiled.stepBudget;
         }
+        if (this.timeBudget) extendRerunTimeBudget(compiled, this.timeBudget);
         definitions.push(compiled);
       }
     }
@@ -145,6 +153,7 @@ export class CaseV2Service {
     id: string,
     caseId: unknown,
     budgetMode: 'current' | 'original' = 'current',
+    timeBudget?: unknown,
   ): Promise<CaseResultV2> {
     if (
       typeof caseId !== 'string' ||
@@ -152,6 +161,7 @@ export class CaseV2Service {
       caseId === id
     )
       throw new ApiError(400, 'INVALID_RERUN', '重跑需要一个新的有效 caseId');
+    const time = parseRerunTimeBudget(timeBudget);
     const { definition } = await this.stored(id);
     const profile: CaseProfile = {
       // 历史快照省略开关时沿用旧语义，避免新建默认值改变重跑的登录与人工权限。
@@ -183,6 +193,7 @@ export class CaseV2Service {
               : {}),
           }
         : undefined,
+      time,
     );
     const [result] = await service.submit([
       { ...structuredClone(definition.caseV2Definition!), caseId },

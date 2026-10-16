@@ -430,13 +430,18 @@ export async function buildApp(
     { preHandler: admin },
     async (request, reply) => {
       const body = request.body as
-        { caseId?: unknown; budgetMode?: 'current' | 'original' } | undefined;
+        | {
+            caseId?: unknown;
+            budgetMode?: 'current' | 'original';
+            timeBudget?: unknown;
+          }
+        | undefined;
       if (
         !body ||
         typeof body !== 'object' ||
         Array.isArray(body) ||
         Object.keys(body).some(
-          (key) => !['caseId', 'budgetMode'].includes(key),
+          (key) => !['caseId', 'budgetMode', 'timeBudget'].includes(key),
         ) ||
         (body.budgetMode !== undefined &&
           !['current', 'original'].includes(body.budgetMode)) ||
@@ -450,7 +455,12 @@ export async function buildApp(
       return reply
         .code(202)
         .send(
-          await casesV2.rerun(request.params.id, body.caseId, body.budgetMode),
+          await casesV2.rerun(
+            request.params.id,
+            body.caseId,
+            body.budgetMode,
+            body.timeBudget,
+          ),
         );
     },
   );

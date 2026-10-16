@@ -66,7 +66,23 @@ test('薄身份 Agent 只接收目录摘要，拒绝候选外引用', async () =
       await selectIdentity(settings, input, new AbortController().signal),
       answer,
     );
-    assert.equal(requests.length, 1);
+    // 同一夹具补充 max 身份选择协议，输出额度包含推理 token；不代表实际登录或供应商验收。
+    await selectIdentity(
+      {
+        ...settings,
+        thinking: 'enabled',
+        reasoningEffort: 'max',
+        maxTokens: 8192,
+      },
+      input,
+      new AbortController().signal,
+    );
+    const maxRequest = requests.at(-1);
+    assert.equal(maxRequest.reasoning_effort, 'max');
+    assert.equal(maxRequest.tool_choice, 'auto');
+    assert.deepEqual(maxRequest.thinking, { type: 'enabled' });
+    assert.equal(maxRequest.max_tokens, 8192);
+    assert.equal(requests.length, 2);
     assert.equal(requests[0].tools.length, 1);
     assert.ok(!JSON.stringify(requests).includes(input.token));
     answer = {

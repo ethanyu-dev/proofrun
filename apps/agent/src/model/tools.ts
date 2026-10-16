@@ -1,3 +1,4 @@
+import type { DecisionContextData } from '../execution/context.js';
 import { OBSERVATION_REVIEW_ROUNDS } from '../evidence/changes.js';
 import type { AgentDecision } from '@proofrun/contracts';
 import { WORKFLOW_SCHEMA } from '../execution/workflow.js';
@@ -18,10 +19,10 @@ export interface DecisionTool {
 
 /** 每轮只公布当前步骤可用的验收身份、清理能力与滚动容器。 */
 export function decisionTools(
-  text: string,
+  input: string | DecisionContextData,
   tools: DecisionTool[],
 ): DecisionTool[] {
-  const context = JSON.parse(text);
+  const context = typeof input === 'string' ? JSON.parse(input) : input;
   const evidenceIds = visibleEvidenceIds(context);
   const ids: string[] | undefined = context.task?.acceptanceCriteria?.map(
     (c: { id: string }) => c.id,
@@ -49,7 +50,8 @@ export function decisionTools(
             OBSERVATION_REVIEW_ROUNDS) &&
         (tool.type !== 'verification.record' ||
           (!!ids?.length &&
-            (!!context.executionStep || !!context.executionGuidance) &&
+            (!!context.executionStep ||
+              !!(context.executionGuidance || context.executionPolicy)) &&
             (context.executionStep?.type !== 'setup' ||
               context.cleanup === true))),
     )
@@ -86,7 +88,7 @@ export function decisionTools(
       }
       // 同轮结论复用现有验收 schema；先验收旧证据，再执行新动作，不要求额外调用。
       if (
-        context.executionGuidance &&
+        (context.executionGuidance || context.executionPolicy) &&
         context.executionStep?.type !== 'setup' &&
         !context.cleanup &&
         ids?.length &&
@@ -133,7 +135,8 @@ export function decisionTools(
           // 恢复耗尽时明确要求新策略，不能继续生成必定被执行器拒绝的孤立动作。
           if (
             context.workflow.recovery?.remaining === 0 ||
-            (context.executionGuidance && !context.workflow.recovery)
+            ((context.executionGuidance || context.executionPolicy) &&
+              !context.workflow.recovery)
           ) {
             parameters.required = [...(parameters.required ?? []), 'workflow'];
             workflow.required = ['recovery'];
@@ -176,6 +179,41 @@ export function decisionTools(
               ),
             },
           };
+      }
+      // 统一策略只发布一个计划入口，执行器仍复用已有工作流的证据与额度校验。
+      if (
+        context.executionPolicy?.version === 'planned-v1' &&
+        context.workflow &&
+        !context.verificationReview?.final
+      ) {
+        const workflow = parameters.properties
+          .workflow as typeof WORKFLOW_SCHEMA & { required?: string[] };
+        if (workflow) {
+          const plan = structuredClone(workflow.properties.recovery);
+          plan.required = [...plan.required, 'allowedActions'];
+          const properties = workflow.properties as Record<string, unknown>;
+          delete properties.recovery;
+          if (workflow.required)
+            workflow.required = workflow.required.filter(
+              (k) => k !== 'recovery',
+            );
+          if (parameters.required)
+            parameters.required = parameters.required.filter(
+              (k) => k !== 'workflow' || tool.type !== 'browser.act',
+            );
+          if (
+            ['browser.act', 'browser.observe', 'verification.record'].includes(
+              tool.type,
+            )
+          ) {
+            parameters.properties.plan = plan;
+            if (
+              tool.type === 'browser.act' &&
+              (!context.plan || context.plan.remaining === 0)
+            )
+              parameters.required = [...(parameters.required ?? []), 'plan'];
+          }
+        }
       }
       constrainEvidenceRefs(parameters, evidenceIds);
       return {

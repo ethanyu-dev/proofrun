@@ -88,3 +88,17 @@ node tests/browser-node/validate-events.mjs /absolute/path/to/events.jsonl
 需要真实模型时，在浏览器节点主机运行 `python3 tests/agent/guidance-browser-fixture.py`（仅监听 127.0.0.1:8082），分别执行 `/long-form`、`/nested`、`/wizard`。固定模型与预算，检查报告、真实动作和 `/metrics` 的禁止提交计数；此类结果仍仅是本地合成业务。外部回归保留原任务标准、约束、预算，不因无法触发禁止操作而放宽结论。
 
 `tests/agent/settlement.test.mjs` 验证同轮结论先保存、未知副作用后不丢结果、无效证据禁止动作、慢回复后的预算内只读收尾，以及历史正文去重边界。HTTP 模型和页面为夹具，不能替代真实模型完成率比较。真实对照仍使用相同模型、原始任务和预算，分别统计可靠结论与未完成项。
+
+## 统一计划执行回归
+
+`pnpm test:agent` 中的 `planned-execution.test.mjs` 覆盖首轮计划随动作提交、计划字段值复用、结构化复核、批量面板采集、上下文裁剪、请求预算和身份代次失效。回复及控制面由脚本生成，只证明执行协议。
+
+```bash
+# 使用本机固定版本的原生引擎和 Chrome 绝对路径。
+export PROOFRUN_AGENT_BROWSER_BIN=/absolute/path/to/agent-browser
+export PROOFRUN_CHROME_BIN=/absolute/path/to/chrome
+cargo build --locked -p proofrun-node
+pnpm test:agent:planned-browser
+```
+
+浏览器用例创建临时独立会话，在真实 Rust session-host/Chrome 中填写和提交，由回环 HTTP 服务独立计数，结束关闭会话。未提供浏览器路径时明确跳过。模型、控制面证据上传和租约仍为夹具；不验证真实供应商质量、生产账号或 API 数据库持久化。

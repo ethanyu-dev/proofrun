@@ -1,3 +1,4 @@
+import { plannedModel } from './execution/model-router.js';
 import { prepareIdentitySelection } from './model/identity-selector.js';
 import { readFile } from 'node:fs/promises';
 import { validateVerificationTask } from '@proofrun/contracts';
@@ -32,13 +33,21 @@ async function worker(once: boolean, slot: number): Promise<void> {
         const grant = await client.claim(controller.signal);
         if (grant) {
           const jev = executionStrategy(grant.task) === 'jev';
-          const model = jev
-            ? new JevModel(
-                config,
-                process.env.TYPESAFE_API_KEY ?? '',
-                process.env.TYPESAFE_MODEL,
-              )
-            : new ChatModel(config);
+          const model =
+            config.executionPolicy === 'planned-v1'
+              ? plannedModel(
+                  config,
+                  jev,
+                  process.env.TYPESAFE_API_KEY ?? '',
+                  process.env.TYPESAFE_MODEL,
+                )
+              : jev
+                ? new JevModel(
+                    config,
+                    process.env.TYPESAFE_API_KEY ?? '',
+                    process.env.TYPESAFE_MODEL,
+                  )
+                : new ChatModel(config);
           const report = await execute(
             {
               ...config,

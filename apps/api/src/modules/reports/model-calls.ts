@@ -20,6 +20,7 @@ const REQUEST_FIELDS = new Set([
   'state',
   'questions',
   'thinking',
+  'reasoning_effort',
   'assets',
 ]);
 
@@ -165,6 +166,16 @@ export class ModelCalls {
               'Invalid thinking parameter',
             );
         }
+        // 推理强度只接受已声明档位，不能用对象或未知字符串夹带任意供应商参数。
+        if (
+          'reasoning_effort' in request &&
+          !['low', 'high', 'max'].includes(request.reasoning_effort as string)
+        )
+          throw new ApiError(
+            400,
+            'INVALID_MODEL_CALL',
+            'Invalid reasoning_effort parameter',
+          );
         await consumeStepBudget(client, context, 'modelCalls', record.stepId);
         const inserted = await client.query(
           'INSERT INTO pr_model_calls(id,execution_id,call_index,record,start_hash) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING RETURNING id',
