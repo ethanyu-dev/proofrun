@@ -1574,7 +1574,7 @@ export class Coordinator {
       ],
     );
     const sessions = await client.query(
-      "SELECT execution_id,last_renew_request FROM pr_sessions WHERE node_id=$1 AND node_epoch=$2 AND state='ACTIVE'",
+      "SELECT execution_id,last_renew_request FROM pr_sessions WHERE node_id=$1 AND node_epoch=$2 AND state IN ('OPENING','ACTIVE')",
       [connection.nodeId, heartbeat.nodeEpoch],
     );
     for (const row of sessions.rows) {
@@ -1585,9 +1585,22 @@ export class Coordinator {
       );
       if (
         context.task_state !== 'RUNNING' ||
-        context.execution_state !== 'RUNNING' ||
+        !['STARTING', 'RUNNING'].includes(context.execution_state) ||
         context.lease_expires_at.getTime() <= Date.now() ||
         executionDeadline(context) <= Date.now()
+      )
+        continue;
+      // 开启命令发出不等于节点已准入；只有心跳确认同租约的本机会话后才给启动阶段续租。
+      // 既避免慢 profile 恢复耗尽短租约，也避免提前续租触发 SESSION_MISSING。
+      if (
+        context.session_state === 'OPENING' &&
+        !heartbeat.occupied.some(
+          (session) =>
+            session.sessionId === context.session_id &&
+            session.leaseId === context.lease_id &&
+            session.fence === Number(context.fence) &&
+            ['STARTING', 'ACTIVE'].includes(session.state),
+        )
       )
         continue;
       await insertCommand(
