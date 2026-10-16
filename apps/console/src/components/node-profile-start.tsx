@@ -1,14 +1,17 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type Ref } from 'react';
 import { ApiClient, errorMessage } from '../api';
 import { ErrorNotice } from './ui';
 
 /** 节点默认模板独立于身份库；重复进入先恢复尚未关闭的维护会话。 */
 export function NodeProfileStart({
+  ref,
   api,
   nodeId,
   name,
   close,
 }: {
+  /** 由节点页定位面板，避免长列表中的入口与表单相隔一屏以上。 */
+  ref?: Ref<HTMLElement>;
   api: ApiClient;
   nodeId: string;
   name: string;
@@ -39,7 +42,12 @@ export function NodeProfileStart({
     return () => active.current?.abort();
   }, [api, nodeId]);
   return (
-    <section className="panel" aria-label="维护节点默认 profile">
+    <section
+      ref={ref}
+      tabIndex={-1}
+      className="panel"
+      aria-label="维护节点默认 profile"
+    >
       <div className="section-heading">
         <h2>{name} · 默认 profile</h2>
         <button className="button button-secondary" onClick={close}>

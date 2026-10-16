@@ -35,6 +35,14 @@ export function NodesPage({ api }: { api: ApiClient }) {
   >(api, '/v1/nodes');
   const [profileNode, setProfileNode] =
     useState<Pick<NodeSummary, 'id' | 'name'>>();
+  const profilePanel = useRef<HTMLElement>(null);
+  useEffect(() => {
+    // 入口位于长列表底部；打开和重复点击都将焦点与视口移到实际操作面板。
+    if (profileNode) {
+      profilePanel.current?.focus({ preventScroll: true });
+      profilePanel.current?.scrollIntoView({ block: 'start' });
+    }
+  }, [profileNode]);
   const [routingNode, setRoutingNode] = useState<NodeSummary>();
   const [savedRouting, setSavedRouting] = useState(false);
   const [rotation, setRotation] = useState<string>();
@@ -82,6 +90,7 @@ export function NodesPage({ api }: { api: ApiClient }) {
       {profileNode && (
         <NodeProfileStart
           key={profileNode.id}
+          ref={profilePanel}
           api={api}
           nodeId={profileNode.id}
           name={profileNode.name}
@@ -261,7 +270,9 @@ export function NodesPage({ api }: { api: ApiClient }) {
                     >
                       <button
                         className="text-button"
-                        onClick={() => setProfileNode(node)}
+                        onClick={() =>
+                          setProfileNode({ id: node.id, name: node.name })
+                        }
                       >
                         默认 profile
                       </button>
