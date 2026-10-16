@@ -310,6 +310,8 @@ export class NodeProfiles {
       closing: row.task_state !== 'RUNNING',
       saveStatus: row.save_status,
       failure,
+      // 关闭命令回执可能先于 session.closed 到达；容量释放不代表诊断信息已经完整。
+      failureDetailsPending: Boolean(failure && !row.close_reason),
     };
   }
 

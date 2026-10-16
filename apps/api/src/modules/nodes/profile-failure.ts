@@ -10,6 +10,8 @@ const FAILURE_MESSAGES: Record<string, string> = {
     '无法复制节点默认 profile。请检查节点磁盘空间与目录权限。',
   PROFILE_STATE_INVALID:
     '节点默认 profile 中的会话状态无效，请检查节点运行日志。',
+  COMMAND_DEADLINE_EXCEEDED:
+    '浏览器命令未在规定时间内返回结果，操作结果无法确认。',
   SESSION_COMMAND_TIMEOUT:
     '网页操作超过执行时限，浏览器已停止。请检查目标网站连接后重新打开维护会话。',
   DEADLINE_EXCEEDED: '浏览器操作或会话授权已超时，请重新打开维护会话。',

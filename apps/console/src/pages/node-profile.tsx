@@ -31,10 +31,10 @@ export function NodeProfilePage({ api, id }: { api: ApiClient; id: string }) {
         setStatus(value);
         setError(undefined);
         // 已进入交互后继续低频读取终态，节点异常关闭也能显示持久失败原因。
-        if (!value.closed)
+        if (!value.closed || value.failureDetailsPending)
           timer = setTimeout(
             () => void read(),
-            value.ready ? ACTIVE_POLL_MS : STARTUP_POLL_MS,
+            value.ready || value.closed ? ACTIVE_POLL_MS : STARTUP_POLL_MS,
           );
       } catch (e) {
         if (!controller.signal.aborted) {
@@ -55,7 +55,7 @@ export function NodeProfilePage({ api, id }: { api: ApiClient; id: string }) {
       <NodeProfileOutcome status={status} closing={closing} />
       <ErrorNotice message={error} />
       <div className="page-actions">
-        {error && (
+        {(error || status?.failure) && (
           <button
             className="button button-secondary"
             onClick={() => setAttempt((n) => n + 1)}

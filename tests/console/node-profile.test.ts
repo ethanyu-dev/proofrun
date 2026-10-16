@@ -129,3 +129,34 @@ test('维护结果显示具体失败码且不暗示旧模板丢失', async () =>
   assert.match(saved, /本次节点默认 profile 已保存/);
   assert.doesNotMatch(saved, /本次没有确认发布/);
 });
+
+// 范围：关闭后原因尚未同步时明确提示等待；静态渲染不替代浏览器轮询回归。
+test('关闭确认与最终失败诊断分开展示', async () => {
+  const { NodeProfileOutcome } =
+    await import('../../apps/console/src/components/node-profile-outcome.tsx');
+  const status = {
+    ready: false,
+    closed: true,
+    closing: true,
+    saveStatus: null,
+    failureDetailsPending: true,
+    failure: {
+      code: 'COMMAND_DEADLINE_EXCEEDED',
+      errorCode: 'COMMAND_DEADLINE_EXCEEDED',
+      closeReason: null,
+      message: '浏览器命令未在规定时间内返回结果。',
+    },
+  };
+  const provisional = renderToStaticMarkup(
+    createElement(NodeProfileOutcome, { status, closing: false }),
+  );
+  assert.match(provisional, /正在同步节点最终失败原因/);
+  assert.match(provisional, /浏览器已关闭/);
+  const final = renderToStaticMarkup(
+    createElement(NodeProfileOutcome, {
+      status: { ...status, failureDetailsPending: false },
+      closing: false,
+    }),
+  );
+  assert.doesNotMatch(final, /正在同步/);
+});

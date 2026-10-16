@@ -8,6 +8,8 @@ export interface NodeProfileStatus {
   closing: boolean;
   /** 本次维护是否确认发布了模板。 */
   saveStatus: 'saved' | 'newer' | null;
+  /** 物理关闭回执先到时，仍等待节点的最终关闭原因。 */
+  failureDetailsPending?: boolean;
   /** 旧 API 可能不返回故障详情，兼容缺省值。 */
   failure?: {
     code: string;
@@ -39,6 +41,9 @@ export function NodeProfileOutcome({
       {status?.failure && (
         <div role="alert">
           <p>{status.failure.message}</p>
+          {status.failureDetailsPending && (
+            <p>正在同步节点最终失败原因，收到后将自动更新。</p>
+          )}
           <p>
             错误码：<code>{status.failure.code}</code>
             {status.failure.errorCode !== status.failure.code && (
