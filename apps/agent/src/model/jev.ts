@@ -2,7 +2,12 @@ import {
   FIELD_VALUE_PROMPT,
   FIELD_RESULT_REVIEW,
   fieldValueRecovery,
-  JEV_SELECTION_RULES,
+  JEV_VISUAL_TARGET,
+  JEV_VISUAL_EXISTS,
+  JEV_VISUAL_UNIQUE,
+  JEV_CONTROL_CHOICES,
+  JEV_VISUAL_OPTION,
+  JEV_VISUAL_COUNTS,
   reviewFeedback,
   FINAL_REVIEW_REASON,
   ACTIONS_EXHAUSTED_REASON,
@@ -10,13 +15,19 @@ import {
 } from '../prompts/jev.js';
 import type { AgentDecision } from '@proofrun/contracts';
 import { DEFAULT_JEV_MODEL, type AgentConfig } from '../config.js';
-import type { WorkflowView } from '../execution/workflow.js';
 import type { Observation } from '../evidence/observation.js';
-import type { RecentOperation } from '../execution/context.js';
 import { AgentFault, jsonRequest } from '../http.js';
 import { modelRequest } from './request.js';
 import { candidates, estimatedTokens, type Candidate } from './candidates.js';
 import { JevProgress, evidenceExcerpt } from './jev-progress.js';
+import { jevQuestions, EXPANDED_ACTION_LIMIT } from './jev-questions.js';
+import {
+  prepareJevImage,
+  JEV_IMAGE_TOKEN_RESERVE,
+  JEV_REQUEST_BYTES,
+  type JevImage,
+} from './jev-image.js';
+import { jevBoxPoint, supportsJevBox } from './jev-box.js';
 import {
   ChatModel,
   type DecisionInput,
@@ -81,6 +92,8 @@ export function jevChoice(
 export class JevModel implements DecisionModel {
   /** 与对照组使用同一配置，负责自由文本和按证据验收。 */
   private readonly text: DecisionModel;
+  /** 图片参数被供应商拒绝后，本次执行不重复发送同类图片请求。 */
+  private imageRejection: string | undefined;
   /** 跨栏目证据及循环检测只在当前执行内生效。 */
   private readonly progress = new JevProgress();
   /** 公共执行器确认有新的步骤证据后，才清除局部循环计数。 */
@@ -120,27 +133,8 @@ export class JevModel implements DecisionModel {
   ): Promise<DecisionOutput> {
     if (!this.key)
       throw new AgentFault('JEV_NOT_CONFIGURED', 'JEV 组缺少 TypeSafe 配置');
-    const context = JSON.parse(input.text) as {
-      task: { taskId: string; objective: string };
-      observation: Observation;
-      recentOperations: RecentOperation[];
-      actionMemory?: { items: Array<{ commandId: string }>; omitted: number };
-      budgetRemaining: { actions: number };
-      feedback: unknown;
-      workflow?: WorkflowView;
-      executionStep?: { stepId: string; type?: string };
-      cleanup?: boolean;
-      verificationReview?: { pendingCriterionIds: string[]; final?: boolean };
-      environmentReview?: { required: boolean };
-      interactionProgress?: {
-        items: Array<{ status: string }>;
-        currentTargets?: Array<{
-          target: string;
-          itemId: string;
-          status: string;
-        }>;
-      };
-    };
+    const context: import('../execution/context.js').DecisionContextData =
+      input.context ?? JSON.parse(input.text);
     // 环境意图必须由拥有完整原始约束的文本模型单独声明，不能被动作提案跳过。
     if (context.environmentReview?.required)
       return this.text.decide(input, signal);
@@ -152,11 +146,19 @@ export class JevModel implements DecisionModel {
       this.structuredStep = context.executionStep.stepId;
       this.reviewedFieldCommand = undefined;
     }
-    const page = context.observation;
+    const page = input.observation ?? context.observation;
+    if (page.observationId !== context.observation.observationId)
+      throw new AgentFault(
+        'EVIDENCE_MISMATCH',
+        '原始观察与模型上下文不属于同一轮',
+      );
     const stage = context.workflow?.steps.find(
       (s) => s.id === context.workflow?.activeStep,
     );
-    const objective = stage?.requirement ?? context.task.objective;
+    const objective =
+      context.executionGuidance && context.workflow?.recovery
+        ? context.workflow.recovery.goal
+        : (stage?.requirement ?? context.task.objective);
     const recovery = context.workflow?.recovery;
     if (context.workflow && context.workflow.revision !== this.revision) {
       this.progress.advanced();
@@ -176,9 +178,11 @@ export class JevModel implements DecisionModel {
     )
       history.shift();
     const review = async (reason: string): Promise<DecisionOutput> => {
+      // 复核视图添加了独立历史与反馈，不能同时携带原来的类型化快照冒充同一份上下文。
+      const { context: _context, ...reviewInput } = input;
       const output = await this.text.decide(
         {
-          ...input,
+          ...reviewInput,
           text: JSON.stringify({
             ...enriched,
             feedback: reviewFeedback(reason, context.feedback),
@@ -212,32 +216,44 @@ export class JevModel implements DecisionModel {
         )) &&
       lastAction.commandId !== this.reviewedFieldCommand;
     const reason = context.verificationReview?.final
-      ? FINAL_REVIEW_REASON
+      ? context.verificationReview.reason === 'budget'
+        ? '原预算内最后一次只读验收整理：只提交已有证据支持的结论和缺口，不再探索'
+        : FINAL_REVIEW_REASON
       : context.budgetRemaining.actions <= 0
         ? ACTIONS_EXHAUSTED_REASON
         : fieldChanged
           ? FIELD_RESULT_REVIEW
-          : context.interactionProgress?.items.some(
-                (item) => item.status === 'observed',
-              )
-            ? '新展开的面板已取得原文，请先通过 workflow.readings 登记子项，再继续尚未读取的问题；记录不等于验收通过'
-            : context.cleanup
-              ? '后续清理由文本模型核对明确的恢复条件及 Cookie 清理回执，满足后及时结束'
-              : context.verificationReview
-                ? '阶段性核对尚未登记的验收项：先用 verification_record 保存已有充分证据的独立结论，再处理剩余交互；没有充分证据不能编造通过'
-                : typeof context.feedback === 'string' &&
-                    /^(CRITERIA_ALREADY_RECORDED:|PREPARATION_REVIEW:|WORKFLOW_|INTERACTION_RECOVERY_REQUIRED:|INTERACTION_ALREADY_RECORDED:|OBSERVATION_STALLED:|BROWSER_TARGET_OBSCURED:|BROWSER_STALE_OBSERVATION:|BROWSER_ACTION_PRECONDITION_FAILED:)/u.test(
-                      context.feedback,
-                    )
-                  ? '执行器反馈步骤缺口、预算耗尽或动作目标失效；请核对当前状态并改变恢复策略，无法继续时 verification.block'
-                  : context.workflow?.activeStep === null
-                    ? '全部原始步骤已登记证据，请按原 criterionId 整理最终结论，避免继续浏览'
-                    : recovery?.remaining === 0
-                      ? '恢复计划动作预算耗尽，核对成功条件；未成功时改变策略或停止，不能重复同一计划'
-                      : this.progress.reviewReason(
-                          context.budgetRemaining.actions,
-                          !!recovery && recovery.remaining > 0,
-                        );
+          : context.executionGuidance?.review &&
+              ![
+                'TASK_PROGRESS',
+                'TARGET_LOCATED',
+                'WORK_BUDGET_LOW',
+                'BUDGET_LOW',
+              ].includes(context.executionGuidance.review)
+            ? `执行器复核事件 ${context.executionGuidance.review}：根据当前子目标、剩余验收项、位置线索与预算调整执行计划`
+            : context.interactionProgress?.items.some(
+                  (item) => item.status === 'observed',
+                )
+              ? '新展开的面板已取得原文，请先通过 workflow.readings 登记子项，再继续尚未读取的问题；记录不等于验收通过'
+              : context.cleanup
+                ? '后续清理由文本模型核对明确的恢复条件及 Cookie 清理回执，满足后及时结束'
+                : context.verificationReview
+                  ? '阶段性核对尚未登记的验收项：先用 verification_record 保存已有充分证据的独立结论，再处理剩余交互；没有充分证据不能编造通过'
+                  : typeof context.feedback === 'string' &&
+                      /^(CRITERIA_ALREADY_RECORDED:|PREPARATION_REVIEW:|WORKFLOW_|INTERACTION_RECOVERY_REQUIRED:|INTERACTION_ALREADY_RECORDED:|OBSERVATION_STALLED:|BROWSER_TARGET_OBSCURED:|BROWSER_STALE_OBSERVATION:|BROWSER_ACTION_PRECONDITION_FAILED:)/u.test(
+                        context.feedback,
+                      )
+                    ? '执行器反馈步骤缺口、预算耗尽或动作目标失效；请核对当前状态并改变恢复策略，无法继续时 verification.block'
+                    : context.workflow?.activeStep === null
+                      ? '全部原始步骤已登记证据，请按原 criterionId 整理最终结论，避免继续浏览'
+                      : recovery?.remaining === 0
+                        ? '恢复计划动作预算耗尽，核对成功条件；未成功时改变策略或停止，不能重复同一计划'
+                        : context.executionGuidance
+                          ? undefined
+                          : this.progress.reviewReason(
+                              context.budgetRemaining.actions,
+                              !!recovery && recovery.remaining > 0,
+                            );
     if (reason) {
       const output = await review(reason);
       // 请求失败不能吞掉填写后的核对机会；下一轮仍需要检查提示。
@@ -260,7 +276,18 @@ export class JevModel implements DecisionModel {
               : {}),
           }
         : undefined,
+      this.config.jevExpandedActions === true,
     )
+      .filter((candidate) => {
+        if (!context.executionGuidance || !recovery?.allowedActions)
+          return true;
+        const action = candidate.operation.startsWith('SCROLL_')
+          ? 'scroll'
+          : candidate.operation === 'TYPE_TEXT'
+            ? 'fill'
+            : candidate.operation.toLowerCase();
+        return recovery.allowedActions.includes(action);
+      })
       // 已读控件不再作为普通点击候选竞争；必要重访只能经 REPLAN 由文本模型说明原因。
       .filter(
         (candidate) =>
@@ -276,32 +303,49 @@ export class JevModel implements DecisionModel {
           Number(a.field.reading?.status === 'recorded') -
           Number(b.field.reading?.status === 'recorded'),
       );
-    const selected = available.slice(0, ACTION_LIMIT);
+    const expanded = this.config.jevExpandedActions === true;
+    const selected = available.slice(
+      0,
+      expanded ? EXPANDED_ACTION_LIMIT : ACTION_LIMIT,
+    );
+    let picture: JevImage | undefined;
+    if (this.config.jevImages && input.image && !this.imageRejection) {
+      try {
+        picture = await prepareJevImage(input.image, page);
+      } catch (error) {
+        if (error instanceof AgentFault && error.code === 'JEV_IMAGE_INVALID')
+          return review('当前截图不能用于 JEV，交给文本审查核对已有证据');
+        throw error;
+      }
+    }
+    const boxEnabled =
+      !!picture &&
+      this.config.jevBox === true &&
+      this.model === 'jev-1.14.0' &&
+      supportsJevBox(page);
     // 变化排序后的动作共享一份简短字段说明，不重复完整 DOM 行。
-    const choices: Record<string, unknown> = {
-      OBSERVE: '加载尚未完成，重新读取页面',
-      SCROLL_DOWN: '页面向下滚动；弹层或下拉应优先选择带目标的滚动候选',
-      SCROLL_UP: '页面向上滚动查看未检查内容',
-      VERIFY:
-        '当前阶段证据已齐，交给 LLM 记录进度并推进；全部原任务步骤完成后才最终验收',
-      REPLAN:
-        '目标未提供、覆盖不全、需要复杂规划或重复操作无进展，交给 LLM 检查',
-    };
+    const controls: Record<string, unknown> = { ...JEV_CONTROL_CHOICES };
+    if (
+      context.executionGuidance &&
+      recovery?.allowedActions &&
+      !recovery.allowedActions.includes('scroll')
+    ) {
+      delete controls.SCROLL_UP;
+      delete controls.SCROLL_DOWN;
+    }
+    if (
+      boxEnabled &&
+      (!context.executionGuidance ||
+        !recovery?.allowedActions ||
+        recovery.allowedActions.includes('visual.click'))
+    )
+      controls.VISUAL_LOCATE = JEV_VISUAL_OPTION;
     const actions = new Map<string, Candidate>();
     for (const candidate of selected) {
       const id = `A${actions.size + 1}`;
       actions.set(id, candidate);
-      choices[id] = { operation: candidate.operation, field: candidate.field };
     }
-    const questions = {
-      next: {
-        type: 'choice',
-        criteria: choices,
-        instructions: {
-          rules: JEV_SELECTION_RULES,
-        },
-      },
-    };
+    let selection = jevQuestions(actions, controls, expanded);
     const compactHistory = history.map((p) => ({
       ...p,
       text: evidenceExcerpt(p.text, objective, 2000),
@@ -314,6 +358,14 @@ export class JevModel implements DecisionModel {
       state: {
         ...enriched,
         previousObservations: compactHistory,
+        candidates: selection.fields,
+        screenshot: picture?.reference,
+        screenshotSource: picture?.metadata,
+        imageUnavailable:
+          this.imageRejection ??
+          (this.config.jevImages && !picture
+            ? '当前观察没有可用截图'
+            : undefined),
         observation: {
           ...page,
           text: compactText,
@@ -324,29 +376,39 @@ export class JevModel implements DecisionModel {
           new Set(available.map((a) => a.target)).size -
           new Set(selected.map((a) => a.target)).size,
         candidateCoverage: {
+          sourceTargets: page.targets.length,
+          textViewTargets: context.observation.targets.length,
           totalActions: available.length,
           returnedActions: selected.length,
           omittedActions: available.length - selected.length,
           reason: available.length > selected.length ? 'action_limit' : null,
         },
       },
-      questions,
+      questions: selection.questions,
     };
+    const tokenEstimate = () =>
+      estimatedTokens(body) + (picture ? JEV_IMAGE_TOKEN_RESERVE : 0);
     while (
       compactHistory.length &&
       (JSON.stringify(body).length > budget.requestChars ||
-        estimatedTokens(body) > budget.tokens)
+        tokenEstimate() > budget.tokens)
     )
       compactHistory.shift();
     // 先移除低优先级候选，再转交审查；新增弹层候选排在前面，不因页尾位置被裁剪。
     while (
       (JSON.stringify(body).length > budget.requestChars ||
-        estimatedTokens(body) > budget.tokens) &&
+        tokenEstimate() > budget.tokens) &&
       actions.size > 1
     ) {
-      const last = [...actions.keys()].at(-1)!;
-      actions.delete(last);
-      delete choices[last];
+      // 每轮移除低优先级尾部的一小批，避免两千候选逐个重建导致平方级序列化成本。
+      const removed = Math.min(
+        actions.size - 1,
+        Math.max(1, Math.ceil(actions.size / 10)),
+      );
+      for (const id of [...actions.keys()].slice(-removed)) actions.delete(id);
+      selection = jevQuestions(actions, controls, expanded);
+      body.questions = selection.questions;
+      body.state.candidates = selection.fields;
       body.state.candidateCoverage.returnedActions = actions.size;
       body.state.candidateCoverage.omittedActions =
         available.length - actions.size;
@@ -357,43 +419,85 @@ export class JevModel implements DecisionModel {
     }
     if (
       JSON.stringify(body).length > budget.requestChars ||
-      estimatedTokens(body) > budget.tokens
+      tokenEstimate() > budget.tokens
     )
       return review(
         '当前页面候选与任务定义超过 JEV 请求预算，使用完整上下文核对下一步',
       );
-    let raw: {
+    const headers: Record<string, string> = {};
+    if (picture) headers['TypeSafe-Danger-Zone-Images'] = 'true';
+    if (this.config.jevLongContext && tokenEstimate() > DEFAULT_CONTEXT.tokens)
+      headers[LONG_CONTEXT_HEADER] = 'true';
+    const payload = {
+      ...body,
+      ...(picture ? { assets: { [picture.reference]: picture.asset } } : {}),
+    };
+    if (Buffer.byteLength(JSON.stringify(payload)) > JEV_REQUEST_BYTES)
+      return review('JEV 图片请求超过传输预算，交给文本审查');
+    type Reply = {
       answers?: Record<string, unknown>;
       usage?: { input_tokens?: number; output_tokens?: number };
     };
-    try {
-      raw = (await modelRequest(input, this.model, 'JEV_SELECTION', body, () =>
-        this.request(
-          ENDPOINT,
-          this.key,
-          'POST',
-          body,
-          this.config.modelMs,
-          signal,
-          this.config.jevLongContext &&
-            estimatedTokens(body) > DEFAULT_CONTEXT.tokens
-            ? { [LONG_CONTEXT_HEADER]: 'true' }
-            : undefined,
-        ),
-      )) as typeof raw;
-    } catch (error) {
+    const send = async (
+      requestBody: Record<string, unknown>,
+    ): Promise<Reply> => {
+      signal.throwIfAborted();
+      // Box 的问题与主选择不同，逐次计算实验头，不能继承第一次请求的长度判断。
+      const { assets: _assets, ...textBody } = requestBody;
+      const requestHeaders = { ...headers };
       if (
-        error instanceof AgentFault &&
-        error.code === 'MODEL_CONTEXT_TOO_LARGE'
+        this.config.jevLongContext &&
+        estimatedTokens(textBody) + (picture ? JEV_IMAGE_TOKEN_RESERVE : 0) >
+          DEFAULT_CONTEXT.tokens
       )
-        return review('JEV 服务拒绝上下文长度，转交文本模型核对完整证据');
+        requestHeaders[LONG_CONTEXT_HEADER] = 'true';
+      else delete requestHeaders[LONG_CONTEXT_HEADER];
+      return (await modelRequest(
+        input,
+        this.model,
+        'JEV_SELECTION',
+        requestBody,
+        () =>
+          this.request(
+            ENDPOINT,
+            this.key,
+            'POST',
+            requestBody,
+            this.config.modelMs,
+            signal,
+            Object.keys(requestHeaders).length ? requestHeaders : undefined,
+          ),
+      )) as Reply;
+    };
+    const rejected = (error: unknown): string | undefined => {
+      if (!(error instanceof AgentFault)) return undefined;
+      if (error.code === 'MODEL_CONTEXT_TOO_LARGE')
+        return 'JEV 服务拒绝上下文长度，转交文本模型核对完整证据';
+      if (picture && (error.status === 400 || error.status === 413)) {
+        this.imageRejection = '供应商拒绝图片请求，本次执行回到文本候选';
+        return this.imageRejection;
+      }
+      return undefined;
+    };
+    let raw: Reply;
+    try {
+      raw = await send(payload);
+    } catch (error) {
+      const reason = rejected(error);
+      if (reason) return review(reason);
       throw error;
     }
     const tokens = (n: unknown) =>
       typeof n === 'number' && Number.isSafeInteger(n) && n >= 0 ? n : 0;
-    const promptTokens = tokens(raw.usage?.input_tokens),
+    let promptTokens = tokens(raw.usage?.input_tokens),
       completionTokens = tokens(raw.usage?.output_tokens);
-    const choice = jevChoice(raw.answers?.next, choices).choice;
+    let choice = jevChoice(
+      raw.answers?.next,
+      selection.questions.next!.criteria,
+    ).choice;
+    const group = selection.groups.get(choice);
+    if (group) choice = jevChoice(raw.answers?.[choice], group).choice;
+    if (choice === 'NONE') choice = 'REPLAN';
     const finish = (
       decision: AgentDecision,
       extra?: DecisionOutput,
@@ -403,6 +507,98 @@ export class JevModel implements DecisionModel {
       promptTokens: promptTokens + (extra?.promptTokens ?? 0),
       completionTokens: completionTokens + (extra?.completionTokens ?? 0),
     });
+    if (choice === 'VISUAL_LOCATE' && picture && boxEnabled) {
+      // 定位依赖前一轮已选视觉分支，额外请求独立计量，不能复用其他分组的局部概率。
+      const visualBody = {
+        ...payload,
+        state: { ...payload.state, visualObjective: objective },
+        questions: {
+          exists: { type: 'noul', instructions: JEV_VISUAL_EXISTS },
+          unique: {
+            type: 'choice',
+            instructions: JEV_VISUAL_UNIQUE,
+            criteria: JEV_VISUAL_COUNTS,
+          },
+          target: { type: 'box', instructions: JEV_VISUAL_TARGET },
+        },
+      };
+      const { assets: _assets, ...visualText } = visualBody;
+      if (
+        JSON.stringify(visualText).length > budget.requestChars ||
+        estimatedTokens(visualText) + JEV_IMAGE_TOKEN_RESERVE > budget.tokens ||
+        Buffer.byteLength(JSON.stringify(visualBody)) > JEV_REQUEST_BYTES
+      ) {
+        const output = await review('视觉定位问题超过 JEV 预算，交给文本审查');
+        return finish(output.decision, output);
+      }
+      let located: Reply;
+      try {
+        located = await send(visualBody);
+      } catch (error) {
+        const reason = rejected(error);
+        if (reason) {
+          const output = await review(reason);
+          return finish(output.decision, output);
+        }
+        throw error;
+      }
+      promptTokens += tokens(located.usage?.input_tokens);
+      completionTokens += tokens(located.usage?.output_tokens);
+      try {
+        const point = jevBoxPoint(located.answers, picture, page);
+        const mainFrame = page.documents?.find(
+          (document) => document.isMainFrame,
+        )?.frameId;
+        const matched = page.targets.filter(
+          (target) =>
+            target.operations?.includes('click') &&
+            (!target.frame || target.frame === mainFrame) &&
+            target.clip &&
+            point.x >= target.clip.left &&
+            point.x < target.clip.right &&
+            point.y >= target.clip.top &&
+            point.y < target.clip.bottom,
+        );
+        // 图片只是定位辅助；可还原 DOM 身份时保留原有重访与节点命中检查。
+        if (matched.length > 1)
+          throw new AgentFault(
+            'INVALID_MODEL_DECISION',
+            '视觉位置对应多个 DOM 控件，需重新核对目标',
+          );
+        const target = matched[0];
+        if (target) {
+          if (readings.get(target.target)?.status === 'recorded')
+            throw new AgentFault(
+              'INVALID_MODEL_DECISION',
+              '视觉目标已有读取证据，重访必须由文本模型说明原因',
+            );
+          if (
+            context.executionStep?.type === 'verification' &&
+            target.context?.fixed &&
+            !target.context.heading &&
+            !target.disclosure
+          )
+            throw new AgentFault(
+              'INVALID_MODEL_DECISION',
+              unassociatedTargetReview(target.target, target.name),
+            );
+          return finish({
+            type: 'browser.act',
+            action: 'click',
+            target: target.target,
+          });
+        }
+        return finish({
+          type: 'browser.act',
+          action: 'visual.click',
+          ...point,
+        });
+      } catch (error) {
+        if (!(error instanceof AgentFault)) throw error;
+        const output = await review(error.message);
+        return finish(output.decision, output);
+      }
+    }
     if (choice === 'VERIFY' || choice === 'REPLAN') {
       const output = await review(`JEV 建议 ${choice}`);
       return finish(output.decision, output);
@@ -411,14 +607,30 @@ export class JevModel implements DecisionModel {
     const operation = selectedAction?.operation ?? choice;
     if (operation === 'OBSERVE')
       return finish({ type: 'browser.observe', screenshot: false });
-    if (operation === 'SCROLL_DOWN' || operation === 'SCROLL_UP')
+    if (
+      ['SCROLL_DOWN', 'SCROLL_UP', 'SCROLL_LEFT', 'SCROLL_RIGHT'].includes(
+        operation,
+      )
+    )
       return finish({
         type: 'browser.act',
         action: 'scroll',
-        value: operation === 'SCROLL_DOWN' ? 'down' : 'up',
+        value: operation.slice('SCROLL_'.length).toLowerCase(),
         ...(selectedAction ? { target: selectedAction.target } : {}),
       });
-    const target = selectedAction!.target;
+    if (!selectedAction)
+      throw new AgentFault(
+        'INVALID_MODEL_DECISION',
+        '所选动作不属于当前候选集合',
+      );
+    const target = selectedAction.target;
+    if (['CHECK', 'UNCHECK', 'FRAME', 'HOVER'].includes(operation))
+      return finish({
+        type: 'browser.act',
+        action: operation.toLowerCase() as
+          'check' | 'uncheck' | 'frame' | 'hover',
+        target,
+      });
     const observedTarget = page.targets.find((item) => item.target === target);
     // 保留全局控件候选，只把缺少正文关联的业务点击转交完整上下文审查。
     if (

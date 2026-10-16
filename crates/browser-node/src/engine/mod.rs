@@ -4,6 +4,8 @@ mod cookies;
 mod dom;
 mod identity;
 mod profile;
+mod scroll;
+mod visual;
 
 mod scopes;
 use crate::{
@@ -33,6 +35,9 @@ const ENGINE_TIMEOUT: &str =
     "Operation timed out. The page may still be loading or the element may not exist.";
 /// 导航超时后只读核实文档，不能重发导航或接受调用方提供的脚本。
 const NAVIGATION_PROBE: &str = "({url:location.href,readyState:document.readyState})";
+/// 固定读取主视口，截图和点击使用相同 CSS 坐标，不接收模型提供的脚本。
+const VISUAL_VIEWPORT: &str =
+    "({url:location.href,width:innerWidth,height:innerHeight,x:scrollX,y:scrollY})";
 
 /// 单个 session-host 的引擎启动参数，不携带节点机器凭据。
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -105,7 +110,7 @@ pub struct Engine {
     /// 人工交还重启产生的取证分段，停止取证时统一交付。
     trace_segments: Vec<PathBuf>,
     /// 最近截图的视口身份和采集时间，视觉输入必须匹配。
-    visual: Option<(Value, u64)>,
+    visual: Option<visual::VisualObservation>,
     /// 只有当前观察列出的标签页才能切换或关闭。
     tabs: Vec<String>,
     /// 可选 iframe 观察范围；导航后恢复整个页面。
@@ -596,6 +601,14 @@ impl Engine {
                         crate::network::sanitize(&network)?
                     };
                 }
+                // 纯文本观察同样声明滚动幅度能力；旧协议夹具继续不声明。
+                if self.dom.is_some() && !screenshot.unwrap_or(false) {
+                    let viewport = self
+                        .cli(vec!["eval".into(), VISUAL_VIEWPORT.into()], remaining())
+                        .await?;
+                    result["viewport"] = viewport["result"].clone();
+                    result["viewport"]["scrollDistance"] = json!(true);
+                }
                 if screenshot.unwrap_or(false) {
                     let path = self
                         .config
@@ -607,9 +620,17 @@ impl Engine {
                         remaining(),
                     )
                     .await?;
-                    let viewport = self.cli(vec!["eval".into(), "({url:location.href,width:innerWidth,height:innerHeight,x:scrollX,y:scrollY})".into()], remaining()).await?;
-                    self.visual = Some((viewport["result"].clone(), process::boot_ms()));
+                    let viewport = self
+                        .cli(vec!["eval".into(), VISUAL_VIEWPORT.into()], remaining())
+                        .await?;
+                    self.visual = Some(visual::VisualObservation {
+                        viewport: viewport["result"].clone(),
+                        at: process::boot_ms(),
+                        digest: visual::screenshot_digest(&path)?,
+                    });
                     result["viewport"] = viewport["result"].clone();
+                    result["viewport"]["visualRecheck"] = json!("sha256");
+                    result["viewport"]["scrollDistance"] = json!(true);
                     result["localScreenshot"] = json!(path);
                 }
                 Ok(result)
@@ -698,25 +719,41 @@ impl Engine {
                     return Ok(json!({"performed":true}));
                 }
                 if name == "visual.click" {
-                    let (previous, at) = self.visual.as_ref().ok_or_else(|| {
+                    let previous = self.visual.as_ref().ok_or_else(|| {
                         Fault::rejected(
                             "STALE_OBSERVATION",
                             "visual click requires a current screenshot",
                         )
                     })?;
-                    let viewport=self.cli(vec!["eval".into(),"({url:location.href,width:innerWidth,height:innerHeight,x:scrollX,y:scrollY})".into()],remaining()).await?;
+                    let viewport = self
+                        .cli(vec!["eval".into(), VISUAL_VIEWPORT.into()], remaining())
+                        .await?;
                     let x = raw["x"].as_f64().unwrap();
                     let y = raw["y"].as_f64().unwrap();
-                    if process::boot_ms().saturating_sub(*at) > 120_000
-                        || previous != &viewport["result"]
-                        || x >= previous["width"].as_f64().unwrap_or(0.0)
-                        || y >= previous["height"].as_f64().unwrap_or(0.0)
-                    {
+                    previous.validate(&viewport["result"], process::boot_ms(), x, y)?;
+                    // URL 和滚动位置不变也可能出现弹层。输入前重新取图，只比较完整原始 PNG。
+                    let probe = self
+                        .config
+                        .directory
+                        .join(format!("visual-probe-{}.png", uuid::Uuid::new_v4()));
+                    let captured = self
+                        .cli(
+                            vec!["screenshot".into(), probe.to_string_lossy().into()],
+                            remaining(),
+                        )
+                        .await;
+                    let digest = captured.and_then(|_| visual::screenshot_digest(&probe));
+                    let _ = std::fs::remove_file(&probe);
+                    if digest? != previous.digest {
                         return Err(Fault::rejected(
                             "STALE_OBSERVATION",
-                            "viewport changed; observe before visual input",
+                            "screenshot changed; observe before visual input",
                         ));
                     }
+                    let current = self
+                        .cli(vec!["eval".into(), VISUAL_VIEWPORT.into()], remaining())
+                        .await?;
+                    previous.validate(&current["result"], process::boot_ms(), x, y)?;
                     self.observation = None;
                     self.visual = None;
                     self.dom = None;
@@ -725,8 +762,8 @@ impl Engine {
                         vec![
                             "mouse".into(),
                             "move".into(),
-                            x.round().to_string(),
-                            y.round().to_string(),
+                            x.floor().to_string(),
+                            y.floor().to_string(),
                         ],
                         remaining(),
                     )
@@ -1141,14 +1178,9 @@ pub fn action_args(
         ],
         "press" => vec!["press".into(), argument(value, "value")?],
         "scroll" => {
-            let direction = argument(value, "value")?;
-            if !["up", "down", "left", "right"].contains(&direction.as_str()) {
-                return Err(Fault::rejected(
-                    "INVALID_ARGUMENT",
-                    "invalid scroll direction",
-                ));
-            }
-            vec!["scroll".into(), direction, "400".into()]
+            let value = argument(value, "value")?;
+            let (direction, distance) = scroll::parse(&value)?;
+            vec!["scroll".into(), direction.into(), distance.to_string()]
         }
         "back" | "forward" | "reload" => vec![action.as_str().unwrap().into()],
         "frame" => vec!["frame".into(), argument(target, "frame")?],

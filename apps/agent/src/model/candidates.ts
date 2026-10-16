@@ -22,9 +22,24 @@ const WORDS = /[a-z][a-z0-9.-]{2,}|[\p{Script=Han}]{2,}/gu;
 
 /** 一个候选绑定一个允许的操作；动作上限与元素上限分开计数。 */
 export interface Candidate {
-  operation: 'CLICK' | 'TYPE_TEXT' | 'SELECT' | 'SCROLL_DOWN' | 'SCROLL_UP';
+  /** 能由已有封闭浏览器协议表达的操作，不允许模型创造新动作。 */
+  operation:
+    | 'CLICK'
+    | 'TYPE_TEXT'
+    | 'SELECT'
+    | 'SCROLL_DOWN'
+    | 'SCROLL_UP'
+    | 'SCROLL_LEFT'
+    | 'SCROLL_RIGHT'
+    | 'CHECK'
+    | 'UNCHECK'
+    | 'FRAME'
+    | 'HOVER';
+  /** 只属于当前观察的目标身份。 */
   target: string;
+  /** 原生选项的实际值，不能用模型生成的标签代替。 */
   value?: string;
+  /** 有界的目标描述与状态，供候选问题选择。 */
   field: Record<string, unknown>;
 }
 
@@ -33,6 +48,7 @@ export function candidates(
   targets: ObservedTarget[],
   objective: string,
   focus?: { scope?: string; terms?: string[] },
+  expanded = false,
 ): Candidate[] {
   const words =
     [objective, ...(focus?.terms ?? [])].join(' ').toLowerCase().match(WORDS) ??
@@ -94,12 +110,39 @@ export function candidates(
         change: t.change,
         activeRegion: t.activeRegion,
         scroll: t.scroll,
+        // clip 仍属于目标自己的 frame，不能假装它是主视口的截图坐标。
+        position: t.clip
+          ? { frame: t.frame, coordinates: 'frame viewport CSS', clip: t.clip }
+          : undefined,
       };
       const actions: Candidate[] = [];
       if (operations.includes('fill') && t.role !== 'combobox')
         actions.push({ operation: 'TYPE_TEXT', target: t.target, field });
-      if (operations.includes('click'))
+      if (
+        operations.includes('click') &&
+        !(
+          expanded &&
+          operations.includes('check') &&
+          [true, false, 'true', 'false'].includes(t.checked as boolean | string)
+        )
+      )
         actions.push({ operation: 'CLICK', target: t.target, field });
+      if (expanded) {
+        if (
+          operations.includes('check') &&
+          (t.checked === false || t.checked === 'false')
+        )
+          actions.push({ operation: 'CHECK', target: t.target, field });
+        if (
+          operations.includes('uncheck') &&
+          (t.checked === true || t.checked === 'true')
+        )
+          actions.push({ operation: 'UNCHECK', target: t.target, field });
+        if (operations.includes('frame'))
+          actions.push({ operation: 'FRAME', target: t.target, field });
+        if (operations.includes('hover'))
+          actions.push({ operation: 'HOVER', target: t.target, field });
+      }
       if (operations.includes('fill') && t.role === 'combobox')
         actions.push({ operation: 'TYPE_TEXT', target: t.target, field });
       if (operations.includes('select') && Array.isArray(t.options)) {
@@ -129,6 +172,16 @@ export function candidates(
           actions.push({ operation: 'SCROLL_DOWN', target: t.target, field });
         if (!t.scroll || t.scroll.y > 0)
           actions.push({ operation: 'SCROLL_UP', target: t.target, field });
+        if (expanded && t.scroll) {
+          if (t.scroll.x + t.scroll.width < t.scroll.scrollWidth - 1)
+            actions.push({
+              operation: 'SCROLL_RIGHT',
+              target: t.target,
+              field,
+            });
+          if (t.scroll.x > 0)
+            actions.push({ operation: 'SCROLL_LEFT', target: t.target, field });
+        }
       }
       return actions;
     });

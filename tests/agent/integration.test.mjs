@@ -16,6 +16,7 @@ import {
 } from '../../apps/api/test/fixture.ts';
 import { ControlClient } from '../../apps/agent/dist/client.js';
 import { ChatModel } from '../../apps/agent/dist/model/chat.js';
+import { JevModel } from '../../apps/agent/dist/model/jev.js';
 import { execute } from '../../apps/agent/dist/execution/runner.js';
 import { compileStepBudget } from '../../contracts/dist/index.js';
 import { pause } from '../../apps/agent/dist/http.js';
@@ -154,12 +155,14 @@ test(
       decide,
       {
         unknown = false,
+        executionGuidance = false,
         vision = false,
         thinking,
         beforeComplete,
         observeFailuresAfterClick = 0,
         preparationFailures = 0,
         unknownClick = false,
+        createModel,
       } = {},
     ) => {
       const node = new SimulatedNode(base, definition.environment.nodePool);
@@ -227,6 +230,7 @@ test(
         vision,
         thinking,
         modelMs: 5000,
+        executionGuidance,
       };
       const client = new ControlClient(settings);
       const execution = await until(() => client.claim(), Boolean);
@@ -235,7 +239,8 @@ test(
         const report = await execute(
           settings,
           client,
-          new ChatModel(settings),
+          createModel?.(settings, { execution, client }) ??
+            new ChatModel(settings),
           execution,
         );
         await beforeComplete?.();
@@ -880,6 +885,104 @@ test(
           ),
         );
       });
+      // 范围：真实 JEV 序列化、脱敏、HTTP 存档与 PostgreSQL；图片和供应商回复为夹具，不证明视觉识别质量。
+      await suite.test('JEV 图片请求先存档再派发，拒绝未脱敏资源', async () => {
+        let sent = 0;
+        const { report, execution } = await run(
+          task('agent-jev-image-archive', true),
+          finish,
+          {
+            vision: true,
+            createModel: (settings, { execution, client }) =>
+              new JevModel(
+                { ...settings, jevImages: true, jevExpandedActions: true },
+                'fixture-key',
+                'jev-1.14.0',
+                async (_url, _key, _method, body) => {
+                  sent++;
+                  const path = `/v1/admin/executions/${execution.id}/model-calls`;
+                  const list = await api('GET', path);
+                  const call = await api(
+                    'GET',
+                    `${path}/${list.calls.at(-1).id}`,
+                  );
+                  assert.equal(call.status, 'PENDING');
+                  assert.equal(call.purpose, 'JEV_SELECTION');
+                  assert.equal(call.imagesOmitted, 1);
+                  assert.equal(
+                    call.requestSha256,
+                    createHash('sha256')
+                      .update(JSON.stringify(body))
+                      .digest('hex'),
+                  );
+                  const archived = JSON.parse(call.request);
+                  const asset = Object.values(body.assets)[0];
+                  assert.equal(typeof asset.data_base64, 'string');
+                  assert(!call.request.includes(asset.data_base64));
+                  assert.equal(
+                    typeof Object.values(archived.assets)[0].data_base64
+                      .omitted,
+                    'string',
+                  );
+                  assert(archived.state.screenshotSource.artifactId);
+                  // 未脱敏原图、数组和额外资源参数均不能突破既有存档边界。
+                  for (const assets of [
+                    body.assets,
+                    [],
+                    {
+                      image: {
+                        ...Object.values(archived.assets)[0],
+                        authorization: 'fixture-secret',
+                      },
+                    },
+                  ]) {
+                    const id = randomUUID();
+                    await assert.rejects(
+                      client.recordModelCall(execution, id, {
+                        phase: 'start',
+                        record: {
+                          ...call,
+                          id,
+                          callIndex: 200,
+                          request: JSON.stringify({ ...archived, assets }),
+                        },
+                      }),
+                      (error) =>
+                        error.code === 'INVALID_MODEL_CALL' &&
+                        error.status === 400,
+                    );
+                  }
+                  return {
+                    answers: {
+                      next: {
+                        choice: 'VERIFY',
+                        confidence: 1,
+                        probabilities: Object.fromEntries(
+                          Object.keys(body.questions.next.criteria).map(
+                            (key) => [key, Number(key === 'VERIFY')],
+                          ),
+                        ),
+                      },
+                    },
+                    usage: { input_tokens: 10, output_tokens: 1 },
+                  };
+                },
+              ),
+          },
+        );
+        assert.equal(sent, 1);
+        assert.equal(report.verdict, 'PASSED');
+        const list = await api(
+          'GET',
+          `/v1/admin/executions/${execution.id}/model-calls`,
+        );
+        assert(
+          list.calls.some(
+            (call) =>
+              call.purpose === 'JEV_SELECTION' && call.status === 'RECEIVED',
+          ),
+        );
+      });
       // 范围：能力不足的 BLOCKED 语义与报告幂等；不验证真实模型视觉能力探测。
       await suite.test('阻塞报告不会伪造业务失败', async () => {
         const { report, stored } = await run(task('agent-block', true), () => {
@@ -888,6 +991,30 @@ test(
         assert.equal(stored.state, 'COMPLETED');
         assert.equal(report.executionDisposition, 'BLOCKED');
         assert.equal(report.verdict, null);
+      });
+      // 范围：真实 API 与数据库接受受阻任务的独立结论，仍校验证据归属；不模拟真实业务判定。
+      await suite.test('非结构化任务同轮保存部分结论并明确受阻', async () => {
+        const definition = task('agent-partial-settlement');
+        definition.acceptanceCriteria.push({
+          ...definition.acceptanceCriteria[0],
+          id: 'unavailable',
+          expectedResult: '缺失的后续状态',
+        });
+        const { report, stored } = await run(
+          definition,
+          (context) => ({
+            type: 'verification.block',
+            summary: '已确认第一项，第二项缺少触发条件',
+            conclusions: finish(context).criteria.slice(0, 1),
+          }),
+          { executionGuidance: true },
+        );
+        assert.equal(report.verdict, null);
+        assert.deepEqual(
+          stored.report.criteria.map((c) => c.verdict),
+          ['PASSED', 'SKIPPED'],
+        );
+        assert.equal(stored.report.executionDisposition, 'BLOCKED');
       });
       // 范围：控制面先终止未知写入后仍可挂接故障报告；不模拟真实引擎重试机制。
       await suite.test('未知写入终止后挂接 ERROR 报告', async () => {

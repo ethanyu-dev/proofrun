@@ -30,6 +30,8 @@ pnpm build
 | `pnpm test:hitl:linux`          | Linux 实时画面、坐标与中文输入、交还原会话及关闭                             | 执行者为夹具；回环 WS 不证明生产 TLS、SSO/MFA   |
 | `pnpm test:deploy`              | 构建后用 Docker 检查 Caddy 路由、空库迁移、鉴权和重启持久化                  | HTTP；HA 模板指向同一测试 API，不证明跨主机切换 |
 
+JEV 图片与候选测试包含在 `pnpm test:agent`：合成 PNG 的缩放、来源和存档，独立视觉开关，超过 255 项的分组，以及 Box 存在性、唯一性、坐标与预算拒绝。模型回答为夹具，不能据此声称真实多模态准确率、置信度校准或任务成功率。
+
 ## 数据库集成
 
 ```sh
@@ -63,7 +65,7 @@ python3 tests/browser-node/real_engine_smoke.py
 node tests/browser-node/validate-events.mjs /absolute/path/to/events.jsonl
 ```
 
-能力场景见 `browser-node/capabilities_smoke.py`；登录与网络场景见 `browser-node/auth_network_smoke.py`。登录快照只覆盖 Cookie/localStorage，网络证据只有有界脱敏元数据，不保证捕获完整。
+能力场景见 `browser-node/capabilities_smoke.py`，包含当前截图视觉点击及同视口新增覆盖层后的拒绝；登录与网络场景见 `browser-node/auth_network_smoke.py`。登录快照只覆盖 Cookie/localStorage，网络证据只有有界脱敏元数据，不保证捕获完整。
 
 ## Console 与真实环境
 
@@ -76,3 +78,11 @@ node tests/browser-node/validate-events.mjs /absolute/path/to/events.jsonl
 - `pnpm test:api`：六字段私密存储、版本冻结、选择租约；HTTP/WebSocket 贯通默认身份选择、成功 HITL 发布与“无法处理”整例终态。浏览器结果使用协议夹具。
 - `pnpm test:agent`：单次身份选择工具调用、无凭据模型输入、无效引用与人工分支。
 - `pnpm test:identity:profile`：设置 `PROOFRUN_AGENT_BROWSER_BIN`（0.38.1 原生 CLI）和 `PROOFRUN_CHROME_BIN` 后，真实 Chrome 回环验证完整 profile 的 Cookie 与站点状态复用、HITL 重启、业务修改隔离。此入口不覆盖 Linux 监管、SSO 或生产业务。
+
+### 通用执行策略回归
+
+`pnpm test:agent` 包含持续子目标、权威进度、循环检测、位置线索、预算与旧节点兼容；`pnpm test:console` 包含诊断的两种请求格式。模型和控制面夹具不能代表真实业务验收。`capabilities_smoke.py` 在真实 Chromium 中检查新旧滚动命令、iframe 容器及观察失效。
+
+需要真实模型时，在浏览器节点主机运行 `python3 tests/agent/guidance-browser-fixture.py`（仅监听 127.0.0.1:8082），分别执行 `/long-form`、`/nested`、`/wizard`。固定模型与预算，检查报告、真实动作和 `/metrics` 的禁止提交计数；此类结果仍仅是本地合成业务。外部回归保留原任务标准、约束、预算，不因无法触发禁止操作而放宽结论。
+
+`tests/agent/settlement.test.mjs` 验证同轮结论先保存、未知副作用后不丢结果、无效证据禁止动作、慢回复后的预算内只读收尾，以及历史正文去重边界。HTTP 模型和页面为夹具，不能替代真实模型完成率比较。真实对照仍使用相同模型、原始任务和预算，分别统计可靠结论与未完成项。

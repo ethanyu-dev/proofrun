@@ -397,6 +397,56 @@ async function main() {
       '3',
       'http://127.0.0.1:4100/health/ready',
     ]);
+    // 本地验证必须运行刚构建的节点，避免旧发布版 drop-in 覆盖开发入口。
+    const nodeOverrideDirectory =
+      '/home/proofrun/.config/systemd/user/proofrun-node.service.d';
+    run('docker', [
+      'exec',
+      CONTAINER,
+      'runuser',
+      '-u',
+      'proofrun',
+      '--',
+      'mkdir',
+      '-p',
+      nodeOverrideDirectory,
+    ]);
+    const nodeMetadata = JSON.parse(
+      run(
+        'docker',
+        [
+          'exec',
+          '-w',
+          '/workspace',
+          CONTAINER,
+          'cargo',
+          'metadata',
+          '--no-deps',
+          '--format-version',
+          '1',
+        ],
+        { stdio: 'pipe', encoding: 'utf8' },
+      ),
+    );
+    run(
+      'docker',
+      [
+        'exec',
+        '-i',
+        CONTAINER,
+        'runuser',
+        '-u',
+        'proofrun',
+        '--',
+        'tee',
+        `${nodeOverrideDirectory}/90-local-build.conf`,
+      ],
+      {
+        input: `[Service]\nExecStart=\nExecStart=${nodeMetadata.target_directory}/debug/proofrun-node --config /workspace/.proofrun/runtime/local-node.toml serve\n`,
+        stdio: ['pipe', 'ignore', 'inherit'],
+      },
+    );
+    systemctl('daemon-reload');
     systemctl('start', 'proofrun-node.service');
     // 测试页面使用临时单元，容器重启后重新创建；不会重置仍在运行的页面。
     try {
@@ -449,7 +499,7 @@ async function main() {
       Object.fromEntries(
         Object.entries(settings).filter(
           ([key]) =>
-            /^PROOFRUN_(MODEL|AGENT|CONTROL_URL|WORKER_TOKEN|WORKER_ID)/.test(
+            /^PROOFRUN_(MODEL|AGENT|JEV_|CONTROL_URL|WORKER_TOKEN|WORKER_ID)/.test(
               key,
             ) ||
             key.startsWith('TYPESAFE_') ||

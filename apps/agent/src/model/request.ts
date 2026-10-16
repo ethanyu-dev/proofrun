@@ -33,6 +33,12 @@ export async function modelRequest(
     /* 填写子请求不要求通用上下文。 */
   }
   const request = JSON.stringify(body, (key, value) => {
+    if (key === 'data_base64' && typeof value === 'string') {
+      imagesOmitted++;
+      return {
+        omitted: '图片通过 state.screenshotSource 的原始证据和派生摘要核查',
+      };
+    }
     if (
       key === 'image_url' &&
       value &&

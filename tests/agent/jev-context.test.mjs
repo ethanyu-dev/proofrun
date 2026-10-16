@@ -219,3 +219,33 @@ test('JEV 保留上游正文截断事实', async () => {
   await model.decide(request, signal());
   assert.equal(calls[0].body.state.observation.textTruncated, true);
 });
+
+// 范围：记账和定位提示不重复请求文本复核；计划耗尽、取证与故障路径另有测试。
+test('公共进度提示不打断仍有效的 JEV 动作计划', async () => {
+  for (const review of [
+    'TASK_PROGRESS',
+    'TARGET_LOCATED',
+    'BUDGET_LOW',
+    'WORK_BUDGET_LOW',
+  ]) {
+    const { model, calls, reviews } = harness();
+    const request = input('选择继续', 1, {
+      executionGuidance: { review },
+      workflow: {
+        revision: 0,
+        activeStep: 's',
+        steps: [{ id: 's', requirement: '选择继续' }],
+        recovery: {
+          goal: '选择继续',
+          scope: '',
+          terms: ['继续'],
+          successCondition: '进入下一页',
+          remaining: 2,
+        },
+      },
+    });
+    await model.decide(request, signal());
+    assert.equal(calls.length, 1, review);
+    assert.equal(reviews.length, 0, review);
+  }
+});

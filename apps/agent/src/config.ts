@@ -32,6 +32,14 @@ export interface AgentConfig {
   vision: boolean;
   /** 显式允许 Jev 扩展文本预算；实验请求头只在估算超过默认 token 预算时发送。 */
   jevLongContext?: boolean;
+  /** JEV 独立接收当前截图，不要求文本审查模型支持图片。 */
+  jevImages?: boolean;
+  /** 按操作分组候选并开放已声明的额外动作，关闭时保留旧选择策略。 */
+  jevExpandedActions?: boolean;
+  /** 允许实验 Box 定位；必须同时开启 JEV 图片输入。 */
+  jevBox?: boolean;
+  /** 通用子目标、进度和定位策略，显式灰度启用。 */
+  executionGuidance?: boolean;
   /** 不同 Chat Completions 服务使用的输出预算参数。 */
   tokenParameter: 'max_tokens' | 'max_completion_tokens';
   /** 未设置时沿用供应商默认；显式模式仅传给配置的 Chat Completions 服务。 */
@@ -108,7 +116,15 @@ export function loadConfig(): AgentConfig {
   const jevLongContext = process.env.PROOFRUN_JEV_LONG_CONTEXT ?? 'false';
   if (!['true', 'false'].includes(jevLongContext))
     throw new Error('PROOFRUN_JEV_LONG_CONTEXT must be true or false');
+  const jevImages = boolean('PROOFRUN_JEV_IMAGES');
+  const jevBox = boolean('PROOFRUN_JEV_BOX');
+  if (jevBox && !jevImages)
+    throw new Error('PROOFRUN_JEV_BOX requires PROOFRUN_JEV_IMAGES=true');
   return {
+    executionGuidance: boolean('PROOFRUN_AGENT_EXECUTION_GUIDANCE'),
+    jevImages,
+    jevBox,
+    jevExpandedActions: boolean('PROOFRUN_JEV_EXPANDED_ACTIONS'),
     jevLongContext: jevLongContext === 'true',
     apiUrl: endpoint('PROOFRUN_CONTROL_URL', 'http://127.0.0.1:4100'),
     workerToken,
@@ -153,4 +169,12 @@ export function loadConfig(): AgentConfig {
       16_384,
     ),
   };
+}
+
+/** 实验能力只能显式开启，拼写错误不能静默采用默认值。 */
+function boolean(name: string): boolean {
+  const value = process.env[name] ?? 'false';
+  if (!['true', 'false'].includes(value))
+    throw new Error(`${name} must be true or false`);
+  return value === 'true';
 }

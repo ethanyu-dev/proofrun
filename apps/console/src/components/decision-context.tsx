@@ -1,3 +1,4 @@
+import { ExecutionGuidanceSummary } from './execution-guidance';
 import { useState } from 'react';
 import type { ModelCall } from '@proofrun/contracts';
 import { ApiClient } from '../api';
@@ -86,6 +87,7 @@ function CallDetails({
             {call.imagesOmitted > 0 &&
               ' 图片 base64 已替换为已有截图证据引用。'}
           </p>
+          {request && <ExecutionGuidanceSummary request={request} />}
           {call.error && (
             <ErrorNotice message={`本次请求异常：${call.error}`} />
           )}

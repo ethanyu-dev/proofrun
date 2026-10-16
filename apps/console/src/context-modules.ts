@@ -11,6 +11,8 @@ export interface ContextModule {
 /** 常用模块保持固定阅读顺序，LLM 和 JEV 的额外字段随后逐项展示。 */
 const CONTEXT_LABELS: Record<string, string> = {
   task: '任务定义与验收标准',
+  workflow: '当前子目标与工作流',
+  executionGuidance: '执行计划、进度与预算诊断',
   budgetRemaining: '剩余预算',
   previousObservations: '历史页面观察',
   recentOperations: '近期操作',

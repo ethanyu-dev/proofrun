@@ -1,3 +1,4 @@
+import type { GuidanceView } from './execution-guidance.js';
 import type { InteractionProgress } from './interaction-progress.js';
 import type { ActionMemory } from './action-memory.js';
 import type { VerificationReport, VerificationTask } from '@proofrun/contracts';
@@ -75,7 +76,8 @@ export interface ContextInput {
   recordedCriteria?: VerificationReport['criteria'];
   /** 有界周期提示核对独立验收项，不将阅读进度自动判为通过。 */
   verificationReview?:
-    { pendingCriterionIds: string[]; final?: boolean } | undefined;
+    | { pendingCriterionIds: string[]; final?: boolean; reason?: 'budget' }
+    | undefined;
   /** 只在平台编排的后续清理步骤提供 Cookie 清理工具。 */
   cleanup?: boolean;
   /** 当前观察和控制代次下的前置结果；只含业务条件与来源，不含身份配方或凭据。 */
@@ -86,6 +88,8 @@ export interface ContextInput {
   interactionProgress?: ReturnType<InteractionProgress['view']>;
   /** 公共工作流的只读视图。 */
   workflow: WorkflowView | undefined;
+  /** 公共执行器生成的计划、导航与复核诊断。 */
+  executionGuidance?: GuidanceView | undefined;
   /** 剩余原任务动作、模型请求与时间预算。 */
   budgetRemaining: { actions: number; modelCalls: number; timeMs: number };
   /** 当前已核实可用的观察。 */
@@ -126,15 +130,16 @@ export function rememberObservation(
   if (history.length > OBSERVATION_HISTORY_LIMIT) history.shift();
 }
 
-/** 标准保持完整；仅裁剪事实副本并声明缺口，无法容纳固定定义时明确失败。 */
-export function decisionContext(input: ContextInput): DecisionInput {
+/** 各模型共用同一类型化事实，适配器不得另建验收或预算账本。 */
+function contextData(input: ContextInput) {
   const current = input.current;
   const evidenceIds = new Set(input.evidence.map((artifact) => artifact.id));
   const context = {
     // 模型只需业务定义；节点配方引用、账号池和登录槽不参与决策上下文。
-    task: (({ sessionPlan: _sessionPlan, ...business }) => business)(
-      input.task,
-    ),
+    task: (({
+      sessionPlan: _sessionPlan,
+      ...business
+    }): Omit<VerificationTask, 'sessionPlan'> => business)(input.task),
     identity: input.task.sessionPlan?.library
       ? {
           name: input.task.sessionPlan.candidates[0]?.label ?? null,
@@ -144,7 +149,7 @@ export function decisionContext(input: ContextInput): DecisionInput {
             '这是候选账号描述，不是已验证事实。先依据当前页面确认登录和 Case 所需资格；不符合时请求人工处理。身份库不提供密码，不要自行注册或切换到其他账号。',
         }
       : undefined,
-    executionStep: input.executionStep,
+    executionStep: input.executionStep as ContextInput['executionStep'],
     policyChecks: input.policyChecks,
     setupPhase: input.setupPhase,
     environmentReview: input.environmentReview,
@@ -153,6 +158,7 @@ export function decisionContext(input: ContextInput): DecisionInput {
     cleanup: input.cleanup === true,
     preconditions: structuredClone(input.preconditions),
     workflow: input.workflow,
+    executionGuidance: input.executionGuidance,
     interactionProgress: input.interactionProgress
       ? structuredClone(input.interactionProgress)
       : undefined,
@@ -204,6 +210,15 @@ export function decisionContext(input: ContextInput): DecisionInput {
         .join(' ') || null,
     truncated: false,
   };
+  return context;
+}
+/** 类型从唯一构造函数推导，防止模型适配器手写字段逐渐偏离执行器。 */
+export type DecisionContextData = ReturnType<typeof contextData>;
+
+/** 标准保持完整；仅裁剪事实副本并声明缺口，无法容纳固定定义时明确失败。 */
+export function decisionContext(input: ContextInput): DecisionInput {
+  const current = input.current;
+  const context = contextData(input);
   let text = JSON.stringify(context);
   while (text.length > input.maxContextChars) {
     context.truncated = true;
@@ -286,5 +301,10 @@ export function decisionContext(input: ContextInput): DecisionInput {
       current.targets.length - context.observation.targets.length;
     text = JSON.stringify(context);
   }
-  return { text, ...(input.image ? { image: input.image } : {}) };
+  return {
+    text,
+    context: structuredClone(context),
+    observation: structuredClone(current),
+    ...(input.image ? { image: input.image } : {}),
+  };
 }

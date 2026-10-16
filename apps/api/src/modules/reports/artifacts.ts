@@ -670,12 +670,8 @@ export class ArtifactStore {
         ? 'PASSED'
         : 'INCONCLUSIVE';
     const executed = report.executionDisposition === 'EXECUTED';
-    if (
-      (!executed &&
-        !context.definition.steps &&
-        report.criteria.some((c) => c.verdict !== 'SKIPPED')) ||
-      report.verdict !== (executed ? verdict : null)
-    )
+    // 执行受阻仍可保留已校验的独立结论；总 verdict 保持 null，不伪装整体验收完成。
+    if (report.verdict !== (executed ? verdict : null))
       throw new ApiError(
         422,
         'INVALID_REPORT',

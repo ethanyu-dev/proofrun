@@ -1,7 +1,6 @@
 //! 同一 profile 内的标签页作用域。切页和实际命令在 session-host 的同一串行队列内完成。
 use super::{Engine, dom};
 use crate::error::{Fault, Result};
-use serde_json::Value;
 use std::collections::HashMap;
 
 /// 最大业务分组数加一个统一清理 tab；不包含引擎启动页。
@@ -19,7 +18,7 @@ pub(super) struct TabState {
     /// 本 tab 的原生 DOM 节点映射和 CDP 连接。
     pub dom: Option<dom::Dom>,
     /// 当前观察的可视画面及有效期。
-    pub visual: Option<(Value, u64)>,
+    pub visual: Option<super::visual::VisualObservation>,
     /// 模型可见的本组标签页列表。
     pub tabs: Vec<String>,
     /// 本 tab 当前选择的 frame。

@@ -1,3 +1,5 @@
+import { ExecutionGuidance } from './execution-guidance.js';
+import { scrollDistance } from './navigation-memory.js';
 import { conditionKey, evaluatePolicyChecks } from './policy-checks.js';
 import { InteractionProgress } from './interaction-progress.js';
 import { executeProfile } from './profile-runner.js';
@@ -9,8 +11,10 @@ import {
 import { CriteriaLedger } from './criteria.js';
 import { evaluateChecks, mergeChecks } from './identity.js';
 import { stepLimit } from '@proofrun/contracts';
+import { SettlementBudget } from './settlement-budget.js';
 import { StepAllowance } from './step-budget.js';
 import { stepObjective } from '../prompts/step.js';
+import { settlementRepairFeedback } from '../prompts/settlement.js';
 import {
   PREPARATION_BLOCK_REVIEW,
   REPEATED_RECORD_FEEDBACK,
@@ -30,6 +34,7 @@ import type { AgentConfig } from '../config.js';
 import type { BrowserOperation, ControlClient } from '../client.js';
 import type { DecisionInput, DecisionModel } from '../model/chat.js';
 import { modelTraceFault } from '../model/request.js';
+import { executionStrategy } from '../model/strategy.js';
 import { observation, type Observation } from '../evidence/observation.js';
 import { waitForEvidence } from '../evidence/delivery.js';
 import { AgentFault, pause, transient } from '../http.js';
@@ -166,6 +171,8 @@ class Execution {
   private readinessEvidence = new Set<string>();
   /** 原任务阶段和恢复计划由所有决策模式共享。 */
   private workflow: Workflow;
+  /** 每个 tab 独立的通用规划诊断，不能跨执行共享。 */
+  private readonly guidance = new ExecutionGuidance();
   /** 新版业务逐步独立计数，整段清理共享另一份额度；旧任务沿用冻结语义。 */
   private allowance: StepAllowance | undefined;
   /** 后续清理之间只切换 stepId，保留整段累计计数。 */
@@ -240,7 +247,12 @@ class Execution {
     this.guard = new LeaseGuard(client, grant, stop, (view) =>
       this.allowance?.sync(view),
     );
-    this.workflow = new Workflow(grant.task.objective);
+    this.workflow = new Workflow(
+      grant.task.objective,
+      undefined,
+      undefined,
+      config.executionGuidance,
+    );
     this.criteria = new CriteriaLedger(grant.task.acceptanceCriteria);
     this.stepResults = (grant.task.steps ?? []).map((step) => ({
       stepId: step.stepId!,
@@ -314,10 +326,10 @@ class Execution {
   private blocked(summary: string, code: string): VerificationReport {
     return this.report('BLOCKED', summary, this.faultCriteria(summary), code);
   }
-  /** 结构化步骤保留部分结论；旧任务沿用一次性交付语义。 */
+  /** 结构化步骤和新策略保留部分结论；关闭策略的旧任务沿用一次性交付语义。 */
   private faultCriteria(summary: string) {
     return (
-      this.grant.task.steps
+      this.grant.task.steps || this.config.executionGuidance
         ? this.criteria
         : new CriteriaLedger(this.task.acceptanceCriteria)
     ).complete(summary);
@@ -463,9 +475,26 @@ class Execution {
       );
     return result;
   }
+  /** 图片采集按当前策略启用；文本模型和 JEV 的图片能力分别配置。 */
+  private screenshots(): boolean {
+    return (
+      this.config.vision ||
+      (executionStrategy(this.grant.task) === 'jev' &&
+        this.config.jevImages === true)
+    );
+  }
+  /** 视觉执行单独授权；JEV 仅看图选 DOM 目标时不能发坐标点击。 */
+  private visualActions(): boolean {
+    return (
+      this.config.vision ||
+      (executionStrategy(this.grant.task) === 'jev' &&
+        this.config.jevImages === true &&
+        this.config.jevBox === true)
+    );
+  }
   /** 动作与等待之后刷新事实；新观察不能与上一张截图混用。 */
   private async observe(
-    screenshot = this.config.vision,
+    screenshot = this.screenshots(),
     countProgress = true,
   ): Promise<void> {
     const result = await this.readObservation(screenshot);
@@ -501,7 +530,7 @@ class Execution {
     const png = current.artifactRefs.find((r) => r.kind === 'SCREENSHOT');
     if (screenshot && !png)
       throw new AgentFault('EVIDENCE_UNAVAILABLE', '本次观察没有返回所需截图');
-    if (png && this.config.vision)
+    if (png && this.screenshots())
       this.image = await this.client.image(
         this.grant,
         { id: png.artifactId, sha256: png.sha256 },
@@ -594,6 +623,7 @@ class Execution {
                 this.currentTask.objective,
                 `${setup.stepId}-policy`,
                 setup.policy,
+                this.config.executionGuidance,
               );
               this.stepResults[this.stepIndex]!.phase = 'CHECKING';
               await this.client.recordSteps(this.grant, this.stepResults);
@@ -621,7 +651,7 @@ class Execution {
     }
   }
   /** 在统一安全点取得预算快照并登记有界审查提示；裁剪只影响发给模型的副本。 */
-  private context(finalReview = false): DecisionInput {
+  private context(finalReview = false, settling = false): DecisionInput {
     const savedCriteria = this.criteria.values();
     const pendingCriterionIds = this.task.acceptanceCriteria
       .filter(
@@ -636,15 +666,50 @@ class Execution {
     const verificationReview =
       !this.isSetup() &&
       !this.isCleanup() &&
-      !!this.grant.task.steps &&
-      pendingCriterionIds.length > 0 &&
+      (!!this.grant.task.steps || settling) &&
+      (pendingCriterionIds.length > 0 || settling) &&
       (finalReview ||
-        this.details.actions - this.lastCriteriaReview >=
-          CRITERIA_REVIEW_ACTIONS)
-        ? { pendingCriterionIds, ...(finalReview ? { final: true } : {}) }
+        (!this.config.executionGuidance &&
+          this.details.actions - this.lastCriteriaReview >=
+            CRITERIA_REVIEW_ACTIONS))
+        ? {
+            pendingCriterionIds,
+            ...(finalReview ? { final: true } : {}),
+            ...(settling ? { reason: 'budget' as const } : {}),
+          }
         : undefined;
     if (verificationReview) this.lastCriteriaReview = this.details.actions;
+    const budgetRemaining = this.allowance?.available(
+      this.details.actions,
+      this.details.modelCalls,
+    ) ?? {
+      actions: this.grant.task.budget.maxActions - this.details.actions,
+      modelCalls: this.config.maxTurns - this.details.modelCalls,
+      timeMs: Math.floor(this.guard.remaining()),
+    };
+    const progress = {
+      workflow: this.workflow.view().revision,
+      reading: this.interactions.view().revision,
+      criteria: savedCriteria
+        .filter((item) => ['PASSED', 'FAILED'].includes(item.verdict))
+        .map((item) => item.criterionId)
+        .sort(),
+    };
+    const progressKey = JSON.stringify(progress);
+    this.workflow.creditProgress(progress);
+    this.workflow.observeState(this.current!);
+    const executionGuidance = this.config.executionGuidance
+      ? this.guidance.view({
+          page: this.current!,
+          workflow: this.workflow.view(),
+          pending: pendingCriterionIds,
+          progressKey,
+          scope: `${this.stepIndex}:${this.setupPhase}:${this.controlRevision}`,
+          budget: budgetRemaining,
+        })
+      : undefined;
     return decisionContext({
+      executionGuidance,
       task: this.task,
       setupPhase: this.setupPhase,
       environmentReview: this.needsEnvironmentReview()
@@ -673,14 +738,7 @@ class Execution {
       ],
       workflow: this.workflow.view(),
       interactionProgress: this.interactions.view(),
-      budgetRemaining: this.allowance?.available(
-        this.details.actions,
-        this.details.modelCalls,
-      ) ?? {
-        actions: this.grant.task.budget.maxActions - this.details.actions,
-        modelCalls: this.config.maxTurns - this.details.modelCalls,
-        timeMs: Math.floor(this.guard.remaining()),
-      },
+      budgetRemaining,
       current: this.current!,
       changes: this.changes,
       evidence: [...this.currentEvidence().values()],
@@ -691,6 +749,35 @@ class Execution {
       image: this.image,
       maxContextChars: this.config.maxContextChars,
     });
+  }
+  /** 所有结论共用原账本与当前证据边界；持久化失败时不能派发后续动作。 */
+  private async saveCriteria(
+    criteria: VerificationReport['criteria'],
+    summary: string,
+  ) {
+    const changed = this.criteria.record(criteria, this.currentEvidence());
+    const state = this.stepResults[this.stepIndex];
+    if (state && this.criteria.values().length) {
+      state.readings = this.interactions.results();
+      state.criteria = this.criteria.values();
+      state.evidenceRefs = [
+        ...new Set([
+          ...state.criteria.flatMap((c) => c.evidenceRefs),
+          ...state.readings.flatMap((item) => item.evidenceRefs),
+        ]),
+      ];
+      state.summary = summary;
+      try {
+        await this.client.recordSteps(this.grant, this.stepResults);
+      } catch {
+        // 保存失败不能当作可重试的模型问题，否则下一轮可能越过尚未持久化的结论继续动作。
+        throw new AgentFault(
+          'CRITERIA_SAVE_FAILED',
+          '独立结论未能持久化，停止后续动作并保留本次报告',
+        );
+      }
+    }
+    return changed;
   }
   /** 模型可引用列表与提交校验共用同一边界，前序步骤及准备阶段证据仅作历史背景。 */
   private currentEvidence() {
@@ -748,6 +835,23 @@ class Execution {
         'INVALID_MODEL_DECISION',
         '动作参数不完整或目标不属于当前观察',
       );
+    // 历史回执包含节点幅度时，模型可能回传相同格式；只提取合法方向，再按当前观察重算。
+    if (
+      decision.action === 'scroll' &&
+      /^(up|down|left|right):[0-9]{1,4}$/u.test(decision.value ?? '')
+    ) {
+      const [direction, amount] = decision.value!.split(':');
+      if (Number(amount) < 1 || Number(amount) > 1200) throw invalid();
+      decision = { ...decision, value: direction! };
+    }
+    if (
+      decision.action === 'scroll' &&
+      !['up', 'down', 'left', 'right'].includes(decision.value ?? '')
+    )
+      throw new AgentFault(
+        'INVALID_MODEL_DECISION',
+        'scroll.value 只能是 up、down、left、right；不支持 top/bottom。幅度由执行器依据当前视口计算。',
+      );
     if (['navigate', 'tab.new'].includes(decision.action)) {
       try {
         const url = new URL(decision.target ?? '');
@@ -785,10 +889,14 @@ class Execution {
         );
       if (!['up', 'down', 'left', 'right'].includes(decision.value ?? ''))
         throw invalid();
-      return { ...decision, observationId: this.current!.observationId };
+      return {
+        ...decision,
+        value: this.scrollValue(decision),
+        observationId: this.current!.observationId,
+      };
     } else if (decision.action === 'visual.click') {
       if (
-        !this.config.vision ||
+        !this.visualActions() ||
         !this.image ||
         !Number.isFinite(decision.x) ||
         !Number.isFinite(decision.y)
@@ -816,7 +924,19 @@ class Execution {
         !['up', 'down', 'left', 'right'].includes(decision.value))
     )
       throw invalid();
+    if (decision.action === 'scroll')
+      return { ...decision, value: this.scrollValue(decision) };
     return decision;
+  }
+  /** 幅度只由当前能力和几何事实生成，不信任模型提供的任意像素值。 */
+  private scrollValue(
+    decision: Extract<AgentDecision, { type: 'browser.act' }>,
+  ) {
+    const viewport = this.current?.viewport as
+      { scrollDistance?: boolean } | undefined;
+    return this.config.executionGuidance && viewport?.scrollDistance === true
+      ? `${decision.value}:${scrollDistance(this.current!, decision.target, ['left', 'right'].includes(decision.value ?? ''))}`
+      : decision.value!;
   }
   /** 完成决定只提供结论，证据元数据与总判定由执行器生成并由 API 再次核实。 */
   private finish(
@@ -1391,7 +1511,7 @@ class Execution {
   private async loop(): Promise<VerificationReport> {
     this.guard.signal.throwIfAborted();
     if (
-      !this.config.vision &&
+      !this.screenshots() &&
       this.task.acceptanceCriteria.some((c) =>
         c.evidenceKinds.includes('SCREENSHOT'),
       )
@@ -1410,13 +1530,23 @@ class Execution {
     let errors = 0;
     let workflowRecoveries = 0;
     let repeatedRecords = 0;
-    // 每次步骤循环最多一次；无模型额度、准备/清理阶段和已有全部确定结论时不触发。
+    // 收尾只进入一次；协议纠错仍在同一只读阶段内消耗原额度，不能重新探索。
     let finalReview = false;
+    let settling = false;
+    const settlement = new SettlementBudget(
+      this.allowance?.remaining() ?? this.guard.remaining(),
+    );
     // 连续遮挡只允许有限次重新规划；仍消耗原动作与模型预算。
     let obscured = 0;
     while (this.allowance || this.details.modelCalls < this.config.maxTurns) {
       this.guard.signal.throwIfAborted();
-      if (finalReview) return this.blocked(STALLED_SUMMARY, 'NO_PROGRESS');
+      if (finalReview)
+        return this.blocked(
+          settling
+            ? '原预算内的只读整理未能完成，保留已保存结论和证据'
+            : STALLED_SUMMARY,
+          settling ? 'EVIDENCE_INCOMPLETE' : 'NO_PROGRESS',
+        );
       try {
         if (await this.checkpoint()) {
           this.current = undefined;
@@ -1482,7 +1612,7 @@ class Execution {
             )
           ) {
             await pause(SHELL_WAIT_MS, this.guard.signal);
-            await this.observe(this.config.vision, false);
+            await this.observe(this.screenshots(), false);
             retries++;
           }
           // 被动重采不累计动作循环，也不能清除导航前已经存在的循环记录。
@@ -1614,7 +1744,36 @@ class Execution {
           }
         }
         this.syncPolicyChecks();
-        const input = this.context(finalReview);
+        if (
+          this.config.executionGuidance &&
+          !this.isSetup() &&
+          !this.isCleanup()
+        ) {
+          const available = this.allowance?.available(
+            this.details.actions,
+            this.details.modelCalls,
+          ) ?? {
+            timeMs: this.guard.remaining(),
+            modelCalls: this.config.maxTurns - this.details.modelCalls,
+          };
+          settling ||= settlement.shouldSettle(
+            available.timeMs,
+            available.modelCalls,
+          );
+          if (settling) finalReview = true;
+        }
+        const input = this.context(finalReview, settling);
+        if (
+          this.config.executionGuidance &&
+          !this.isSetup() &&
+          !this.isCleanup()
+        )
+          input.modelDeadline =
+            performance.now() +
+            settlement.requestMs(
+              JSON.parse(input.text).budgetRemaining.timeMs,
+              settling,
+            );
         const remainingActions = JSON.parse(input.text).budgetRemaining.actions;
         const decisionIndex = ++this.decisionIndex;
         input.traceRequest = async (request) => {
@@ -1653,6 +1812,11 @@ class Execution {
               throw modelTraceFault(error, 'start');
             });
           return async (result) => {
+            if (
+              request.purpose !== 'JEV_SELECTION' &&
+              result.elapsedMs !== null
+            )
+              settlement.observe(result.elapsedMs);
             await this.client
               .recordModelCall(this.grant, id, { phase: 'finish', result })
               .catch((error) => {
@@ -1734,7 +1898,18 @@ class Execution {
         if (!validateAgentDecision(decision))
           throw new AgentFault('INVALID_MODEL_DECISION', '决定不满足工具协议');
         // 工具 schema 不能代替执行端围栏，忽略只读限制的动作绝不派发。
-        if (finalReview && decision.type !== 'verification.record')
+        if (
+          finalReview &&
+          !(
+            settling
+              ? [
+                  'verification.record',
+                  'verification.block',
+                  'verification.finish',
+                ]
+              : ['verification.record']
+          ).includes(decision.type)
+        )
           return this.blocked(STALLED_SUMMARY, 'NO_PROGRESS');
         if (
           decision.type === 'browser.observe' &&
@@ -1807,6 +1982,44 @@ class Execution {
           this.feedback = PREPARATION_BLOCK_REVIEW;
           continue;
         }
+        // 已有结论先校验并保存；后续计划、目标失效或浏览器失败不能抹掉本批结果。
+        let savedChanged = false;
+        const attached =
+          output.conclusions ??
+          (this.config.executionGuidance &&
+          !this.isSetup() &&
+          !this.isCleanup() &&
+          ['verification.record', 'verification.finish'].includes(
+            decision.type,
+          ) &&
+          'criteria' in decision &&
+          !decision.criteria.some((c) =>
+            this.task.acceptanceCriteria
+              .find((expected) => expected.id === c.criterionId)
+              ?.evidenceKinds.includes('TRACE'),
+          )
+            ? decision.criteria
+            : undefined);
+        if (attached?.length) {
+          if (
+            !this.config.executionGuidance ||
+            this.isSetup() ||
+            this.isCleanup() ||
+            !validateAgentDecision({
+              type: 'verification.record',
+              summary: '本轮已有证据结论',
+              criteria: attached,
+            })
+          )
+            throw this.criteria.invalid('当前阶段不接受同轮验收结论');
+          this.assertPolicyChecks();
+          const blocked = await this.checkIdentity(false);
+          if (blocked) return blocked;
+          savedChanged = await this.saveCriteria(
+            attached,
+            '根据动作前已有证据保存独立结论',
+          );
+        }
         const readings = this.interactions.validate(output.workflow?.readings);
         const readingRevision = this.interactions.view().revision;
         const revision = this.workflow.view().revision;
@@ -1820,6 +2033,7 @@ class Execution {
             ),
           ),
           remainingActions,
+          new Set(this.task.acceptanceCriteria.map((item) => item.id)),
         );
         this.syncPolicyChecks();
         this.interactions.record(readings);
@@ -1877,7 +2091,11 @@ class Execution {
           decision.type === 'verification.record' ||
           decision.type === 'verification.finish'
         ) {
-          if (decision.type === 'verification.record' && !this.grant.task.steps)
+          if (
+            decision.type === 'verification.record' &&
+            !this.grant.task.steps &&
+            !this.config.executionGuidance
+          )
             throw new AgentFault(
               'INVALID_MODEL_DECISION',
               '逐项保存需要结构化步骤',
@@ -1899,6 +2117,7 @@ class Execution {
               this.task.objective,
               `${step.stepId}-policy`,
               step.policy,
+              this.config.executionGuidance,
             );
             this.readinessEvidence = new Set(this.evidence.keys());
             this.current = undefined;
@@ -1966,25 +2185,16 @@ class Execution {
             this.criteria = ready;
             return report;
           }
-          const changed = this.criteria.record(
-            decision.criteria,
-            currentEvidence,
-          );
-          // 即使完成声明还缺其他项，也先保存本批合法结论；持久化失败则不继续业务动作。
-          const state = this.stepResults[this.stepIndex];
-          if (state && this.criteria.values().length) {
-            state.readings = this.interactions.results();
-            state.criteria = this.criteria.values();
-            state.evidenceRefs = [
-              ...new Set([
-                ...state.criteria.flatMap((c) => c.evidenceRefs),
-                ...state.readings.flatMap((item) => item.evidenceRefs),
-              ]),
-            ];
-            state.summary = decision.summary;
-            await this.client.recordSteps(this.grant, this.stepResults);
-          }
-          if (finalReview) return this.blocked(STALLED_SUMMARY, 'NO_PROGRESS');
+          const changed =
+            (await this.saveCriteria(decision.criteria, decision.summary)) ||
+            savedChanged;
+          if (finalReview && decision.type !== 'verification.finish')
+            return this.blocked(
+              settling
+                ? '已在原预算内整理已有证据，剩余项目无法继续取证'
+                : STALLED_SUMMARY,
+              settling ? 'EVIDENCE_INCOMPLETE' : 'NO_PROGRESS',
+            );
           if (changed) {
             repeatedRecords = 0;
             this.lastCriteriaReview = this.details.actions;
@@ -2070,7 +2280,7 @@ class Execution {
             );
           operation = { ...decision, url: this.task.target.url };
         } else if (decision.type === 'browser.observe') {
-          if (decision.screenshot && !this.config.vision)
+          if (decision.screenshot && !this.screenshots())
             throw new AgentFault(
               'INVALID_MODEL_DECISION',
               '当前模型配置不支持截图输入',
@@ -2082,7 +2292,7 @@ class Execution {
         this.feedback = null;
         if (operation.type === 'browser.observe')
           await this.observe(
-            this.config.vision || operation.screenshot === true,
+            this.screenshots() || operation.screenshot === true,
           );
         else {
           await this.command(operation);
@@ -2103,6 +2313,10 @@ class Execution {
               'forward',
             ].includes(operation.action)
           ) {
+            if (this.config.executionGuidance) {
+              this.workflow.invalidateRecovery();
+              this.guidance.invalidateNavigation();
+            }
             this.tracker.reset(true);
             this.settlePending = true;
           }
@@ -2110,7 +2324,7 @@ class Execution {
           await this.observe();
         }
       } catch (error) {
-        // 收尾不是新的恢复循环；无效引用仍拒绝，不能凭错误回复补造结论。
+        // 收尾协议错误复用原有纠错上限；只重交声明，不重放动作或增加时间与请求额度。
         if (
           finalReview &&
           error instanceof AgentFault &&
@@ -2118,15 +2332,40 @@ class Execution {
             'INVALID_MODEL_DECISION',
             'WORKFLOW_INCOMPLETE',
             'WORKFLOW_RECOVERY_EXHAUSTED',
+            'WORKFLOW_PLAN_REQUIRED',
           ].includes(error.code)
-        )
-          return this.blocked(STALLED_SUMMARY, 'NO_PROGRESS');
+        ) {
+          const available = this.allowance?.available(
+            this.details.actions,
+            this.details.modelCalls,
+          ) ?? {
+            timeMs: this.guard.remaining(),
+            modelCalls: this.config.maxTurns - this.details.modelCalls,
+          };
+          if (
+            settling &&
+            error.code === 'INVALID_MODEL_DECISION' &&
+            ++errors < MAX_DECISION_ERRORS &&
+            available.modelCalls > 0 &&
+            settlement.requestMs(available.timeMs, true) > 1
+          ) {
+            this.feedback = settlementRepairFeedback(error.message);
+            // 仅解除本轮已结束标记；settling 保持 true，下轮仍只公布只读工具。
+            finalReview = false;
+            continue;
+          }
+          return this.blocked(
+            settling ? `只读整理未完成：${error.message}` : STALLED_SUMMARY,
+            settling ? 'EVIDENCE_INCOMPLETE' : 'NO_PROGRESS',
+          );
+        }
         if (
           error instanceof AgentFault &&
           [
             'POLICY_EVIDENCE_INCOMPLETE',
             'WORKFLOW_INCOMPLETE',
             'WORKFLOW_RECOVERY_EXHAUSTED',
+            'WORKFLOW_PLAN_REQUIRED',
             'INTERACTION_RECOVERY_REQUIRED',
             'INTERACTION_ALREADY_RECORDED',
           ].includes(error.code)
@@ -2377,6 +2616,7 @@ class Execution {
         this.isSetup()
           ? [step.description, ...(this.setupPhase ? [] : step.policy)]
           : undefined,
+        this.config.executionGuidance,
       );
       this.readinessEvidence = new Set(this.evidence.keys());
       this.criteria = new CriteriaLedger(this.currentTask.acceptanceCriteria);
