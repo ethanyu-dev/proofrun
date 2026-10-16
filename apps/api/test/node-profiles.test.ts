@@ -134,6 +134,139 @@ test(
           (data) => data.nodes[0].capabilities.nodeProfileManagement,
         );
       });
+      // 范围：真实控制面在启动回执前续租，且拒绝未准入或租约身份不匹配的占用；不运行 Chrome。
+      await suite.test(
+        '慢启动跨越初始租约，续租只授予已确认的同租约会话',
+        async () => {
+          const execute = node.execute.bind(node);
+          const send = node.send.bind(node);
+          const requests = new Map<string, number>();
+          let opened: Parameters<typeof node.execute>[0] | undefined;
+          let admitted = false;
+          let mismatch = false;
+          let heartbeats = 0;
+          let renewals = 0;
+          let expires = 0;
+          config.nodeLeaseMs = 1200;
+          node.send = (raw) => {
+            const value = raw as any;
+            if (value.type === 'node.heartbeat') {
+              heartbeats++;
+              requests.set(value.leaseRequestId, Date.now());
+              if (opened && admitted)
+                value.occupied = [
+                  {
+                    sessionId: opened.sessionId,
+                    leaseId: mismatch ? 'wrong-lease' : opened.leaseId,
+                    fence: opened.fence,
+                    state: 'STARTING',
+                  },
+                ];
+            }
+            send(value);
+          };
+          node.execute = (command) => {
+            if (command.command.type === 'session.open') {
+              opened = command;
+              if (!expires)
+                expires =
+                  (requests.get(command.command.leaseRequestId) ?? Date.now()) +
+                  command.command.leaseTtlMs;
+              return;
+            }
+            if (command.command.type === 'session.renew') {
+              assert.ok(admitted && !mismatch);
+              assert.ok(Date.now() < expires, '续租必须早于上一段租约截止');
+              expires = Math.max(
+                expires,
+                requests.get(command.command.leaseRequestId)! +
+                  command.command.leaseTtlMs,
+              );
+              renewals++;
+            }
+            execute(command);
+          };
+          try {
+            node.heartbeat();
+            const { id } = await api(path, {
+              url: 'https://login.example.test/',
+            });
+            await until(() => opened, Boolean);
+            const first = heartbeats;
+            await until(
+              () => heartbeats,
+              (n) => n >= first + 1,
+            );
+            assert.equal(renewals, 0);
+            admitted = true;
+            mismatch = true;
+            const beforeMismatch = heartbeats;
+            await until(
+              () => heartbeats,
+              (n) => n >= beforeMismatch + 1,
+            );
+            assert.equal(renewals, 0);
+            mismatch = false;
+            const initialExpires = expires;
+            await until(
+              () => renewals,
+              (n) => n >= 4 && Date.now() > initialExpires,
+            );
+            assert.ok(Date.now() < expires);
+            assert.equal((await api(`/v1/node-profiles/${id}`)).ready, false);
+            assert.equal(
+              (
+                await sql.query(
+                  'SELECT count(*)::int AS n FROM pr_commands WHERE id=$1',
+                  [`node-profile-open-${id}`],
+                )
+              ).rows[0].n,
+              0,
+            );
+            execute(opened!);
+            await until(
+              () => api(`/v1/node-profiles/${id}`),
+              (value) => value.ready,
+            );
+            await api(`/v1/node-profiles/${id}/close`, {});
+            await until(
+              () => api(`/v1/node-profiles/${id}`),
+              (value) => value.closed,
+            );
+            const finishedRenewals = renewals;
+            const beforeClosed = heartbeats;
+            await until(
+              () => heartbeats,
+              (n) => n >= beforeClosed + 2,
+            );
+            assert.equal(renewals, finishedRenewals);
+          } finally {
+            node.execute = execute;
+            node.send = send;
+            config.nodeLeaseMs = 10_000;
+          }
+        },
+      );
+      // 范围：异常关闭原因与正常不保存分别呈现，保存回执不受新失败覆盖；不验证真实磁盘模板。
+      await suite.test('维护状态保留租约过期原因', async () => {
+        const id = await create();
+        const opened = [...node.sessions.values()][0]!;
+        node.closed(opened.sessionId, 'SESSION_LEASE_EXPIRED');
+        const state = await until(
+          () => api(`/v1/node-profiles/${id}`),
+          (value) => value.closed,
+        );
+        assert.equal(state.failure.code, 'SESSION_LEASE_EXPIRED');
+        assert.match(state.failure.message, /续租/);
+        assert.equal(state.saveStatus, null);
+        const next = await create();
+        await api(`/v1/node-profiles/${next}/close`, {});
+        const normal = await until(
+          () => api(`/v1/node-profiles/${next}`),
+          (value) => value.closed,
+        );
+        assert.equal(normal.failure, null);
+      });
       // 范围：重复创建、任务列表隔离、首帧凭据与任务链接隔离；画面内容为夹具。
       await suite.test('创建恢复和鉴权边界', async () => {
         const id = await create();

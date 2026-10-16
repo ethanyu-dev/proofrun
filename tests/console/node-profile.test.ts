@@ -88,3 +88,44 @@ test('节点模板连接仅在首帧携带 Console 凭据', () => {
     }
   }
 });
+
+// 范围：失败展示区别租约过期、正常关闭和已保存；静态渲染不验证远端浏览器或轮询时序。
+test('维护结果显示具体失败码且不暗示旧模板丢失', async () => {
+  const { NodeProfileOutcome } =
+    await import('../../apps/console/src/components/node-profile-outcome.tsx');
+  const status = {
+    ready: false,
+    closed: true,
+    closing: true,
+    saveStatus: null,
+    failure: {
+      code: 'SESSION_LEASE_EXPIRED',
+      errorCode: 'DEADLINE_EXCEEDED',
+      closeReason: 'SESSION_LEASE_EXPIRED',
+      message: '节点未能在租约到期前完成续租，浏览器已停止。',
+    },
+  };
+  const html = renderToStaticMarkup(
+    createElement(NodeProfileOutcome, { status, closing: false }),
+  );
+  assert.match(html, /维护会话失败/);
+  assert.match(html, /SESSION_LEASE_EXPIRED/);
+  assert.match(html, /DEADLINE_EXCEEDED/);
+  assert.match(html, /之前已保存的模板不会因此被删除/);
+  assert.match(html, /重新创建维护会话/);
+  const normal = renderToStaticMarkup(
+    createElement(NodeProfileOutcome, {
+      status: { ...status, failure: null },
+      closing: false,
+    }),
+  );
+  assert.doesNotMatch(normal, /维护会话失败|错误码/);
+  const saved = renderToStaticMarkup(
+    createElement(NodeProfileOutcome, {
+      status: { ...status, saveStatus: 'saved' },
+      closing: false,
+    }),
+  );
+  assert.match(saved, /本次节点默认 profile 已保存/);
+  assert.doesNotMatch(saved, /本次没有确认发布/);
+});

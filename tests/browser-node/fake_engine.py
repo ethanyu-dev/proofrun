@@ -32,6 +32,12 @@ if operation == 'open':
         child = subprocess.Popen([sys.executable, __file__, '--daemon'], stdin=subprocess.DEVNULL,
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         Path('daemon.pid').write_text(str(child.pid))
+    # 范围：一次性延迟初始化，验证 host/主服务在慢启动期间仍处理租约；不是实际 profile 复制。
+    delay_file = Path.cwd().parent.parent / 'fixture-open-delay'
+    if delay_file.exists():
+        delay = float(delay_file.read_text())
+        delay_file.unlink()
+        time.sleep(min(delay, 30))
     Path('url').write_text(args[1])
 elif operation == 'snapshot':
     data = {'snapshot': '- button "Save" [ref=e1]', 'refs': {'e1': {'role': 'button', 'name': 'Save'}, 'e2': {'role': 'button', 'name': 'Slow save'}}}

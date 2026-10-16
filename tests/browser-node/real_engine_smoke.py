@@ -94,7 +94,7 @@ def run():
         # macOS 直接运行 host 时使用进程相对时间；Linux 使用系统启动后的时间。
         boot_ms = int(float(Path('/proc/uptime').read_text().split()[0]) * 1000) if Path('/proc/uptime').exists() else 0
         send({'type': 'init', 'config': {'binary': str(engine), 'chrome': str(chrome), 'session': session,
-               'directory': str(root), 'allow_unverified_writes': True}, 'deadline_ms': boot_ms + 120000})
+               'directory': str(root), 'allow_unverified_writes': True}, 'deadline_ms': boot_ms + 120000, 'startup_deadline_ms': boot_ms + 120000})
         opened = receive()
         assert 'Ok' in opened['result'], opened
         known_pids = [int(path.read_text()) for path in socket_dir.glob('*.pid')]

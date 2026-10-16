@@ -219,8 +219,11 @@ impl Engine {
             self.profile_restored = self.auth_version.is_some();
             self.profile_initialized = true;
         }
-        self.cli(vec!["open".into(), "about:blank".into()], timeout_ms)
-            .await?;
+        self.cli(
+            vec!["open".into(), "about:blank".into()],
+            deadline.saturating_sub(process::boot_ms()),
+        )
+        .await?;
         if self.config.full_profile {
             let state = self
                 .config

@@ -212,6 +212,51 @@ def run():
         assert (client.directory('two') / 'writes').read_text() == '1'
         checks.append('unknown write is never replayed')
 
+        # 范围：真实 supervisor/host/systemd 链路跨越初始短租约；仅用假引擎模拟慢 profile 恢复。
+        client.fresh_heartbeat()
+        (client.root / 'state/fixture-open-delay').write_text('4')
+        opening = client.request('slow-start', 'session.open', timeout_ms=15000,
+                                 leaseRequestId=client.heartbeat['leaseRequestId'], leaseTtlMs=2000,
+                                 maxDurationMs=30000, renewable=True, liveView=True)
+        started = time.monotonic()
+        client.send(opening)
+        while True:
+            try:
+                record = client.record('slow-start')
+                if (client.directory('slow-start') / 'daemon.pid').exists():
+                    break
+            except (TypeError, KeyError):
+                pass
+            assert time.monotonic() - started < 1.5, '启动未及时准入'
+            time.sleep(.02)
+        assert record['state'] == 'STARTING', record
+        assert_ok(client.call('slow-start', 'session.renew', leaseRequestId=client.heartbeat['leaseRequestId'], leaseTtlMs=12000))
+        assert_ok(client.result(opening))
+        assert time.monotonic() - started > 3.5
+        assert_ok(client.call('slow-start', 'browser.observe'))
+        slow_pids = client.pids('slow-start')
+        assert_ok(client.call('slow-start', 'session.close'))
+        wait_gone(slow_pids)
+        checks.append('slow startup forwards renewal to host across initial lease')
+
+        # 范围：同样的慢启动失去续租后回收整个 cgroup，不能靠延长启动上限越过短租约。
+        client.fresh_heartbeat()
+        (client.root / 'state/fixture-open-delay').write_text('4')
+        lost = client.request('startup-lost-lease', 'session.open', timeout_ms=15000,
+                              leaseRequestId=client.heartbeat['leaseRequestId'], leaseTtlMs=1500,
+                              maxDurationMs=30000, renewable=True, liveView=True)
+        client.send(lost)
+        result = client.result(lost)
+        assert result['operationStatus'] != 'SUCCEEDED', result
+        lost_pids = client.pids('startup-lost-lease')
+        wait_gone(lost_pids)
+        until_closed = time.monotonic() + 5
+        while client.record('startup-lost-lease')['state'] != 'CLOSED':
+            assert time.monotonic() < until_closed
+            time.sleep(.05)
+        assert client.record('startup-lost-lease')['close_reason'] == 'SESSION_LEASE_EXPIRED'
+        checks.append('startup lease loss still closes all descendants')
+
         # 范围：普通会话保留总时限；人工可续期会话跨过初始时限，仍在短租约到期时清理。引擎为故障夹具。
         assert client.heartbeat['capabilities']['renewableSessions'] is True
         client.fresh_heartbeat()

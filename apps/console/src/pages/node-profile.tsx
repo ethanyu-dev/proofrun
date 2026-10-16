@@ -2,15 +2,18 @@ import { useEffect, useState } from 'react';
 import { ApiClient, errorMessage } from '../api';
 import { ErrorNotice } from '../components/ui';
 import { HitlPage } from './hitl';
+import {
+  NodeProfileOutcome,
+  type NodeProfileStatus,
+} from '../components/node-profile-outcome';
+
+/** 初始打开与关闭确认需要较快反馈，已进入交互后只低频读取终态。 */
+const STARTUP_POLL_MS = 750;
+const ACTIVE_POLL_MS = 3000;
 
 /** 准入与初次导航完成后才挂载共用操作界面，启动期间也允许明确关闭。 */
 export function NodeProfilePage({ api, id }: { api: ApiClient; id: string }) {
-  const [status, setStatus] = useState<{
-    ready: boolean;
-    closed: boolean;
-    closing: boolean;
-    saveStatus: 'saved' | 'newer' | null;
-  }>();
+  const [status, setStatus] = useState<NodeProfileStatus>();
   const [error, setError] = useState<string>();
   const [closing, setClosing] = useState(false);
   const [attempt, setAttempt] = useState(0);
@@ -26,10 +29,18 @@ export function NodeProfilePage({ api, id }: { api: ApiClient; id: string }) {
         );
         if (controller.signal.aborted) return;
         setStatus(value);
-        if (!value.ready && !value.closed)
-          timer = setTimeout(() => void read(), 750);
+        setError(undefined);
+        // 已进入交互后继续低频读取终态，节点异常关闭也能显示持久失败原因。
+        if (!value.closed)
+          timer = setTimeout(
+            () => void read(),
+            value.ready ? ACTIVE_POLL_MS : STARTUP_POLL_MS,
+          );
       } catch (e) {
-        if (!controller.signal.aborted) setError(errorMessage(e));
+        if (!controller.signal.aborted) {
+          setError(errorMessage(e));
+          timer = setTimeout(() => void read(), ACTIVE_POLL_MS);
+        }
       }
     };
     void read();
@@ -41,22 +52,7 @@ export function NodeProfilePage({ api, id }: { api: ApiClient; id: string }) {
   if (status?.ready && !closing) return <HitlPage api={api} id={id} />;
   return (
     <section className="panel" aria-label="节点默认 profile">
-      <h1>
-        {status?.closed
-          ? '维护会话已关闭'
-          : status?.closing || closing
-            ? '正在关闭浏览器…'
-            : '正在打开维护浏览器…'}
-      </h1>
-      <p>
-        {status?.closed
-          ? status.saveStatus === 'saved'
-            ? '节点默认 profile 已保存。'
-            : status.saveStatus === 'newer'
-              ? '已保留较新的节点默认 profile。'
-              : '浏览器已关闭，没有确认发布新的节点默认 profile。'
-          : '浏览器打开后可前往网页、完成登录，再保存为节点默认模板。'}
-      </p>
+      <NodeProfileOutcome status={status} closing={closing} />
       <ErrorNotice message={error} />
       <div className="page-actions">
         {error && (

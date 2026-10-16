@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { profileFailure } from './profile-failure.js';
 import type { VerificationTask } from '@proofrun/contracts';
 import { Database } from '../../db.js';
 import {
@@ -49,6 +50,9 @@ interface ProfileSession {
   closure_verified: boolean;
   /** 确定的模板发布回执；空值不宣称已保存。 */
   save_status: 'saved' | 'newer' | null;
+  /** 任务失败码与物理关闭原因分别保留，避免把异常退出展示为用户主动关闭。 */
+  task_error: { code?: string } | null;
+  close_reason: string | null;
 }
 
 /** Console 维护入口只编排人工会话，复用调度器的容量、持久命令、撤权与物理关闭语义。 */
@@ -234,7 +238,7 @@ export class NodeProfiles {
   private async read(id: string): Promise<ProfileSession> {
     const row = (
       await this.db.query<ProfileSession>(
-        `SELECT p.*,e.id AS execution_id,t.definition->'target'->>'url' AS url,h.expires_at,t.state AS task_state,s.state AS session_state,s.closure_verified FROM pr_node_profiles p JOIN pr_tasks t ON t.id=p.task_id JOIN pr_executions e ON e.task_id=t.id JOIN pr_sessions s ON s.execution_id=e.id JOIN pr_interventions h ON h.id=p.id WHERE p.id=$1`,
+        `SELECT p.*,e.id AS execution_id,t.definition->'target'->>'url' AS url,h.expires_at,t.state AS task_state,s.state AS session_state,s.closure_verified,t.error AS task_error,s.close_reason FROM pr_node_profiles p JOIN pr_tasks t ON t.id=p.task_id JOIN pr_executions e ON e.task_id=t.id JOIN pr_sessions s ON s.execution_id=e.id JOIN pr_interventions h ON h.id=p.id WHERE p.id=$1`,
         [id],
       )
     ).rows[0];
@@ -276,6 +280,12 @@ export class NodeProfiles {
   async status(id: string) {
     const row = await this.read(id);
     let ready = false;
+    let failure = ['ERROR', 'TIMED_OUT'].includes(row.task_state)
+      ? profileFailure(
+          row.task_error?.code ?? 'NODE_PROFILE_FAILED',
+          row.close_reason,
+        )
+      : null;
     if (row.task_state === 'RUNNING' && row.session_state === 'ACTIVE') {
       const receipt =
         (
@@ -285,10 +295,9 @@ export class NodeProfiles {
         ).rows[0] ?? {};
       ready = receipt.result?.operationStatus === 'SUCCEEDED';
       if (receipt.result && !ready)
-        throw new ApiError(
-          409,
-          'NODE_PROFILE_NAVIGATION',
-          '初始网页打开失败，请关闭维护会话后重试',
+        failure = profileFailure(
+          receipt.result.error?.code ?? 'NODE_PROFILE_NAVIGATION',
+          row.close_reason,
         );
     }
     return {
@@ -300,6 +309,7 @@ export class NodeProfiles {
       closed: row.closure_verified,
       closing: row.task_state !== 'RUNNING',
       saveStatus: row.save_status,
+      failure,
     };
   }
 

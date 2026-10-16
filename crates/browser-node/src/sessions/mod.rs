@@ -1,6 +1,7 @@
 //! 本机会话准入与监管。STARTING、CLOSING 和 QUARANTINED 状态持续占用容量，
 //! 直到 systemd 确认进程范围已清空。会话内浏览器操作串行，续租和关闭走独立控制路径。
 pub mod host;
+mod startup;
 use crate::{
     config::NodeConfig,
     engine::EngineConfig,
@@ -30,8 +31,8 @@ use tokio_util::{
     sync::CancellationToken,
 };
 
-/// 单会话启动最多等待 20 秒，同时仍受命令和租约期限约束。
-const HOST_STARTUP_LIMIT_MS: u64 = 20_000;
+/// profile 恢复与浏览器初始化最多等待两分钟；续租不能延长此独立启动上限。
+const HOST_STARTUP_LIMIT_MS: u64 = 120_000;
 /// 定期检测 systemd-run 包装进程是否意外退出。
 const HOST_HEALTH_INTERVAL: Duration = Duration::from_secs(1);
 /// 关闭时先给 host 一个短暂机会自行退出，再由 systemd 强制清理。
@@ -422,9 +423,10 @@ async fn start(
     config: &NodeConfig,
     store: &Store,
     record: &mut SessionRecord,
-    deadline: u64,
+    startup_deadline: u64,
     max_ms: Option<u64>,
     session: &Session,
+    renew: &mut watch::Receiver<u64>,
 ) -> anyhow::Result<(HostIo, Value)> {
     let directory = config.home.join("sessions").join(&record.launch_id);
     std::fs::create_dir_all(&directory)?;
@@ -477,10 +479,20 @@ async fn start(
             network_evidence: session.network_evidence,
             live_view: session.live_view,
         },
-        deadline_ms: deadline,
+        deadline_ms: session.deadline.load(Ordering::SeqCst),
+        startup_deadline_ms: startup_deadline,
     })
     .await?;
-    let opened = host.receive().await?;
+    // host 初始化同样受短租约监管，等待打开结果时必须持续转发已接受的续租。
+    let opened = loop {
+        tokio::select! {
+            changed = renew.changed() => {
+                changed.context("startup renewal channel closed")?;
+                send_renewal(&mut host, session).await?;
+            },
+            result = host.receive() => break result?,
+        }
+    };
     anyhow::ensure!(opened["type"] == "host.opened", "invalid open response");
     let result: Result<Value> = serde_json::from_value(opened["result"].clone())?;
     let mut data = result?;
@@ -502,18 +514,24 @@ async fn supervise(
         closed,
         opened,
     } = channels;
-    // 启动不能耗尽命令或租约期限，也不能无限等待浏览器就绪。
-    let startup_budget = command_deadline
-        .min(session.deadline.load(Ordering::SeqCst))
-        .saturating_sub(process::boot_ms())
-        .min(HOST_STARTUP_LIMIT_MS);
-    let startup = tokio::select! {
-        result = tokio::time::timeout(Duration::from_millis(startup_budget), start(
-            &config, &store, &mut record, session.deadline.load(Ordering::SeqCst),
-            (session.hard_deadline != u64::MAX).then(|| session.hard_deadline.saturating_sub(process::boot_ms())), &session,
-        )) => result.unwrap_or_else(|_| Err(anyhow::anyhow!("startup timed out"))),
-        _ = session.cancel.cancelled() => Err(anyhow::anyhow!("startup cancelled")),
-    };
+    let startup_deadline = command_deadline.min(process::boot_ms() + HOST_STARTUP_LIMIT_MS);
+    // 单独订阅，外层看门狗与内层 host 转发都必须收到每次续租，不能互相消费通知。
+    let startup = startup::wait(
+        start(
+            &config,
+            &store,
+            &mut record,
+            startup_deadline,
+            (session.hard_deadline != u64::MAX)
+                .then(|| session.hard_deadline.saturating_sub(process::boot_ms())),
+            &session,
+            &mut renew,
+        ),
+        session.renew.subscribe(),
+        &session.cancel,
+        startup_deadline,
+    )
+    .await;
     let mut host = match startup {
         Ok((host, proof)) => {
             record.state = "ACTIVE".into();
@@ -526,10 +544,28 @@ async fn supervise(
             Some(host)
         }
         Err(error) => {
-            let _ = opened.send(Err(Fault::unknown(
-                "SESSION_START_FAILED",
-                error.to_string(),
-            )));
+            // host 与主服务任一看门狗先到期，都保留同一个可诊断原因。
+            let mut fault = error
+                .downcast_ref::<Fault>()
+                .cloned()
+                .unwrap_or_else(|| Fault::unknown("SESSION_START_FAILED", error.to_string()));
+            if fault.code == "DEADLINE_EXCEEDED" {
+                fault.code = if session.deadline.load(Ordering::SeqCst) <= process::boot_ms() {
+                    "SESSION_LEASE_EXPIRED"
+                } else if startup_deadline <= process::boot_ms() {
+                    "SESSION_START_TIMEOUT"
+                } else {
+                    "DEADLINE_EXCEEDED"
+                }
+                .into();
+            }
+            let reason = match fault.code.as_str() {
+                "SESSION_LEASE_EXPIRED" => "SESSION_LEASE_EXPIRED",
+                "SESSION_START_TIMEOUT" => "SESSION_START_TIMEOUT",
+                _ => "SESSION_START_FAILED",
+            };
+            session.request_close(reason);
+            let _ = opened.send(Err(fault));
             None
         }
     };

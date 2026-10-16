@@ -193,6 +193,7 @@ class DebugSession {
         allow_unverified_writes: true,
       },
       deadline_ms: hostDeadline(),
+      startup_deadline_ms: hostDeadline(),
     };
     const events = [
       { direction: '输出 ← Browser Node session-host', payload: ready },
