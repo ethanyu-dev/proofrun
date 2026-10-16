@@ -32,6 +32,8 @@ const MIGRATIONS = [
   '020-environment-proofs.sql',
   '021-identity-library.sql',
   '022-node-profiles.sql',
+  '023-hitl-notifications.sql',
+  '024-feishu-lifecycle.sql',
 ];
 
 /** 所有业务事务使用同一连接；独占连接单独维护控制面实例锁。 */

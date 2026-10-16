@@ -8,6 +8,10 @@ import {
 } from './modules/identities/catalog.js';
 import { resolve } from 'node:path';
 import { loadCaseProfile, type CaseProfile } from './modules/cases/profile.js';
+import {
+  feishuConfig,
+  type FeishuConfig,
+} from './modules/notifications/feishu.js';
 
 /** 环境变量未覆盖时的控制面运行界限。 */
 const DEFAULTS = {
@@ -20,6 +24,8 @@ const DEFAULTS = {
 
 /** 控制面只支持一个活动实例；队列、租约和消息均持久化到数据库。 */
 export interface ApiConfig {
+  /** 可选飞书企业自建应用；未配置时关闭 Case 生命周期通知。 */
+  feishu?: FeishuConfig;
   /** 每次人工请求的独立等待期限；默认三十分钟，旧等待不补造截止时间。 */
   humanWaitMs?: number;
   /** 测试身份元数据，不包含原始密码或 Cookie。 */
@@ -120,7 +126,21 @@ export function loadConfig(): ApiConfig {
   )
     throw new Error('外部身份库需要 URL 与 TOKEN_FILE，且不能同时配置本地目录');
   const caseProfile = loadCaseProfile(process.env.PROOFRUN_CASE_PROFILE_FILE);
+  const feishu = feishuConfig(
+    process.env.PROOFRUN_FEISHU_APP_ID,
+    process.env.PROOFRUN_FEISHU_APP_SECRET,
+    process.env.PROOFRUN_FEISHU_CHAT_ID,
+  );
+  if (
+    !feishu &&
+    (process.env.PROOFRUN_FEISHU_WEBHOOK_URL ||
+      process.env.PROOFRUN_FEISHU_SIGNING_SECRET)
+  )
+    throw new Error(
+      '飞书通知已改为企业自建应用，请移除旧 WEBHOOK_URL/SIGNING_SECRET 并配置 APP_ID、APP_SECRET、CHAT_ID',
+    );
   return {
+    ...(feishu ? { feishu } : {}),
     ...(caseProfile ? { caseProfile } : {}),
     ...(providerEndpoint
       ? {
