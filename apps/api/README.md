@@ -36,6 +36,51 @@ pnpm dev:api
 
 远端使用同一个 HTTPS/WSS origin，由反向代理转发 HTTP 和 WebSocket Upgrade。API 自身默认仅监听回环地址。节点向外连接，控制面不需要访问业务内网。数据库与证据目录都必须持久化。
 
+## Case 飞书生命周期通知
+
+在飞书开放平台创建企业自建应用，开启机器人能力，申请 `im:message:send_as_bot` 权限并发布应用，再把应用机器人加入目标群。使用同一应用身份[发送消息](https://open.feishu.cn/document/server-docs/im-v1/message/create)和[更新卡片](https://open.feishu.cn/document/server-docs/im-v1/message-card/patch)，不需要配置事件订阅或卡片回调地址。
+
+在 API 服务端配置以下环境变量并重启：
+
+```sh
+export PROOFRUN_FEISHU_APP_ID='cli_替换为应用ID'
+export PROOFRUN_FEISHU_APP_SECRET='替换为应用密钥'
+export PROOFRUN_FEISHU_CHAT_ID='oc_替换为目标群ID'
+export PROOFRUN_CONSOLE_URL='https://你的控制台域名'
+```
+
+`PROOFRUN_FEISHU_CHAT_ID` 填目标群完整的 `oc_...` 字符串。获取与配置步骤：
+
+1. 先在目标群的「··· → 设置 → 群机器人 → 添加机器人」中加入上述自建应用机器人。
+2. 飞书客户端升级到 **7.60 或以上**，打开目标群右上角菜单，进入群设置页查看并复制群 ID。入口说明见飞书官方[群 ID 说明](https://open.feishu.cn/document/server-docs/group/chat/chat-id-description)。
+3. 若客户端没有显示，可登录 [API 调试台](https://open.feishu.cn/api-explorer)，选择需要 `chat_id` 路径参数的接口，在「路径参数 → 选择群组」中找到目标群并点击「复制群组 ID」。这里只需要复制 ID，无需调用修改群信息的接口。
+4. 把完整 ID 配到 API 服务环境变量，例如 `PROOFRUN_FEISHU_CHAT_ID=oc_实际群ID`，与同一机器人的 App ID、App Secret 一起保存并重启 API。Railway 在 `api` 服务 Variables 中填写变量值，不带 `export` 或额外引号；本地则写入 `.proofrun/local.env`。
+
+群 ID 不是群名称、分享链接、Webhook 地址或应用 ID。查到群 ID 不等于机器人已加入群；若无法推送，先核对机器人群成员身份、应用已发布且拥有 `im:message:send_as_bot` 权限。无需为通知配置消息读取权限。
+
+三个飞书变量同时填写或全部留空；全部留空时关闭通知，部分配置会阻止 API 启动。应用密钥仅在服务端用于交换并缓存 `tenant_access_token`，不放入 `VITE_*`、任务定义、消息进度表或版本库。Console 地址需为群成员可访问的 origin；未配置时使用 `PROOFRUN_PUBLIC_URL`。
+
+使用 `pnpm dev:local` 时，将三个变量写入 `.proofrun/local.env`，启动器仅传给 API；本机默认生成回环 Console 链接，群内其他设备使用前应改用具有可访问 Console 地址的部署。Railway 则仅在 `api` 服务变量中配置。
+
+以下里程碑各发送一条新卡片，同时把同一 Case 本轮已发卡片更新为当前状态。每张卡片保留原始事件、组别、原因及发生时间，便于回看过程：
+
+- 提交：单任务发送一次；双组比较按 `comparison.id` 聚合为一次。
+- 进入 HITL：每组每一轮人工请求发送一次；确认接管不重复发送。
+- 恢复执行：每次从人工处理恢复自动执行发送一次。
+- 执行结束：两组均结束后发送一次，分别展示完成、取消、超时、错误及验收结论；结束不等于验收通过。
+
+卡片沿用 Console 的中文状态、验证目标、Case ID、分组和验收口径，显示北京时间的处理截止。有效请求提供「立即处理」，结束、过期或会话失效后移除操作入口；后续新一轮 HITL 会显示新入口。报告生成后「查看任务」切换为「查看报告」。立即处理沿用现有任务专属 HITL 链接，群成员持链接即可操作本次会话；查看任务或报告仍需要 Console 管理员认证。长文只展示摘要，完整内容以处理页为准。
+
+首次启用只通知启用后提交的 Case，不补发历史任务，节点模板维护和独立清理任务不推送。同一应用和群的通知起点、事件、发送回执及每张卡片更新进度持久化；重启后补齐期间发生的里程碑，即使多轮状态变化快于轮询也不会遗漏事件。切换应用或群会建立独立通知起点，不能跨群更新旧卡片。沿用同一配置停用后再启用会补齐该起点之后的事件。
+
+扫描与业务调度独立，每秒轮转一个 Case，最多发送一张新卡片、更新三张旧卡片，更新为最终一致。单次 HTTP 最多五秒；失败按 10、20、40、80 秒退避，总计最多五次。某张旧卡片失败不影响其他卡片，当前状态发生变化时可重新尝试该卡片的新版本。日志只含内部通知 ID、次数及数值错误码。
+
+首次发送前冻结内容与 UUID，回执丢失时复用它们重试。飞书发送去重窗口为一小时，本实现首次尝试超过 55 分钟后停止未知结果重发；不能承诺无限期严格一次送达。旧卡片只可更新发送后十四天内的消息，已删除或撤回的消息也会停止更新。达到重试上限会留存记录并告警；修复故障后，维护者可按 `pr_feishu_messages.id` 精确重置对应发送或更新的次数及下次时间，并清空其 `pr_feishu_runs.settled_at`，但不要重置首次发送时间以绕过去重窗口。
+
+从旧 webhook 方案升级时移除 `PROOFRUN_FEISHU_WEBHOOK_URL` 和 `PROOFRUN_FEISHU_SIGNING_SECRET`，改配上述应用变量。只配置旧变量时 API 会提示迁移。迁移 `023` 的旧投递记录保留，`024` 增加应用消息进度表；自建应用无法接管旧 webhook 已发卡片。
+
+`feishu.test.ts` 验证应用配置、令牌刷新、卡片结构、回环 HTTP 与错误脱敏；`feishu-lifecycle.test.ts` 在独立 PostgreSQL 验证迁移、四类事件、双组聚合、重启恢复、独立重试和链接失效。它们不连接真实飞书群，不代表飞书客户端渲染、应用权限或生产网络已验收。
+
 ## 节点配对
 
 1. 管理员调用 `POST /v1/node-pairings`，提交 `{"type":"node.enroll","pool":"internal","name":"vm-01"}`，取得十分钟有效的一次性 `pairingToken`。

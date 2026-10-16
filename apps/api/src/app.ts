@@ -28,6 +28,7 @@ import { Coordinator } from './modules/scheduling/coordinator.js';
 import { ExecutionControl } from './modules/scheduling/control.js';
 import { NodeProfiles } from './modules/nodes/profiles.js';
 import { HitlService } from './modules/hitl/service.js';
+import { CaseNotifications } from './modules/notifications/service.js';
 import { TaskReader } from './modules/tasks/reader.js';
 import { LiveService } from './modules/hitl/live.js';
 import { ModelCalls } from './modules/reports/model-calls.js';
@@ -106,6 +107,8 @@ export async function buildApp(
     nodeProfiles,
   );
   const live = new LiveService(db, gateway, config.adminToken);
+  const notifications = new CaseNotifications(db, config, app.log);
+  app.addHook('onReady', async () => notifications.start());
   const modelCalls = new ModelCalls(db);
   const authenticatedNodes = new WeakMap<
     FastifyRequest,
@@ -787,6 +790,7 @@ export async function buildApp(
   async function closeTransports() {
     stopped = true;
     clearInterval(timer);
+    await notifications.close();
     await ticking;
     hitl.close();
     live.close();

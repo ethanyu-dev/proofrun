@@ -68,6 +68,8 @@ API：
 
 密钥可分别使用 `openssl rand -hex 32` 生成。不要把密钥写入仓库、Docker build arguments 或 `VITE_*` 变量。
 
+需要飞书群通知时，仅在 API 增加 `PROOFRUN_FEISHU_APP_ID`、`PROOFRUN_FEISHU_APP_SECRET` 和 `PROOFRUN_FEISHU_CHAT_ID`，三个变量同时填写。使用已发布的企业自建应用机器人并将其加入目标群，权限与卡片同步规则见 [Case 飞书生命周期通知](../../apps/api/README.md#case-飞书生命周期通知)。
+
 镜像默认监听 `::`，兼容私网 IPv4/IPv6；证据默认写入 `/data/artifacts`。不要把 `PROOFRUN_PUBLIC_URL` 填成 API 私网地址。`PROOFRUN_CONSOLE_URL` 不设置时沿用公开地址，无需额外 CORS 配置。Case profile 的 JSON 与 `PROOFRUN_CASE_PROFILE_FILE` 不能同时设置；未设置 profile 时不会接受新 case。
 
 Web：
