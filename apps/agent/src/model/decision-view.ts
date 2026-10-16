@@ -1,8 +1,10 @@
+import type { DecisionContextData } from '../execution/context.js';
+
 /** 历史正文只合并完全相同的副本，不生成需要模型重建的差分文本。 */
 export function compactDecisionText(text: string): string {
   const context = JSON.parse(text);
   if (
-    !context.executionGuidance ||
+    (!context.executionGuidance && !context.executionPolicy) ||
     !Array.isArray(context.previousObservations)
   )
     return text;
@@ -38,4 +40,11 @@ export function compactDecisionText(text: string): string {
   }
   context.previousObservations = history;
   return JSON.stringify(context);
+}
+
+/** 兼容工作流内部仍持有计划；对新模型只公布顶层 plan，避免两份可修改计划。 */
+export function requestContext(context: DecisionContextData) {
+  if (!context.executionPolicy || !context.workflow) return context;
+  const { recovery: _recovery, ...workflow } = context.workflow;
+  return { ...context, workflow };
 }

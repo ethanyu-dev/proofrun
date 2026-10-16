@@ -158,6 +158,7 @@ test(
         executionGuidance = false,
         vision = false,
         thinking,
+        reasoningEffort,
         beforeComplete,
         observeFailuresAfterClick = 0,
         preparationFailures = 0,
@@ -229,6 +230,7 @@ test(
         modelUrl: server.url,
         vision,
         thinking,
+        reasoningEffort,
         modelMs: 5000,
         executionGuidance,
       };
@@ -659,9 +661,19 @@ test(
       await suite.test(
         '思考参数贯通 Agent、存档校验和模型派发，非法扩展仍被拒绝',
         async () => {
-          for (const thinking of [undefined, 'disabled', 'enabled']) {
+          for (const { thinking, reasoningEffort } of [
+            {},
+            { thinking: 'disabled' },
+            { thinking: 'enabled' },
+            ...['low', 'high', 'max'].map((reasoningEffort) => ({
+              thinking: 'enabled',
+              reasoningEffort,
+            })),
+          ]) {
             const { report, execution, requests } = await run(
-              task(`agent-thinking-${thinking ?? 'default'}`),
+              task(
+                `agent-thinking-${thinking ?? 'default'}-${reasoningEffort ?? 'default'}`,
+              ),
               async (context, _turn, body, _request, { execution, client }) => {
                 const path = `/v1/admin/executions/${execution.id}/model-calls`;
                 const list = await api('GET', path);
@@ -673,6 +685,11 @@ test(
                 assert.deepEqual(
                   body.thinking,
                   thinking ? { type: thinking } : undefined,
+                );
+                assert.equal(body.reasoning_effort, reasoningEffort);
+                assert.equal(
+                  body.tool_choice,
+                  thinking === 'enabled' ? 'auto' : 'required',
                 );
                 assert.equal(
                   call.requestSha256,
@@ -692,6 +709,9 @@ test(
                       { type: ['disabled'] },
                       { type: 'disabled', api_key: 'fixture-secret' },
                     ].map((value) => ({ ...body, thinking: value })),
+                    ...[null, false, {}, [], 42, '', 'MAX', 'xhigh'].map(
+                      (value) => ({ ...body, reasoning_effort: value }),
+                    ),
                     { ...body, authorization: 'fixture-secret' },
                     { ...body, url: 'https://unexpected.invalid' },
                   ];
@@ -716,7 +736,7 @@ test(
                 }
                 return finish(context);
               },
-              { thinking },
+              { thinking, reasoningEffort },
             );
             assert.equal(report.verdict, 'PASSED');
             assert.equal(requests.length, 1);

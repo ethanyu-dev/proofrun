@@ -59,6 +59,28 @@ function requestWith(content) {
   };
 }
 
+// 范围：填写子请求继承 max、TypeSafe 候选不接收推理参数；回复为夹具，不验证真实供应商。
+test('JEV 字段生成继承 LLM 推理配置', async () => {
+  const bodies = [];
+  const request = requestWith('{"text":"fixture-invalid"}');
+  const model = new JevModel(
+    { ...config, thinking: 'enabled', reasoningEffort: 'max' },
+    'fixture',
+    'jev-test',
+    async (...args) => {
+      bodies.push(args[3]);
+      return request(...args);
+    },
+  );
+  const result = await model.decide(input(), new AbortController().signal);
+  assert.equal(result.decision.value, 'fixture-invalid');
+  assert.equal(bodies.length, 2);
+  assert.equal(Object.hasOwn(bodies[0], 'reasoning_effort'), false);
+  assert.equal(Object.hasOwn(bodies[0], 'thinking'), false);
+  assert.equal(bodies[1].reasoning_effort, 'max');
+  assert.deepEqual(bodies[1].thinking, { type: 'enabled' });
+});
+
 // 范围：填写回执后先核对提示且不重复审查同一回执；仅模拟选择失焦动作，不证明真实页面会出现提示。
 test('JEV 填写后先交给文本模型核对校验状态', async () => {
   let selections = 0,

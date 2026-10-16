@@ -4,7 +4,7 @@ import { compileStepBudget } from '../../contracts/dist/index.js';
 import { execute } from '../../apps/agent/dist/execution/runner.js';
 import { ChatModel } from '../../apps/agent/dist/model/chat.js';
 import { JevModel } from '../../apps/agent/dist/model/jev.js';
-import { ActionMemory } from '../../apps/agent/dist/execution/action-memory.js';
+import { OperationJournal } from '../../apps/agent/dist/execution/operation-journal.js';
 import { config, grant, FakeControl, finish, modelServer } from './fixture.mjs';
 
 /** 构造已规范化的连续步骤；测试不连接业务网站或真实身份服务。 */
@@ -95,7 +95,7 @@ function scripted(decide = finish) {
 
 // 范围：关键填写回执不会被观察/滚动挤掉，不保留输入值且超限标记省略；不验证真实字段值或业务提示。
 test('关键动作记忆独立于近期窗口且不保留输入值', () => {
-  const memory = new ActionMemory();
+  const memory = new OperationJournal();
   memory.record({
     commandId: 'fill',
     operation: 'browser.act',
@@ -121,9 +121,9 @@ test('关键动作记忆独立于近期窗口且不保留输入值', () => {
       effect: 'COMPLETED',
     });
   }
-  assert.equal(memory.view().items[0].commandId, 'fill');
-  assert.equal(memory.view().items.length, 1);
-  assert(!JSON.stringify(memory.view()).includes('private-fixture-value'));
+  assert.equal(memory.critical().items[0].commandId, 'fill');
+  assert.equal(memory.critical().items.length, 1);
+  assert(!JSON.stringify(memory.critical()).includes('private-fixture-value'));
   for (let i = 0; i < 30; i++)
     memory.record({
       commandId: `click-${i}`,
@@ -132,10 +132,10 @@ test('关键动作记忆独立于近期窗口且不保留输入值', () => {
       operationStatus: 'FAILED',
       effect: 'NOT_STARTED',
     });
-  assert.equal(memory.view().items.length, 24);
-  assert.equal(memory.view().omitted, 7);
+  assert.equal(memory.critical().items.length, 24);
+  assert.equal(memory.critical().omitted, 7);
   assert(
-    memory.view().items.every((item) => item.operationStatus === 'FAILED'),
+    memory.critical().items.every((item) => item.operationStatus === 'FAILED'),
   );
 });
 

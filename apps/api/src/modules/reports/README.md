@@ -10,7 +10,7 @@ artifacts.ts 负责 DOM 归档、PNG 流式上传和存储确认、标准覆盖�
 
 该实现核对固定版本 [agent-browser 0.38.1 原生请求实现](https://github.com/vercel-labs/agent-browser/blob/v0.38.1/cli/src/native/actions.rs) 和 [存储状态实现](https://github.com/vercel-labs/agent-browser/blob/v0.38.1/cli/src/native/state.rs)，继续保持版本固定，不随文档最新版本自动升级。
 
-模型请求正文采用顶层字段白名单；`thinking` 可省略，提供时仅接受 `{"type":"enabled"}` 或 `{"type":"disabled"}`，不允许额外字段。新增模型参数时必须同步该校验，并运行 `pnpm test:agent:integration` 验证 Agent 真实序列化正文可以先存档、再派发；仅模型适配器夹具通过不能证明控制面兼容。
+模型请求正文采用顶层字段白名单；`thinking` 可省略，提供时仅接受 `{"type":"enabled"}` 或 `{"type":"disabled"}`，不允许额外字段。`reasoning_effort` 可省略，提供时只接受 `low`、`high`、`max` 字符串。新增模型参数时必须同步该校验，并运行 `pnpm test:agent:integration` 验证 Agent 真实序列化正文可以先存档、再派发；仅模型适配器夹具通过不能证明控制面兼容。
 
 JEV 的 `assets` 只接收已脱敏的 PNG 资源：`data_base64` 必须被替换为仅含 `omitted` 说明的对象，拒绝原始图片编码及额外资源字段。原图证据和派生图片摘要保留在 `state.screenshotSource`；`requestSha256` 仍对应实际发出的完整请求。
 

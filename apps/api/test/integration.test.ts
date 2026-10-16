@@ -5080,7 +5080,7 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       );
     });
 
-    // 范围：HTTP 认证、并发重跑幂等、双组持久化和列表归属；不调用真实模型或业务浏览器。
+    // 范围：HTTP 认证、时间预算传递、并发重跑幂等、双组持久化和列表归属；不调用真实模型或业务浏览器。
     await suite.test(
       '结构化 case 重跑整体创建两组且列表携带 case 身份',
       async () => {
@@ -5125,12 +5125,23 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
           { caseId: sourceId },
           { caseId, extra: true },
           { caseId: 'a/b' },
+          { caseId, timeBudget: {} },
+          { caseId, timeBudget: { cleanupTimeoutMs: 0 } },
+          { caseId, timeBudget: { stepTimeoutMs: '900000' } },
           'invalid',
         ])
           assert.equal((await api('POST', path, invalid)).status, 400);
         const results = await Promise.all([
-          api('POST', path, { caseId }),
-          api('POST', path, { caseId }),
+          api('POST', path, {
+            caseId,
+            budgetMode: 'original',
+            timeBudget: { stepTimeoutMs: 900_000, cleanupTimeoutMs: 600_000 },
+          }),
+          api('POST', path, {
+            caseId,
+            budgetMode: 'original',
+            timeBudget: { stepTimeoutMs: 900_000, cleanupTimeoutMs: 600_000 },
+          }),
         ]);
         for (const result of results) {
           assert.equal(result.status, 202, JSON.stringify(result));
@@ -5151,6 +5162,9 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         for (const arm of results[0]!.data.comparison.arms) {
           const fresh = (await api('GET', `/v1/tasks/${arm.taskId}`)).data;
           assert.equal(fresh.report, null);
+          assert.equal(fresh.definition.budget.timeoutMs, 900_000);
+          assert.equal(fresh.definition.stepBudget.steps[0].timeoutMs, 900_000);
+          assert.equal(fresh.definition.stepBudget.cleanup.timeoutMs, 600_000);
           assert.deepEqual(fresh.definition.caseV2Definition, {
             ...input,
             session: { mode: 'manual' },

@@ -128,6 +128,27 @@
                   "budgetMode": {
                     "enum": ["current", "original"],
                     "default": "current"
+                  },
+                  "timeBudget": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [],
+                    "properties": {
+                      "stepTimeoutMs": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 86400000,
+                        "description": "每个业务步骤的最低总时长，包含等待；毫秒。"
+                      },
+                      "cleanupTimeoutMs": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 86400000,
+                        "description": "整段清理共享的最低总时长；毫秒。"
+                      }
+                    },
+                    "minProperties": 1,
+                    "description": "只扩展新任务的时间额度；完整会话仍须在 24 小时内，相同 caseId 保留首次冻结值。"
                   }
                 }
               }

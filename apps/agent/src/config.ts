@@ -4,6 +4,9 @@ import { validateControlRequest } from '@proofrun/contracts';
 /** 固定已核对的版本，避免 jev-latest 别名延迟切换或后续静默升级。 */
 export const DEFAULT_JEV_MODEL = 'jev-1.14.0';
 
+/** 思考输出与工具参数共享额度；显式长推理仍有上限，默认成本配置保持独立。 */
+const MODEL_LIMITS = { timeoutMs: 600_000, outputTokens: 65_536 };
+
 /** 默认限制约束单 worker 的成本；任务预算和控制面租约仍是更硬的边界。 */
 const DEFAULTS = {
   pollMs: 1000,
@@ -40,10 +43,14 @@ export interface AgentConfig {
   jevBox?: boolean;
   /** 通用子目标、进度和定位策略，显式灰度启用。 */
   executionGuidance?: boolean;
+  /** 执行创建时冻结；legacy 保留原流程，planned-v1 使用统一计划与路由。 */
+  executionPolicy?: 'legacy' | 'planned-v1';
   /** 不同 Chat Completions 服务使用的输出预算参数。 */
   tokenParameter: 'max_tokens' | 'max_completion_tokens';
   /** 未设置时沿用供应商默认；显式模式仅传给配置的 Chat Completions 服务。 */
   thinking?: 'enabled' | 'disabled';
+  /** 显式推理强度；不设置时不覆盖供应商默认，也不影响 TypeSafe 候选模型。 */
+  reasoningEffort?: 'low' | 'high' | 'max';
   /** 空队列轮询、单 HTTP 请求、模型调用和浏览器命令的时限。 */
   pollMs: number;
   requestMs: number;
@@ -84,6 +91,12 @@ function endpoint(name: string, fallback?: string): string {
 }
 /** 启动时核实配置，不扫描磁盘寻找其他项目的密钥。 */
 export function loadConfig(): AgentConfig {
+  const executionPolicy =
+    process.env.PROOFRUN_AGENT_EXECUTION_POLICY ?? 'legacy';
+  if (!['legacy', 'planned-v1'].includes(executionPolicy))
+    throw new Error(
+      'PROOFRUN_AGENT_EXECUTION_POLICY must be legacy or planned-v1',
+    );
   const workerToken = process.env.PROOFRUN_WORKER_TOKEN ?? '';
   const modelKey = process.env.PROOFRUN_MODEL_API_KEY ?? '';
   const model = process.env.PROOFRUN_MODEL ?? '';
@@ -110,6 +123,12 @@ export function loadConfig(): AgentConfig {
     throw new Error(
       'PROOFRUN_MODEL_THINKING must be default, enabled or disabled',
     );
+  const reasoningEffort =
+    process.env.PROOFRUN_MODEL_REASONING_EFFORT ?? 'default';
+  if (!['default', 'low', 'high', 'max'].includes(reasoningEffort))
+    throw new Error(
+      'PROOFRUN_MODEL_REASONING_EFFORT must be default, low, high or max',
+    );
   const vision = process.env.PROOFRUN_MODEL_VISION ?? 'false';
   if (!['true', 'false'].includes(vision))
     throw new Error('PROOFRUN_MODEL_VISION must be true or false');
@@ -121,7 +140,12 @@ export function loadConfig(): AgentConfig {
   if (jevBox && !jevImages)
     throw new Error('PROOFRUN_JEV_BOX requires PROOFRUN_JEV_IMAGES=true');
   return {
-    executionGuidance: boolean('PROOFRUN_AGENT_EXECUTION_GUIDANCE'),
+    executionPolicy: executionPolicy as NonNullable<
+      AgentConfig['executionPolicy']
+    >,
+    executionGuidance:
+      boolean('PROOFRUN_AGENT_EXECUTION_GUIDANCE') ||
+      executionPolicy === 'planned-v1',
     jevImages,
     jevBox,
     jevExpandedActions: boolean('PROOFRUN_JEV_EXPANDED_ACTIONS'),
@@ -134,6 +158,13 @@ export function loadConfig(): AgentConfig {
     model,
     vision: vision === 'true',
     ...(thinking === 'default' ? {} : { thinking }),
+    ...(reasoningEffort === 'default'
+      ? {}
+      : {
+          reasoningEffort: reasoningEffort as NonNullable<
+            AgentConfig['reasoningEffort']
+          >,
+        }),
     tokenParameter: tokenParameter as AgentConfig['tokenParameter'],
     pollMs: number('PROOFRUN_AGENT_POLL_MS', DEFAULTS.pollMs, 100, 30_000),
     requestMs: number(
@@ -142,7 +173,12 @@ export function loadConfig(): AgentConfig {
       100,
       10_000,
     ),
-    modelMs: number('PROOFRUN_AGENT_MODEL_MS', DEFAULTS.modelMs, 100, 120_000),
+    modelMs: number(
+      'PROOFRUN_AGENT_MODEL_MS',
+      DEFAULTS.modelMs,
+      100,
+      MODEL_LIMITS.timeoutMs,
+    ),
     commandMs: number(
       'PROOFRUN_AGENT_COMMAND_MS',
       DEFAULTS.commandMs,
@@ -166,7 +202,7 @@ export function loadConfig(): AgentConfig {
       'PROOFRUN_MODEL_MAX_TOKENS',
       DEFAULTS.maxTokens,
       256,
-      16_384,
+      MODEL_LIMITS.outputTokens,
     ),
   };
 }

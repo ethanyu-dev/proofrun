@@ -1,6 +1,6 @@
 import type { DecisionContextData } from '../execution/context.js';
 import { decisionTools, type DecisionTool } from './tools.js';
-import { compactDecisionText } from './decision-view.js';
+import { compactDecisionText, requestContext } from './decision-view.js';
 import { CONCLUSION_RULES, SETTLEMENT_RULES } from '../prompts/settlement.js';
 import { SYSTEM_PROMPT } from '../prompts/decision.js';
 import {
@@ -16,6 +16,8 @@ import { AgentFault, jsonRequest } from '../http.js';
 import { modelRequest } from './request.js';
 import type { WorkflowUpdate } from '../execution/workflow.js';
 import type { Observation } from '../evidence/observation.js';
+import { PLANNED_RULES } from '../prompts/planned.js';
+import { reasoningParameters, toolChoice } from './reasoning.js';
 
 /** 将封闭协议的各分支映射成独立工具，避免供应商遗漏嵌套联合对象的外层字段。 */
 const MODEL_TOOLS = agentDecisionSchema.oneOf.map(
@@ -62,6 +64,8 @@ export interface DecisionInput {
   modelDeadline?: number;
   /** 同一裁剪快照的类型化副本；旧调用端只提供 text 时仍兼容。 */
   context?: DecisionContextData;
+  /** 复核添加诊断后仍使用同一字符上限。 */
+  contextLimit?: number;
   /** 可选的一张当前截图，已经核实归属、格式与 SHA-256。 */
   image?: string;
   /** 执行器保留的原始观察副本，供专用适配器独立裁剪；不直接发送给文本模型。 */
@@ -76,6 +80,14 @@ export interface DecisionOutput {
   conclusions?: VerificationReport['criteria'];
   promptTokens: number;
   completionTokens: number;
+  /** 统一路由声明本轮已由文本模型复核；只有执行器接受结果后才消费检查点。 */
+  reviewed?: boolean;
+  /** 供应商故障降级在当前步骤内生效，避免重复消耗相同失败请求。 */
+  selectorUnavailable?: string;
+}
+/** 类型化快照是唯一输入；旧调用端只有文本时在边界解析一次。 */
+export function decisionData(input: DecisionInput): DecisionContextData {
+  return input.context ?? JSON.parse(input.text);
 }
 /** 执行循环只依赖此接口，供应商细节限制在单个适配器中。 */
 export interface DecisionModel {
@@ -91,9 +103,9 @@ export class ChatModel implements DecisionModel {
     input: DecisionInput,
     signal: AbortSignal,
   ): Promise<DecisionOutput> {
-    const text = compactDecisionText(input.text);
-    const availableTools = decisionTools(text, MODEL_TOOLS);
-    const context = JSON.parse(input.text);
+    const context = decisionData(input);
+    const text = compactDecisionText(JSON.stringify(requestContext(context)));
+    const availableTools = decisionTools(context, MODEL_TOOLS);
     const hasWorkflow = !!context.workflow;
     const content =
       this.config.vision && input.image
@@ -115,10 +127,7 @@ export class ChatModel implements DecisionModel {
       }
     }
     const body = {
-      // 不向其他供应商默认添加扩展参数；DeepSeek 强制工具调用需显式关闭思考模式。
-      ...(this.config.thinking
-        ? { thinking: { type: this.config.thinking } }
-        : {}),
+      ...reasoningParameters(this.config),
       model: this.config.model,
       stream: false,
       parallel_tool_calls: false,
@@ -130,7 +139,12 @@ export class ChatModel implements DecisionModel {
             context.verificationReview?.reason === 'budget'
               ? SETTLEMENT_RULES
               : SYSTEM_PROMPT +
-                (context.executionGuidance ? '\n' + CONCLUSION_RULES : ''),
+                (context.executionGuidance || context.executionPolicy
+                  ? '\n' + CONCLUSION_RULES
+                  : '') +
+                (context.executionPolicy?.version === 'planned-v1'
+                  ? '\n' + PLANNED_RULES
+                  : ''),
         },
         { role: 'user', content },
       ],
@@ -143,7 +157,7 @@ export class ChatModel implements DecisionModel {
           parameters,
         },
       })),
-      tool_choice: 'required',
+      tool_choice: toolChoice(this.config),
     };
     const raw = (await modelRequest(
       input,
@@ -236,10 +250,38 @@ export class ChatModel implements DecisionModel {
         'INVALID_MODEL_DECISION',
         '工具参数不接受 type 字段，动作类型由工具名称决定',
       );
-    let { workflow, conclusions, ...args } = parsed as Record<string, unknown>;
+    let { workflow, conclusions, plan, ...args } = parsed as Record<
+      string,
+      unknown
+    >;
+    if (plan !== undefined) {
+      if (
+        context.executionPolicy?.version !== 'planned-v1' ||
+        !('plan' in (tool.parameters as { properties: object }).properties) ||
+        (workflow !== undefined &&
+          (!workflow ||
+            typeof workflow !== 'object' ||
+            Array.isArray(workflow))) ||
+        (workflow && 'recovery' in (workflow as object))
+      )
+        throw new AgentFault(
+          'INVALID_MODEL_DECISION',
+          'plan 只能在统一执行策略中声明一次',
+        );
+      workflow = { ...(workflow as object | undefined), recovery: plan };
+    } else if (
+      context.executionPolicy?.version === 'planned-v1' &&
+      workflow &&
+      typeof workflow === 'object' &&
+      'recovery' in workflow
+    )
+      throw new AgentFault(
+        'INVALID_MODEL_DECISION',
+        '统一执行策略使用顶层 plan，不接受 workflow.recovery',
+      );
     // 完成工具的裸声明数组与 assessments 容器语义唯一；只补容器，条目仍由公共工作流严格校验。
     if (
-      context.executionGuidance &&
+      (context.executionGuidance || context.executionPolicy) &&
       tool.type === 'verification.finish' &&
       Array.isArray(workflow)
     )
@@ -265,7 +307,7 @@ export class ChatModel implements DecisionModel {
     }
     if (
       conclusions !== undefined &&
-      (!context.executionGuidance ||
+      (!(context.executionGuidance || context.executionPolicy) ||
         context.executionStep?.type === 'setup' ||
         context.cleanup ||
         !(
@@ -327,7 +369,7 @@ export class ChatModel implements DecisionModel {
       if (
         Array.isArray(conclusions) &&
         conclusions.length &&
-        context.executionGuidance
+        (context.executionGuidance || context.executionPolicy)
       ) {
         return {
           decision: {

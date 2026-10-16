@@ -1,3 +1,4 @@
+import { PLAN_INPUT_LIMIT, type PlanInput } from './plan-inputs.js';
 import { createHash } from 'node:crypto';
 import { observationState } from '../evidence/changes.js';
 import type { Observation } from '../evidence/observation.js';
@@ -63,6 +64,12 @@ export interface WorkflowUpdate {
   recovery?: {
     /** 这次恢复试图达到的局部状态。 */
     goal: string;
+    /** 计划内非秘密字段值，执行时重新绑定当前观察。 */
+    inputs?: PlanInput[];
+    /** 明确的动作后检查点，语义成功仍由文本模型复核。 */
+    checkpoints?: Array<'after-fill' | 'after-click' | 'after-navigation'>;
+    /** 仅采集目标允许批量跳过已取得完整正文的面板。 */
+    collectReadings?: boolean;
     /** 原始验收项引用，未提供时继承原步骤边界。 */
     criterionIds?: string[];
     /** 定位、交互、取证和复核是执行阶段，不新增业务要求。 */
@@ -155,6 +162,26 @@ export const WORKFLOW_SCHEMA = {
       additionalProperties: false,
       properties: {
         goal: { type: 'string', maxLength: MAX_NOTE },
+        inputs: {
+          type: 'array',
+          maxItems: PLAN_INPUT_LIMIT,
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              key: { type: 'string', minLength: 1, maxLength: 64 },
+              value: { type: 'string', maxLength: 8192 },
+            },
+            required: ['key', 'value'],
+          },
+        },
+        checkpoints: {
+          type: 'array',
+          uniqueItems: true,
+          maxItems: 3,
+          items: { enum: ['after-fill', 'after-click', 'after-navigation'] },
+        },
+        collectReadings: { type: 'boolean' },
         criterionIds: {
           type: 'array',
           maxItems: 64,
@@ -410,6 +437,9 @@ export class Workflow {
           (key) =>
             ![
               'goal',
+              'inputs',
+              'checkpoints',
+              'collectReadings',
               'scope',
               'terms',
               'successCondition',
@@ -442,6 +472,9 @@ export class Workflow {
           (k) =>
             ![
               'goal',
+              'inputs',
+              'checkpoints',
+              'collectReadings',
               'criterionIds',
               'phase',
               'allowedActions',
@@ -469,6 +502,33 @@ export class Workflow {
               (action) =>
                 typeof action !== 'string' || !PLAN_ACTIONS.includes(action),
             ))) ||
+        (r.inputs !== undefined &&
+          (!Array.isArray(r.inputs) ||
+            r.inputs.length > PLAN_INPUT_LIMIT ||
+            new Set(r.inputs.map((i) => (object(i) ? i.key : null))).size !==
+              r.inputs.length ||
+            r.inputs.some(
+              (i) =>
+                !object(i) ||
+                Object.keys(i).some((k) => !['key', 'value'].includes(k)) ||
+                typeof i.key !== 'string' ||
+                !i.key ||
+                i.key.length > 64 ||
+                typeof i.value !== 'string' ||
+                i.value.length > 8192,
+            ))) ||
+        (r.checkpoints !== undefined &&
+          (!Array.isArray(r.checkpoints) ||
+            r.checkpoints.length > 3 ||
+            new Set(r.checkpoints).size !== r.checkpoints.length ||
+            r.checkpoints.some(
+              (c) =>
+                !['after-fill', 'after-click', 'after-navigation'].includes(
+                  String(c),
+                ),
+            ))) ||
+        (r.collectReadings !== undefined &&
+          typeof r.collectReadings !== 'boolean') ||
         !note(r.goal) ||
         typeof r.scope !== 'string' ||
         r.scope.length > MAX_NOTE ||

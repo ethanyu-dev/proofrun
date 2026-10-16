@@ -1,5 +1,7 @@
+import { validatePlanInputs } from './plan-inputs.js';
+import type { ReviewEvent } from './model-router.js';
 import { ExecutionGuidance } from './execution-guidance.js';
-import { scrollDistance } from './navigation-memory.js';
+import { scrollDistance, NavigationMemory } from './navigation-memory.js';
 import { conditionKey, evaluatePolicyChecks } from './policy-checks.js';
 import { InteractionProgress } from './interaction-progress.js';
 import { executeProfile } from './profile-runner.js';
@@ -51,7 +53,7 @@ import {
   type RecentOperation,
   type PreviousObservation,
 } from './context.js';
-import { ActionMemory } from './action-memory.js';
+import { OperationJournal } from './operation-journal.js';
 import {
   ObservationTracker,
   STALLED_ROUNDS,
@@ -78,8 +80,6 @@ const SHELL_WAIT_MS = 300;
 /** DOM 读取失败最多补采两次，只重试观察，仍受原任务期限及控制权约束。 */
 const OBSERVATION_RETRIES = 2;
 const OBSERVATION_RETRY_MS = 300;
-/** 只将近期操作和证据摘要放入上下文，完整事实保留在控制面。 */
-const HISTORY_LIMIT = 8;
 /** 访客人工复核的稳定定义，在交接前列出，不能在交还后追加要求。 */
 const GUEST_CHECK = {
   id: 'profile-guest',
@@ -117,9 +117,11 @@ class Execution {
     VerificationReport['artifacts'][number]
   >();
   /** 已执行操作的有界摘要，供上下文读取。 */
-  private readonly history: RecentOperation[] = [];
-  /** 关键动作仅属于当前步骤和控制代次，不混入前序步骤的填写事实。 */
-  private actionMemory = new ActionMemory();
+  private readonly operations = new OperationJournal();
+  /** 两个上下文视图都从同一份有界回执集合派生。 */
+  private get history(): RecentOperation[] {
+    return this.operations.recent();
+  }
   private readonly details: NonNullable<VerificationReport['executionDetails']>;
   /** 仅初次进入或步骤明确更换网址时安排导航；人工交还页面后取消待导航。 */
   private pendingNavigation: string | undefined;
@@ -145,6 +147,12 @@ class Execution {
   private readonly previousObservations: PreviousObservation[] = [];
   private image: string | undefined;
   private feedback: string | null = null;
+  /** 只由执行错误或环境变更设置，不解析模型可见的反馈文案。 */
+  private routingEvent: ReviewEvent | undefined;
+  /** 文本复核已消费的最后动作；不属于新的预算或历史账本。 */
+  private reviewedCommandId: string | undefined;
+  /** 单步供应商故障降级，切步后可重新尝试；不影响浏览器权限。 */
+  private selectorUnavailable: string | undefined;
   /** 人工介入后旧模型回复与旧观察均失效。 */
   private controlRevision = 0;
   /** 新计划的身份确认跟随认证环境；控制权变化仍拒绝旧动作。 */
@@ -173,6 +181,8 @@ class Execution {
   private workflow: Workflow;
   /** 每个 tab 独立的通用规划诊断，不能跨执行共享。 */
   private readonly guidance = new ExecutionGuidance();
+  /** 新策略仅保留位置索引，循环诊断统一来自 ObservationTracker。 */
+  private navigation = new NavigationMemory();
   /** 新版业务逐步独立计数，整段清理共享另一份额度；旧任务沿用冻结语义。 */
   private allowance: StepAllowance | undefined;
   /** 后续清理之间只切换 stepId，保留整段累计计数。 */
@@ -241,6 +251,8 @@ class Execution {
     private readonly grant: ExecutionGrant,
     stop: AbortSignal,
   ) {
+    if (config.executionPolicy === 'planned-v1')
+      config = this.config = { ...config, executionGuidance: true };
     this.environmentMode = grant.task.executionPlan?.environment.mode;
     this.pendingNavigation =
       grant.task.steps?.[0]?.url ?? grant.task.target.url;
@@ -394,7 +406,7 @@ class Execution {
     if (result.commandId && result.commandId !== id)
       this.details.commandIds[this.details.commandIds.length - 1] =
         result.commandId;
-    this.history.push({
+    this.operations.record({
       commandId: result.commandId ?? id,
       operation: operation.type,
       ...(operation.type === 'browser.act'
@@ -419,8 +431,6 @@ class Execution {
       operationStatus: result.operationStatus,
       effect: result.effect,
     });
-    this.actionMemory.record(this.history.at(-1)!);
-    if (this.history.length > HISTORY_LIMIT) this.history.shift();
     if (
       clicked &&
       this.current &&
@@ -518,6 +528,8 @@ class Execution {
       rememberObservation(this.previousObservations, this.current);
     this.changes = this.tracker.observe(current, countProgress);
     this.current = current;
+    if (this.config.executionPolicy === 'planned-v1')
+      this.navigation.observe(current);
     this.interactions.observe(current);
     this.image = undefined;
     for (const ref of current.artifactRefs)
@@ -597,7 +609,20 @@ class Execution {
             (this.grant.task.executionPlan
               ? this.authRevision
               : this.controlRevision);
-        if (changed || recheckNeeded) {
+        if (
+          changed ||
+          recheckNeeded ||
+          (authChanged && this.config.executionPolicy === 'planned-v1')
+        ) {
+          if (this.config.executionPolicy === 'planned-v1') {
+            this.workflow.invalidateRecovery();
+            this.recheck?.workflow.invalidateRecovery();
+            this.routingEvent = {
+              code: 'ENVIRONMENT_CHANGED',
+              detail: '控制权或身份代次发生变化，重新核实页面与计划',
+            };
+            this.reviewedCommandId = undefined;
+          }
           if (
             this.grant.task.profilePlan &&
             this.currentTask &&
@@ -629,7 +654,8 @@ class Execution {
               await this.client.recordSteps(this.grant, this.stepResults);
             }
           }
-          this.actionMemory = new ActionMemory();
+          this.operations.beginScope();
+          this.navigation = new NavigationMemory();
           if (!this.grant.task.executionPlan || authChanged)
             this.invalidateReadiness();
           // 人工交还的是同一会话的当前页面；旧观察失效，但不能用导航覆盖处理结果。
@@ -638,7 +664,10 @@ class Execution {
           this.image = undefined;
           this.settlePending = false;
         }
-        return changed;
+        return (
+          changed ||
+          (this.config.executionPolicy === 'planned-v1' && authChanged)
+        );
       }
       this.allowance?.pause();
       if (view.controlMode === 'REQUESTED')
@@ -698,18 +727,37 @@ class Execution {
     const progressKey = JSON.stringify(progress);
     this.workflow.creditProgress(progress);
     this.workflow.observeState(this.current!);
-    const executionGuidance = this.config.executionGuidance
-      ? this.guidance.view({
-          page: this.current!,
-          workflow: this.workflow.view(),
-          pending: pendingCriterionIds,
-          progressKey,
-          scope: `${this.stepIndex}:${this.setupPhase}:${this.controlRevision}`,
-          budget: budgetRemaining,
-        })
-      : undefined;
+    const executionGuidance =
+      this.config.executionGuidance &&
+      this.config.executionPolicy !== 'planned-v1'
+        ? this.guidance.view({
+            page: this.current!,
+            workflow: this.workflow.view(),
+            pending: pendingCriterionIds,
+            progressKey,
+            scope: `${this.stepIndex}:${this.setupPhase}:${this.controlRevision}`,
+            budget: budgetRemaining,
+          })
+        : undefined;
     return decisionContext({
+      executionPolicy:
+        this.config.executionPolicy === 'planned-v1'
+          ? {
+              version: 'planned-v1',
+              scope: `${this.grant.sessionId}:${this.grant.task.steps?.[this.stepIndex]?.stepId ?? this.stepIndex}:${this.setupPhase}:${this.controlRevision}:${this.authRevision}`,
+              event: this.routingEvent ?? { code: 'CONTINUE' },
+              reviewedCommandId: this.reviewedCommandId,
+              selectorUnavailable: this.selectorUnavailable,
+            }
+          : undefined,
       executionGuidance,
+      navigation:
+        this.config.executionPolicy === 'planned-v1'
+          ? this.navigation.hints(
+              this.current!,
+              this.workflow.view().recovery?.terms ?? [],
+            )
+          : undefined,
       task: this.task,
       setupPhase: this.setupPhase,
       environmentReview: this.needsEnvironmentReview()
@@ -737,13 +785,15 @@ class Execution {
         ),
       ],
       workflow: this.workflow.view(),
-      interactionProgress: this.interactions.view(),
+      interactionProgress: this.interactions.view(
+        this.config.executionPolicy === 'planned-v1' ? 4000 : 400,
+      ),
       budgetRemaining,
       current: this.current!,
       changes: this.changes,
       evidence: [...this.currentEvidence().values()],
       history: this.history,
-      actionMemory: this.actionMemory.view(),
+      actionMemory: this.operations.critical(),
       previousObservations: this.previousObservations,
       feedback: this.feedback,
       image: this.image,
@@ -1343,7 +1393,8 @@ class Execution {
   /** 控制权变化时撤销全部准备声明，避免沿用另一账号或旧环境的证据。 */
   private invalidateReadiness() {
     this.interactions = new InteractionProgress();
-    this.actionMemory = new ActionMemory();
+    this.operations.beginScope();
+    this.navigation = new NavigationMemory();
     if (!this.isSetup()) return;
     this.workflow.invalidateAssessments();
     this.readinessEvidence = new Set(this.evidence.keys());
@@ -1980,6 +2031,10 @@ class Execution {
         ) {
           this.preparationReviewed.add(this.stepIndex);
           this.feedback = PREPARATION_BLOCK_REVIEW;
+          this.routingEvent = {
+            code: 'EXECUTION_EXCEPTION',
+            detail: '准备阶段存在可执行目标，复核阻塞原因',
+          };
           continue;
         }
         // 已有结论先校验并保存；后续计划、目标失效或浏览器失败不能抹掉本批结果。
@@ -2023,6 +2078,8 @@ class Execution {
         const readings = this.interactions.validate(output.workflow?.readings);
         const readingRevision = this.interactions.view().revision;
         const revision = this.workflow.view().revision;
+        if (this.config.executionPolicy === 'planned-v1')
+          validatePlanInputs(output.workflow?.recovery, this.current!);
         this.workflow.apply(
           output.workflow,
           new Set(
@@ -2037,6 +2094,14 @@ class Execution {
         );
         this.syncPolicyChecks();
         this.interactions.record(readings);
+        if (output.selectorUnavailable)
+          this.selectorUnavailable = output.selectorUnavailable;
+        if (output.reviewed) {
+          this.reviewedCommandId = this.history.findLast(
+            (op) => op.operation === 'browser.act',
+          )?.commandId;
+          this.routingEvent = undefined;
+        }
         if (
           revision !== this.workflow.view().revision ||
           readingRevision !== this.interactions.view().revision
@@ -2313,10 +2378,15 @@ class Execution {
               'forward',
             ].includes(operation.action)
           ) {
-            if (this.config.executionGuidance) {
+            if (
+              this.config.executionGuidance &&
+              (this.config.executionPolicy !== 'planned-v1' ||
+                ['frame', 'tab.switch', 'tab.new'].includes(operation.action))
+            ) {
               this.workflow.invalidateRecovery();
               this.guidance.invalidateNavigation();
             }
+            this.navigation = new NavigationMemory();
             this.tracker.reset(true);
             this.settlePending = true;
           }
@@ -2324,6 +2394,14 @@ class Execution {
           await this.observe();
         }
       } catch (error) {
+        if (
+          this.config.executionPolicy === 'planned-v1' &&
+          error instanceof AgentFault
+        )
+          this.routingEvent = {
+            code: 'EXECUTION_EXCEPTION',
+            detail: error.code,
+          };
         // 收尾协议错误复用原有纠错上限；只重交声明，不重放动作或增加时间与请求额度。
         if (
           finalReview &&
@@ -2625,8 +2703,12 @@ class Execution {
       this.current = undefined;
       this.image = undefined;
       this.feedback = null;
+      this.routingEvent = undefined;
+      this.reviewedCommandId = undefined;
+      this.selectorUnavailable = undefined;
       this.interactions = new InteractionProgress();
-      this.actionMemory = new ActionMemory();
+      this.operations.beginScope();
+      this.navigation = new NavigationMemory();
       this.lastCriteriaReview = this.details.actions;
       this.settlePending = false;
       this.tracker.reset();

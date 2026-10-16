@@ -18,6 +18,8 @@ const OUTPUT = new URL('../contracts/public-api.openapi.json', import.meta.url);
 /** 在线文档优先展示新协议，并明确旧协议仍用于兼容调用。 */
 const TAG_V2 = 'Case API v2';
 const TAG_V1 = 'Case API v1（兼容）';
+/** 重跑时间参数仍受平台 24 小时会话上限约束；服务端另校验完整计划合计。 */
+const MAX_RERUN_TIME_MS = 86_400_000;
 
 /** 当前源文件使用的关键字兼容 2020-12；移除旧方言和离线身份，改成文档内引用。 */
 function embed(value) {
@@ -161,6 +163,29 @@ const document = {
                 budgetMode: {
                   enum: ['current', 'original'],
                   default: 'current',
+                },
+                timeBudget: {
+                  ...object(
+                    {
+                      stepTimeoutMs: {
+                        type: 'integer',
+                        minimum: 1,
+                        maximum: MAX_RERUN_TIME_MS,
+                        description:
+                          '每个业务步骤的最低总时长，包含等待；毫秒。',
+                      },
+                      cleanupTimeoutMs: {
+                        type: 'integer',
+                        minimum: 1,
+                        maximum: MAX_RERUN_TIME_MS,
+                        description: '整段清理共享的最低总时长；毫秒。',
+                      },
+                    },
+                    [],
+                  ),
+                  minProperties: 1,
+                  description:
+                    '只扩展新任务的时间额度；完整会话仍须在 24 小时内，相同 caseId 保留首次冻结值。',
                 },
               },
               ['caseId'],

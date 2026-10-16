@@ -1,16 +1,19 @@
+import { planFields } from './plan-inputs.js';
 import type { GuidanceView } from './execution-guidance.js';
 import type { InteractionProgress } from './interaction-progress.js';
-import type { ActionMemory } from './action-memory.js';
+import type { OperationJournal } from './operation-journal.js';
+import type { NavigationMemory } from './navigation-memory.js';
 import type { VerificationReport, VerificationTask } from '@proofrun/contracts';
 import type { BrowserOperation } from '../client.js';
 import type { Observation } from '../evidence/observation.js';
 import { OBSERVATION_REVIEW_ROUNDS } from '../evidence/changes.js';
 import type { ObservationChanges } from '../evidence/changes.js';
 import type { DecisionInput } from '../model/chat.js';
-import { evidenceExcerpt } from '../model/jev-progress.js';
+import { evidenceExcerpt } from '../model/evidence-excerpt.js';
 import { AgentFault } from '../http.js';
 import type { WorkflowView } from './workflow.js';
 import type { CheckResult } from './identity.js';
+import { executionEvent, type PolicyContext } from './model-router.js';
 
 /** 只发送近期证据摘要，完整证据仍由执行器和控制面保存。 */
 const EVIDENCE_LIMIT = 24;
@@ -58,6 +61,10 @@ export interface PreviousObservation {
 
 /** 执行器传入事实快照；上下文模块不改变执行状态或原始证据。 */
 export interface ContextInput {
+  /** 单执行冻结的策略与本轮路由原因，不从反馈文案推断。 */
+  executionPolicy?: PolicyContext | undefined;
+  /** 执行器维护的位置索引只提供线索，不提供历史目标授权。 */
+  navigation?: ReturnType<NavigationMemory['hints']> | undefined;
   /** 并发开始前单独分类原始环境要求，字段不能作为登录事实证明。 */
   environmentReview?:
     | {
@@ -101,7 +108,7 @@ export interface ContextInput {
   /** 已执行操作的近期摘要。 */
   history: RecentOperation[];
   /** 本步骤关键动作回执，不受观察和滚动挤出近期窗口的影响。 */
-  actionMemory?: ReturnType<ActionMemory['view']>;
+  actionMemory?: ReturnType<OperationJournal['critical']>;
   /** 有来源的历史页面正文。 */
   previousObservations: PreviousObservation[];
   /** 上轮执行错误或恢复提示。 */
@@ -135,6 +142,12 @@ function contextData(input: ContextInput) {
   const current = input.current;
   const evidenceIds = new Set(input.evidence.map((artifact) => artifact.id));
   const context = {
+    executionPolicy: input.executionPolicy
+      ? structuredClone(input.executionPolicy)
+      : undefined,
+    navigation: input.navigation,
+    plan: input.executionPolicy ? input.workflow?.recovery : undefined,
+    inputFields: input.executionPolicy ? planFields(current) : undefined,
     // 模型只需业务定义；节点配方引用、账号池和登录槽不参与决策上下文。
     task: (({
       sessionPlan: _sessionPlan,
@@ -210,6 +223,8 @@ function contextData(input: ContextInput) {
         .join(' ') || null,
     truncated: false,
   };
+  if (context.executionPolicy)
+    context.executionPolicy.event = executionEvent(context);
   return context;
 }
 /** 类型从唯一构造函数推导，防止模型适配器手写字段逐渐偏离执行器。 */
@@ -218,9 +233,33 @@ export type DecisionContextData = ReturnType<typeof contextData>;
 /** 标准保持完整；仅裁剪事实副本并声明缺口，无法容纳固定定义时明确失败。 */
 export function decisionContext(input: ContextInput): DecisionInput {
   const current = input.current;
-  const context = contextData(input);
-  let text = JSON.stringify(context);
-  while (text.length > input.maxContextChars) {
+  const { text, context } = boundContext(
+    contextData(input),
+    current,
+    input.maxContextChars,
+  );
+  return {
+    text,
+    context: structuredClone(context),
+    contextLimit: input.maxContextChars,
+    observation: structuredClone(current),
+    ...(input.image ? { image: input.image } : {}),
+  };
+}
+
+/** 初始上下文和复核补充共用同一裁剪器；固定约束始终完整，裁剪只修改请求副本。 */
+export function boundContext(
+  context: DecisionContextData,
+  current: Observation,
+  maxContextChars: number,
+) {
+  const serialize = () => {
+    if (context.executionPolicy?.event.code === 'CONTINUE')
+      context.executionPolicy.event = executionEvent(context);
+    return JSON.stringify(context);
+  };
+  let text = serialize();
+  while (text.length > maxContextChars) {
     context.truncated = true;
     // 优先丢弃重复的历史正文，保留当前待登记面板原文与已登记身份。
     if (context.previousObservations.length > 0)
@@ -229,7 +268,11 @@ export function decisionContext(input: ContextInput): DecisionInput {
       context.interactionProgress?.items.some((item) => item.text.length > 80)
     )
       context.interactionProgress.items = context.interactionProgress.items.map(
-        (item) => ({ ...item, text: item.text.slice(0, 80) }),
+        (item) => ({
+          ...item,
+          text: item.text.slice(0, 80),
+          truncated: item.truncated || item.text.length > 80,
+        }),
       );
     else if ((context.interactionProgress?.items.length ?? 0) > 1) {
       // 只裁剪模型视图，完整进度仍保留在执行器和报告；优先保留已展开的新子项。
@@ -256,7 +299,7 @@ export function decisionContext(input: ContextInput): DecisionInput {
     } else if (context.observation.text.length > 256)
       context.observation.text = evidenceExcerpt(
         current.text,
-        input.task.objective,
+        context.task.objective,
         Math.floor(context.observation.text.length / 2),
       );
     else if (context.changes && context.changes.text.length > 1024) {
@@ -296,15 +339,16 @@ export function decisionContext(input: ContextInput): DecisionInput {
       );
     context.coverage.text.truncated =
       current.truncated === true || context.observation.text !== current.text;
+    if (context.inputFields) {
+      const targets = new Set(context.observation.targets.map((t) => t.target));
+      context.inputFields = context.inputFields.filter((f) =>
+        targets.has(f.target),
+      );
+    }
     context.coverage.controls.returned = context.observation.targets.length;
     context.coverage.controls.omitted =
       current.targets.length - context.observation.targets.length;
-    text = JSON.stringify(context);
+    text = serialize();
   }
-  return {
-    text,
-    context: structuredClone(context),
-    observation: structuredClone(current),
-    ...(input.image ? { image: input.image } : {}),
-  };
+  return { text, context };
 }

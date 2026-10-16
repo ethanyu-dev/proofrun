@@ -203,7 +203,7 @@ export class InteractionProgress {
   }
 
   /** 面板完整正文保留在证据中；上下文只保留有界摘录和稳定进度。 */
-  view() {
+  view(textLimit = 400) {
     return {
       revision: this.revision,
       // 与 items 的裁剪独立，JEV 与文本模型均可识别当前控件对应的历史阅读状态。
@@ -230,7 +230,8 @@ export class InteractionProgress {
         )
         .map((item) => ({
           ...structuredClone(item),
-          text: item.status === 'recorded' ? '' : item.text.slice(0, 400),
+          text: item.status === 'recorded' ? '' : item.text.slice(0, textLimit),
+          truncated: item.status !== 'recorded' && item.text.length > textLimit,
         })),
       limit: ITEM_LIMIT,
       omittedItems: 0,

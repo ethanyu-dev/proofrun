@@ -651,6 +651,98 @@ test('v2 新预算按步骤冻结，混合组请求加倍，超过上限直接�
   );
 });
 
+// 范围：重跑时间扩容、双组冻结、旧记录及幂等性；端口夹具不验证真实超时或模型速度。
+test('重跑可单独扩大步骤和清理时间且不改变动作额度或业务定义', async () => {
+  const f = fixture({ ...PROFILE, executionMode: 'parallel' });
+  await f.service.submit([INPUT]);
+  const source = f.records.get('case-v2-case-1')!.definition;
+  source.stepBudget!.steps[0]!.timeoutMs = 1_200_000;
+  source.budget.timeoutMs = 1_800_000;
+  const before = structuredClone(source);
+  await f.service.rerun(INPUT.caseId, 'extended', 'original', {
+    stepTimeoutMs: 900_000,
+    cleanupTimeoutMs: 600_000,
+  });
+  const fresh = f.records.get('case-v2-extended')!.definition;
+  assert.deepEqual(
+    fresh.stepBudget!.steps.map((s) => s.timeoutMs),
+    [1_200_000, 900_000, 900_000],
+  );
+  assert.equal(fresh.budget.timeoutMs, 3_000_000);
+  assert.equal(fresh.budget.maxActions, before.budget.maxActions);
+  assert.deepEqual(fresh.steps, before.steps);
+  assert.deepEqual(fresh.acceptanceCriteria, before.acceptanceCriteria);
+  for (const arm of ['case-v2-extended', 'comparison-case-v2-extended-jev']) {
+    const task = f.records.get(arm)!.definition;
+    assert(validateVerificationTask(task));
+    assert.equal(task.stepBudget!.cleanup.timeoutMs, 600_000);
+    const factor = task.executionMode === 'jev' ? 2 : 1;
+    task.stepBudget!.steps.forEach((step, index) => {
+      assert.equal(
+        step.maxActions,
+        before.stepBudget!.steps[index]!.maxActions,
+      );
+      assert.equal(
+        step.maxModelCalls,
+        before.stepBudget!.steps[index]!.maxModelCalls * factor,
+      );
+    });
+  }
+  const frozen = structuredClone(fresh);
+  await f.service.rerun(INPUT.caseId, 'extended', 'current', {
+    stepTimeoutMs: 1_800_000,
+  });
+  assert.deepEqual(f.records.get('case-v2-extended')!.definition, frozen);
+  assert.deepEqual(source, before);
+});
+
+// 范围：错误输入与会话总时间上限在写入前拒绝；不验证调度或浏览器行为。
+test('重跑拒绝无效时间预算和超过会话上限的扩容', async () => {
+  const f = fixture();
+  await f.service.submit([INPUT]);
+  for (const time of [
+    null,
+    {},
+    [],
+    10,
+    { extra: 1 },
+    { stepTimeoutMs: 0 },
+    { cleanupTimeoutMs: -1 },
+    { stepTimeoutMs: 1.5 },
+    { stepTimeoutMs: '900000' },
+    { stepTimeoutMs: Infinity },
+    { stepTimeoutMs: 86_400_001 },
+  ])
+    await assert.rejects(
+      f.service.rerun(INPUT.caseId, 'invalid', 'original', time),
+      { code: 'INVALID_RERUN' },
+    );
+  await assert.rejects(
+    f.service.rerun(INPUT.caseId, 'too-large', 'original', {
+      stepTimeoutMs: 30_000_000,
+    }),
+    { code: 'CASE_BUDGET_EXCEEDED' },
+  );
+  assert.equal(f.records.size, 1);
+});
+
+// 范围：无逐步预算的旧快照可在新身份补编译，单项覆盖保留另一项；不代表历史运行已迁移。
+test('历史总预算重跑扩容时生成逐步计划且保留旧动作上限', async () => {
+  const f = fixture();
+  await f.service.submit([INPUT]);
+  const old = f.records.get('case-v2-case-1')!.definition;
+  delete old.stepBudget;
+  old.budget = { timeoutMs: 300_000, maxActions: 29 };
+  await f.service.rerun(INPUT.caseId, 'cleanup-time', 'original', {
+    cleanupTimeoutMs: 600_000,
+  });
+  const fresh = f.records.get('case-v2-cleanup-time')!.definition;
+  assert.deepEqual(fresh.budget, { timeoutMs: 900_000, maxActions: 29 });
+  assert.equal(fresh.stepBudget!.cleanup.timeoutMs, 600_000);
+  assert(fresh.stepBudget!.steps.every((s) => s.timeoutMs === 300_000));
+  assert.equal(old.stepBudget, undefined);
+});
+
 // 范围：稳定排序后 setup 拆组，cleanup 不占业务 tab，双跑保持计划；不验证真实浏览器并发。
 test('profile 按 setup 分组且保持原步骤身份', () => {
   const input = structuredClone(INPUT);

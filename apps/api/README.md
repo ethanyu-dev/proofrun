@@ -153,6 +153,8 @@ BLOCKED 报告结束任务为 COMPLETED，ERROR 报告结束任务为 ERROR；�
 
 `/v2/cases` 每步冻结五分钟；setup 为 10 次动作，verification 按验收项数增加动作额度（10 起，每增加一项加 2，最多 30）。模型请求额度为动作数的 2 倍（JEV 再翻倍）；耗尽后标记受阻并继续后续步骤。整段清理独立三分钟、10 次动作和 20/40 次模型请求。旧 profile 总预算不再覆盖新 v2，历史快照保持不变。重跑默认使用当前预算策略，可选 budgetMode=original。详见[平台配置](../../docs/case-platform-config.md)。
 
+重跑还可传 `timeBudget: {"stepTimeoutMs":900000,"cleanupTimeoutMs":600000}`，只提高新任务的步骤和清理时间下限，保留动作及请求次数额度。历史快照和全局默认值保持不变；参数及幂等语义见 [v2 协议](../../docs/public-api-v2.md)。
+
 旧任务总预算包含排队，新版步骤额度从领取后开始；每个 task 只有一次 execution。API 支持 DOM、SCREENSHOT、NETWORK 元数据和 TRACE 证据；TRACE 只调度到声明对应能力的节点。节点若关闭写动作则不会被分配需要执行浏览器任务的 worker；开发联调需明确启用节点测试开关，不能由 API 绕过。
 
 ## 模块与状态

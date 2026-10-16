@@ -25,21 +25,26 @@ pnpm --filter @proofrun/agent start serve
 pnpm --filter @proofrun/agent start once
 ```
 
-应用不自动加载 `.env`。模型名称、API 地址与密钥没有默认值；每次 `decide` 发起一次 `/chat/completions` 请求。服务必须支持函数工具、`tool_choice: required`、`parallel_tool_calls: false`。不支持 `max_completion_tokens` 的服务可配置 `PROOFRUN_MODEL_TOKEN_PARAMETER=max_tokens`，不自动猜测供应商或隐藏重试。工具使用非严格模式；各协议分支映射为独立工具，工具名确定动作类型，参数无需 decision 外层。执行器仍使用同源 Schema 和领域规则校验返回内容，格式错误只反馈对应分支的约束，不回显原始回复。
+应用不自动加载 `.env`。模型名称、API 地址与密钥没有默认值；每次 `decide` 发起一次 `/chat/completions` 请求。服务必须支持函数工具与 `parallel_tool_calls: false`；默认使用 `tool_choice: required`，显式开启思考或推理强度时使用 `auto`。不支持 `max_completion_tokens` 的服务可配置 `PROOFRUN_MODEL_TOKEN_PARAMETER=max_tokens`，不自动猜测供应商或隐藏重试。工具使用非严格模式；各协议分支映射为独立工具，工具名确定动作类型，参数无需 decision 外层。执行器仍使用同源 Schema 和领域规则校验返回内容，格式错误只反馈对应分支的约束，不回显原始回复。
 
-`PROOFRUN_MODEL_THINKING` 接受 `default`（默认）、`enabled`、`disabled`。`default` 不发送 `thinking`，保留原有供应商行为；显式模式发送 `thinking: {"type":"enabled"}` 或 `thinking: {"type":"disabled"}`，同时作用于 LLM 决策、JEV 文本审查和字段填写，不传给 TypeSafe 候选接口。非法值会在启动时拒绝。供应商必须支持所选模式与强制工具调用的组合。
+`PROOFRUN_MODEL_THINKING` 接受 `default`（默认）、`enabled`、`disabled`。`default` 不发送 `thinking`；显式模式发送 `thinking: {"type":"enabled"}` 或 `thinking: {"type":"disabled"}`。
 
-DeepSeek 的 `deepseek-flash` 默认开启思考模式，与本项目的 `tool_choice: required` 冲突并返回 HTTP 400（见 [DeepSeek Chat Completions 文档](https://api-docs.deepseek.com/api/create-chat-completion/)）。使用以下非敏感配置，并另外注入模型密钥：
+`PROOFRUN_MODEL_REASONING_EFFORT` 接受 `default`（默认）、`low`、`high`、`max`。显式档位发送 `reasoning_effort`；`thinking=disabled` 优先关闭思考，此时保留 `max` 不代表模型仍执行最高强度推理，工具选择与身份选择预算也按关闭模式处理。两项配置统一用于 LLM 决策、JEV 文本审查、字段填写与身份选择，不传给 TypeSafe 候选接口。非法值在启动时拒绝；供应商或代理必须支持所选参数。DeepSeek 官方默认推理强度对照可使用 `thinking=enabled`、`reasoning_effort=default`，确保工具选择兼容思考模式。
+
+DeepSeek 思考模式不支持 `tool_choice: required`，因此显式开启思考或推理强度时改用 `auto`；Agent 仍要求完整的单个已声明工具调用，普通文字、多个工具、截断结果和无效参数仍会被拒绝。身份选择在此模式下沿用配置的模型输出额度，并将模型超时限制在 110 秒内，为 120 秒选择租约预留回写时间，避免推理 token 被原先短 JSON 的 2000 token 上限截断。参见 [DeepSeek Chat Completions 文档](https://api-docs.deepseek.com/api/create-chat-completion/)。直连官方接口采用默认强度 `high` 与 8192 token 的配置示例：
 
 ```sh
 export PROOFRUN_MODEL_BASE_URL=https://api.deepseek.com
 export PROOFRUN_MODEL=deepseek-flash
 export PROOFRUN_MODEL_VISION=true
 export PROOFRUN_MODEL_TOKEN_PARAMETER=max_tokens
-export PROOFRUN_MODEL_THINKING=disabled
+export PROOFRUN_MODEL_THINKING=enabled
+export PROOFRUN_MODEL_REASONING_EFFORT=high
+export PROOFRUN_MODEL_MAX_TOKENS=8192
+export PROOFRUN_AGENT_MODEL_MS=120000
 ```
 
-这需要部署包含上述配置入口的 Agent 版本后重启生效。仅修改模型名称、增加超时或重试旧请求不能消除参数冲突；最小模型调用成功也不代表业务任务验收通过。
+推理强度、输出上限与超时独立生效；输出上限需覆盖推理 token 和最终工具参数，8192 是成本与速度取舍，不保证复杂调用不会截断。`PROOFRUN_MODEL_MAX_TOKENS` 可显式设为 256–65536，`PROOFRUN_AGENT_MODEL_MS` 可设为 100–600000 毫秒，通用代码默认值仍为 4096 token 和 30 秒；提高这两项不会增加冻结的任务或步骤预算，身份选择也仍受 110 秒限制。采用代理时保留其实际模型名与输出预算参数。配置在 Agent 重启后生效，API 必须同时部署支持 `reasoning_effort` 的请求存档校验；最小模型调用成功不代表业务任务验收通过。
 
 `PROOFRUN_MODEL_VISION=true` 时，每次观察都采集并下载一张 PNG，核实归属和摘要后作为 LLM 输入。JEV 任务也可独立开启 `PROOFRUN_JEV_IMAGES`，仅向 JEV 提供图片；关闭 LLM 视觉时，文本审查不接收图片，也不能执行坐标点击。要求 SCREENSHOT 的任务在当前策略未启用任何图片输入时返回 BLOCKED，不静默替换证据。JEV 看图不等于文本审查已经看过图；仅有截图引用、缺少可核实内容时仍须保留验收缺口。
 
@@ -96,6 +101,31 @@ worker 根据 `task.executionMode` 选择纯 LLM（`llm`）或 LLM + JEV（`jev`
 
 Linux Chromium 在容器内渲染截图和实时画面，不能使用宿主机字体。`tests/agent/Dockerfile` 显式安装 `fonts-noto-cjk` 和 `fontconfig`；普通节点用户运行 `fc-match 'sans-serif:lang=zh-cn'` 应匹配中文字体。已有容器须补装字体或重建；已生成的截图不会改变，新的浏览器会话才可可靠使用更新后的字体缓存。
 
+## 统一计划执行策略
+
+`PROOFRUN_AGENT_EXECUTION_POLICY=planned-v1` 为新领取的执行启用统一计划策略，同时适用于 `llm` 和 `jev`。默认值 `legacy` 保留原流程；策略在执行创建时冻结，修改环境变量并重启 worker 只影响后续执行。此开关自动启用共享计划约束、同轮结论保存和预算内收尾，不需要再设置 `PROOFRUN_AGENT_EXECUTION_GUIDANCE`。图片、扩展候选和 Box 仍独立配置。
+
+```bash
+export PROOFRUN_AGENT_EXECUTION_POLICY=planned-v1
+```
+
+登录仍先经过身份选择、节点 Profile/Cookie 恢复和前置条件检查。进入业务步骤后，首个动作由文本模型同时给出局部 `plan`；随后 JEV 在该计划范围内选择一个当前动作，到检查点再由文本模型核验证据、保存结论并推进。纯 LLM 模式复用相同计划、上下文和执行校验，仅不调用候选服务。
+
+- `plan` 包含 `goal/scope/terms/successCondition/allowedActions/maxActions`，可选 `criterionIds/phase/inputs/checkpoints/collectReadings`。模型通常选择四次动作，硬上限为六次且不超过步骤余额。计划 ID、剩余次数和防重额度由执行器管理；改名和重送不能恢复额度。内部复用原工作流校验，对新模型仅公布顶层 `plan`，不同时公布可修改的 `workflow.recovery`。
+- `inputs` 为 `{key,value}` 数组，键来自当前 `inputFields` 中唯一、可填写的非密码字段；动作执行时重新绑定当前观察。字段含义、页面或环境改变后不能复用旧绑定。信息不足进入正常文本复核，不发独立 `FIELD_VALUE` 请求；身份库秘密仍由节点处理。
+- `checkpoints` 支持 `after-fill/after-click/after-navigation`。普通填写和固定四次动作不再各自触发额外复核；计划耗尽、真实异常和预算收尾仍触发。JEV 的 VERIFY 只是请求复核，不能直接产生验收通过。
+- `collectReadings=true` 允许连续采集面板，跳过已取得完整正文的目标。`observed` 表示已采集但未核验，`recorded` 表示文本模型已登记原文；二者均不等于业务通过。最多四个待核对面板、正文截断或视图省略时进入批量复核；原始正文和引文来源由公共执行层保留。
+- 每轮共享类型化快照。当前计划、身份事实、原任务、证据、近期操作和预算来自执行器；LLM/JEV 只生成各自请求视图。复核新增诊断后再次执行相同裁剪预算，固定约束不裁剪；候选仍可从同轮原始观察独立构造并声明覆盖差异。
+- `executionPolicy` 保存版本、执行范围和唯一主要路由事件：`PLAN_REQUIRED/CHECKPOINT/DECISION_GAP/EXECUTION_EXCEPTION/ENVIRONMENT_CHANGED/SETTLEMENT`；`CONTINUE` 表示可继续候选选择。程序不解析中文反馈前缀。循环检测只使用公共 ObservationTracker，位置索引仅提供历史线索。
+- 候选请求与回退逐次经过原预算和审计。仅剩两次调用时直接交文本模型，避免额外选择挤掉收尾；Box 追加请求也预留复核空间。可恢复的候选供应商故障在接受文本回退后使本步骤转为文本执行；审计失败、预算拒绝、撤权和未知副作用不能被降级吞掉。
+- 控制权或身份代次改变使旧回复和旧计划失效，重新观察后复核。多 tab 的计划、进度和供应商诊断独立，原登录门禁、共享环境检查和结论保存规则继续生效。
+
+代码入口：`execution/model-router.ts` 负责统一路由，`model/jev-selector.ts` 只处理候选协议，`execution/plan-inputs.ts` 处理字段绑定，`execution/operation-journal.ts` 从同一回执集合派生近期与关键操作。`prompts/planned.ts` 独立维护新协议提示。旧 `JevModel` 与 `JevProgress` 仅服务 `legacy` 回滚路径，共用候选适配器，避免复制图片和 Box 实现。
+
+回滚时停止分配新任务，等待执行与清理结束，设置 `PROOFRUN_AGENT_EXECUTION_POLICY=legacy` 后重启 worker；需要原先的实验 guidance 时仍沿用其独立配置。不能运行中热切策略。此实现提供可灰度的新执行链，不代表已经完成真实供应商配对评测或生产登录验收。
+
+`pnpm test:agent` 覆盖计划、填写、批量取证、裁剪、预算和身份代次。设置 `PROOFRUN_AGENT_BROWSER_BIN` 与 `PROOFRUN_CHROME_BIN` 后运行 `pnpm test:agent:planned-browser`，通过真实 Node/Chrome 回环表单及独立服务写入计数验证链路；模型和控制面仍是夹具，不证明真实模型成功率。
+
 ## Jev 版本与实验长上下文
 
 默认固定 `jev-1.14.0`；可用 `TYPESAFE_MODEL` 显式回退到 `jev-1.13.0`。已有环境若配置 `jev-latest`，需要主动改成版本号：截至 2026-10-15，[TypeSafe 官方模型说明](https://docs.typesafe.ai/models)仍将 `jev-latest` 指向 1.13、`jev-preview` 指向 1.14。模型调用回执保存供应商返回的 `model` 字段，便于核对别名实际解析版本。
@@ -133,7 +163,7 @@ Box 仅在固定 `jev-1.14.0` 且当前节点声明画面复核能力时提供 V
 
 ## 提示词与上下文边界
 
-`src/prompts/decision.ts` 独立维护执行系统提示，`src/prompts/jev.ts` 维护候选选择、字段填写与文本审查提示；适配器只负责组装请求与解析协议。
+`src/prompts/planned.ts` 维护统一计划协议，`src/prompts/decision.ts` 独立维护执行系统提示，`src/prompts/jev.ts` 维护候选选择、字段填写与文本审查提示；适配器只负责组装请求与解析协议。
 
 `src/execution/context.ts` 负责历史正文去除旧元素编号、上下文预算裁剪和覆盖标记。`runner.ts` 负责租约安全点、当前步骤与执行状态，传入事实快照；裁剪不能修改原始观察、任务或报告证据。
 
@@ -141,7 +171,7 @@ Box 仅在固定 `jev-1.14.0` 且当前节点声明画面复核能力时提供 V
 
 主循环先领取身份选择工作，再领取浏览器任务。身份选择 Agent 使用独立提示词 `src/prompts/identity-selector.ts`，单次工具调用根据 Case 与同源候选摘要选取账号；模型不接触 Cookie、profile 或内部凭据文件。选取失败或没有适用账号转人工。选取和状态加载不证明账号角色有效，执行器仍检查页面条件。新版身份库不自动保存认证状态，只有 HITL 成功后由控制面发布完整 profile 基准。详见[测试身份](../api/src/modules/identities/README.md)。
 
-## 通用子目标与执行进度
+## 兼容策略的通用子目标与执行进度
 
 `PROOFRUN_AGENT_EXECUTION_GUIDANCE=true` 为本 worker 启用 `evidence-settlement-v2`，同时作用于 `llm` 和 `jev`。默认关闭，先在独立本地/灰度 worker 验证；运行中的执行不热切策略。模型和任务预算保持原配置。
 
