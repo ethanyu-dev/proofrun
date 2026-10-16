@@ -431,6 +431,11 @@ impl Engine {
         ) || (matches!(operation, BrowserCommand::BrowserInput { .. })
             && raw["action"] != "scroll")
         {
+            // 登录相关输入使所有 tab 的旧身份网络证据失效。后台 tab 可能暂停或卡住，
+            // 不能逐个等待它们的 Page.getFrameTree；直接丢弃旁路订阅，切回时重新采集。
+            // 活动 tab 保留订阅并排空旧事件，确保本次输入产生的新请求仍可成为后续证据。
+            self.networks
+                .retain(|target, _| network_target.as_ref() == Some(target));
             for capture in self.networks.values_mut() {
                 capture.network_invalidate().await?;
             }

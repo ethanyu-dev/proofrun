@@ -15,6 +15,10 @@ test('节点维护失败优先展示具体物理原因，启动错误保留细�
     profileFailure('SESSION_START_TIMEOUT', null).message,
     /启动时限/,
   );
+  assert.match(
+    profileFailure('COMMAND_DEADLINE_EXCEEDED', null).message,
+    /规定时间/,
+  );
   assert.match(profileFailure('UNRECOGNIZED_FAILURE', null).message, /错误码/);
   assert.match(profileFailure('constructor', null).message, /错误码/);
 });

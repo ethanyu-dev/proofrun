@@ -67,6 +67,8 @@ node tests/browser-node/validate-events.mjs /absolute/path/to/events.jsonl
 
 能力场景见 `browser-node/capabilities_smoke.py`，包含当前截图视觉点击及同视口新增覆盖层后的拒绝；登录与网络场景见 `browser-node/auth_network_smoke.py`。登录快照只覆盖 Cookie/localStorage，网络证据只有有界脱敏元数据，不保证捕获完整。
 
+人工输入网络隔离回归见 `browser-node/input_network_smoke.py`，使用同样的引擎与 Chrome 环境变量。真实浏览器的后台标签页阻塞二十二秒、前台接口持续等待时，验证前台点击完成、新请求证据保留及独立写入计数；不访问生产网站，也不证明某次线上超时的唯一原因。该场景已纳入完整 Linux 回归。
+
 ## Console 与真实环境
 
 页面联调入口、临时凭据和夹具回收见 [Console README](../apps/console/README.md#验证)；独立 Node 调试页见 [调试页 README](browser-node/debug-ui/README.md)。夹具 PNG 和协议状态不构成真实业务界面验收，也不能仅凭下载按钮存在就认定文件落盘。

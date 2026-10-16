@@ -267,6 +267,67 @@ test(
         );
         assert.equal(normal.failure, null);
       });
+      // 范围：真实命令到期和数据库回执顺序；节点延迟发送关闭原因，不模拟真实 Chrome 卡顿。
+      await suite.test('点击超时关闭后仍等待并返回迟到的具体原因', async () => {
+        const id = await create();
+        const opened = [...node.sessions.values()][0]!;
+        const original = node.execute.bind(node);
+        node.holdClosedEvent = true;
+        node.execute = (command) => {
+          if (command.command.type !== 'browser.input') original(command);
+        };
+        try {
+          const viewer = await connect(id);
+          await until(
+            () => viewer.messages,
+            (rows) => rows.some((row) => row.type === 'frame'),
+          );
+          const commandId = randomUUID();
+          viewer.socket.send(
+            JSON.stringify({
+              type: 'command',
+              commandId,
+              command: { type: 'browser.input', action: 'click', x: 50, y: 50 },
+            }),
+          );
+          await until(
+            async () =>
+              (
+                await sql.query(
+                  'SELECT first_sent_at FROM pr_commands WHERE id=$1',
+                  [commandId],
+                )
+              ).rows[0],
+            (row) => Boolean(row?.first_sent_at),
+          );
+          await sql.query(
+            "UPDATE pr_commands SET deadline_at=clock_timestamp()-interval '1 second' WHERE id=$1",
+            [commandId],
+          );
+          const provisional = await until(
+            () => api(`/v1/node-profiles/${id}`),
+            (value) => value.closed,
+          );
+          assert.equal(provisional.failure.code, 'COMMAND_DEADLINE_EXCEEDED');
+          assert.equal(provisional.failure.closeReason, null);
+          assert.equal(provisional.failureDetailsPending, true);
+          assert.match(provisional.failure.message, /规定时间/);
+          // 容量已经由 close 回执释放，此时 session.closed 才提供独立的诊断事实。
+          node.closed(opened.sessionId, 'SESSION_COMMAND_TIMEOUT');
+          const final = await until(
+            () => api(`/v1/node-profiles/${id}`),
+            (value) => !value.failureDetailsPending,
+          );
+          assert.equal(final.closed, true);
+          assert.equal(final.failure.code, 'SESSION_COMMAND_TIMEOUT');
+          assert.equal(final.failure.errorCode, 'COMMAND_DEADLINE_EXCEEDED');
+          assert.match(final.failure.message, /网页操作超过执行时限/);
+          assert.equal(final.saveStatus, null);
+        } finally {
+          node.holdClosedEvent = false;
+          node.execute = original;
+        }
+      });
       // 范围：重复创建、任务列表隔离、首帧凭据与任务链接隔离；画面内容为夹具。
       await suite.test('创建恢复和鉴权边界', async () => {
         const id = await create();
