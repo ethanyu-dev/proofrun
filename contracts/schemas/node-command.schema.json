@@ -88,6 +88,10 @@
                 "fullProfile": {
                   "type": "boolean",
                   "description": "复制完整磁盘 profile，仅人工成功交还后允许发布新版本。"
+                },
+                "nodeTemplate": {
+                  "type": "boolean",
+                  "description": "Console 节点默认模板维护会话；使用保留槽位，保存后不重启浏览器。"
                 }
               },
               "required": ["stateId", "restore"]

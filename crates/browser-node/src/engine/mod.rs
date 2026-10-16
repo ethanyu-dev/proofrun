@@ -55,6 +55,12 @@ pub struct EngineConfig {
     /// 是否启用完整 profile 版本，旧存储状态任务保持兼容。
     #[serde(default)]
     pub full_profile: bool,
+    /// 节点模板维护只发布并关闭；普通 HITL 保存后仍重启任务浏览器。
+    #[serde(default)]
+    pub node_template: bool,
+    /// 节点托管模板槽位；初次身份优先复制它，缺失时才使用配置目录。
+    #[serde(default)]
+    pub template_state: Option<PathBuf>,
     /// 首次身份准备时复制的已关闭环境基准。
     #[serde(default)]
     pub base_profile_directory: Option<PathBuf>,
@@ -99,6 +105,8 @@ pub struct Engine {
     profile_initialized: bool,
     /// 恢复身份基准时不能再注入较旧的初始 Cookie。
     profile_restored: bool,
+    /// 已复制托管模板时，无显式 Cookie 种子的身份应保留其中的登录。
+    template_restored: bool,
     /// 当前有效观察身份；执行动作后清空。
     observation: Option<String>,
     /// 平台 target 到引擎短期 ref 的映射，不能作为公共协议暴露。
@@ -148,6 +156,7 @@ impl Engine {
             auth_version: None,
             profile_initialized: false,
             profile_restored: false,
+            template_restored: false,
             observation: None,
             targets: HashMap::new(),
             dom: None,
@@ -193,13 +202,20 @@ impl Engine {
                 .auth_state
                 .as_ref()
                 .ok_or_else(|| Fault::rejected("PROFILE_BASELINE_MISSING", "身份基准未绑定"))?;
-            self.auth_version = crate::profile_snapshots::restore(
+            let (version, template_restored) = crate::profile_snapshots::restore_with_template(
                 state,
                 self.config.auth_snapshot_id.as_deref(),
                 &self.config.directory.join("profile"),
                 self.config.base_profile_directory.as_deref(),
+                if self.config.node_template {
+                    None
+                } else {
+                    self.config.template_state.as_deref()
+                },
             )
             .map_err(|_| Fault::rejected("PROFILE_COPY_FAILED", "完整浏览器基准无法复制"))?;
+            self.auth_version = version;
+            self.template_restored = template_restored;
             self.profile_restored = self.auth_version.is_some();
             self.profile_initialized = true;
         }
@@ -226,7 +242,7 @@ impl Engine {
                 .await?;
             }
         }
-        let mut auth_restored = self.profile_restored;
+        let mut auth_restored = self.profile_restored || self.template_restored;
         if !self.config.full_profile {
             if let Some(path) = &self.config.auth_state {
                 let snapshot = crate::auth::snapshot(path, self.config.auth_snapshot_id.as_deref())

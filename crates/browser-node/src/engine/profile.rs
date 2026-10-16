@@ -65,6 +65,11 @@ impl Engine {
             );
         }
         let Some(path) = &self.config.identity_seed_file else {
+            if self.template_restored {
+                return Ok(
+                    json!({"status":"LOADED","source":"profile","reasonCode":"NODE_TEMPLATE_LOADED","saved":false}),
+                );
+            }
             return Ok(
                 json!({"status":"NEEDS_HUMAN","source":"none","reasonCode":"LOGIN_RECIPE_MISSING","saved":false}),
             );
@@ -90,12 +95,17 @@ impl Engine {
                 "身份不适用于当前站点",
             ));
         }
-        let (mut dom, target) = self.identity_dom(deadline).await?;
-        // 复制环境模板后先清除目标源身份状态，不能混用旧账号存储和新账号 Cookie。
-        dom.identity_clear(&target, &origin).await?;
         let values = seed["cookies"]
             .as_array()
             .ok_or_else(|| Fault::rejected("IDENTITY_SEED_UNAVAILABLE", "身份 Cookie 不可用"))?;
+        if values.is_empty() && self.template_restored {
+            return Ok(
+                json!({"status":"LOADED","source":"profile","reasonCode":"NODE_TEMPLATE_LOADED","saved":false}),
+            );
+        }
+        let (mut dom, target) = self.identity_dom(deadline).await?;
+        // 显式 Cookie 种子覆盖目标源身份；没有种子时保留托管模板中的人工登录。
+        dom.identity_clear(&target, &origin).await?;
         for value in values {
             let mut params = value.clone();
             params["url"] = json!(origin);
@@ -203,6 +213,11 @@ impl Engine {
         .await?;
         let saved = profile_snapshots::publish(&state, &profile, &mut self.auth_version)
             .map_err(|_| Fault::unknown("PROFILE_SAVE_FAILED", "完整浏览器基准保存结果未确认"))?;
+        if self.config.node_template {
+            return Ok(
+                json!({"saved":saved,"reason":if saved {"SAVED"} else {"NEWER_STATE_PRESERVED"},"profileRestarted":false}),
+            );
+        }
         self.scopes.clear();
         self.networks.clear();
         self.active_scope = None;

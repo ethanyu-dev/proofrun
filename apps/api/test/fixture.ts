@@ -122,6 +122,8 @@ export class SimulatedNode {
   identityPreparation = false;
   /** 完整 profile 能力仅用于新版控制面协议测试，磁盘复制由真实浏览器用例覆盖。 */
   fullProfile = false;
+  /** 只模拟节点模板维护协议；不代表磁盘快照或浏览器登录验收。 */
+  nodeProfileManagement = false;
   /** 清理能力默认关闭，相关回归显式模拟升级后的节点。 */
   cookieCleanup = false;
   readonly id = randomUUID();
@@ -274,6 +276,7 @@ export class SimulatedNode {
         trace: this.trace,
         identityPreparation: this.identityPreparation,
         fullProfile: this.fullProfile,
+        nodeProfileManagement: this.nodeProfileManagement,
         cookieCleanup: this.cookieCleanup,
       },
     });

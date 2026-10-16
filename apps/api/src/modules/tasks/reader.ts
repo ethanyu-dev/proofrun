@@ -129,7 +129,8 @@ export class TaskReader {
         report#>>'{executionDetails,reasonCode}' AS execution_reason_code,
         report->>'executionDisposition' AS execution_disposition,report->>'verdict' AS verdict,
         to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_at
-       FROM pr_tasks WHERE ($1::text IS NULL OR state=$1)
+       FROM pr_tasks WHERE NOT EXISTS(SELECT 1 FROM pr_node_profiles p WHERE p.task_id=pr_tasks.id)
+        AND ($1::text IS NULL OR state=$1)
         AND ($2::text IS NULL OR id ILIKE $2 OR definition->>'objective' ILIKE $2)
         AND (NOT $3::boolean OR report IS NOT NULL)
         AND ($4::timestamptz IS NULL OR (created_at,id)<($4::timestamptz,$5::text))

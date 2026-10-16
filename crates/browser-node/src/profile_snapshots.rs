@@ -9,6 +9,8 @@ use std::{
 /// 单份基准的大小与文件数有界，避免异常站点把快照复制变成无界工作。
 const MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_FILES: usize = 100_000;
+/// 节点默认模板使用保留槽位，与身份库的 lib-* 基准分开发布。
+pub const NODE_TEMPLATE_ID: &str = "node-default-template";
 /// 进程协调文件不属于可复用状态，禁止把旧锁、调试端口复制进新会话。
 const RUNTIME_FILES: &[&str] = &[
     "SingletonLock",
@@ -133,6 +135,16 @@ pub fn restore(
     destination: &Path,
     base: Option<&Path>,
 ) -> Result<Option<String>> {
+    Ok(restore_with_template(state, round, destination, base, None)?.0)
+}
+/// 身份基准优先；缺失时固定本轮的节点模板版本。模板复制不成为身份自身的发布版本。
+pub fn restore_with_template(
+    state: &Path,
+    round: Option<&str>,
+    destination: &Path,
+    base: Option<&Path>,
+    template: Option<&Path>,
+) -> Result<(Option<String>, bool)> {
     let root = root(state);
     let _lock = lock(&root)?;
     let version = if let Some(round) = round {
@@ -153,12 +165,16 @@ pub fn restore(
     if let Some(ref version) = version {
         safe_id(version)?;
         copy_closed(&root.join(version), destination)?;
+    } else if let Some(template) = template {
+        ensure!(template != state, "template cannot inherit itself");
+        let inherited = restore(template, round, destination, base)?.is_some();
+        return Ok((None, inherited));
     } else if let Some(base) = base {
         copy_closed(base, destination)?;
     } else {
         private_dir(destination)?;
     }
-    Ok(version)
+    Ok((version, false))
 }
 /// 发布先写完整不可变目录，再原子替换指针；旧任务版本不允许覆盖新人工基准。
 pub fn publish(state: &Path, source: &Path, expected: &mut Option<String>) -> Result<bool> {
@@ -185,6 +201,54 @@ pub fn publish(state: &Path, source: &Path, expected: &mut Option<String>) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// 范围：模板复制、本轮版本固定、已有身份优先与维护 CAS；仅文件夹夹具，不证明真实登录。
+    #[test]
+    fn node_template_is_fallback_and_round_pinned() {
+        let dir = tempfile::tempdir().unwrap();
+        let template = dir.path().join("node-default-template.json");
+        let edit = dir.path().join("edit");
+        let mut template_version = restore(&template, None, &edit, None).unwrap();
+        fs::write(edit.join("marker"), "template-one").unwrap();
+        assert!(publish(&template, &edit, &mut template_version).unwrap());
+        let identity = dir.path().join("identity.json");
+        let first = dir.path().join("first");
+        let (mut identity_version, inherited) =
+            restore_with_template(&identity, Some("round"), &first, None, Some(&template)).unwrap();
+        assert!(inherited);
+        assert!(identity_version.is_none());
+        assert_eq!(
+            fs::read_to_string(first.join("marker")).unwrap(),
+            "template-one"
+        );
+        fs::write(edit.join("marker"), "template-two").unwrap();
+        assert!(publish(&template, &edit, &mut template_version).unwrap());
+        let peer = dir.path().join("peer");
+        restore_with_template(&identity, Some("round"), &peer, None, Some(&template)).unwrap();
+        assert_eq!(
+            fs::read_to_string(peer.join("marker")).unwrap(),
+            "template-one"
+        );
+        let next = dir.path().join("next");
+        restore_with_template(&identity, Some("next-round"), &next, None, Some(&template)).unwrap();
+        assert_eq!(
+            fs::read_to_string(next.join("marker")).unwrap(),
+            "template-two"
+        );
+        fs::write(first.join("marker"), "identity-baseline").unwrap();
+        assert!(publish(&identity, &first, &mut identity_version).unwrap());
+        let existing = dir.path().join("existing");
+        let (_, inherited) =
+            restore_with_template(&identity, None, &existing, None, Some(&template)).unwrap();
+        assert!(!inherited);
+        assert_eq!(
+            fs::read_to_string(existing.join("marker")).unwrap(),
+            "identity-baseline"
+        );
+        assert_eq!(
+            fs::read_to_string(edit.join("marker")).unwrap(),
+            "template-two"
+        );
+    }
     /// 范围：完整目录复制、同轮版本固定、任务修改隔离和并发人工 CAS；不代表真实浏览器登录验收。
     #[test]
     fn profiles_are_immutable_and_pinned() {

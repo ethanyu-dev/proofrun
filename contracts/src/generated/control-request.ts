@@ -413,6 +413,10 @@ export interface OpenSession {
      * 复制完整磁盘 profile，仅人工成功交还后允许发布新版本。
      */
     fullProfile?: boolean;
+    /**
+     * Console 节点默认模板维护会话；使用保留槽位，保存后不重启浏览器。
+     */
+    nodeTemplate?: boolean;
   };
   /**
    * 在首次业务导航前启用网络元数据采集。

@@ -7,7 +7,8 @@ import {
   type HitlServer,
 } from '@proofrun/contracts';
 import { Database } from '../../db.js';
-import { ApiError, digest } from '../../domain.js';
+import { ApiError, digest, requireToken } from '../../domain.js';
+import type { NodeProfiles } from '../nodes/profiles.js';
 import type { ApiConfig } from '../../config.js';
 import { ExecutionControl } from '../scheduling/control.js';
 import { interventionToken } from '../scheduling/hitl-token.js';
@@ -63,6 +64,8 @@ interface Grant {
   target_url: string;
   /** 分组模式必须提交与本次待办完全对应的人工确认。 */
   profile_plan: unknown;
+  /** 节点默认模板维护仅接受 Console 凭据，禁止转换为任务专属链接。 */
+  node_profile: boolean;
 }
 interface Viewer {
   socket: WebSocket;
@@ -88,6 +91,7 @@ export class HitlService {
     private readonly coordinator: Coordinator,
     private readonly gateway: NodeGateway,
     private readonly library?: IdentityLibrary,
+    private readonly nodeProfiles?: NodeProfiles,
   ) {}
 
   private async grant(id: string): Promise<Grant> {
@@ -95,7 +99,8 @@ export class HitlService {
       await this.db.query<Grant>(
         `SELECT h.*,e.control_mode,e.control_revision,e.control_reason,
       t.definition->'profilePlan' AS profile_plan,t.definition->'target'->>'url' AS target_url,e.state AS execution_state,e.lease_expires_at,e.human_deadline_at,t.id AS task_id,t.state AS task_state,t.deadline_at,
-      s.auth_state AS auth,s.id AS session_id,s.node_id,s.node_epoch,s.lease_id,s.fence,s.state AS session_state
+      s.auth_state AS auth,s.id AS session_id,s.node_id,s.node_epoch,s.lease_id,s.fence,s.state AS session_state,
+      EXISTS(SELECT 1 FROM pr_node_profiles p WHERE p.id=h.id) AS node_profile
       FROM pr_interventions h JOIN pr_executions e ON e.id=h.execution_id JOIN pr_tasks t ON t.id=e.task_id
       JOIN pr_sessions s ON s.execution_id=e.id WHERE h.id=$1`,
         [id],
@@ -124,6 +129,7 @@ export class HitlService {
     const id = await this.control.currentInterventionId(executionId);
     if (!id) return { intervention: null };
     const grant = await this.grant(id);
+    if (grant.node_profile) return { intervention: null };
     try {
       this.active(grant);
     } catch {
@@ -173,7 +179,7 @@ export class HitlService {
     });
   }
   /** 首条消息认证，凭据不进入 URL、代理日志或节点；单一处理者占有当前连接。 */
-  accept(socket: WebSocket): void {
+  accept(socket: WebSocket, consoleProfile = false): void {
     this.tracked(socket);
     let viewer: Viewer | undefined;
     let queued = 0;
@@ -201,9 +207,53 @@ export class HitlService {
           if (!viewer) {
             if (message.type !== 'authenticate')
               throw new ApiError(401, 'HITL_INVALID', '请使用完整处理链接');
+            if (consoleProfile)
+              requireToken(`Bearer ${message.token}`, this.config.adminToken);
             const grant = await this.grant(message.id);
-            if (digest(message.token) !== grant.token_hash)
+            if (
+              grant.node_profile !== consoleProfile ||
+              (!consoleProfile && digest(message.token) !== grant.token_hash)
+            )
               throw new ApiError(401, 'HITL_INVALID', '处理链接无效');
+            clearTimeout(authTimer);
+            if (this.viewers.has(grant.id))
+              throw new ApiError(
+                409,
+                'HITL_OCCUPIED',
+                '此任务已在另一个处理页打开',
+              );
+            if (consoleProfile && grant.task_state !== 'RUNNING') {
+              const authStatus = await this.nodeProfiles!.waitClosed(grant.id);
+              this.send(socket, {
+                type: 'completed',
+                ...(authStatus ? { authStatus } : {}),
+              });
+              socket.close();
+              return;
+            }
+            // 模板发布后浏览器已退出；重连必须先恢复原保存命令，不能等待已不存在的画面。
+            if (consoleProfile) {
+              const previous = (
+                await this.db.query(
+                  'SELECT result FROM pr_commands WHERE execution_id=$1 AND id LIKE $2 ORDER BY created_at DESC LIMIT 1',
+                  [grant.execution_id, `auth-complete-${grant.id}-%`],
+                )
+              ).rows[0];
+              if (
+                previous &&
+                !(
+                  previous.result?.operationStatus === 'FAILED' &&
+                  previous.result.effect === 'NOT_STARTED'
+                )
+              ) {
+                this.active(grant);
+                const authStatus = await this.saveAuth(grant, socket);
+                await this.nodeProfiles!.finish(grant.id, authStatus);
+                this.send(socket, { type: 'completed', authStatus });
+                socket.close();
+                return;
+              }
+            }
             if (grant.unable_reason) {
               this.send(socket, {
                 type: 'unable',
@@ -219,6 +269,7 @@ export class HitlService {
             }
             this.active(grant);
             if (socket.readyState !== WebSocket.OPEN) return;
+            // 模板恢复路径有异步回执查询，登记前再核对占用，避免两个新连接同时获得输入权。
             if (this.viewers.has(grant.id))
               throw new ApiError(
                 409,
@@ -245,6 +296,20 @@ export class HitlService {
           if (grant.control_mode !== 'HUMAN')
             throw new ApiError(409, 'HITL_WAIT', '正在等待 Agent 完成交接');
           if (message.type === 'unable') {
+            if (grant.node_profile) {
+              viewer.finalizing = true;
+              try {
+                await this.nodeProfiles!.finish(grant.id);
+                this.send(socket, {
+                  type: 'completed',
+                  authStatus: 'disabled',
+                });
+                this.end(viewer);
+              } finally {
+                viewer.finalizing = false;
+              }
+              return;
+            }
             const result = await this.control.unable(
               grant.execution_id,
               grant.revision,
@@ -287,6 +352,18 @@ export class HitlService {
               const authStatus = grant.auth
                 ? await this.saveAuth(grant, socket)
                 : 'disabled';
+              if (grant.node_profile) {
+                if (authStatus === 'disabled')
+                  throw new ApiError(
+                    409,
+                    'AUTH_STATE_MISSING',
+                    '节点模板未绑定',
+                  );
+                await this.nodeProfiles!.finish(grant.id, authStatus);
+                this.send(socket, { type: 'completed', authStatus });
+                this.end(viewer);
+                return;
+              }
               if (authStatus === 'saved' || authStatus === 'newer')
                 await this.library?.published(grant.task_id, grant.node_id);
               // 保存有确定回执后才恢复；失败或断线保留人工控制权。
