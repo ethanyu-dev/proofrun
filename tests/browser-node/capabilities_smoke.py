@@ -26,6 +26,9 @@ class Page(BaseHTTPRequestHandler):
             body = 'ok'
         elif parsed.path == '/poll':
             body = json.dumps(self.server.replace)
+        elif parsed.path == '/visual-change':
+            body = '''<html><body style="margin:0"><button id="target" style="position:fixed;left:5px;top:5px;width:100px;height:35px" onclick="fetch('/submit',{method:'POST',body:JSON.stringify({unexpectedVisualWrite:true})})">Continue</button>
+<script>const timer=setInterval(async()=>{if(await(await fetch('/poll')).json()){const overlay=document.createElement('div');overlay.style='position:fixed;inset:0;background:red;z-index:999';overlay.textContent='New overlay';document.body.append(overlay);clearInterval(timer);}},50);</script></body></html>'''
         elif parsed.path == '/compound':
             body = (Path(__file__).parent/'fixtures/compound-controls.html').read_text()
         elif parsed.path == '/wujie':
@@ -164,6 +167,20 @@ def run():
         visual=command(type='browser.observe',screenshot=True)
         command(type='browser.act',action='visual.click',x=35,y=20,observationId=visual['observationId'])
         assert 'Visual clicked' in observe()['text']
+        # 范围：URL、视口和滚动位置不变时，新增覆盖层必须在坐标输入前被拒绝；不证明所有瞬时竞态均可检测。
+        server.replace=False
+        saved_tab=next(t['tabId'] for t in observe()['tabs'] if t['active'])
+        command(type='browser.act',action='tab.new',target=f'http://127.0.0.1:{server.server_port}/visual-change')
+        before_overlay=command(type='browser.observe',screenshot=True)
+        assert before_overlay['viewport']['visualRecheck']=='sha256'
+        writes_before=len(server.writes)
+        server.replace=True
+        time.sleep(.3)
+        rejected=command(expect_error=True,type='browser.act',action='visual.click',x=35,y=20,observationId=before_overlay['observationId'])
+        assert rejected['code']=='STALE_OBSERVATION' and rejected['effect']=='NOT_STARTED',rejected
+        assert len(server.writes)==writes_before
+        observe()
+        command(type='browser.act',action='tab.switch',target=saved_tab)
         command(type='browser.act',action='resize',value='1000x700')
         original=observe()
         original_tab=next(t['tabId'] for t in original['tabs'] if t['active'])
@@ -188,11 +205,13 @@ def run():
         assert 'secret-fixture' not in json.dumps(before)
         container=next(t for t in before['targets'] if t['name']=='Scroll choices')
         assert 'scroll' in container['operations']
-        scrolled=command(type='browser.act',action='scroll',target=container['target'],value='down',observationId=before['observationId'])
+        # 范围：能力协商及 iframe 容器的可变幅度；不验证模型如何选择滚动策略。
+        assert before['viewport']['scrollDistance'] is True
+        scrolled=command(type='browser.act',action='scroll',target=container['target'],value='down:150',observationId=before['observationId'])
         assert scrolled['scroll']['moved'] and scrolled['scroll']['after']['y']>0,scrolled
         after=observe()
         names={t['name'] for t in after['targets']}
-        assert 'Choice 0' not in names and 'Choice 10' in names,names
+        assert 'Choice 0' not in names and 'Choice 4' in names,names
         assert after['coverage']['controls']['outsideViewportOrHidden']>0
         # 范围：定向滚动仍绑定观察，滚到底后返回无位移；不将滚动成功等同于业务完成。
         error=command(expect_error=True,type='browser.act',action='scroll',target=container['target'],value='down',observationId=before['observationId'])
@@ -256,7 +275,7 @@ def run():
         trace=command(type='browser.trace',action='stop')
         events=json.loads(Path(trace['localTrace']).read_text())['traceEvents']
         assert len(events)>0
-        print(json.dumps({'passed':['native DOM without ARIA','nested open and closed Shadow DOM','same-origin and nested cross-origin iframe actions and waits','check/uncheck/select','detached node rejection','fresh screenshot visual input','resize and tabs','stable comparison identities','visible control capabilities','targeted iframe container scroll','isolated Wujie-style DOM and actions','delegated root exclusion','reference snapshot diagnostics','compound combobox hit ownership and overlay rejection','Chromium TRACE'],'businessWrites':len(server.writes),'traceEvents':len(events),'root':str(root)},indent=2))
+        print(json.dumps({'passed':['native DOM without ARIA','nested open and closed Shadow DOM','same-origin and nested cross-origin iframe actions and waits','check/uncheck/select','detached node rejection','fresh screenshot visual input','same-viewport overlay rejects stale visual input','resize and tabs','stable comparison identities','visible control capabilities','targeted iframe container scroll','isolated Wujie-style DOM and actions','delegated root exclusion','reference snapshot diagnostics','compound combobox hit ownership and overlay rejection','Chromium TRACE'],'businessWrites':len(server.writes),'traceEvents':len(events),'root':str(root)},indent=2))
     finally:
         if process.poll() is None:
             send({'type':'close'})

@@ -51,6 +51,10 @@ TYPESAFE_API_KEY=你的真实密钥
 TYPESAFE_MODEL=jev-1.14.0
 ```
 
+本地启动会透传 `PROOFRUN_JEV_*` 开关。启用 `PROOFRUN_JEV_IMAGES=true` 和 `PROOFRUN_JEV_EXPANDED_ACTIONS=true` 后，JEV 可接收当前截图并使用扩展候选；Box 仍由 `PROOFRUN_JEV_BOX` 单独控制。已有环境文件中的 `TYPESAFE_MODEL` 会覆盖默认版本，应同步检查。
+
+启用 Docker 预览节点时，启动器为该节点写入 `90-local-build.conf` 开发覆盖项，使用本次 Cargo 构建的二进制及 `local-node.toml`，避免旧发布版覆盖项让服务继续运行历史版本。API 仍连接 `.proofrun/local.env` 配置的数据库。
+
 使用 `pnpm dev:local` 时，若 JEV 需要本机 HTTP 代理，可在同一文件中追加以下配置（端口按本机代理修改）。启动脚本将这些设置传给 Agent；Node 24 的 `fetch` 需要 `NODE_USE_ENV_PROXY=1` 才会使用代理。`NO_PROXY` 中列出控制面及需要直连的文本模型域名，Docker 中的浏览器代理由节点单独配置。修改后需重启 Agent 才能生效。
 
 ```dotenv
@@ -96,3 +100,13 @@ node --env-file=/absolute/path/to/jev.env scripts/test-jev.mjs
 `MATCHED_EXPECTATION` 仅表示定向建议匹配，`EXPLORATORY_ONLY` 仅表示探索性调用完成。HTTP 错误、非法响应或网络错误会单独记录；不将服务失败计作建议错误。完整任务是否通过，需要后续接入执行循环并核验实际证据。
 
 Jev 离线证据建议与对照脚本默认固定 `jev-1.14.0`，已有 `.proofrun/local.env` 中的 `TYPESAFE_MODEL` 会覆盖默认值。脚本继续使用各自的短上下文；worker 的实验长上下文配置见 [Agent README](../apps/agent/README.md#jev-版本与实验长上下文)。
+
+## 通用执行策略真实模型回归
+
+先在浏览器节点启动 `tests/agent/guidance-browser-fixture.py`，再在本地控制面启用 `PROOFRUN_AGENT_EXECUTION_GUIDANCE=true`。
+
+```sh
+PROOFRUN_CONTROL_URL=http://127.0.0.1:4101 node --env-file=.proofrun/local.env scripts/test-execution-guidance.mjs
+```
+
+默认运行 JEV；`PROOFRUN_GUIDANCE_MODE=llm` 可验证相同任务在文本决策模式中的共享机制。脚本仅允许本地控制面，依次提交长页面、嵌套列表和分阶段配置任务，保存真实任务与调用，并以非零退出码报告未通过、缺少策略诊断或资源未关闭。真实请求产生正常模型用量；本地夹具结果不能替代外部网站回归。通过节点的 `/metrics` 另外确认禁止提交的计数为零。

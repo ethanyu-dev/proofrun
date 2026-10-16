@@ -30,6 +30,17 @@ export function targetState(t: ObservedTarget): string {
   ]);
 }
 
+/** 所有模式共用状态身份；滚动位置表示搜索位置变化，不能当作验收进展。 */
+export function observationState(page: Observation): string {
+  return JSON.stringify([
+    page.url,
+    page.viewport,
+    page.text.replace(TARGET_MARKER, '').trim(),
+    page.documents?.map(({ url, lang }) => [url, lang]),
+    page.targets.map(targetState).sort(),
+  ]);
+}
+
 /** 两份真实观察之间的差异；新出现只代表新观察到，不证明由上一步操作导致。 */
 export interface ObservationChanges {
   /** 首轮或切换观察范围时不做跨范围增删推断。 */
@@ -112,13 +123,7 @@ export class ObservationTracker {
           .split('\n')
           .filter((line) => !lines.has(normalize(line)))
           .join('\n');
-    const fingerprint = JSON.stringify([
-      page.url,
-      page.viewport,
-      normalize(page.text),
-      page.documents?.map(({ url, lang }) => [url, lang]),
-      page.targets.map(targetState).sort(),
-    ]);
+    const fingerprint = observationState(page);
     if (countProgress) {
       this.unchanged =
         fingerprint === this.fingerprint ? this.unchanged + 1 : 0;

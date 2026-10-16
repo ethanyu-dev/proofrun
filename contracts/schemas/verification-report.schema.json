@@ -252,34 +252,7 @@
           "verdict": {
             "type": "null"
           }
-        },
-        "allOf": [
-          {
-            "if": {
-              "not": {
-                "required": ["steps"],
-                "properties": {
-                  "steps": {}
-                }
-              }
-            },
-            "then": {
-              "properties": {
-                "criteria": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "properties": {
-                      "verdict": {
-                        "const": "SKIPPED"
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        ]
+        }
       }
     }
   ]

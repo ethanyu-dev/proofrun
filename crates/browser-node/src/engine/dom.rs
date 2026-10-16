@@ -674,6 +674,7 @@ impl Dom {
                                     || CONTROL_ROLES.contains(&role.as_str())))
                         {
                             operations.push("click");
+                            operations.push("hover");
                         }
                         if facts["editable"] == true {
                             operations.push("fill");
@@ -900,11 +901,12 @@ impl Dom {
                 "scroll container is covered",
             ));
         }
+        let (direction, distance) = super::scroll::parse(direction)?;
         let (dx, dy) = match direction {
-            "down" => (0, 400),
-            "up" => (0, -400),
-            "right" => (400, 0),
-            "left" => (-400, 0),
+            "down" => (0, distance),
+            "up" => (0, -distance),
+            "right" => (distance, 0),
+            "left" => (-distance, 0),
             _ => {
                 return Err(Fault::rejected(
                     "INVALID_ARGUMENT",

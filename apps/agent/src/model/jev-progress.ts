@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { Observation } from '../evidence/observation.js';
-import { targetState } from '../evidence/changes.js';
+import { observationState } from '../evidence/changes.js';
 import { lowActionBudgetReview } from '../prompts/jev.js';
 
 /** 有界证据记忆保留不同页面，不能将元素编号变化当成新信息。 */
@@ -94,9 +94,7 @@ export class JevProgress {
     this.observationId = page.observationId;
     const text = page.text.replace(ELEMENT_REFS, '');
     const key = createHash('sha256')
-      .update(
-        JSON.stringify([page.url, text, page.targets.map(targetState).sort()]),
-      )
+      .update(observationState(page))
       .digest('hex');
     this.unchanged = key === this.previous ? this.unchanged + 1 : 0;
     this.previous = key;

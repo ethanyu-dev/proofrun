@@ -377,7 +377,7 @@ export interface ActBrowser {
    */
   target?: string;
   /**
-   * 填写/输入/选择的值、按键、滚动方向或 resize 的 WIDTHxHEIGHT。
+   * 填写/输入/选择的值、按键、滚动方向或 resize 的 WIDTHxHEIGHT。观察 viewport.scrollDistance=true 时，scroll 还接受 direction:pixels（1..1200）；旧方向保持 400 像素。
    */
   value?: string;
   /**

@@ -7,9 +7,9 @@ import type { NodeCommand, NodeRuntime } from '@proofrun/contracts';
 const POLL_MS = 25;
 /** 夹具续租最多间隔一秒，短租约按剩余时间的三分之一续期。 */
 const WORKER_HEARTBEAT_MS = 1000;
-/** 有效的最小 PNG；只验证存储链路，不用于证明真实截图内容。 */
+/** 可完整解码的一像素 PNG；覆盖存储及图片预处理，不用于证明真实截图内容。 */
 export const PNG = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jD1sAAAAASUVORK5CYII=',
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVQImWP4////fwAJ+wP9CNHoHgAAAABJRU5ErkJggg==',
   'base64',
 );
 export const PNG_HASH = createHash('sha256').update(PNG).digest('hex');

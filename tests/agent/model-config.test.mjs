@@ -15,6 +15,10 @@ function configure(t) {
     PROOFRUN_MODEL_BASE_URL: 'http://127.0.0.1:4101/v1',
     PROOFRUN_MODEL_THINKING: undefined,
     PROOFRUN_JEV_LONG_CONTEXT: undefined,
+    PROOFRUN_JEV_IMAGES: undefined,
+    PROOFRUN_JEV_BOX: undefined,
+    PROOFRUN_JEV_EXPANDED_ACTIONS: undefined,
+    PROOFRUN_AGENT_EXECUTION_GUIDANCE: undefined,
     PROOFRUN_AGENT_COMMAND_MS: undefined,
     PROOFRUN_AGENT_EVIDENCE_MS: undefined,
   };
@@ -42,6 +46,29 @@ test('思考模式默认不覆盖供应商并拒绝非法配置', (t) => {
   for (const mode of ['', 'false', 'DISABLED', 'disable']) {
     process.env.PROOFRUN_MODEL_THINKING = mode;
     assert.throws(() => loadConfig(), /PROOFRUN_MODEL_THINKING/);
+  }
+});
+
+// 范围：实验能力显式开启、非法值及 Box 依赖；不验证服务账户是否支持这些能力。
+test('JEV 图片、Box 和候选扩展独立配置并校验依赖', (t) => {
+  configure(t);
+  assert.equal(loadConfig().jevImages, false);
+  assert.equal(loadConfig().jevBox, false);
+  assert.equal(loadConfig().jevExpandedActions, false);
+  process.env.PROOFRUN_JEV_BOX = 'true';
+  assert.throws(() => loadConfig(), /requires PROOFRUN_JEV_IMAGES/);
+  process.env.PROOFRUN_JEV_IMAGES = 'true';
+  assert.equal(loadConfig().jevBox, true);
+  for (const name of [
+    'PROOFRUN_JEV_IMAGES',
+    'PROOFRUN_JEV_BOX',
+    'PROOFRUN_JEV_EXPANDED_ACTIONS',
+  ]) {
+    const previous = process.env[name];
+    process.env[name] = 'enabled';
+    assert.throws(() => loadConfig(), new RegExp(name));
+    if (previous === undefined) delete process.env[name];
+    else process.env[name] = previous;
   }
 });
 
@@ -177,4 +204,18 @@ test('JEV 长上下文默认关闭并严格解析开关', (t) => {
     process.env.PROOFRUN_JEV_LONG_CONTEXT = value;
     assert.throws(() => loadConfig(), /PROOFRUN_JEV_LONG_CONTEXT/);
   }
+});
+
+// 范围：通用执行策略默认关闭、显式灰度及错误配置拒绝；不验证模型效果。
+test('通用执行策略独立开关不改变模型和预算配置', (t) => {
+  configure(t);
+  const before = loadConfig();
+  assert.equal(before.executionGuidance, false);
+  process.env.PROOFRUN_AGENT_EXECUTION_GUIDANCE = 'true';
+  const enabled = loadConfig();
+  assert.equal(enabled.executionGuidance, true);
+  assert.equal(enabled.model, before.model);
+  assert.equal(enabled.maxTurns, before.maxTurns);
+  process.env.PROOFRUN_AGENT_EXECUTION_GUIDANCE = 'enabled';
+  assert.throws(() => loadConfig(), /PROOFRUN_AGENT_EXECUTION_GUIDANCE/);
 });

@@ -20,7 +20,29 @@ const REQUEST_FIELDS = new Set([
   'state',
   'questions',
   'thinking',
+  'assets',
 ]);
+
+/** 仅接收 Agent 已脱敏的 JEV PNG 引用，不允许原始 base64 或任意资源参数进入存档。 */
+function redactedAssets(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  return Object.entries(value).every(([id, asset]) => {
+    if (!ID_PATTERN.test(id) || !asset || typeof asset !== 'object')
+      return false;
+    const { type, format, data_base64: data, ...extra } = asset;
+    return (
+      type === 'image' &&
+      format === 'png' &&
+      Object.keys(extra).length === 0 &&
+      data &&
+      typeof data === 'object' &&
+      !Array.isArray(data) &&
+      Object.keys(data).length === 1 &&
+      typeof data.omitted === 'string' &&
+      data.omitted.length > 0
+    );
+  });
+}
 
 /** 请求在派发前存档，回复只允许补写一次；相同身份重送不能改写原始上下文。 */
 export class ModelCalls {
@@ -119,6 +141,12 @@ export class ModelCalls {
             400,
             'INVALID_MODEL_CALL',
             'Unexpected request fields',
+          );
+        if ('assets' in request && !redactedAssets(request.assets))
+          throw new ApiError(
+            400,
+            'INVALID_MODEL_CALL',
+            'Invalid redacted assets',
           );
         // 思考参数必须是封闭对象，不能借新字段夹带认证配置或其他扩展。
         if ('thinking' in request) {

@@ -311,3 +311,29 @@ test('逐项保存需明确标准及证据，Cookie 清理不允许模型指定 
   ])
     assert(!validateAgentDecision({ ...clear, ...patch }));
 });
+
+// 范围：非结构化任务受阻仍可保留独立结论，总 verdict 必须为空；证据归属由控制面校验。
+test('blocked reports retain independent criteria without claiming overall completion', () => {
+  const partial = {
+    ...blocked,
+    criteria: [
+      {
+        criterionId: 'visible',
+        verdict: 'PASSED',
+        summary: '已有证据',
+        evidenceRefs: ['00000000-0000-4000-8000-000000000001'],
+      },
+      {
+        criterionId: 'remaining',
+        verdict: 'SKIPPED',
+        summary: '未能取证',
+        evidenceRefs: [],
+      },
+    ],
+  };
+  assert.equal(validateVerificationReport(partial), true);
+  assert.equal(
+    validateVerificationReport({ ...partial, verdict: 'PASSED' }),
+    false,
+  );
+});

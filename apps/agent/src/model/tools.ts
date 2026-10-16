@@ -30,7 +30,14 @@ export function decisionTools(
     .filter(
       (tool) =>
         (!context.verificationReview?.final ||
-          ['verification.record', 'verification.block'].includes(tool.type)) &&
+          (context.verificationReview?.reason === 'budget'
+            ? [
+                'verification.record',
+                'verification.block',
+                'verification.finish',
+              ]
+            : ['verification.record', 'verification.block']
+          ).includes(tool.type)) &&
         (context.environmentReview?.required
           ? tool.type === 'verification.environment'
           : tool.type !== 'verification.environment') &&
@@ -42,8 +49,8 @@ export function decisionTools(
             OBSERVATION_REVIEW_ROUNDS) &&
         (tool.type !== 'verification.record' ||
           (!!ids?.length &&
-            !!context.executionStep &&
-            (context.executionStep.type !== 'setup' ||
+            (!!context.executionStep || !!context.executionGuidance) &&
+            (context.executionStep?.type !== 'setup' ||
               context.cleanup === true))),
     )
     .map((tool) => {
@@ -77,6 +84,39 @@ export function decisionTools(
             : {}),
         };
       }
+      // 同轮结论复用现有验收 schema；先验收旧证据，再执行新动作，不要求额外调用。
+      if (
+        context.executionGuidance &&
+        context.executionStep?.type !== 'setup' &&
+        !context.cleanup &&
+        ids?.length &&
+        ['browser.act', 'browser.observe', 'verification.block'].includes(
+          tool.type,
+        )
+      ) {
+        const record = tools.find(
+          (item) => item.type === 'verification.record',
+        )!;
+        const schema = structuredClone(
+          (
+            record.parameters as {
+              properties: { criteria: { items: { properties: object } } };
+            }
+          ).properties.criteria,
+        );
+        parameters.properties.conclusions = {
+          ...schema,
+          minItems: 0,
+          maxItems: ids.length,
+          items: {
+            ...schema.items,
+            properties: {
+              ...schema.items.properties,
+              criterionId: { type: 'string', enum: ids },
+            },
+          },
+        };
+      }
       // setup 的空 criteria 不能让供应商省略准备声明；公共执行器仍独立校验完整性。
       if (
         tool.type === 'verification.finish' &&
@@ -91,7 +131,10 @@ export function decisionTools(
             required?: string[];
           };
           // 恢复耗尽时明确要求新策略，不能继续生成必定被执行器拒绝的孤立动作。
-          if (context.workflow.recovery?.remaining === 0) {
+          if (
+            context.workflow.recovery?.remaining === 0 ||
+            (context.executionGuidance && !context.workflow.recovery)
+          ) {
             parameters.required = [...(parameters.required ?? []), 'workflow'];
             workflow.required = ['recovery'];
           }
@@ -119,6 +162,20 @@ export function decisionTools(
               : { not: { required: ['target'] } },
           },
         ];
+      }
+      // 只读收尾不需要计划、阅读登记或重访字段；finish 仅保留原步骤完成声明。
+      if (context.verificationReview?.reason === 'budget') {
+        delete parameters.properties.workflow;
+        if (tool.type === 'verification.finish')
+          parameters.properties.workflow = {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              assessments: structuredClone(
+                WORKFLOW_SCHEMA.properties.assessments,
+              ),
+            },
+          };
       }
       constrainEvidenceRefs(parameters, evidenceIds);
       return {
