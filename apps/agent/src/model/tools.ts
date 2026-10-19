@@ -157,6 +157,27 @@ export function decisionTools(
         parameters.allOf = [
           {
             if: {
+              properties: { action: { const: 'press' } },
+              required: ['action'],
+            },
+            then:
+              (
+                context.observation?.viewport as
+                  { targetedPress?: boolean } | undefined
+              )?.targetedPress === true && context.observation.targets.length
+                ? {
+                    properties: {
+                      target: {
+                        enum: context.observation.targets.map(
+                          (t: { target: string }) => t.target,
+                        ),
+                      },
+                    },
+                  }
+                : { not: { required: ['target'] } },
+          },
+          {
+            if: {
               properties: { action: { const: 'scroll' } },
               required: ['action'],
             },

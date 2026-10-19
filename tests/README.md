@@ -65,6 +65,8 @@ python3 tests/browser-node/real_engine_smoke.py
 node tests/browser-node/validate-events.mjs /absolute/path/to/events.jsonl
 ```
 
+`real_engine_smoke.py` 同时覆盖普通输入框、两层 Shadow DOM 与同源 iframe 的定向 Tab、真实按键和失焦事件、过期观察拒绝、当前焦点回执，以及焦点被监听器转移时停止按键；独立 HTTP 计数核对实际收到的 Tab。页面只在本机回环地址运行，不验证生产邀请码提示或 Linux 会话监管。
+
 能力场景见 `browser-node/capabilities_smoke.py`，包含当前截图视觉点击及同视口新增覆盖层后的拒绝；登录与网络场景见 `browser-node/auth_network_smoke.py`。登录快照只覆盖 Cookie/localStorage，网络证据只有有界脱敏元数据，不保证捕获完整。
 
 人工输入网络隔离回归见 `browser-node/input_network_smoke.py`，使用同样的引擎与 Chrome 环境变量。真实浏览器的后台标签页阻塞二十二秒、前台接口持续等待时，验证前台点击完成、新请求证据保留及独立写入计数；不访问生产网站，也不证明某次线上超时的唯一原因。该场景已纳入完整 Linux 回归。

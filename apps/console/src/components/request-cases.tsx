@@ -4,6 +4,7 @@ import type { ApiClient } from '../api';
 import { time } from './ui';
 import { RequestStatus as Status } from './request-status';
 import { ReportEvidenceDrawer } from './report-evidence';
+import { OutcomeStatus } from './execution-outcome';
 
 /** 逐项保留 case 与执行组上下文；同名标准不能跨 case 拼接证据。 */
 export function RequestCases({
@@ -78,8 +79,8 @@ export function RequestCases({
                         {arm.result.executionOutcome && (
                           <p>
                             执行原因：
-                            <Status
-                              value={arm.result.executionOutcome.category}
+                            <OutcomeStatus
+                              outcome={arm.result.executionOutcome}
                             />
                           </p>
                         )}

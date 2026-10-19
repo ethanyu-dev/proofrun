@@ -1,15 +1,18 @@
 import type { ExecutionOutcome, TaskDetail } from '@proofrun/contracts';
 import { Status, time } from './ui';
 
-/** 决策内容不合规与供应商服务故障分开显示，兼容历史 MODEL_ERROR 分类。 */
-function OutcomeStatus({ outcome }: { outcome: ExecutionOutcome }) {
+/** 主动阻塞、决策不合规与供应商故障分开显示；请求页和详情共用历史分类兼容。 */
+export function OutcomeStatus({ outcome }: { outcome: ExecutionOutcome }) {
   return (
     <Status
       value={
         outcome.category === 'MODEL_ERROR' &&
-        outcome.reasonCode === 'INVALID_MODEL_DECISION'
-          ? outcome.reasonCode
-          : outcome.category
+        outcome.reasonCode === 'MODEL_BLOCKED'
+          ? 'EXECUTION_BLOCKED'
+          : outcome.category === 'MODEL_ERROR' &&
+              outcome.reasonCode === 'INVALID_MODEL_DECISION'
+            ? outcome.reasonCode
+            : outcome.category
       }
     />
   );

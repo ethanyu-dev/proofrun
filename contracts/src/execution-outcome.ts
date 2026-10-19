@@ -69,6 +69,8 @@ export function executionOutcome(facts: ExecutionFacts): ExecutionOutcome {
     code === 'HOST_CHANNEL_CLOSED'
   )
     category = 'SESSION_ERROR';
+  // 主动声明执行缺口是正常模型回复，必须先于 MODEL_ 服务故障前缀分类。
+  else if (code === 'MODEL_BLOCKED') category = 'EXECUTION_BLOCKED';
   else if (
     code?.startsWith('MODEL_') ||
     code?.startsWith('LLM_') ||

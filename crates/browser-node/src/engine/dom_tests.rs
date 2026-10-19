@@ -18,7 +18,7 @@ async fn failed_action(action: &str, failure: &str, disconnect: bool) -> (Fault,
             let script = call["params"]["functionDeclaration"].as_str().unwrap_or("");
             let label = if method == "Input.dispatchMouseEvent" {
                 format!("{method}:{}", call["params"]["type"].as_str().unwrap())
-            } else if script.contains("this.focus()") {
+            } else if script.contains("this.focus(") {
                 "focus".into()
             } else if script.contains("this.options") {
                 "select".into()
@@ -26,6 +26,17 @@ async fn failed_action(action: &str, failure: &str, disconnect: bool) -> (Fault,
                 method.into()
             };
             calls.push(call.clone());
+            if failure == "focus-denied" && label == "focus" {
+                socket
+                    .send(Message::Text(
+                        json!({"id":call["id"],"result":{"result":{"value":false}}})
+                            .to_string()
+                            .into(),
+                    ))
+                    .await
+                    .unwrap();
+                return calls;
+            }
             if label == failure {
                 if disconnect {
                     socket.close(None).await.unwrap();
@@ -102,6 +113,7 @@ async fn preparation_failure_keeps_session_without_dispatching_input() {
 #[tokio::test]
 async fn dispatched_input_never_becomes_a_preparation_failure() {
     for (action, method) in [
+        ("focus", "focus"),
         ("click", "Input.dispatchMouseEvent:mouseMoved"),
         ("click", "Input.dispatchMouseEvent:mousePressed"),
         ("click", "Input.dispatchMouseEvent:mouseReleased"),
@@ -116,6 +128,19 @@ async fn dispatched_input_never_becomes_a_preparation_failure() {
             assert!(!error.message.contains("private-page-and-cookie-value"));
         }
     }
+}
+
+// 范围：聚焦监听器转移焦点的 CDP 结果不能被当作成功；只模拟传输结果，真实焦点由回环 Chrome 场景覆盖。
+#[tokio::test]
+async fn unconfirmed_focus_stops_before_key_dispatch() {
+    let (error, calls) = failed_action("focus", "focus-denied", false).await;
+    assert_eq!(error.code, "KEYBOARD_FOCUS_UNCONFIRMED");
+    assert_eq!(error.effect, "MAY_HAVE_HAPPENED");
+    assert!(
+        !calls
+            .iter()
+            .any(|call| call["method"].as_str().unwrap().starts_with("Input."))
+    );
 }
 
 // 范围：声明缺失、读取未知与真实值区分；不按正文推断语言，也不覆盖站点自身声明准确性。

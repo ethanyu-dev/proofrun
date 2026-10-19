@@ -657,6 +657,8 @@ impl Engine {
                     result["viewport"]["scrollDistance"] = json!(true);
                     result["localScreenshot"] = json!(path);
                 }
+                // 仅原生 DOM 目标支持确认聚焦后的定向按键；旧节点没有该能力标记。
+                result["viewport"]["targetedPress"] = json!(self.dom.is_some());
                 Ok(result)
             }
             BrowserCommand::BrowserAct {
@@ -669,6 +671,7 @@ impl Engine {
                 let name = raw["action"].as_str().unwrap();
                 let element = [
                     "click", "fill", "type", "hover", "check", "uncheck", "select", "scroll",
+                    "press",
                 ]
                 .contains(&name)
                     && target.is_some();
@@ -733,6 +736,16 @@ impl Engine {
                     self.observation = None;
                     self.visual = None;
                     self.targets.clear();
+                    if name == "press" {
+                        // CLI 的 press 是全局按键，必须先核对指定原生节点已取得焦点。
+                        // 聚焦与按键共用本次命令截止时间，任何失败都不降级为全局重试。
+                        let args = action_args(action, None, value.clone())?;
+                        dom.act(target.as_deref().unwrap(), "focus", None).await?;
+                        self.cli(args, remaining()).await?;
+                        return Ok(
+                            json!({"performed":true,"keyboard":{"scope":"target","target":target,"focusVerified":true}}),
+                        );
+                    }
                     if name == "scroll" {
                         return dom
                             .scroll(target.as_deref().unwrap(), value.as_deref().unwrap_or(""))
@@ -804,6 +817,12 @@ impl Engine {
                     .await?;
                     return Ok(json!({"performed":true}));
                 }
+                if name == "press" && target.is_some() {
+                    return Err(Fault::rejected(
+                        "INVALID_TARGET",
+                        "targeted press requires a current native DOM target",
+                    ));
+                }
                 if name == "scroll" && target.is_some() {
                     return Err(Fault::rejected(
                         "INVALID_SCROLL_TARGET",
@@ -853,6 +872,11 @@ impl Engine {
                         );
                     }
                     return Err(fault);
+                }
+                if name == "press" {
+                    return Ok(
+                        json!({"performed":true,"keyboard":{"scope":"current-focus","focusVerified":false}}),
+                    );
                 }
                 Ok(json!({"performed":true}))
             }

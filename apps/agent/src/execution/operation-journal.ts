@@ -67,6 +67,12 @@ export class OperationJournal {
         ...(op.targetName === undefined
           ? {}
           : { targetName: op.targetName.slice(0, NAME_LIMIT) }),
+        ...(op.requestedTargetName === undefined
+          ? {}
+          : {
+              requestedTargetName: op.requestedTargetName.slice(0, NAME_LIMIT),
+            }),
+        ...(op.keyboard === undefined ? {} : { keyboard: { ...op.keyboard } }),
         operationStatus: op.operationStatus,
         effect: op.effect,
       }));
