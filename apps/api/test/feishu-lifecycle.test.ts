@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { Database } from '../src/db.js';
@@ -75,7 +76,7 @@ class FakeFeishu implements FeishuTransport {
 
 // 范围：真实 PostgreSQL、迁移与控制权事务；任务/会话由 SQL 建立，飞书为协议夹具，不验收真实群或浏览器。
 test(
-  'Case 生命周期新消息与全部历史卡片同步',
+  '请求与 Case 通知复用卡片并在完成后汇总',
   { timeout: 45_000 },
   async (suite) => {
     const databaseUrl = process.env.PROOFRUN_TEST_DATABASE_URL;
@@ -150,6 +151,30 @@ test(
       );
       return id;
     }
+    /** 建立 v2 请求冻结成员关系；任务仍由夹具创建，不替代公共 API 接收验证。 */
+    async function request(ids: string[], requestId = randomUUID()) {
+      await db.transaction(async (client) => {
+        await client.query(
+          'INSERT INTO pr_verification_requests(request_id,title,definition_hash) VALUES($1,$2,$1)',
+          [requestId, '批量验证'],
+        );
+        for (const [position, id] of ids.entries()) {
+          await client.query(
+            `UPDATE pr_tasks SET definition=jsonb_set(definition,'{caseV2Definition}',jsonb_build_object('caseId',$1::text)) WHERE id=$1`,
+            [id],
+          );
+          await client.query(
+            `INSERT INTO pr_verification_request_cases(request_id,case_id,task_id,position,definition_hash,execution_origin) VALUES($1,$2,$2,$3,$2,'created')`,
+            [requestId, id, position],
+          );
+          await client.query(
+            `INSERT INTO pr_verification_request_arms(request_id,case_id,task_id,execution_mode) VALUES($1,$2,$2,'jev')`,
+            [requestId, id],
+          );
+        }
+      });
+      return `request:${requestId}`;
+    }
     /** 模拟已建立的浏览器会话和存活执行者，不调用真实浏览器。 */
     async function activate(id: string) {
       await db.query(
@@ -188,10 +213,10 @@ test(
         );
       });
     }
-    /** 只加速扫描轮次；默认不跳过真实重试退避。 */
+    /** 加速扫描但保留轮次先后，避免多条活动记录因统一重置时间而饥饿；默认不跳过重试退避。 */
     async function tick(retry = false) {
       await db.query(
-        "UPDATE pr_feishu_runs SET next_at=clock_timestamp()-interval '1 second'",
+        "UPDATE pr_feishu_runs SET next_at=next_at-interval '2 seconds' WHERE settled_at IS NULL",
       );
       if (retry)
         await db.query(
@@ -226,9 +251,199 @@ test(
       throw new Error('通知未收敛');
     }
     try {
-      // 范围：四类真实控制面事件、重复请求去重、旧卡片状态和按钮同步；不验证真实飞书渲染。
+      // 范围：真实 PostgreSQL 请求归属、多 case 完成门槛、同 case 多轮 HITL 和重启去重；飞书由夹具模拟。
       await suite.test(
-        '提交、HITL、恢复、完成各发一条，旧卡片保留原始事件',
+        '一次 v2 请求一张主卡片，HITL 按 case 复用，全部结束才汇总',
+        async () => {
+          const a = await create();
+          const b = await create();
+          const key = await request([a, b]);
+          let rows = await sync(key, 1);
+          const mainId = rows[0]!.message_id;
+          assert.equal((await messages(a)).length, 0);
+          assert.equal((await messages(b)).length, 0);
+          assert.ok(
+            JSON.stringify(remote.cards.get(mainId)).includes(
+              '验证状态：排队中',
+            ),
+          );
+          await activate(a);
+          await activate(b);
+          await sync(key, 1);
+          assert.equal(
+            remote.cards.get(mainId).header.title.content,
+            '自动化测试 · 执行中',
+          );
+          await control.change(a, WORKER, 'request', 0, 'A 登录');
+          await control.change(b, WORKER, 'request', 0, 'B 登录');
+          rows = await sync(key, 3);
+          const aCard = rows.find((row) => row.event.taskId === a)!;
+          const bCard = rows.find((row) => row.event.taskId === b)!;
+          const aLink = (await control.currentInterventionId(a))!;
+          const bLink = (await control.currentInterventionId(b))!;
+          assert.ok(
+            JSON.stringify(remote.cards.get(aCard.message_id)).includes(aLink),
+          );
+          assert.ok(
+            !JSON.stringify(remote.cards.get(aCard.message_id)).includes(bLink),
+          );
+          assert.ok(
+            !JSON.stringify(remote.cards.get(mainId)).includes('/#/hitl/'),
+          );
+          await control.change(a, WORKER, 'acknowledge', 1);
+          await control.change(a, null, 'resume', 1);
+          await sync(key, 3);
+          assert.ok(
+            !JSON.stringify(remote.cards.get(aCard.message_id)).includes(
+              '/#/hitl/',
+            ),
+          );
+          assert.ok(
+            JSON.stringify(remote.cards.get(bCard.message_id)).includes(bLink),
+          );
+          await control.change(a, WORKER, 'request', 2, '再次确认');
+          await sync(key, 3);
+          const next = await control.currentInterventionId(a);
+          const body = JSON.stringify(remote.cards.get(aCard.message_id));
+          assert.ok(body.includes(next!));
+          assert.ok(body.includes('再次确认'));
+          assert.ok(!body.includes('本轮人工介入已结束'));
+          await finish(a);
+          rows = await sync(key, 3);
+          assert.ok(!rows.some((row) => row.event.kind === 'COMPLETED'));
+          assert.ok(
+            JSON.stringify(remote.cards.get(mainId)).includes(
+              '验证状态：执行完成',
+            ),
+          );
+          assert.equal(
+            remote.cards.get(aCard.message_id).header.title.content,
+            '自动化测试 · 执行完成',
+          );
+          await service.close();
+          service = new CaseNotifications(db, config, log, remote);
+          await sync(key, 3);
+          await finish(b, 'TIMED_OUT', 'INCONCLUSIVE');
+          rows = await sync(key, 4);
+          const report = remote.cards.get(
+            rows.find((row) => row.event.kind === 'COMPLETED')!.message_id,
+          );
+          assert.equal(report.header.title.content, '自动化测试 · 证据不足');
+          assert.doesNotMatch(
+            JSON.stringify(report),
+            /Case 进度|报告覆盖|汇总结论|请求：/,
+          );
+          assert.ok(JSON.stringify(report).includes('最终结论：验收通过'));
+          assert.ok(JSON.stringify(report).includes('最终结论：证据不足'));
+          assert.ok(JSON.stringify(report).includes('/#/request-reports/'));
+          for (const row of rows)
+            assert.doesNotMatch(
+              JSON.stringify(remote.cards.get(row.message_id)),
+              /对照组|实验组|执行模式/,
+            );
+          assert.equal(
+            remote.sends.filter((id) => rows.some((row) => row.id === id))
+              .length,
+            4,
+          );
+          // 复用已完成成员的新请求仍有自己的主卡片和汇总，但不重放旧 HITL。
+          const reused = await request([a, b]);
+          const reusedRows = await sync(reused, 2);
+          assert.deepEqual(
+            new Set(reusedRows.map((row) => row.event.kind)),
+            new Set(['SUBMITTED', 'COMPLETED']),
+          );
+        },
+      );
+
+      // 范围：新请求复用仍待人工的旧任务、提交顺序和缺报告终态；不验证公共 API 或真实飞书时序。
+      await suite.test(
+        '复用活动 case 先发请求主卡片，缺报告仍保守汇总',
+        async () => {
+          const id = await create();
+          await activate(id);
+          await control.change(id, WORKER, 'request', 0, '旧请求等待登录');
+          const first = await request([id]);
+          await sync(first, 2);
+          const second = await request([id]);
+          const rows = await sync(second, 2);
+          const sent = remote.sends.filter((uuid) =>
+            rows.some((row) => row.id === uuid),
+          );
+          assert.equal(
+            rows.find((row) => row.id === sent[0])!.event.kind,
+            'SUBMITTED',
+          );
+          assert.ok(
+            JSON.stringify(
+              remote.cards.get(
+                rows.find((row) => row.event.kind === 'HITL')!.message_id,
+              ),
+            ).includes('/#/hitl/'),
+          );
+          await finish(id, 'CANCELLED');
+          await db.query('UPDATE pr_tasks SET report=NULL WHERE id=$1', [id]);
+          await sync(first, 3);
+          const done = await sync(second, 3);
+          const report = remote.cards.get(
+            done.find((row) => row.event.kind === 'COMPLETED')!.message_id,
+          );
+          assert.ok(!JSON.stringify(report).includes('报告覆盖：'));
+          assert.ok(JSON.stringify(report).includes('最终结论：证据不足'));
+          assert.notEqual(report.header.template, 'green');
+        },
+      );
+
+      // 范围：升级保留活动请求旧消息身份、抑制已结束历史请求重发；只执行真实迁移 SQL，不访问飞书。
+      await suite.test(
+        '旧 case 通知迁移到请求，继续更新原主卡片和 HITL 卡片',
+        async () => {
+          const id = await create();
+          await activate(id);
+          await control.change(id, WORKER, 'request', 0, '升级前登录');
+          const before = await sync(id, 2);
+          const history = await create();
+          await finish(history);
+          await sync(history, 2);
+          const key = await request([id]);
+          const historicalKey = await request([history]);
+          // 模拟升级前按控制事件命名的 HITL 记录，迁移不能另建消息身份。
+          await db.query(
+            "UPDATE pr_feishu_messages SET event_key='control-999',event=jsonb_set(event,'{key}','\"control-999\"') WHERE run_key=$1 AND event->>'kind'='HITL'",
+            [id],
+          );
+          await db.query(
+            await readFile(
+              new URL(
+                '../migrations/026-feishu-request-cards.sql',
+                import.meta.url,
+              ),
+              'utf8',
+            ),
+          );
+          const migrated = await sync(key, 2);
+          assert.deepEqual(
+            new Set(migrated.map((row) => row.message_id)),
+            new Set(before.map((row) => row.message_id)),
+          );
+          assert.ok(
+            JSON.stringify(
+              remote.cards.get(
+                migrated.find((row) => row.event.kind === 'SUBMITTED')!
+                  .message_id,
+              ),
+            ).includes('验证状态：等待人工处理'),
+          );
+          assert.equal((await messages(historicalKey)).length, 0);
+          await finish(id);
+          await sync(key, 3);
+          assert.equal((await messages(id)).length, 0);
+        },
+      );
+
+      // 范围：真实控制面事件、恢复不新增消息、旧卡片状态和按钮同步；不验证真实飞书渲染。
+      await suite.test(
+        '提交和首次 HITL 发卡片，恢复原位更新，完成另发报告',
         async () => {
           const id = await create();
           let rows = await sync(id, 1);
@@ -247,7 +462,7 @@ test(
               ),
             );
           await control.change(id, null, 'resume', 1);
-          rows = await sync(id, 3);
+          rows = await sync(id, 2);
           for (const row of rows)
             assert.ok(
               !JSON.stringify(remote.cards.get(row.message_id)).includes(
@@ -257,22 +472,22 @@ test(
           const hitl = rows.find((row) => row.event.kind === 'HITL')!;
           assert.ok(
             JSON.stringify(remote.cards.get(hitl.message_id)).includes(
-              '本轮人工介入已结束',
+              '执行中',
             ),
           );
           await finish(id, 'COMPLETED', 'FAILED');
-          rows = await sync(id, 4);
+          rows = await sync(id, 3);
           assert.deepEqual(
             rows.find((row) => row.event.kind === 'SUBMITTED')!.event,
             original,
           );
           assert.deepEqual(
             new Set(rows.map((row) => row.event.kind)),
-            new Set(['SUBMITTED', 'HITL', 'RESUMED', 'COMPLETED']),
+            new Set(['SUBMITTED', 'HITL', 'COMPLETED']),
           );
           for (const row of rows) {
             const card = remote.cards.get(row.message_id);
-            assert.equal(card.header.title.content, 'ProofRun · 执行完成');
+            assert.equal(card.header.title.content, '自动化测试 · 执行完成');
             assert.ok(JSON.stringify(card).includes('验收失败'));
             assert.ok(JSON.stringify(card).includes('/#/reports/'));
           }
@@ -283,8 +498,8 @@ test(
         },
       );
 
-      // 范围：快于扫描的多轮人工请求仍由持久事件补齐；不声称网络能瞬时同步多张卡片。
-      await suite.test('连续两轮 HITL 和恢复不丢中间事件', async () => {
+      // 范围：快于扫描的多轮人工请求合并为一张卡片；不声称网络能瞬时同步。
+      await suite.test('连续两轮 HITL 和恢复复用同一 Case 卡片', async () => {
         const id = await create();
         await activate(id);
         for (const revision of [0, 2]) {
@@ -299,18 +514,11 @@ test(
           await control.change(id, null, 'resume', revision + 1);
         }
         await finish(id);
-        const rows = await sync(id, 6);
+        const rows = await sync(id, 3);
         const observed = remote.sends
           .filter((uuid) => rows.some((row) => row.id === uuid))
           .map((uuid) => rows.find((row) => row.id === uuid)!.event.kind);
-        assert.deepEqual(observed, [
-          'SUBMITTED',
-          'HITL',
-          'RESUMED',
-          'HITL',
-          'RESUMED',
-          'COMPLETED',
-        ]);
+        assert.deepEqual(observed, ['SUBMITTED', 'HITL', 'COMPLETED']);
         for (const row of rows)
           assert.ok(
             !JSON.stringify(remote.cards.get(row.message_id)).includes(
@@ -328,11 +536,11 @@ test(
         await activate(b);
         await control.change(a, WORKER, 'request', 0, 'A 登录');
         await control.change(b, WORKER, 'request', 0, 'B 登录');
-        let rows = await sync(key, 3);
+        let rows = await sync(key, 2);
         for (const row of rows) {
           const body = JSON.stringify(remote.cards.get(row.message_id));
-          assert.ok(body.includes('处理对照组 A'));
-          assert.ok(body.includes('处理实验组 B'));
+          assert.ok(body.includes(`处理任务 ${a}`));
+          assert.ok(body.includes(`处理任务 ${b}`));
           assert.ok(!body.includes('different-source-task'));
         }
         await finish(a);
@@ -342,7 +550,7 @@ test(
           false,
         );
         await finish(b, 'TIMED_OUT', 'INCONCLUSIVE');
-        rows = await sync(key, 4);
+        rows = await sync(key, 3);
         for (const row of rows) {
           const body = JSON.stringify(remote.cards.get(row.message_id));
           assert.ok(body.includes('执行已结束'));
@@ -406,11 +614,11 @@ test(
           assert.ok(hitl.message_id);
           assert.equal(
             remote.cards.get(first).header.title.content,
-            'ProofRun · 排队中',
+            '自动化测试 · 排队中',
           );
           assert.equal(
             remote.cards.get(hitl.message_id).header.title.content,
-            'ProofRun · 等待人工处理',
+            '自动化测试 · 等待人工处理',
           );
           for (let i = 0; i < 5; i++) await tick(true);
           assert.equal(
@@ -432,7 +640,7 @@ test(
           for (const row of rows)
             assert.equal(
               remote.cards.get(row.message_id).header.title.content,
-              'ProofRun · 执行完成',
+              '自动化测试 · 执行完成',
             );
         },
       );

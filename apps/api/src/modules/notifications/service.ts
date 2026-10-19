@@ -6,8 +6,17 @@ import { digest } from '../../domain.js';
 import { caseCard, type CaseEvent, type CaseView } from './card.js';
 import { FeishuClient, FeishuError, type FeishuTransport } from './feishu.js';
 import { readCase } from './source.js';
+import {
+  readRequest,
+  REQUEST_RUN_PREFIX,
+  type RequestView,
+} from './request-source.js';
+import { requestCard } from './request-card.js';
 
-/** 每轮一个 Case、最多一次发送及三次旧消息更新；外部请求不进入业务调度 tick。 */
+/** 旧独立任务与 v2 请求共用可靠投递队列，但保留各自展示范围。 */
+type NotificationView = CaseView | RequestView;
+
+/** 每轮一个请求或独立 Case、最多一次发送及三次旧消息更新；外部请求不进入业务调度 tick。 */
 const SCAN_MS = 1000;
 const UPDATES_PER_TICK = 3;
 /** 单个操作最多五次；每个新的视图版本重置更新重试次数。 */
@@ -27,7 +36,7 @@ interface Message {
   /** 原始事件元数据，发送和更新时均不改写。 */
   event: CaseEvent;
   /** 首次尝试前冻结，不含任何令牌。 */
-  initial_view: CaseView | null;
+  initial_view: NotificationView | null;
   /** 飞书回执中的消息身份；为空时尚未确认送达。 */
   message_id: string | null;
   /** 本地确认送达时间，用于更新窗口的保守判断。 */
@@ -124,9 +133,19 @@ export class CaseNotifications {
     await this.initialize();
     await this.db.query(
       `INSERT INTO pr_feishu_runs(destination_id,run_key)
+       SELECT $1, $3||r.request_id FROM pr_verification_requests r
+       JOIN pr_feishu_destinations d ON d.id=$1
+       WHERE r.created_at>=d.started_at
+       AND NOT EXISTS(SELECT 1 FROM pr_feishu_runs n WHERE n.destination_id=$1 AND n.run_key=$3||r.request_id)
+       ORDER BY r.created_at,r.request_id LIMIT $2 ON CONFLICT DO NOTHING`,
+      [this.destination, DISCOVERY_LIMIT, REQUEST_RUN_PREFIX],
+    );
+    await this.db.query(
+      `INSERT INTO pr_feishu_runs(destination_id,run_key)
       SELECT $1,COALESCE(t.definition#>>'{comparison,id}',t.id)
       FROM pr_tasks t JOIN pr_feishu_destinations d ON d.id=$1
       WHERE t.created_at>=d.started_at AND COALESCE(t.definition->>'purpose','verification')<>'cleanup'
+        AND NOT EXISTS(SELECT 1 FROM pr_verification_request_arms a WHERE a.task_id=t.id)
         AND NOT EXISTS(SELECT 1 FROM pr_node_profiles p WHERE p.task_id=t.id)
         AND NOT EXISTS(SELECT 1 FROM pr_feishu_runs r WHERE r.destination_id=$1 AND r.run_key=COALESCE(t.definition#>>'{comparison,id}',t.id))
       ORDER BY t.created_at,t.id LIMIT $2 ON CONFLICT DO NOTHING`,
@@ -144,7 +163,9 @@ export class CaseNotifications {
       "UPDATE pr_feishu_runs SET next_at=clock_timestamp()+$3*interval '1 millisecond' WHERE destination_id=$1 AND run_key=$2",
       [this.destination, run.run_key, SCAN_MS],
     );
-    const { view, events } = await readCase(this.db, run.run_key);
+    const { view, events } = run.run_key.startsWith(REQUEST_RUN_PREFIX)
+      ? await readRequest(this.db, run.run_key.slice(REQUEST_RUN_PREFIX.length))
+      : await readCase(this.db, run.run_key);
     await this.db.transaction(async (client) => {
       for (const event of events)
         await client.query(
@@ -163,12 +184,12 @@ export class CaseNotifications {
     const messages = (
       await this.db.query<Message>(
         `SELECT * FROM pr_feishu_messages WHERE destination_id=$1 AND run_key=$2
-       ORDER BY occurred_at,CASE event->>'kind' WHEN 'SUBMITTED' THEN 0 WHEN 'COMPLETED' THEN 2 ELSE 1 END,
+       ORDER BY CASE event->>'kind' WHEN 'SUBMITTED' THEN 0 WHEN 'COMPLETED' THEN 2 ELSE 1 END,occurred_at,
          CASE WHEN event_key LIKE 'control-%' THEN substring(event_key FROM 9)::bigint ELSE 0 END`,
         [this.destination, run.run_key],
       )
     ).rows;
-    // 新消息按原始事件顺序发送；已达到上限的失败不会永久阻挡后续事件。
+    // 提交卡片优先于复用任务中更早发生的 HITL；失败达到上限后不永久阻挡后续通知。
     const pending = messages.find(
       (message) => !message.message_id && message.send_attempts < MAX_ATTEMPTS,
     );
@@ -222,7 +243,14 @@ export class CaseNotifications {
   }
 
   /** 生成链接只发生在内存，不把 token 写入通知进度表。 */
-  private card(event: CaseEvent, view: CaseView) {
+  private card(event: CaseEvent, view: NotificationView) {
+    if ('requestId' in view)
+      return requestCard(
+        event,
+        view,
+        this.config.consoleUrl ?? this.config.publicUrl,
+        this.config.adminToken,
+      );
     return caseCard(
       event,
       view,
@@ -232,7 +260,7 @@ export class CaseNotifications {
   }
 
   /** 冻结首次请求内容及 uuid；一小时去重窗口外不猜测首次请求是否送达。 */
-  private async send(message: Message, view: CaseView): Promise<void> {
+  private async send(message: Message, view: NotificationView): Promise<void> {
     if (this.stop.signal.aborted || !this.db.healthy) return;
     if (
       message.first_attempt_at &&

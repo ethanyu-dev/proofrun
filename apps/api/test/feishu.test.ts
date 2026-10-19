@@ -6,6 +6,8 @@ import {
   FeishuError,
   feishuConfig,
 } from '../src/modules/notifications/feishu.js';
+import { requestCard } from '../src/modules/notifications/request-card.js';
+import type { RequestView } from '../src/modules/notifications/request-source.js';
 import {
   caseCard,
   type CaseEvent,
@@ -227,11 +229,20 @@ test('飞书错误脱敏，发送必须取得有效消息 ID', async () => {
   assert.equal(new FeishuError(230020).uneditable, false);
 });
 
-// 范围：原始事件保留、当前状态替换、处理按钮撤销、不同组结论与体积上限；不代表飞书客户端视觉验收。
-test('历史卡片保留事件并同步最新状态，完成不等于验收通过', () => {
+// 范围：HITL 顶部仅保留内容与时间、当前处理信息和按钮同步、体积上限；不代表飞书客户端视觉验收。
+test('HITL 卡片精简顶部并同步最新状态，完成不等于验收通过', () => {
   const first = caseCard(EVENT, VIEW, 'https://console.example.test', 'secret');
   assert.equal(first.config.update_multi, true);
   assert.ok(JSON.stringify(first).includes('立即处理'));
+  assert.ok(JSON.stringify(first).includes('介入原因：登录后继续'));
+  assert.ok(JSON.stringify(first).includes('待办事项'));
+  assert.ok(JSON.stringify(first).includes('处理截止：'));
+  assert.deepEqual(
+    first.elements
+      .slice(0, 2)
+      .map((element) => ('text' in element ? element.text.content : null)),
+    [VIEW.objective, '发生时间：2026/10/16 10:00:00（北京时间）'],
+  );
   assert.ok(JSON.stringify(first).includes('<at id=all></at>'));
   assert.ok(!JSON.stringify(first).includes('lark_md'));
   const done: CaseView = {
@@ -255,9 +266,10 @@ test('历史卡片保留事件并同步最新状态，完成不等于验收通�
     'https://console.example.test',
     'secret',
   );
-  assert.equal(updated.header.title.content, 'ProofRun · 执行完成');
+  assert.equal(updated.header.title.content, '自动化测试 · 执行完成');
   const content = JSON.stringify(updated);
-  assert.ok(content.includes('进入人工处理（本轮人工介入已结束）'));
+  assert.doesNotMatch(content, /Case：|事件：|事件原因：|本轮人工介入/);
+  assert.ok(content.includes(VIEW.objective));
   assert.ok(content.includes('验收失败'));
   assert.ok(content.includes('10:00:00'));
   assert.ok(!content.includes('/#/hitl/'));
@@ -287,4 +299,75 @@ test('历史卡片保留事件并同步最新状态，完成不等于验收通�
     Buffer.byteLength(JSON.stringify({ content: JSON.stringify(large) })) <
       30 * 1024,
   );
+});
+
+// 范围：请求仅列状态和提交时间、报告仅列最终结论、大请求截断和导航；仅检查卡片协议，不验收客户端渲染。
+test('请求与报告按 case 精简展示，保留导航并限制卡片体积', () => {
+  const cases: CaseView[] = Array.from({ length: 100 }, (_, i) => ({
+    ...VIEW,
+    caseId: `case-${i}`,
+    objective: '😀\\\"'.repeat(1000),
+    state: 'COMPLETED',
+    terminal: true,
+    arms: [
+      {
+        ...VIEW.arms[0]!,
+        taskId: `task-${i}`,
+        label: '实验组 B',
+        state: 'COMPLETED',
+        verdict: i ? 'PASSED' : 'FAILED',
+        hasReport: true,
+        human: null,
+      },
+    ],
+  }));
+  const view: RequestView = {
+    ...VIEW,
+    requestId: 'request-id',
+    cases,
+    state: 'COMPLETED',
+    terminal: true,
+    arms: cases.flatMap((item) => item.arms),
+  };
+  const card = requestCard(
+    { ...EVENT, kind: 'COMPLETED' },
+    view,
+    'https://console.example.test',
+    'secret',
+  );
+  const body = JSON.stringify(card);
+  assert.equal(card.header.title.content, '自动化测试 · 验收失败');
+  assert.ok(body.includes('最终结论：验收通过'));
+  assert.ok(body.includes('最终结论：验收失败'));
+  assert.doesNotMatch(
+    body,
+    /Case 进度|报告覆盖|请求：|提交时间|完成时间|验证状态|汇总结论/,
+  );
+  assert.ok(card.elements.every((element) => element.tag !== 'hr'));
+  const main = requestCard(
+    { ...EVENT, kind: 'SUBMITTED' },
+    {
+      ...view,
+      objective: '不得展示请求标题',
+      state: 'RUNNING',
+      terminal: false,
+    },
+    'https://console.example.test',
+    'secret',
+  );
+  const mainBody = JSON.stringify(main);
+  assert.equal(main.header.title.content, '自动化测试 · 执行中');
+  assert.ok(mainBody.includes('验证状态：执行完成'));
+  assert.ok(mainBody.includes('提交时间：2026/10/16 10:00:00（北京时间）'));
+  assert.doesNotMatch(
+    mainBody,
+    /不得展示请求标题|请求：|Case 进度|报告覆盖|最终结论|验收结论/,
+  );
+  assert.ok(main.elements.every((element) => element.tag !== 'hr'));
+  assert.ok(body.includes('其余 90 个 Case'));
+  assert.ok(body.includes('/#/request-reports/request-id'));
+  assert.ok(!body.includes('case-10'));
+  assert.doesNotMatch(body, /实验组|对照组|执行模式|\/#\/hitl\//);
+  assert.notEqual(card.header.template, 'green');
+  assert.ok(Buffer.byteLength(JSON.stringify({ content: body })) < 30 * 1024);
 });
