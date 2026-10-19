@@ -4,6 +4,9 @@ import { validateControlRequest } from '@proofrun/contracts';
 /** 固定已核对的版本，避免 jev-latest 别名延迟切换或后续静默升级。 */
 export const DEFAULT_JEV_MODEL = 'jev-1.14.0';
 
+/** 新执行默认使用统一计划；legacy 仅供显式回退。 */
+const DEFAULT_EXECUTION_POLICY = 'planned-v1';
+
 /** 思考输出与工具参数共享额度；显式长推理仍有上限，默认成本配置保持独立。 */
 const MODEL_LIMITS = { timeoutMs: 600_000, outputTokens: 65_536 };
 
@@ -92,7 +95,7 @@ function endpoint(name: string, fallback?: string): string {
 /** 启动时核实配置，不扫描磁盘寻找其他项目的密钥。 */
 export function loadConfig(): AgentConfig {
   const executionPolicy =
-    process.env.PROOFRUN_AGENT_EXECUTION_POLICY ?? 'legacy';
+    process.env.PROOFRUN_AGENT_EXECUTION_POLICY ?? DEFAULT_EXECUTION_POLICY;
   if (!['legacy', 'planned-v1'].includes(executionPolicy))
     throw new Error(
       'PROOFRUN_AGENT_EXECUTION_POLICY must be legacy or planned-v1',

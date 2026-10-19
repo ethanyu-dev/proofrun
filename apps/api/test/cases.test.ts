@@ -72,6 +72,34 @@ function fixture() {
   };
 }
 
+// 范围：V1 缺省采用 JEV，显式模式及历史幂等语义保留；不连接真实模型或浏览器。
+test('V1 默认 JEV 单组，显式配置与已保存任务不被默认值覆盖', async () => {
+  const { executionMode: _, ...defaults } = PROFILE;
+  for (const mode of [undefined, 'jev', 'llm', 'parallel'] as const) {
+    const { tasks, records } = fixture();
+    const profile = mode ? { ...defaults, executionMode: mode } : defaults;
+    const service = new CaseService(
+      tasks,
+      profile,
+      'https://proofrun.example.test',
+    );
+    await service.submit(INPUT);
+    const task = records.get(`case-${INPUT.caseId}`)!.definition;
+    assert.equal(
+      task.executionMode,
+      mode === 'llm' || mode === 'parallel' ? 'llm' : 'jev',
+    );
+    const changed = new CaseService(
+      tasks,
+      defaults,
+      'https://proofrun.example.test',
+    );
+    await changed.submit(INPUT);
+    assert.deepEqual(records.get(task.taskId)!.definition, task);
+    assert.equal(records.size, 1);
+  }
+});
+
 // 范围：环境等配置只从平台注入、业务步骤和验收原文保留；不验证页面语义或实际动作。
 test('case 只接受业务定义并转换成内部任务', async () => {
   const { service, records } = fixture();

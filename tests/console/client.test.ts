@@ -179,11 +179,12 @@ test('证据超出读取上限会停止流', async (context) => {
   assert.equal(cancelled, true);
 });
 
-// 范围：表单导入导出的配置保真与协议校验；不代表浏览器交互或真实任务验收。
+// 范围：新表单默认 JEV、导入导出的配置保真与协议校验；不代表浏览器交互或真实任务验收。
 test('任务表单与 JSON 保留高级配置并拒绝无效定义', async () => {
   const { newTaskDefinition, parseTaskDefinition } =
     await import('../../apps/console/src/task-definition.ts');
   const task = newTaskDefinition();
+  assert.equal(task.executionMode, 'jev');
   task.target.url = 'https://example.com';
   task.objective = '检查公开页面';
   task.acceptanceCriteria[0].description = '页面标题';
@@ -232,7 +233,7 @@ test('执行模式支持并行与两种单组策略，允许从同一登录快�
   const { newTaskDefinition, parseTaskDefinition } =
     await import('../../apps/console/src/task-definition.ts');
   const task = newTaskDefinition();
-  assert.equal(task.executionMode, 'parallel');
+  assert.equal(task.executionMode, 'jev');
   task.target.url = 'https://example.com';
   task.objective = '检查页面';
   task.acceptanceCriteria[0].description = '标题';
@@ -258,7 +259,13 @@ test('执行模式支持并行与两种单组策略，允许从同一登录快�
   );
   assert.throws(
     () =>
-      parseTaskDefinition(JSON.stringify({ ...task, taskId: 'x'.repeat(101) })),
+      parseTaskDefinition(
+        JSON.stringify({
+          ...task,
+          executionMode: 'parallel',
+          taskId: 'x'.repeat(101),
+        }),
+      ),
     /100/,
   );
   const shared = {

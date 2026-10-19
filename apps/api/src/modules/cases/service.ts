@@ -8,6 +8,7 @@ import { ApiError, canonical } from '../../domain.js';
 import type { Coordinator } from '../scheduling/coordinator.js';
 import {
   caseBudget,
+  DEFAULT_CASE_EXECUTION_MODE,
   validateCaseProfile,
   type CaseProfile,
 } from './profile.js';
@@ -131,7 +132,11 @@ export class CaseService {
       environment: profile.environment,
       target: { url: input.url },
       budget: caseBudget(profile, input.steps?.length ?? 1),
-      executionMode: profile.executionMode === 'jev' ? 'jev' : 'llm',
+      // V1 只支持单组；显式 parallel 仍沿用旧入口的纯 LLM 兼容语义。
+      executionMode:
+        (profile.executionMode ?? DEFAULT_CASE_EXECUTION_MODE) === 'jev'
+          ? 'jev'
+          : 'llm',
       // 输入校验已保证至少一项，映射只添加平台证据要求，不删改原验收项。
       acceptanceCriteria: input.acceptanceCriteria.map((c) => ({
         ...c,

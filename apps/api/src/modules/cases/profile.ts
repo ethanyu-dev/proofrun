@@ -4,11 +4,14 @@ import {
   type VerificationTask,
 } from '@proofrun/contracts';
 
+/** 新建 case 默认单组 LLM + JEV；历史任务继续使用已冻结的执行模式。 */
+export const DEFAULT_CASE_EXECUTION_MODE = 'jev';
+
 /** 平台执行配置仅从服务端加载，不接受 case 请求覆盖。 */
 export type CaseProfile = Pick<VerificationTask, 'environment'> & {
   /** 省略总时长时按步骤数计算，动作上限仍由平台明确设置。 */
   budget: { timeoutMs?: number; maxActions: number };
-  /** v2 默认双跑；旧版 case 保持单组语义。 */
+  /** 默认单组 LLM + JEV；v2 可显式选择 parallel 双跑。 */
   executionMode?: 'llm' | 'jev' | 'parallel';
   /** 平台选择取证能力，上层只定义业务预期。 */
   evidenceKinds: VerificationTask['acceptanceCriteria'][number]['evidenceKinds'];
@@ -68,7 +71,7 @@ export function validateCaseProfile(value: unknown): CaseProfile {
     environment: profile.environment,
     target: { url: PROFILE_VALIDATION_URL },
     budget: { timeoutMs: DEFAULT_STEP_MS, ...profile.budget },
-    executionMode: profile.executionMode ?? 'parallel',
+    executionMode: profile.executionMode ?? DEFAULT_CASE_EXECUTION_MODE,
     acceptanceCriteria: [
       {
         id: 'profile',

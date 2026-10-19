@@ -103,7 +103,7 @@ Linux Chromium 在容器内渲染截图和实时画面，不能使用宿主机�
 
 ## 统一计划执行策略
 
-`PROOFRUN_AGENT_EXECUTION_POLICY=planned-v1` 为新领取的执行启用统一计划策略，同时适用于 `llm` 和 `jev`。默认值 `legacy` 保留原流程；策略在执行创建时冻结，修改环境变量并重启 worker 只影响后续执行。此开关自动启用共享计划约束、同轮结论保存和预算内收尾，不需要再设置 `PROOFRUN_AGENT_EXECUTION_GUIDANCE`。图片、扩展候选和 Box 仍独立配置。
+`PROOFRUN_AGENT_EXECUTION_POLICY=planned-v1` 为新领取的执行启用统一计划策略，同时适用于 `llm` 和 `jev`。默认值为 `planned-v1`；显式设置 `legacy` 可回退原流程。策略在执行创建时冻结，修改环境变量并重启 worker 只影响后续执行。此开关自动启用共享计划约束、同轮结论保存和预算内收尾，不需要再设置 `PROOFRUN_AGENT_EXECUTION_GUIDANCE`。图片、扩展候选和 Box 仍独立配置。
 
 ```bash
 export PROOFRUN_AGENT_EXECUTION_POLICY=planned-v1
@@ -173,7 +173,7 @@ Box 仅在固定 `jev-1.14.0` 且当前节点声明画面复核能力时提供 V
 
 ## 兼容策略的通用子目标与执行进度
 
-`PROOFRUN_AGENT_EXECUTION_GUIDANCE=true` 为本 worker 启用 `evidence-settlement-v2`，同时作用于 `llm` 和 `jev`。默认关闭，先在独立本地/灰度 worker 验证；运行中的执行不热切策略。模型和任务预算保持原配置。
+`PROOFRUN_AGENT_EXECUTION_GUIDANCE=true` 在 `legacy` 下为本 worker 启用 `evidence-settlement-v2`，同时作用于 `llm` 和 `jev`。该独立开关默认关闭；默认的 `planned-v1` 已自动启用共享能力，无需额外设置。运行中的执行不热切策略。模型和任务预算保持原配置。
 
 - 文本动作和阻塞工具可携带 `conclusions`，复用原验收账本，先校验并保存动作前已有证据支持的结论，再执行新动作。保存失败不派发动作；后续动作失败保留独立结果。完整回复中的动作参数无效时，只保存通过独立校验的结论；截断回复仍整体拒绝，不猜测缺失内容。finish 的工作流元数据错误不抹掉合法独立结论。结构化任务同时写入步骤快照，旧非结构化任务保留在最终报告中。
 - 提示词与工具声明统一使用顶层 `conclusions`；解析层也接受明确的 `workflow.conclusions` 同名字段并执行相同校验，同时声明两份则拒绝，其他未知字段不放宽。

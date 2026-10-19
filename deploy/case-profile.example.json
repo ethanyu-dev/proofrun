@@ -8,6 +8,6 @@
   "budget": {
     "maxActions": 30
   },
-  "executionMode": "parallel",
+  "executionMode": "jev",
   "evidenceKinds": ["DOM"]
 }

@@ -305,9 +305,10 @@ test('JEV 长上下文默认关闭并严格解析开关', (t) => {
   }
 });
 
-// 范围：通用执行策略默认关闭、显式灰度及错误配置拒绝；不验证模型效果。
+// 范围：legacy 下通用执行策略独立开关及错误配置拒绝；不验证模型效果。
 test('通用执行策略独立开关不改变模型和预算配置', (t) => {
   configure(t);
+  process.env.PROOFRUN_AGENT_EXECUTION_POLICY = 'legacy';
   const before = loadConfig();
   assert.equal(before.executionGuidance, false);
   process.env.PROOFRUN_AGENT_EXECUTION_GUIDANCE = 'true';
@@ -320,11 +321,16 @@ test('通用执行策略独立开关不改变模型和预算配置', (t) => {
 });
 
 // 范围：策略仅在加载配置时冻结，非法值拒绝启动；不改变运行中任务或真实部署环境。
-test('统一策略显式启用并自动启用共享计划及收尾能力', (t) => {
+test('统一策略默认启用共享计划及收尾能力，并支持显式回退', (t) => {
   configure(t);
-  assert.equal(loadConfig().executionPolicy, 'legacy');
-  process.env.PROOFRUN_AGENT_EXECUTION_POLICY = 'planned-v1';
   assert.equal(loadConfig().executionPolicy, 'planned-v1');
+  assert.equal(loadConfig().executionGuidance, true);
+  process.env.PROOFRUN_AGENT_EXECUTION_GUIDANCE = 'false';
+  assert.equal(loadConfig().executionGuidance, true);
+  process.env.PROOFRUN_AGENT_EXECUTION_POLICY = 'legacy';
+  assert.equal(loadConfig().executionPolicy, 'legacy');
+  assert.equal(loadConfig().executionGuidance, false);
+  process.env.PROOFRUN_AGENT_EXECUTION_POLICY = 'planned-v1';
   assert.equal(loadConfig().executionGuidance, true);
   process.env.PROOFRUN_AGENT_EXECUTION_POLICY = 'unknown';
   assert.throws(() => loadConfig(), /PROOFRUN_AGENT_EXECUTION_POLICY/);
