@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://proofrun.invalid/contracts/0.1/request-list.schema.json",
+  "title": "RequestList",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "requests": {
+      "type": "array",
+      "items": {
+        "$ref": "request-summary.schema.json"
+      },
+      "description": "按请求分页的摘要，不截断其中成员。"
+    },
+    "nextCursor": {
+      "type": ["string", "null"],
+      "description": "绑定筛选条件的微秒分页游标。"
+    }
+  },
+  "required": ["requests", "nextCursor"]
+}

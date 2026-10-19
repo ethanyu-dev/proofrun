@@ -1,3 +1,5 @@
+import { RequestReader } from './modules/requests/reader.js';
+import { RequestService } from './modules/requests/service.js';
 import { IdentityLibrary } from './modules/identities/library.js';
 import { IdentitySelection } from './modules/identities/selection.js';
 import { identityMetrics } from './modules/identities/metrics.js';
@@ -85,6 +87,12 @@ export async function buildApp(
       request && ['identity', 'pool', 'auto'].includes(request.mode)
         ? identities.catalog()
         : library.catalog(),
+  );
+  const requestReader = new RequestReader(db, config.publicUrl);
+  const verificationRequests = new RequestService(
+    casesV2,
+    coordinator,
+    requestReader,
   );
   const control = new ExecutionControl(
     db,
@@ -421,7 +429,41 @@ export async function buildApp(
   );
   // 新版批量入口与旧单 case 协议并存，批内定义原子接收。
   app.post('/v2/cases', { preHandler: admin }, async (request, reply) =>
-    reply.code(202).send(await casesV2.submit(request.body)),
+    reply
+      .code(202)
+      .send(
+        Array.isArray(request.body)
+          ? await casesV2.submit(request.body)
+          : await verificationRequests.submit(request.body),
+      ),
+  );
+  app.get('/v2/requests', { preHandler: admin }, (request) =>
+    requestReader.list(request.query as Record<string, unknown>),
+  );
+  app.get<{ Params: IdParams }>(
+    '/v2/requests/:id',
+    { preHandler: admin },
+    (request) => requestReader.get(request.params.id),
+  );
+  app.get<{ Params: IdParams }>(
+    '/v2/requests/:id/report',
+    { preHandler: admin },
+    (request) => requestReader.get(request.params.id),
+  );
+  app.post<{ Params: IdParams }>(
+    '/v2/requests/:id/rerun',
+    { preHandler: admin },
+    async (request, reply) =>
+      reply
+        .code(202)
+        .send(
+          await verificationRequests.rerun(request.params.id, request.body),
+        ),
+  );
+  app.get<{ Params: IdParams }>(
+    '/v1/tasks/:id/requests',
+    { preHandler: admin },
+    (request) => requestReader.memberships(request.params.id),
   );
   app.get<{ Params: IdParams }>(
     '/v2/cases/:id',

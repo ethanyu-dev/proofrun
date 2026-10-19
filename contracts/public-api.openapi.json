@@ -32,15 +32,20 @@
       "post": {
         "operationId": "submitCasesV2",
         "tags": ["Case API v2"],
-        "summary": "原子接收结构化 case 数组；每个对象是独立任务，内部串行",
+        "summary": "原子接收请求封装或兼容 case 数组；请求封装保留归属与汇总",
         "responses": {
           "202": {
             "description": "成功",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": { "$ref": "#/components/schemas/CaseResultV2" }
+                  "oneOf": [
+                    { "$ref": "#/components/schemas/RequestResultV2" },
+                    {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/CaseResultV2" }
+                    }
+                  ]
                 }
               }
             }
@@ -52,11 +57,150 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "array",
-                "minItems": 1,
-                "maxItems": 32,
-                "items": { "$ref": "#/components/schemas/VerificationCaseV2" }
+                "oneOf": [
+                  { "$ref": "#/components/schemas/VerificationRequest" },
+                  {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 32,
+                    "items": {
+                      "$ref": "#/components/schemas/VerificationCaseV2"
+                    }
+                  }
+                ]
               }
+            }
+          }
+        }
+      }
+    },
+    "/v2/requests": {
+      "get": {
+        "operationId": "listRequestsV2",
+        "tags": ["Case API v2"],
+        "summary": "按请求分页查询完整成员汇总",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RequestList" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "schema": { "type": "string", "maxLength": 160 }
+          },
+          {
+            "name": "executionStatus",
+            "in": "query",
+            "schema": { "enum": ["QUEUED", "IN_PROGRESS", "FINISHED"] }
+          },
+          {
+            "name": "reportStatus",
+            "in": "query",
+            "schema": { "enum": ["PASSED", "FAILED", "INCONCLUSIVE"] }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 25
+            }
+          },
+          { "name": "cursor", "in": "query", "schema": { "type": "string" } }
+        ]
+      }
+    },
+    "/v2/requests/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string" }
+        }
+      ],
+      "get": {
+        "operationId": "getRequestV2",
+        "tags": ["Case API v2"],
+        "summary": "读取请求归属、执行进度与报告快照",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RequestResultV2" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v2/requests/{id}/report": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string" }
+        }
+      ],
+      "get": {
+        "operationId": "getRequestReportV2",
+        "tags": ["Case API v2"],
+        "summary": "读取请求汇总报告，部分结果明确标记",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RequestResultV2" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v2/requests/{id}/rerun": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string" }
+        }
+      ],
+      "post": {
+        "operationId": "rerunRequestV2",
+        "tags": ["Case API v2"],
+        "summary": "以全新请求与 case 身份原子重跑全部成员",
+        "responses": {
+          "202": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RequestResultV2" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/RequestRerun" }
             }
           }
         }
@@ -2055,6 +2199,878 @@
           "reportStatus",
           "criteriaCounts"
         ]
+      },
+      "VerificationRequest": {
+        "title": "VerificationRequest",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,80}$",
+            "description": "逻辑提交的稳定身份；重试沿用，重跑使用新身份。"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "pattern": "\\S",
+            "description": "展示标题首次接收后冻结，不生成或改写验证目标。"
+          },
+          "cases": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/VerificationCaseV2" },
+            "minItems": 1,
+            "maxItems": 32,
+            "description": "首次接收冻结的成员与顺序，不按当前筛选截断。"
+          }
+        },
+        "required": ["requestId", "cases"]
+      },
+      "RequestSummary": {
+        "title": "RequestSummary",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,80}$",
+            "description": "逻辑提交的稳定身份；重试沿用，重跑使用新身份。"
+          },
+          "title": {
+            "type": "string",
+            "description": "展示标题首次接收后冻结，不生成或改写验证目标。"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "原记录创建时间；复用时不会改成本次请求时间。"
+          },
+          "sourceRequestId": {
+            "type": ["string", "null"],
+            "description": "整请求重跑的来源；普通提交为 null。"
+          },
+          "aggregationVersion": {
+            "const": 1,
+            "description": "判定算法版本，页面和导出必须一致。"
+          },
+          "generatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "当前一致性读取快照时间，不代表执行结束。"
+          },
+          "caseCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "当前范围内的 case 数，双跑不增加数量。"
+          },
+          "finishedCaseCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "全部要求组已结束的 case 数，不代表验收通过。"
+          },
+          "executionStatus": {
+            "enum": ["QUEUED", "IN_PROGRESS", "FINISHED"],
+            "description": "请求执行进度，不代表业务通过。"
+          },
+          "executionCounts": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "total": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "该统计范围的总数，不能混同 case 数与执行次数。"
+              },
+              "queued": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "仍在队列中的执行组数。"
+              },
+              "running": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "正在运行的执行组数，包括等待人工处理。"
+              },
+              "completed": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "执行完成组数，不等同于业务通过。"
+              },
+              "cancelled": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "被取消的执行组数，不直接视为产品失败。"
+              },
+              "timedOut": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "执行超时组数，不直接视为产品失败。"
+              },
+              "error": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "异常终止组数，包含执行阻塞。"
+              }
+            },
+            "required": [
+              "total",
+              "queued",
+              "running",
+              "completed",
+              "cancelled",
+              "timedOut",
+              "error"
+            ],
+            "description": "冻结执行组的生命周期计数；各分类互斥。"
+          },
+          "reportPhase": {
+            "enum": ["PENDING", "PARTIAL", "FINAL"],
+            "description": "全部要求组结束后为 FINAL，包括缺少报告的情况。"
+          },
+          "reportStatus": {
+            "enum": ["PASSED", "FAILED", "INCONCLUSIVE", null],
+            "description": "所有要求组的业务结论；尚未全部结束时为 null。"
+          },
+          "reportCoverage": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "expected": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "冻结要求或原始验收标准，不由汇总补造。"
+              },
+              "available": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "已经交付报告的执行组数。"
+              },
+              "missing": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "尚无报告的执行组数，终态仍可缺失。"
+              }
+            },
+            "required": ["expected", "available", "missing"],
+            "description": "报告齐全程度，不根据执行终态推测报告存在。"
+          },
+          "observedFailureCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "已交付报告确认失败的唯一项数，部分结果期间也展示。"
+          },
+          "confirmedDisagreementCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "两组明确通过和失败相反的标准数，不含覆盖差异。"
+          },
+          "uniqueCriteriaCounts": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "total": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "该统计范围的总数，不能混同 case 数与执行次数。"
+              },
+              "passed": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "满足该范围全部要求的通过数量。"
+              },
+              "failed": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "已交付结论中确认失败的数量。"
+              },
+              "inconclusive": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "仍无法形成确定结论，包括通过与缺失并存。"
+              },
+              "skipped": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "未验收或所有要求组均缺失该项的数量。"
+              },
+              "pending": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "尚有要求组未结束，且该项没有明确失败。"
+              }
+            },
+            "required": [
+              "total",
+              "passed",
+              "failed",
+              "inconclusive",
+              "skipped",
+              "pending"
+            ],
+            "description": "按 caseId 和 criterionId 去重，双跑不增加分母。"
+          },
+          "byExecutionMode": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "executionMode": {
+                  "enum": ["llm", "jev"],
+                  "description": "冻结执行模式，按 LLM、JEV 顺序展示。"
+                },
+                "caseCount": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "当前范围内的 case 数，双跑不增加数量。"
+                },
+                "missingReportCount": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "当前模式要求组中没有报告的数量。"
+                },
+                "criteriaCounts": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "total": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "该统计范围的总数，不能混同 case 数与执行次数。"
+                    },
+                    "passed": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "满足该范围全部要求的通过数量。"
+                    },
+                    "failed": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "已交付结论中确认失败的数量。"
+                    },
+                    "inconclusive": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "仍无法形成确定结论，包括通过与缺失并存。"
+                    },
+                    "skipped": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "未验收或所有要求组均缺失该项的数量。"
+                    }
+                  },
+                  "required": [
+                    "total",
+                    "passed",
+                    "failed",
+                    "inconclusive",
+                    "skipped"
+                  ],
+                  "description": "当前模式已交付报告的原单组统计。"
+                }
+              },
+              "required": [
+                "executionMode",
+                "caseCount",
+                "missingReportCount",
+                "criteriaCounts"
+              ]
+            },
+            "description": "按模式汇总；未配置该模式的 case 不计缺失。"
+          }
+        },
+        "required": [
+          "requestId",
+          "title",
+          "createdAt",
+          "sourceRequestId",
+          "aggregationVersion",
+          "generatedAt",
+          "caseCount",
+          "finishedCaseCount",
+          "executionStatus",
+          "executionCounts",
+          "reportPhase",
+          "reportStatus",
+          "reportCoverage",
+          "observedFailureCount",
+          "confirmedDisagreementCount",
+          "uniqueCriteriaCounts",
+          "byExecutionMode"
+        ]
+      },
+      "RequestResultV2": {
+        "title": "RequestResultV2",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,80}$",
+            "description": "逻辑提交的稳定身份；重试沿用，重跑使用新身份。"
+          },
+          "title": {
+            "type": "string",
+            "description": "展示标题首次接收后冻结，不生成或改写验证目标。"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "原记录创建时间；复用时不会改成本次请求时间。"
+          },
+          "sourceRequestId": {
+            "type": ["string", "null"],
+            "description": "整请求重跑的来源；普通提交为 null。"
+          },
+          "aggregationVersion": {
+            "const": 1,
+            "description": "判定算法版本，页面和导出必须一致。"
+          },
+          "generatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "当前一致性读取快照时间，不代表执行结束。"
+          },
+          "caseCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "当前范围内的 case 数，双跑不增加数量。"
+          },
+          "finishedCaseCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "全部要求组已结束的 case 数，不代表验收通过。"
+          },
+          "executionStatus": {
+            "enum": ["QUEUED", "IN_PROGRESS", "FINISHED"],
+            "description": "请求执行进度，不代表业务通过。"
+          },
+          "executionCounts": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "total": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "该统计范围的总数，不能混同 case 数与执行次数。"
+              },
+              "queued": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "仍在队列中的执行组数。"
+              },
+              "running": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "正在运行的执行组数，包括等待人工处理。"
+              },
+              "completed": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "执行完成组数，不等同于业务通过。"
+              },
+              "cancelled": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "被取消的执行组数，不直接视为产品失败。"
+              },
+              "timedOut": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "执行超时组数，不直接视为产品失败。"
+              },
+              "error": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "异常终止组数，包含执行阻塞。"
+              }
+            },
+            "required": [
+              "total",
+              "queued",
+              "running",
+              "completed",
+              "cancelled",
+              "timedOut",
+              "error"
+            ],
+            "description": "冻结执行组的生命周期计数；各分类互斥。"
+          },
+          "reportPhase": {
+            "enum": ["PENDING", "PARTIAL", "FINAL"],
+            "description": "全部要求组结束后为 FINAL，包括缺少报告的情况。"
+          },
+          "reportStatus": {
+            "enum": ["PASSED", "FAILED", "INCONCLUSIVE", null],
+            "description": "所有要求组的业务结论；尚未全部结束时为 null。"
+          },
+          "reportCoverage": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "expected": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "冻结要求或原始验收标准，不由汇总补造。"
+              },
+              "available": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "已经交付报告的执行组数。"
+              },
+              "missing": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "尚无报告的执行组数，终态仍可缺失。"
+              }
+            },
+            "required": ["expected", "available", "missing"],
+            "description": "报告齐全程度，不根据执行终态推测报告存在。"
+          },
+          "observedFailureCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "已交付报告确认失败的唯一项数，部分结果期间也展示。"
+          },
+          "confirmedDisagreementCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "两组明确通过和失败相反的标准数，不含覆盖差异。"
+          },
+          "uniqueCriteriaCounts": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "total": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "该统计范围的总数，不能混同 case 数与执行次数。"
+              },
+              "passed": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "满足该范围全部要求的通过数量。"
+              },
+              "failed": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "已交付结论中确认失败的数量。"
+              },
+              "inconclusive": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "仍无法形成确定结论，包括通过与缺失并存。"
+              },
+              "skipped": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "未验收或所有要求组均缺失该项的数量。"
+              },
+              "pending": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "尚有要求组未结束，且该项没有明确失败。"
+              }
+            },
+            "required": [
+              "total",
+              "passed",
+              "failed",
+              "inconclusive",
+              "skipped",
+              "pending"
+            ],
+            "description": "按 caseId 和 criterionId 去重，双跑不增加分母。"
+          },
+          "byExecutionMode": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "executionMode": {
+                  "enum": ["llm", "jev"],
+                  "description": "冻结执行模式，按 LLM、JEV 顺序展示。"
+                },
+                "caseCount": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "当前范围内的 case 数，双跑不增加数量。"
+                },
+                "missingReportCount": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "当前模式要求组中没有报告的数量。"
+                },
+                "criteriaCounts": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "total": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "该统计范围的总数，不能混同 case 数与执行次数。"
+                    },
+                    "passed": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "满足该范围全部要求的通过数量。"
+                    },
+                    "failed": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "已交付结论中确认失败的数量。"
+                    },
+                    "inconclusive": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "仍无法形成确定结论，包括通过与缺失并存。"
+                    },
+                    "skipped": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "未验收或所有要求组均缺失该项的数量。"
+                    }
+                  },
+                  "required": [
+                    "total",
+                    "passed",
+                    "failed",
+                    "inconclusive",
+                    "skipped"
+                  ],
+                  "description": "当前模式已交付报告的原单组统计。"
+                }
+              },
+              "required": [
+                "executionMode",
+                "caseCount",
+                "missingReportCount",
+                "criteriaCounts"
+              ]
+            },
+            "description": "按模式汇总；未配置该模式的 case 不计缺失。"
+          },
+          "cases": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "caseId": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,80}$",
+                  "description": "全局 case 幂等身份，不改为请求内局部身份。"
+                },
+                "title": {
+                  "type": "string",
+                  "description": "展示标题首次接收后冻结，不生成或改写验证目标。"
+                },
+                "executionOrigin": {
+                  "enum": ["created", "reused"],
+                  "description": "接收时创建或复用的冻结事实，不因重提改变。"
+                },
+                "sourceCaseId": {
+                  "type": ["string", "null"],
+                  "description": "整请求重跑对应的原 case；普通提交为 null。"
+                },
+                "reportStatus": {
+                  "enum": ["PASSED", "FAILED", "INCONCLUSIVE", null],
+                  "description": "所有要求组的业务结论；尚未全部结束时为 null。"
+                },
+                "finished": {
+                  "type": "boolean",
+                  "description": "全部要求组进入终态，不代表业务通过。"
+                },
+                "criteria": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "criterionId": {
+                        "type": "string",
+                        "description": "原 expected 的稳定身份；跨 case 用复合身份关联。"
+                      },
+                      "stepId": {
+                        "type": "string",
+                        "description": "排序不改变的冻结步骤身份。"
+                      },
+                      "description": {
+                        "type": "string",
+                        "description": "调用方的说明，不添加额外验证要求。"
+                      },
+                      "expectedResult": {
+                        "type": "string",
+                        "description": "调用方明确声明的单条验收标准。"
+                      },
+                      "status": {
+                        "enum": [
+                          "PASSED",
+                          "FAILED",
+                          "INCONCLUSIVE",
+                          "SKIPPED",
+                          "PENDING"
+                        ],
+                        "description": "当前层级的执行或验收状态，不能跨层级解释。"
+                      },
+                      "disagreement": {
+                        "type": "boolean",
+                        "description": "两组存在相反的明确通过和失败判断。"
+                      },
+                      "coverageDifference": {
+                        "type": "boolean",
+                        "description": "两组覆盖不同，不当作明确判断冲突。"
+                      },
+                      "arms": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "taskId": {
+                              "type": "string",
+                              "description": "原执行任务身份，用于报告和证据追溯。"
+                            },
+                            "executionMode": {
+                              "enum": ["llm", "jev"],
+                              "description": "冻结执行模式，按 LLM、JEV 顺序展示。"
+                            },
+                            "verdict": {
+                              "enum": [
+                                "PASSED",
+                                "FAILED",
+                                "INCONCLUSIVE",
+                                "SKIPPED",
+                                null
+                              ],
+                              "description": "该执行组该项原始判断；无报告时为 null。"
+                            },
+                            "summary": {
+                              "type": "string",
+                              "description": "报告已交付的观察和依据，汇总不会再次生成。"
+                            },
+                            "evidenceRefs": {
+                              "type": "array",
+                              "items": { "type": "string" },
+                              "description": "只引用当前 case 和执行组登记的证据。"
+                            }
+                          },
+                          "required": [
+                            "taskId",
+                            "executionMode",
+                            "verdict",
+                            "summary",
+                            "evidenceRefs"
+                          ]
+                        },
+                        "description": "首次接收冻结的实际执行组，不随平台配置变化。"
+                      }
+                    },
+                    "required": [
+                      "criterionId",
+                      "stepId",
+                      "description",
+                      "expectedResult",
+                      "status",
+                      "disagreement",
+                      "coverageDifference",
+                      "arms"
+                    ]
+                  },
+                  "description": "按业务标准身份对齐的各组结论，清理不计入。"
+                },
+                "arms": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "taskId": {
+                        "type": "string",
+                        "description": "原执行任务身份，用于报告和证据追溯。"
+                      },
+                      "executionMode": {
+                        "enum": ["llm", "jev"],
+                        "description": "冻结执行模式，按 LLM、JEV 顺序展示。"
+                      },
+                      "createdAt": {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "原记录创建时间；复用时不会改成本次请求时间。"
+                      },
+                      "archivedAt": {
+                        "type": ["string", "null"],
+                        "description": "证据清理时间；原结论保留，下载应禁用。"
+                      },
+                      "result": {
+                        "$ref": "#/components/schemas/CaseResultV2",
+                        "description": "原单组公开结果，不能代表另一组。"
+                      }
+                    },
+                    "required": [
+                      "taskId",
+                      "executionMode",
+                      "createdAt",
+                      "archivedAt",
+                      "result"
+                    ]
+                  },
+                  "description": "首次接收冻结的实际执行组，不随平台配置变化。"
+                },
+                "steps": {
+                  "type": "array",
+                  "description": "冻结的步骤定义，准备、业务验证和后续清理分别展示。",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "stepId",
+                      "type",
+                      "description",
+                      "expected",
+                      "cleanup"
+                    ],
+                    "properties": {
+                      "stepId": {
+                        "type": "string",
+                        "description": "排序不改变的冻结步骤身份。"
+                      },
+                      "type": {
+                        "enum": ["setup", "verification"],
+                        "description": "原步骤类型，保持执行顺序与准备门禁。"
+                      },
+                      "description": {
+                        "type": "string",
+                        "description": "调用方的说明，不添加额外验证要求。"
+                      },
+                      "expected": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "冻结要求或原始验收标准，不由汇总补造。"
+                      },
+                      "cleanup": {
+                        "type": "boolean",
+                        "description": "后续清理独立展示，不进入业务统计。"
+                      }
+                    }
+                  }
+                }
+              },
+              "required": [
+                "caseId",
+                "title",
+                "executionOrigin",
+                "sourceCaseId",
+                "reportStatus",
+                "finished",
+                "criteria",
+                "arms",
+                "steps"
+              ]
+            },
+            "description": "首次接收冻结的成员与顺序，不按当前筛选截断。"
+          }
+        },
+        "required": [
+          "requestId",
+          "title",
+          "createdAt",
+          "sourceRequestId",
+          "aggregationVersion",
+          "generatedAt",
+          "caseCount",
+          "finishedCaseCount",
+          "executionStatus",
+          "executionCounts",
+          "reportPhase",
+          "reportStatus",
+          "reportCoverage",
+          "observedFailureCount",
+          "confirmedDisagreementCount",
+          "uniqueCriteriaCounts",
+          "byExecutionMode",
+          "cases"
+        ]
+      },
+      "RequestList": {
+        "title": "RequestList",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "requests": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/RequestSummary" },
+            "description": "按请求分页的摘要，不截断其中成员。"
+          },
+          "nextCursor": {
+            "type": ["string", "null"],
+            "description": "绑定筛选条件的微秒分页游标。"
+          }
+        },
+        "required": ["requests", "nextCursor"]
+      },
+      "RequestRerun": {
+        "title": "RequestRerun",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,80}$",
+            "description": "逻辑提交的稳定身份；重试沿用，重跑使用新身份。"
+          },
+          "caseIds": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "sourceCaseId": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,80}$",
+                  "description": "整请求重跑对应的原 case；普通提交为 null。"
+                },
+                "caseId": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,80}$",
+                  "description": "全局 case 幂等身份，不改为请求内局部身份。"
+                }
+              },
+              "required": ["sourceCaseId", "caseId"]
+            },
+            "minItems": 1,
+            "maxItems": 32,
+            "description": "完整旧新身份映射，由服务端校验覆盖和唯一性。"
+          },
+          "budgetMode": {
+            "enum": ["current", "original"],
+            "description": "current 使用当前预算；original 沿用来源预算。"
+          },
+          "timeBudget": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "stepTimeoutMs": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 86400000,
+                "description": "每个业务步骤的时间下限，毫秒；不缩短原等待。"
+              },
+              "cleanupTimeoutMs": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 86400000,
+                "description": "整段清理的时间下限，毫秒。"
+              }
+            },
+            "required": [],
+            "description": "只增加时间下限，不改变动作与模型额度。",
+            "minProperties": 1
+          }
+        },
+        "required": ["requestId", "caseIds"]
       },
       "Error": {
         "type": "object",

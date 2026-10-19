@@ -190,3 +190,33 @@ export type { ExecutionOutcome } from './generated/execution-outcome.js';
 export { isCriterionUpgrade } from './criteria.js';
 
 export { taskEvidenceKinds } from './execution-plan.js';
+
+// 请求归属独立于 case 定义；结果仍复用单组公开协议。
+ajv.addSchema(
+  { $ref: readSchema('case-result-v2').$id },
+  'case-result-v2.schema.json',
+);
+export type { VerificationRequest } from './generated/verification-request.js';
+export type { RequestSummary } from './generated/request-summary.js';
+export type { RequestResultV2 } from './generated/request-result-v2.js';
+export type { RequestList } from './generated/request-list.js';
+export type { RequestRerun } from './generated/request-rerun.js';
+import type { VerificationRequest } from './generated/verification-request.js';
+import type { RequestResultV2 } from './generated/request-result-v2.js';
+import type { RequestList } from './generated/request-list.js';
+import type { RequestRerun } from './generated/request-rerun.js';
+ajv.addSchema(readSchema('request-summary'), 'request-summary.schema.json');
+export const validateVerificationRequest = ajv.compile<VerificationRequest>(
+  readSchema('verification-request'),
+);
+export const validateRequestResultV2 = ajv.compile<RequestResultV2>(
+  readSchema('request-result-v2'),
+);
+export const validateRequestList = ajv.compile<RequestList>(
+  readSchema('request-list'),
+);
+export const validateRequestRerun = ajv.compile<RequestRerun>(
+  readSchema('request-rerun'),
+);
+export { summarizeRequest, summarizeRequestCase } from './request-summary.js';
+export type { RequestCaseFacts } from './request-summary.js';

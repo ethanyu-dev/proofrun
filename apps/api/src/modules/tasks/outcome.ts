@@ -2,7 +2,7 @@ import { executionOutcome, type ExecutionFacts } from '@proofrun/contracts';
 import type { Database } from '../../db.js';
 
 /** 批量读取原因投影；历史人工请求按当前代次关联，已恢复的阻塞不会污染后续故障。 */
-export async function taskOutcomes(db: Database, ids: string[]) {
+export async function taskOutcomes(db: Pick<Database, 'query'>, ids: string[]) {
   if (!ids.length)
     return new Map<string, ReturnType<typeof executionOutcome>>();
   const rows = await db.query<ExecutionFacts & { id: string }>(

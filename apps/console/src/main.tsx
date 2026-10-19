@@ -1,3 +1,5 @@
+import { RequestListPage } from './pages/request-list';
+import { RequestDetailPage } from './pages/request-detail';
 import { StrictMode, useCallback, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ApiClient } from './api';
@@ -14,6 +16,7 @@ import { HitlPage } from './pages/hitl';
 import { suspendCredentialRestore } from './credential-storage';
 import './tokens.css';
 import './style.css';
+import './requests.css';
 import './identity-library.css';
 
 /** 路由只接受协议允许的任务身份，未知路径显示明确的缺失页面。 */
@@ -67,12 +70,34 @@ function App() {
   const nodeProfileId = /^\/node-profiles\/([A-Za-z0-9_-]{1,128})$/.exec(
     path,
   )?.[1];
-  const taskId = TASK_ROUTE.exec(path)?.[1];
-  const reportId = REPORT_ROUTE.exec(path)?.[1];
+  const taskId = TASK_ROUTE.exec(path.split('?')[0]!)?.[1];
+  const reportId = REPORT_ROUTE.exec(path.split('?')[0]!)?.[1];
+  const requestRoute =
+    /^\/(requests|request-reports)\/([A-Za-z0-9_-]{1,80})$/.exec(path);
   let page;
   if (!api) page = <Connect onConnect={connected} autoRestore={autoRestore} />;
   else if (path === '/tasks' || path === '/reports')
-    page = <TaskListPage key={path} api={api} reports={path === '/reports'} />;
+    page = (
+      <RequestListPage key={path} api={api} reports={path === '/reports'} />
+    );
+  else if (/^\/(tasks|reports)\/(ungrouped|executions)$/.test(path))
+    page = (
+      <TaskListPage
+        key={path}
+        api={api}
+        reports={path.startsWith('/reports/')}
+        ungrouped={path.endsWith('/ungrouped')}
+      />
+    );
+  else if (requestRoute)
+    page = (
+      <RequestDetailPage
+        key={path}
+        api={api}
+        id={requestRoute[2]!}
+        reports={requestRoute[1] === 'request-reports'}
+      />
+    );
   else if (path === '/tasks/new') page = <TaskSubmitPage api={api} />;
   else if (reportId)
     page = <ReportDetailPage key={reportId} api={api} id={reportId} />;
@@ -111,6 +136,9 @@ function App() {
                 key={href}
                 aria-current={
                   path === href ||
+                  (href === '/tasks' && requestRoute?.[1] === 'requests') ||
+                  (href === '/reports' &&
+                    requestRoute?.[1] === 'request-reports') ||
                   (href === '/nodes' && !!nodeProfileId) ||
                   ((href === '/tasks' || href === '/reports') &&
                     path.startsWith(`${href}/`))

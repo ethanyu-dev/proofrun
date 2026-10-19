@@ -1,10 +1,31 @@
 # 结构化 Case API v2
 
-`POST /v2/cases` 接收数组，数组中每个对象是一个独立 case，默认创建纯 LLM 与 JEV+LLM 两组任务。不同 caseId 及同一 case 的两组可按平台容量并行执行；每个对象是独立 profile 维度；内部先按 `exec_order` 稳定排序，再以 setup 拆成独占 tab 的分组，默认两个组并发、组内串行。不同账号或有冲突的环境应放在不同对象，存在先后依赖的步骤放在同一分组。不会为每个步骤创建独立任务。
+`POST /v2/cases` 支持请求对象封装和兼容数组；cases 中每个对象是一个独立 case，默认创建纯 LLM 与 JEV+LLM 两组任务。不同 caseId 及同一 case 的两组可按平台容量并行执行；每个对象是独立 profile 维度；内部先按 `exec_order` 稳定排序，再以 setup 拆成独占 tab 的分组，默认两个组并发、组内串行。不同账号或有冲突的环境应放在不同对象，存在先后依赖的步骤放在同一分组。不会为每个步骤创建独立任务。
 
 旧 `/v1/cases` 单 case 接口继续保留。新旧请求格式不混用；内部 `/v1/tasks` 不接收新版 case、结构化步骤或清理任务，也不支持从内部入口对它们自动重跑或追加双组对照。重新执行可使用下述 case 重跑接口，或通过新版提交接口提交新的 caseId。
 
 查询结果包含可选的 `queueReason: { code, message } | null`，供排查任务为何尚未开始。它记录最近一次领取检查遇到的配置冲突、资源占用或节点不可用等原因；成功领取后清空，取消或排队超时后保留。null 或字段缺失表示尚无诊断，不保证节点可用。排队超时不代表业务验收失败，业务结果仍以实际执行报告为准。
+
+## 请求归属与汇总报告
+
+需要按一次提交关联多个 case 时，`POST /v2/cases` 使用对象封装：`{ "requestId": "release-01", "title": "邀请活动回归", "cases": [...] }`，`cases` 内仍是原有完整 case 定义。完整夹具见 [请求示例](../contracts/examples/public-api/request-v2.json)。对象格式返回 `202 RequestResultV2`；旧数组格式及其 `CaseResultV2[]` 响应保持不变，旧数组不会推测请求归属。
+
+requestId 必填，为 1–80 位字母、数字、下划线或短横线；title 可选，提供时为 1–200 字符非空白文本，省略则显示 requestId。每个请求仍限 1–32 个 case、2 MiB，不允许重复 caseId 或未知顶层字段。请求与新任务、两组执行的归属在同一事务创建；任一冲突不会留下部分新增任务。
+
+同 requestId、同定义重提返回已有请求的最新结果。cases 重排不改变请求身份，展示顺序保持首次接收值；更改标题、成员或 case 定义返回 `409 REQUEST_CONFLICT`。case 内数组保留原有顺序敏感规则。不同 requestId 引用相同 caseId 和定义时复用已有执行，成员的 executionOrigin 为 reused，显示原执行时间；这不表示重新验证。同 caseId 不同定义仍返回 `409 CASE_CONFLICT`。
+
+- `GET /v2/requests`：请求摘要列表，支持 q、executionStatus、reportStatus、limit（1–100，默认 25）及 cursor。q 按请求身份、标题、case 身份或目标搜索；命中一个成员仍返回整个请求的统计。游标绑定筛选条件，不能更换筛选后沿用。
+- `GET /v2/requests/{requestId}`：请求元数据、全部成员、冻结的步骤、各组进度和汇总。
+- `GET /v2/requests/{requestId}/report`：相同一致性快照的汇总报告，包含 case 矩阵、逐项两组结论、证据引用与清理情况。
+- `POST /v2/requests/{requestId}/rerun`：接收新 requestId、完整 `caseIds: [{ sourceCaseId, caseId }]` 映射，以及可选 budgetMode/timeBudget。所有目标 caseId 必须是新身份；整请求原子重建，不覆盖旧结果。重试沿用目标 requestId 和全部映射，参数改变返回 REQUEST_CONFLICT。
+
+请求的 executionStatus 为 QUEUED / IN_PROGRESS / FINISHED，只表达执行进度；reportPhase 为 PENDING / PARTIAL / FINAL。所有要求组终止后为 FINAL，即使有子报告缺失。非 FINAL 的 reportStatus 为 null；已交付报告中的失败仍由 observedFailureCount 显示。FINAL 时，任一组已确认 FAILED 则汇总 FAILED，所有要求组均 PASSED 才 PASSED，否则 INCONCLUSIVE。两组相反的明确判断另计 confirmedDisagreementCount，不能将组间差异直接解释成产品根因。
+
+uniqueCriteriaCounts 按 `(caseId, criterionId)` 统计一次，包含 total、passed、failed、inconclusive、skipped、pending，后五项之和等于 total；双跑不会把总数翻倍。确认失败优先；否则仍有组未终止计 pending；终止后全部通过计 passed，全部缺失/未验收计 skipped，其余计 inconclusive。请求整体结论还检查完整单组 reportStatus，不能只凭验收项统计推断前置步骤已完成。setup 的显式 expected 保留，policy 不计入，cleanup 单独展示。
+
+reportCoverage 的 expected、available、missing 明确报告齐全程度；byExecutionMode 分别统计 LLM/JEV 已交付报告，不把未配置模式当成缺报告。响应携带 generatedAt 与 aggregationVersion（当前为 1），页面和 JSON 导出使用同一份服务端快照；部分导出明确标记 partial。清理失败不改变已确认业务通过，证据清理不改变已有结论。
+
+Console 的任务和报告默认按请求展示，提供未归组任务、全部执行明细以及原 taskId 深链接。共享 case 的执行详情列出所有关联请求，取消会影响所有引用同一执行的请求。单 case 重跑仍使用原接口，新执行不会替换原请求成员；需要整份新请求报告时使用请求重跑接口。请求分组不改变调度、浏览器会话或 case 间依赖关系。
 
 ## 提交与身份
 
@@ -18,7 +39,7 @@ curl --fail-with-body --silent --show-error \
   "$PROOFRUN_CONTROL_URL/v2/cases"
 ```
 
-返回 202 和与输入顺序一致的结果数组。批次限制为 1–32 个 case，请求体仍受 2 MiB 限制。整批校验和事务接收，格式错误或任一身份冲突时不留下部分新任务。不同请求允许重叠 caseId；相同原始定义幂等返回已有结果，不重复执行。steps 的原始排列以及 policy/expected 的顺序属于该 case 定义的一部分；批次中的 case 排列不改变各自的幂等身份。
+使用兼容数组格式时，返回 202 和与输入顺序一致的结果数组；请求对象格式返回请求汇总对象。批次限制为 1–32 个 case，请求体仍受 2 MiB 限制。整批校验和事务接收，格式错误或任一身份冲突时不留下部分新任务。不同请求允许重叠 caseId；相同原始定义幂等返回已有结果，不重复执行。steps 的原始排列以及 policy/expected 的顺序属于该 case 定义的一部分；批次中的 case 排列不改变各自的幂等身份。
 
 | 字段        | 约束与含义                                                                    |
 | ----------- | ----------------------------------------------------------------------------- |

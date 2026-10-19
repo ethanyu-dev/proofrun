@@ -6,6 +6,8 @@
 
 **结构化任务接入：[Case API v2](docs/public-api-v2.md) · [批量示例](contracts/examples/public-api/cases-v2.json)。每个对象对应独立任务，内部按 exec_order 串行执行，业务清理在原会话末尾执行，独立预算三分钟。**
 
+**请求归属与汇总：** v2 支持 `{ requestId, title, cases }` 封装，同次提交在任务和报告中按请求展示；双跑按唯一验收项统计，支持部分报告、组间差异、JSON 导出和整请求原子重跑。旧数组提交保留在未归组任务中。见 [请求示例](contracts/examples/public-api/request-v2.json) 与 [设计](docs/verification-request-design.md)。
+
 **测试身份：[身份库配置与集成](apps/api/src/modules/identities/README.md)。Web 主导航「测试身份」只维护测试地址、Cookies、名称、可选类型、描述和并发数。薄身份 Agent 根据用例选取账号，任务复制完整 profile；只有 HITL 成功后发布新基准，无法处理时记录人工原因并结束 Case。**
 
 **原单 case 接入：[Case API](docs/public-api.md) · [OpenAPI](contracts/public-api.openapi.json) · [case 示例](contracts/examples/public-api/case.json)。** 调用方提交任务描述、待测 URL、可选步骤和验收项；环境、身份与预算由[平台配置](docs/case-platform-config.md)提供。

@@ -1,3 +1,8 @@
+import {
+  registerRequest,
+  registerMembers,
+  type RequestRegistration,
+} from '../requests/registration.js';
 import { selectedTask } from '../identities/selection.js';
 import type { IdentityLibrary } from '../identities/library.js';
 import { taskEvidenceKinds } from '@proofrun/contracts';
@@ -191,8 +196,13 @@ export class Coordinator {
   }
 
   /** 整批原子入队；锁按身份排序，交叉批次不会因请求顺序形成死锁。 */
-  async submitCaseBatch(tasks: VerificationTask[]) {
+  async submitCaseBatch(
+    tasks: VerificationTask[],
+    request?: RequestRegistration,
+  ) {
     await this.db.transaction(async (client) => {
+      if (request && !(await registerRequest(client, request))) return;
+      const created = new Set<string>();
       for (const task of [...tasks].sort((a, b) =>
         a.taskId.localeCompare(b.taskId),
       )) {
@@ -215,6 +225,12 @@ export class Coordinator {
           ])
         ).rows[0];
         if (existing) {
+          if (request?.sourceRequestId)
+            throw new ApiError(
+              409,
+              'CASE_CONFLICT',
+              '请求重跑的目标 caseId 已存在',
+            );
           if (
             canonical(existing.definition.caseV2Definition) !==
             canonical(task.caseV2Definition)
@@ -222,6 +238,7 @@ export class Coordinator {
             throw new ApiError(409, 'CASE_CONFLICT', 'caseId 已绑定另一份定义');
           continue;
         }
+        created.add(task.taskId);
         const source = task;
         for (const task of expandCaseTasks(source)) {
           if (!validateVerificationTask(task))
@@ -239,6 +256,7 @@ export class Coordinator {
             );
         }
       }
+      if (request) await registerMembers(client, request, tasks, created);
     });
   }
 

@@ -2,11 +2,15 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { TaskDetail } from '@proofrun/contracts';
 import { ApiClient, errorMessage } from '../api';
 import { TaskFields } from '../components/task-fields';
-import { submitCaseBatch } from '../components/task-submit-request';
+import {
+  submitCaseBatch,
+  submitVerificationRequest,
+} from '../components/task-submit-request';
 import {
   newTaskDefinition,
   parseTaskDefinition,
   parseCaseBatch,
+  parseVerificationRequest,
 } from '../task-definition';
 import { ErrorNotice, PageHeader } from '../components/ui';
 
@@ -42,13 +46,15 @@ export function TaskSubmitPage({ api }: { api: ApiClient }) {
     try {
       submitted =
         version === 'v2'
-          ? parseCaseBatch(caseDefinition)
+          ? parseVerificationRequest(caseDefinition)
           : mode === 'json' && definition.trimStart().startsWith('[')
             ? parseCaseBatch(definition)
             : parseTaskDefinition(
                 mode === 'json' ? definition : JSON.stringify(task),
               );
       // 发送前把生成的身份写回草稿；网络结果未知时重提不会创建另一批任务。
+      if ('requestId' in submitted)
+        setCaseDefinition(JSON.stringify(submitted, null, 2));
       if (Array.isArray(submitted)) {
         const normalized = JSON.stringify(submitted, null, 2);
         if (version === 'v2') setCaseDefinition(normalized);
@@ -62,6 +68,15 @@ export function TaskSubmitPage({ api }: { api: ApiClient }) {
     active.current = controller;
     setPending(true);
     try {
+      if ('requestId' in submitted) {
+        const path = await submitVerificationRequest(
+          api,
+          submitted,
+          controller.signal,
+        );
+        if (!controller.signal.aborted) window.location.hash = path;
+        return;
+      }
       if (Array.isArray(submitted)) {
         const path = await submitCaseBatch(api, submitted, controller.signal);
         if (!controller.signal.aborted) window.location.hash = path;
@@ -145,7 +160,8 @@ export function TaskSubmitPage({ api }: { api: ApiClient }) {
               <label htmlFor="case-definition">v2 Schema JSON</label>
               <p className="muted" id="case-definition-help">
                 粘贴包含 platform、entry、steps、cleanup 的 case 数组，一次最多
-                32 个。无需填写任务表单；缺少的 caseId 自动生成。
+                32 个；也可粘贴包含 requestId、title、cases
+                的请求对象。数组会自动生成请求身份，缺少的 caseId 自动生成。
               </p>
               <p className="muted">
                 默认开启双跑模式（纯 LLM 与 LLM +
@@ -191,7 +207,7 @@ export function TaskSubmitPage({ api }: { api: ApiClient }) {
         <div className="form-footer">
           <p className="muted">
             {version === 'v2'
-              ? '单个 case 提交后进入任务详情，双跑并列展示两组；批量提交后进入任务列表。自动生成的 caseId 会保留在输入框中；同一 ID 只接受同一份定义。'
+              ? '提交后进入请求详情，按 case 查看两组执行和汇总报告。自动生成的 requestId、caseId 会保留在输入框中；网络失败后沿用原身份重试。'
               : '同一任务 ID 只接受同一份定义。'}
             提交后可能立即开始执行。
           </p>
