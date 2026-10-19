@@ -5,7 +5,11 @@ import type { RequestResultV2 } from '@proofrun/contracts';
 import { ApiClient } from '../../apps/console/src/api.ts';
 import { parseVerificationRequest } from '../../apps/console/src/task-definition.ts';
 import { submitVerificationRequest } from '../../apps/console/src/components/task-submit-request.ts';
-import { RequestSummaryView } from '../../apps/console/src/components/request-summary.tsx';
+import { RequestCasePreview } from '../../apps/console/src/components/request-preview.tsx';
+import {
+  caseVerificationProgress,
+  displayedCaseArm,
+} from '../../apps/console/src/request-presentation.ts';
 import { RequestCases } from '../../apps/console/src/components/request-cases.tsx';
 
 /** 使用真实组件静态渲染；交互和布局另由浏览器检查覆盖。 */
@@ -97,128 +101,124 @@ test('请求封装完整发送并跳到请求详情', async (context) => {
     `/requests/${request.requestId}`,
   );
 });
-// 范围：部分结果、共享来源、缺报告、组名、证据清理及返回上下文的可见文本；不代替窄屏或点击验收。
-test('请求组件明确显示部分结果和两组来源，归档证据不能点击', () => {
-  const arm = (mode: 'llm' | 'jev') => ({
+// 范围：历史双跑只展示默认组的进度、状态和证据；静态夹具不证明浏览器交互或真实验收成功。
+test('case 直接展开，只展示选定执行的通过数和状态', () => {
+  const criterion = {
+    criterionId: 'c',
+    stepId: 's',
+    description: '检查',
+    expectedResult: '显示',
+  };
+  const reading = (verdict: string) => ({
+    criterionId: 'c',
+    verdict,
+    summary: '夹具依据',
+    evidenceRefs: ['artifact'],
+  });
+  const arm = (mode: string) => ({
     taskId: `task-${mode}`,
     executionMode: mode,
     createdAt: '2026-10-19T00:00:00Z',
     archivedAt: '2026-10-19T01:00:00Z',
     result: {
-      caseId: 'a',
-      status: mode === 'llm' ? 'COMPLETED' : 'QUEUED',
-      reportStatus: mode === 'llm' ? 'PASSED' : null,
-      criteriaCounts: null,
-      result:
-        mode === 'llm'
-          ? {
-              outcome: 'PASSED',
-              summary: '夹具依据',
-              criteria: [],
-              evidence: [
-                {
-                  id: 'artifact',
-                  kind: 'DOM',
-                  sha256: 'a'.repeat(64),
-                  url: 'http://localhost/evidence',
-                },
-              ],
-            }
-          : null,
+      status: 'COMPLETED',
       steps: [],
       cleanup: null,
+      result: {
+        outcome: mode === 'jev' ? 'PASSED' : 'FAILED',
+        summary: mode === 'jev' ? '当前记录' : '另一组记录',
+        criteria: [reading(mode === 'jev' ? 'PASSED' : 'FAILED')],
+        evidence: [
+          {
+            id: 'artifact',
+            kind: 'DOM',
+            sha256: 'a'.repeat(64),
+            url: 'http://localhost/evidence',
+          },
+        ],
+      },
     },
   });
   const value = {
     requestId: 'r',
-    title: '请求',
-    createdAt: '2026-10-19T00:00:00Z',
-    generatedAt: '2026-10-19T00:00:00Z',
-    sourceRequestId: null,
-    aggregationVersion: 1,
-    caseCount: 1,
-    finishedCaseCount: 0,
-    executionStatus: 'IN_PROGRESS',
-    executionCounts: {
-      total: 2,
-      queued: 1,
-      running: 0,
-      completed: 1,
-      cancelled: 0,
-      timedOut: 0,
-      error: 0,
-    },
-    reportPhase: 'PARTIAL',
-    reportStatus: null,
-    reportCoverage: { expected: 2, available: 1, missing: 1 },
-    observedFailureCount: 0,
-    confirmedDisagreementCount: 0,
-    uniqueCriteriaCounts: {
-      total: 1,
-      passed: 0,
-      failed: 0,
-      inconclusive: 0,
-      skipped: 0,
-      pending: 1,
-    },
-    byExecutionMode: [],
     cases: [
       {
         caseId: 'a',
         title: '验证目标',
         executionOrigin: 'reused',
-        sourceCaseId: null,
-        reportStatus: null,
-        finished: false,
         arms: [arm('llm'), arm('jev')],
-        criteria: [
-          {
-            criterionId: 'c',
-            stepId: 's',
-            description: '检查',
-            expectedResult: '显示',
-            status: 'PENDING',
-            disagreement: false,
-            coverageDifference: true,
-            arms: [
-              {
-                taskId: 'task-llm',
-                executionMode: 'llm',
-                verdict: 'PASSED',
-                summary: '夹具',
-                evidenceRefs: ['artifact'],
-              },
-              {
-                taskId: 'task-jev',
-                executionMode: 'jev',
-                verdict: null,
-                summary: '',
-                evidenceRefs: [],
-              },
-            ],
-          },
-        ],
+        criteria: [criterion],
+        steps: [],
       },
     ],
-  } as RequestResultV2;
-  const summary = renderToStaticMarkup(
-    createElement(RequestSummaryView, { value }),
+  } as unknown as RequestResultV2;
+  const member = value.cases[0]!;
+  assert.equal(displayedCaseArm(member)?.taskId, 'task-jev');
+  assert.deepEqual(caseVerificationProgress(member), { passed: 1, total: 1 });
+  const preview = renderToStaticMarkup(
+    createElement(RequestCasePreview, { value, reports: true }),
   );
-  assert.match(summary, /部分结果/);
-  assert.match(summary, /尚未汇总完成/);
-  assert.match(summary, /唯一验收项 1/);
-  const cases = renderToStaticMarkup(
+  assert.match(preview, /1 \/ 1/);
+  assert.match(preview, /执行完成/);
+  assert.match(preview, /#\/request-reports\/r/);
+  assert.doesNotMatch(preview, /<details|展开关联|LLM|JEV|执行次数|报告已交付/);
+  const details = renderToStaticMarkup(
     createElement(RequestCases, { api: new ApiClient('fixture'), value }),
   );
-  for (const text of [
-    '复用已有执行',
-    'LLM',
-    'JEV + LLM',
-    '缺少报告',
-    '证据已清理',
-    '两组覆盖不同',
-  ])
-    assert.ok(cases.includes(text));
-  assert.match(cases, /disabled=""[^>]*>证据已清理/);
-  assert.match(cases, /task-llm\?request=r/);
+  assert.match(details, /当前记录/);
+  assert.match(details, /disabled=""[^>]*>证据已清理/);
+  assert.match(details, /task-jev\?request=r/);
+  assert.doesNotMatch(details, /<details|另一组记录|task-llm|LLM|JEV|无法判定/);
+});
+
+// 范围：分母包含缺失项，单组兼容、执行中步骤记录及重复结果；不检查后端生成报告的真实性。
+test('通过数不会合并其他模式或因缺报告缩小分母', () => {
+  const member = {
+    caseId: 'progress-case',
+    title: '进度夹具',
+    criteria: Array.from({ length: 21 }, (_, i) => ({ criterionId: `c${i}` })),
+    arms: [
+      {
+        executionMode: 'jev',
+        taskId: 'primary',
+        result: {
+          status: 'RUNNING',
+          result: null,
+          steps: [
+            {
+              criteria: Array.from({ length: 20 }, (_, i) => ({
+                criterionId: `c${i}`,
+                verdict: 'PASSED',
+              })),
+            },
+          ],
+        },
+      },
+      {
+        executionMode: 'llm',
+        taskId: 'other',
+        result: {
+          status: 'COMPLETED',
+          result: { criteria: [{ criterionId: 'c20', verdict: 'PASSED' }] },
+        },
+      },
+    ],
+  } as unknown as RequestResultV2['cases'][number];
+  assert.deepEqual(caseVerificationProgress(member), { passed: 20, total: 21 });
+  const html = renderToStaticMarkup(
+    createElement(RequestCasePreview, {
+      value: { requestId: 'r', cases: [member] },
+    }),
+  );
+  assert.match(html, /20 \/ 21/);
+  assert.match(html, /执行中/);
+  member.arms.shift();
+  assert.equal(displayedCaseArm(member)?.taskId, 'other');
+  assert.deepEqual(caseVerificationProgress(member), { passed: 1, total: 21 });
+  member.arms[0]!.result.result!.criteria.push(
+    member.arms[0]!.result.result!.criteria[0]!,
+  );
+  assert.deepEqual(caseVerificationProgress(member), { passed: 0, total: 21 });
+  member.arms = [];
+  assert.deepEqual(caseVerificationProgress(member), { passed: 0, total: 21 });
 });
