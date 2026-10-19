@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://proofrun.invalid/contracts/0.1/verification-request.schema.json",
+  "title": "VerificationRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "requestId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,80}$",
+      "description": "逻辑提交的稳定身份；重试沿用，重跑使用新身份。"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "\\S",
+      "description": "展示标题首次接收后冻结，不生成或改写验证目标。"
+    },
+    "cases": {
+      "type": "array",
+      "items": {
+        "$ref": "verification-case-v2.schema.json"
+      },
+      "minItems": 1,
+      "maxItems": 32,
+      "description": "首次接收冻结的成员与顺序，不按当前筛选截断。"
+    }
+  },
+  "required": ["requestId", "cases"]
+}

@@ -1,3 +1,4 @@
+import { RequestMemberships } from '../components/request-memberships';
 import { useEffect, useRef, useState } from 'react';
 import type { TaskDetail } from '@proofrun/contracts';
 import { ApiClient, errorMessage } from '../api';
@@ -114,6 +115,7 @@ export function TaskDetailPage({ api, id }: { api: ApiClient; id: string }) {
           </button>
         )}
       </PageHeader>
+      <RequestMemberships api={api} taskId={id} />
       {!paired && <RefreshBar {...resource} />}
       <ErrorNotice message={resource.error} />
       <ErrorNotice message={error} />

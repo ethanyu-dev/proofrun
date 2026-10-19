@@ -1,3 +1,4 @@
+import { RequestMemberships } from '../components/request-memberships';
 import {
   TaskExecutionStatus,
   ExecutionOutcomeDetails,
@@ -51,6 +52,7 @@ export function ReportDetailPage({ api, id }: { api: ApiClient; id: string }) {
             : '查看任务详情'}
         </a>
       </PageHeader>
+      <RequestMemberships api={api} taskId={id} />
       <RefreshBar {...resource} />
       <ErrorNotice message={resource.error} />
       {resource.data ? (

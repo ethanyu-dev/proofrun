@@ -13,6 +13,11 @@ const SCHEMAS = {
   'step-result': 'StepResult',
   'verification-case-v2': 'VerificationCaseV2',
   'case-result-v2': 'CaseResultV2',
+  'verification-request': 'VerificationRequest',
+  'request-summary': 'RequestSummary',
+  'request-result-v2': 'RequestResultV2',
+  'request-list': 'RequestList',
+  'request-rerun': 'RequestRerun',
 };
 const OUTPUT = new URL('../contracts/public-api.openapi.json', import.meta.url);
 /** 在线文档优先展示新协议，并明确旧协议仍用于兼容调用。 */
@@ -127,17 +132,89 @@ const document = {
     '/v2/cases': {
       post: operation(
         'submitCasesV2',
-        '原子接收结构化 case 数组；每个对象是独立任务，内部串行',
-        { type: 'array', items: ref('CaseResultV2') },
+        '原子接收请求封装或兼容 case 数组；请求封装保留归属与汇总',
+        {
+          oneOf: [
+            ref('RequestResultV2'),
+            { type: 'array', items: ref('CaseResultV2') },
+          ],
+        },
         {
           status: '202',
           requestBody: body({
-            type: 'array',
-            minItems: 1,
-            maxItems: 32,
-            items: ref('VerificationCaseV2'),
+            oneOf: [
+              ref('VerificationRequest'),
+              {
+                type: 'array',
+                minItems: 1,
+                maxItems: 32,
+                items: ref('VerificationCaseV2'),
+              },
+            ],
           }),
         },
+      ),
+    },
+    '/v2/requests': {
+      get: operation(
+        'listRequestsV2',
+        '按请求分页查询完整成员汇总',
+        ref('RequestList'),
+        {
+          parameters: [
+            {
+              name: 'q',
+              in: 'query',
+              schema: { type: 'string', maxLength: 160 },
+            },
+            {
+              name: 'executionStatus',
+              in: 'query',
+              schema: { enum: ['QUEUED', 'IN_PROGRESS', 'FINISHED'] },
+            },
+            {
+              name: 'reportStatus',
+              in: 'query',
+              schema: { enum: ['PASSED', 'FAILED', 'INCONCLUSIVE'] },
+            },
+            {
+              name: 'limit',
+              in: 'query',
+              schema: {
+                type: 'integer',
+                minimum: 1,
+                maximum: 100,
+                default: 25,
+              },
+            },
+            { name: 'cursor', in: 'query', schema: { type: 'string' } },
+          ],
+        },
+      ),
+    },
+    '/v2/requests/{id}': {
+      parameters: [pathId],
+      get: operation(
+        'getRequestV2',
+        '读取请求归属、执行进度与报告快照',
+        ref('RequestResultV2'),
+      ),
+    },
+    '/v2/requests/{id}/report': {
+      parameters: [pathId],
+      get: operation(
+        'getRequestReportV2',
+        '读取请求汇总报告，部分结果明确标记',
+        ref('RequestResultV2'),
+      ),
+    },
+    '/v2/requests/{id}/rerun': {
+      parameters: [pathId],
+      post: operation(
+        'rerunRequestV2',
+        '以全新请求与 case 身份原子重跑全部成员',
+        ref('RequestResultV2'),
+        { status: '202', requestBody: body(ref('RequestRerun')) },
       ),
     },
     '/v2/cases/{id}': {

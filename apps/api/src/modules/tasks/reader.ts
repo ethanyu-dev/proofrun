@@ -44,7 +44,15 @@ export class TaskReader {
       new ApiError(400, 'INVALID_QUERY', 'Invalid task list query or cursor');
     if (
       Object.keys(query).some(
-        (key) => !['limit', 'cursor', 'state', 'q', 'reportOnly'].includes(key),
+        (key) =>
+          ![
+            'limit',
+            'cursor',
+            'state',
+            'q',
+            'reportOnly',
+            'ungrouped',
+          ].includes(key),
       )
     )
       throw invalid();
@@ -55,17 +63,20 @@ export class TaskReader {
     const state = query.state as string | undefined;
     const q = ((query.q as string | undefined) ?? '').trim();
     const reportOnly = query.reportOnly === 'true';
+    const ungrouped = query.ungrouped === 'true';
     if (
       !Number.isInteger(limit) ||
       limit < 1 ||
       limit > MAX_LIMIT ||
       (state && !STATES.includes(state)) ||
       q.length > 160 ||
+      (query.ungrouped !== undefined &&
+        !['true', 'false'].includes(query.ungrouped as string)) ||
       (query.reportOnly !== undefined &&
         !['true', 'false'].includes(query.reportOnly as string))
     )
       throw invalid();
-    const filter = JSON.stringify([state ?? '', q, reportOnly]);
+    const filter = JSON.stringify([state ?? '', q, reportOnly, ungrouped]);
     let cursor: Cursor | null = null;
     if (query.cursor !== undefined) {
       try {
@@ -130,6 +141,7 @@ export class TaskReader {
         report->>'executionDisposition' AS execution_disposition,report->>'verdict' AS verdict,
         to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_at
        FROM pr_tasks WHERE NOT EXISTS(SELECT 1 FROM pr_node_profiles p WHERE p.task_id=pr_tasks.id)
+        AND (NOT $7::boolean OR NOT EXISTS(SELECT 1 FROM pr_verification_request_arms a WHERE a.task_id=pr_tasks.id OR a.task_id=pr_tasks.definition->>'parentTaskId'))
         AND ($1::text IS NULL OR state=$1)
         AND ($2::text IS NULL OR id ILIKE $2 OR definition->>'objective' ILIKE $2)
         AND (NOT $3::boolean OR report IS NOT NULL)
@@ -142,6 +154,7 @@ export class TaskReader {
           cursor?.at ?? null,
           cursor?.id ?? null,
           limit + 1,
+          ungrouped,
         ],
       )
     ).rows;

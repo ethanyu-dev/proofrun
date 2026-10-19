@@ -85,7 +85,7 @@ export class CaseV2Service {
   }
 
   /** 先校验整批，再由调度器事务接收；配置改变后重提仍复用首次冻结的快照。 */
-  async submit(input: unknown): Promise<CaseResultV2[]> {
+  async prepare(input: unknown): Promise<VerificationTask[]> {
     if (
       !Array.isArray(input) ||
       !input.length ||
@@ -144,17 +144,25 @@ export class CaseV2Service {
         definitions.push(compiled);
       }
     }
+    return definitions;
+  }
+
+  /** 旧数组入口继续按 case 幂等，不推测请求归属。 */
+  async submit(input: unknown): Promise<CaseResultV2[]> {
+    const definitions = await this.prepare(input);
     await this.tasks.submitCaseBatch(definitions);
-    return Promise.all(input.map((item) => this.get(item.caseId)));
+    return Promise.all(
+      definitions.map((item) => this.get(item.caseV2Definition!.caseId)),
+    );
   }
 
   /** 重跑从主组冻结配置恢复整个 case；新身份重新编译收尾，不复制执行状态或报告。 */
-  async rerun(
+  async prepareRerun(
     id: string,
     caseId: unknown,
     budgetMode: 'current' | 'original' = 'current',
     timeBudget?: unknown,
-  ): Promise<CaseResultV2> {
+  ): Promise<VerificationTask> {
     if (
       typeof caseId !== 'string' ||
       !/^[A-Za-z0-9_-]{1,80}$/.test(caseId) ||
@@ -195,10 +203,27 @@ export class CaseV2Service {
         : undefined,
       time,
     );
-    const [result] = await service.submit([
+    const [result] = await service.prepare([
       { ...structuredClone(definition.caseV2Definition!), caseId },
     ]);
     return result!;
+  }
+
+  /** 单 case 仍走同一原子入队端口；请求重跑先准备所有定义再统一入队。 */
+  async rerun(
+    id: string,
+    caseId: unknown,
+    budgetMode: 'current' | 'original' = 'current',
+    timeBudget?: unknown,
+  ): Promise<CaseResultV2> {
+    const definition = await this.prepareRerun(
+      id,
+      caseId,
+      budgetMode,
+      timeBudget,
+    );
+    await this.tasks.submitCaseBatch([definition]);
+    return this.get(definition.caseV2Definition!.caseId);
   }
 
   /** 即使 worker 异常退出，已持久化的步骤结果仍可查询。 */

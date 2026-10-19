@@ -29,9 +29,11 @@ const STATES = [
 export function TaskListPage({
   api,
   reports = false,
+  ungrouped = false,
 }: {
   api: ApiClient;
   reports?: boolean;
+  ungrouped?: boolean;
 }) {
   const [state, setState] = useState('');
   const [draft, setDraft] = useState('');
@@ -41,6 +43,7 @@ export function TaskListPage({
   if (state) params.set('state', state);
   if (search) params.set('q', search);
   if (reports) params.set('reportOnly', 'true');
+  if (ungrouped) params.set('ungrouped', 'true');
   const cursor = cursors.at(-1);
   if (cursor) params.set('cursor', cursor);
   const resource = useResource<TaskList>(
@@ -73,6 +76,10 @@ export function TaskListPage({
           提交任务 <span aria-hidden="true">↗</span>
         </a>
       </PageHeader>
+      <p>
+        <a href={reports ? '#/reports' : '#/tasks'}>返回请求视图</a> ·{' '}
+        {ungrouped ? '未归组任务' : '全部执行明细'}
+      </p>
       <div className="toolbar">
         <form className="search-form" onSubmit={submitSearch}>
           <label className="sr-only" htmlFor="task-search">

@@ -1,3 +1,5 @@
+import requestSchema from '../../../contracts/schemas/verification-request.schema.json';
+import type { VerificationRequest } from '@proofrun/contracts';
 import identityCheck from '../../../contracts/schemas/identity-check.schema.json';
 import sessionRequest from '../../../contracts/schemas/session-request.schema.json';
 import sessionPlan from '../../../contracts/schemas/session-plan.schema.json';
@@ -135,4 +137,30 @@ export function newTaskDefinition(): VerificationTask {
     ],
     budget: { maxActions: 100, timeoutMs: 1200000 },
   };
+}
+
+/** 数组粘贴自动封装为请求；返回值必须在派发前写回草稿，网络失败重试沿用全部身份。 */
+export function parseVerificationRequest(text: string): VerificationRequest {
+  let input: unknown;
+  try {
+    input = JSON.parse(text);
+  } catch {
+    throw new Error('请求不是有效 JSON。');
+  }
+  const value = Array.isArray(input)
+    ? {
+        requestId: `request-${crypto.randomUUID()}`,
+        cases: parseCaseBatch(text),
+      }
+    : isRecord(input)
+      ? { ...input, cases: parseCaseBatch(JSON.stringify(input.cases)) }
+      : input;
+  const validateRequest =
+    ajv.getSchema<VerificationRequest>(requestSchema.$id) ??
+    ajv.compile<VerificationRequest>(requestSchema);
+  if (!validateRequest(value))
+    throw new Error(
+      '请求需要有效 requestId、可选 title 和 case 数组，不能包含未知字段。',
+    );
+  return value as VerificationRequest;
 }
