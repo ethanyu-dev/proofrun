@@ -86,10 +86,14 @@ test(
       );
       return true;
     });
-    const profile = await readFile(
-      new URL('../../deploy/case-profile.example.json', import.meta.url),
-      'utf8',
+    const profile = JSON.parse(
+      await readFile(
+        new URL('../../deploy/case-profile.example.json', import.meta.url),
+        'utf8',
+      ),
     );
+    // 模拟生产遗留的显式双组配置，检查镜像启动后新 case 仍只创建 JEV 单组。
+    profile.executionMode = 'parallel';
     /** 使用两个不同 PORT，验证对外代理与私网 API 都遵守平台分配的监听端口。 */
     const startApi = () =>
       docker(
@@ -116,7 +120,7 @@ test(
         '-e',
         'PROOFRUN_PUBLIC_URL=https://proofrun.example.test',
         '-e',
-        `PROOFRUN_CASE_PROFILE_JSON=${profile}`,
+        `PROOFRUN_CASE_PROFILE_JSON=${JSON.stringify(profile)}`,
         'proofrun-railway-api:test',
       );
     await startApi();
@@ -196,7 +200,23 @@ test(
       },
       body: JSON.stringify(cases),
     });
-    assert.equal(submitted.status, 202, await submitted.text());
+    const results = await submitted.json();
+    assert.equal(submitted.status, 202, JSON.stringify(results));
+    assert.equal(results.length, cases.length);
+    for (const [index, result] of results.entries()) {
+      assert.equal(result.comparison, undefined);
+      const taskId = `case-v2-${cases[index].caseId}`;
+      const detail = await fetch(`${base}/v1/tasks/${taskId}`, {
+        headers: { authorization: `Bearer ${admin}` },
+      });
+      assert.equal(detail.status, 200);
+      assert.equal((await detail.json()).definition.executionMode, 'jev');
+      const extra = await fetch(`${base}/v1/tasks/comparison-${taskId}-jev`, {
+        headers: { authorization: `Bearer ${admin}` },
+      });
+      assert.equal(extra.status, 404);
+      await extra.arrayBuffer();
+    }
     // 无节点可领取，worker once 仅验证镜像配置与 API 协议，不访问模型地址。
     const once = await docker(
       'run',

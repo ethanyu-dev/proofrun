@@ -56,21 +56,28 @@ railway status --project PROJECT_ID --environment production --json
 
 API：
 
-| 变量                         | 值                                                                                        |
-| ---------------------------- | ----------------------------------------------------------------------------------------- |
-| `PORT`                       | `4100`，使私网上游端口固定                                                                |
-| `PROOFRUN_DATABASE_URL`      | `${{Postgres.DATABASE_URL}}`                                                              |
-| `PROOFRUN_ADMIN_TOKEN`       | 独立生成的随机密钥，至少 32 字符                                                          |
-| `PROOFRUN_WORKER_TOKEN`      | 另一份独立随机密钥，至少 32 字符                                                          |
-| `PROOFRUN_PUBLIC_URL`        | Web 的 HTTPS origin，当前生产为 `https://proofrun.ethankit.com`，无路径                   |
-| `PROOFRUN_CONSOLE_URL`       | Console 的 HTTPS origin，当前生产为 `https://proofrun.ethankit.com`                       |
-| `PROOFRUN_CASE_PROFILE_JSON` | [case-profile.example.json](../case-profile.example.json) 的 JSON，替换环境、节点池与预算 |
+| 变量                           | 值                                                                                        |
+| ------------------------------ | ----------------------------------------------------------------------------------------- |
+| `PORT`                         | `4100`，使私网上游端口固定                                                                |
+| `PROOFRUN_DATABASE_URL`        | `${{Postgres.DATABASE_URL}}`                                                              |
+| `PROOFRUN_ADMIN_TOKEN`         | 独立生成的随机密钥，至少 32 字符                                                          |
+| `PROOFRUN_WORKER_TOKEN`        | 另一份独立随机密钥，至少 32 字符                                                          |
+| `PROOFRUN_PUBLIC_URL`          | Web 的 HTTPS origin，当前生产为 `https://proofrun.ethankit.com`，无路径                   |
+| `PROOFRUN_CONSOLE_URL`         | Console 的 HTTPS origin，当前生产为 `https://proofrun.ethankit.com`                       |
+| `PROOFRUN_CASE_PROFILE_JSON`   | [case-profile.example.json](../case-profile.example.json) 的 JSON，替换环境、节点池与预算 |
+| `PROOFRUN_CASE_EXECUTION_MODE` | 可选；默认 `jev`（LLM + JEV 单组）。`llm` 为纯 LLM 单组，`parallel` 为双组对照            |
 
 密钥可分别使用 `openssl rand -hex 32` 生成。不要把密钥写入仓库、Docker build arguments 或 `VITE_*` 变量。
 
 需要飞书群通知时，仅在 API 增加 `PROOFRUN_FEISHU_APP_ID`、`PROOFRUN_FEISHU_APP_SECRET` 和 `PROOFRUN_FEISHU_CHAT_ID`，三个变量同时填写。使用已发布的企业自建应用机器人并将其加入目标群，权限与卡片同步规则见 [Case 飞书生命周期通知](../../apps/api/README.md#case-飞书生命周期通知)。
 
 镜像默认监听 `::`，兼容私网 IPv4/IPv6；证据默认写入 `/data/artifacts`。不要把 `PROOFRUN_PUBLIC_URL` 填成 API 私网地址。`PROOFRUN_CONSOLE_URL` 不设置时沿用公开地址，无需额外 CORS 配置。Case profile 的 JSON 与 `PROOFRUN_CASE_PROFILE_FILE` 不能同时设置；未设置 profile 时不会接受新 case。
+
+Railway 的新 case 执行模式以 `PROOFRUN_CASE_EXECUTION_MODE` 为唯一部署选择入口，未设置时使用 `jev`。启动脚本会对 JSON 和文件来源生成私有临时副本，覆盖旧 profile 的 `executionMode`，保留环境、预算和取证配置，不改写原文件。旧配置若为 `parallel` 或 `llm`，启动日志会明确提示覆盖；确实需要这些模式时，须在独立变量中重新指定。非法模式或两种配置来源同时存在会拒绝启动。
+
+该迁移只影响通过 Railway 启动入口创建的新 case；已接收任务及相同请求身份的幂等重提保留冻结的执行模式，不能把已有双组任务变成单组。非 Railway 的 profile 加载和直接任务接口不受此部署默认值影响。合并 PR 不会修改平台变量；修复代码实际部署并启动后才生效。不要为验证默认模式自动重跑生产用例。
+
+`node --test tests/railway/api-entry.test.mjs` 通过真实启动脚本与本地替身检查默认值、显式覆盖、配置来源和非法输入；镜像回归另验证遗留 `parallel` 配置经真实 API 只生成一个 JEV 任务。这些测试不证明当前线上部署状态。
 
 Web：
 
