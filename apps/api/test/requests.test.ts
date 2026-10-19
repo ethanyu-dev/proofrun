@@ -50,7 +50,9 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
   const url = new URL(DATABASE_URL);
   url.pathname = `/${name}`;
   const root = await mkdtemp(join(tmpdir(), 'proofrun-requests-'));
-  const sql = new pg.Pool({ connectionString: url.toString() });
+  // 夹具只需要顺序查询；Client.end 会等待连接关闭，避免 Pool.end 清空池后删库仍与断连竞争。
+  const sql = new pg.Client({ connectionString: url.toString() });
+  await sql.connect();
   const app = await buildApp(
     {
       databaseUrl: url.toString(),
@@ -402,7 +404,8 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
   } finally {
     await app.close();
     await sql.end();
-    await admin.query(`DROP DATABASE ${name} WITH (FORCE)`);
+    // 普通删库让残留连接暴露为测试失败，不能强制断连掩盖资源未释放。
+    await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
     await rm(root, { recursive: true, force: true });
   }
