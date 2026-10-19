@@ -4,10 +4,12 @@ import { interventionToken } from '../scheduling/hitl-token.js';
 const TEXT_LIMIT = 300;
 const ITEM_LIMIT = 120;
 const MAX_ITEMS = 10;
+/** 所有通知统一使用业务名称，避免将内部项目名作为卡片标题。 */
+export const CARD_TITLE = '自动化测试';
 /** 删除不可见控制符以限制 JSON 转义膨胀，保留正常换行和制表。 */
 const CONTROL_CHARACTERS = /[\u0000-\u0008\u000b-\u001f\u007f]/g;
 /** 固定北京时间，不受 API 容器时区影响。 */
-const TIME_FORMAT = new Intl.DateTimeFormat('zh-CN', {
+export const TIME_FORMAT = new Intl.DateTimeFormat('zh-CN', {
   timeZone: 'Asia/Shanghai',
   dateStyle: 'short',
   timeStyle: 'medium',
@@ -21,7 +23,7 @@ const EVENTS = {
   COMPLETED: 'Case 执行已结束',
 };
 /** 执行结束不等于验收通过，分别展示生命周期与结论。 */
-const STATES: Record<string, string> = {
+export const STATES: Record<string, string> = {
   QUEUED: '排队中',
   RUNNING: '执行中',
   WAITING_HUMAN: '等待人工处理',
@@ -31,7 +33,7 @@ const STATES: Record<string, string> = {
   ERROR: '执行错误',
   ENDED: '执行已结束',
 };
-const VERDICTS: Record<string, string> = {
+export const VERDICTS: Record<string, string> = {
   PASSED: '验收通过',
   FAILED: '验收失败',
   INCONCLUSIVE: '证据不足',
@@ -42,15 +44,15 @@ const VERDICTS: Record<string, string> = {
 export interface CaseEvent {
   /** 同一轮次内的稳定事件身份。 */
   key: string;
-  /** 仅四类业务里程碑产生新消息。 */
+  /** 提交、首次人工处理和完成产生新消息；保留恢复类型以读取旧记录。 */
   kind: keyof typeof EVENTS;
   /** 来自持久任务或控制权记录的原始时间。 */
   at: string;
-  /** 人工事件对应组；提交和整例完成可为空。 */
+  /** 人工事件对应的任务，用于定位 case；提交和整例完成可为空。 */
   taskId: string | null;
   /** 人工请求的执行身份；不绑定可轮换的链接 ID。 */
   executionId: string | null;
-  /** 原控制代次，不因后续人工请求而改写。 */
+  /** 首次人工请求的控制代次，后续代次复用卡片。 */
   revision: number | null;
   /** 原事件原因，当前状态变化时保留。 */
   reason: string | null;
@@ -60,7 +62,7 @@ export interface CaseEvent {
 export interface CaseArmView {
   /** Console 任务和报告的真实身份。 */
   taskId: string;
-  /** 与 Console 一致的分组名称。 */
+  /** 历史快照可能保留组名；渲染时统一使用任务身份。 */
   label: string;
   /** 运行状态包含等待人工的投影，不改变数据库生命周期。 */
   state: string;
@@ -91,18 +93,18 @@ export interface CaseView {
   caseId: string;
   /** Console 列表中的验证目标。 */
   objective: string;
-  /** 聚合两组当前状态，只有全部结束才为终态。 */
+  /** 聚合全部成员当前状态，只有全部结束才为终态。 */
   state: string;
-  /** 两组均存在且均结束时才允许发整例完成事件。 */
+  /** 必需成员均存在且均结束时才允许发送完成事件。 */
   terminal: boolean;
   /** 固定顺序展示各组，不能合并相互矛盾的验收结论。 */
   arms: CaseArmView[];
-  /** 已结束人工请求的执行/代次身份，供历史卡片标记。 */
+  /** 保留旧快照的已结束请求身份；卡片现在按 case 当前状态判断是否结束。 */
   endedRequests: string[];
 }
 
 /** 按码点截断，不切断表情，也不把用户文案作为 Markdown 或 @ 标签解析。 */
-function excerpt(value: string, limit = TEXT_LIMIT): string {
+export function excerpt(value: string, limit = TEXT_LIMIT): string {
   const clean = value.replace(CONTROL_CHARACTERS, '');
   const chars = Array.from(clean);
   return chars.length > limit ? `${chars.slice(0, limit).join('')}…` : clean;
@@ -115,12 +117,12 @@ export function caseCard(
   origin: string,
   secret: string,
 ) {
+  view = {
+    ...view,
+    arms: view.arms.map((arm) => ({ ...arm, label: `任务 ${arm.taskId}` })),
+  };
   const text = (content: string) => ({ tag: 'plain_text', content });
   const div = (content: string) => ({ tag: 'div', text: text(content) });
-  const ended =
-    event.kind === 'HITL' &&
-    view.endedRequests.includes(`${event.executionId}:${event.revision}`);
-  const eventArm = view.arms.find((arm) => arm.taskId === event.taskId);
   const buttons = view.arms.flatMap((arm) => [
     ...(arm.human
       ? [
@@ -160,18 +162,27 @@ export function caseCard(
               ? 'green'
               : 'grey'
             : 'blue',
-      title: text(`ProofRun · ${STATES[view.state] ?? view.state}`),
+      title: text(`${CARD_TITLE} · ${STATES[view.state] ?? view.state}`),
     },
     elements: [
       div(excerpt(view.objective)),
-      div(`Case：${excerpt(view.caseId, 128)}`),
-      div(
-        `事件：${eventArm && view.arms.length > 1 ? eventArm.label + ' · ' : ''}${EVENTS[event.kind]}${ended ? '（本轮人工介入已结束）' : ''}\n发生时间：${TIME_FORMAT.format(new Date(event.at))}（北京时间）${event.reason ? '\n事件原因：' + excerpt(event.reason) : ''}`,
-      ),
+      // HITL 上半部只保留验证内容及首次介入时间，下半部继续同步当前处理事实。
+      ...(event.kind === 'HITL'
+        ? [
+            div(
+              `发生时间：${TIME_FORMAT.format(new Date(event.at))}（北京时间）`,
+            ),
+          ]
+        : [
+            div(`Case：${excerpt(view.caseId, 128)}`),
+            div(
+              `事件：${EVENTS[event.kind]}\n发生时间：${TIME_FORMAT.format(new Date(event.at))}（北京时间）${event.reason ? '\n事件原因：' + excerpt(event.reason) : ''}`,
+            ),
+          ]),
       { tag: 'hr' },
       ...view.arms.flatMap((arm) => [
         div(
-          `${arm.label} · ${STATES[arm.state] ?? arm.state}\n验收结论：${arm.verdict ? (VERDICTS[arm.verdict] ?? arm.verdict) : '尚无结论'}${arm.detail ? '\n' + excerpt(arm.detail) : ''}`,
+          `${view.arms.length > 1 ? arm.label + ' · ' : ''}${STATES[arm.state] ?? arm.state}\n验收结论：${arm.verdict ? (VERDICTS[arm.verdict] ?? arm.verdict) : '尚无结论'}${arm.detail ? '\n' + excerpt(arm.detail) : ''}`,
         ),
         ...(arm.human
           ? [
