@@ -38,6 +38,7 @@ class ModelFixture(BaseHTTPRequestHandler):
             assert body['parallel_tool_calls'] is False
             content = body['messages'][1]['content']
             context = json.loads(content[0]['text'])
+            assert context['executionPolicy']['version'] == 'planned-v1'
             image = content[1]['image_url']['url']
             assert base64.b64decode(image.split(',', 1)[1]).startswith(b'\x89PNG\r\n\x1a\n')
             turn = len(self.server.contexts)
@@ -52,6 +53,16 @@ class ModelFixture(BaseHTTPRequestHandler):
                     decision = {'type': 'browser.act', 'action': action, 'target': target}
                     if value:
                         decision['value'] = value
+                    if action == 'fill':
+                        # 每个表单的填写与点击共享两次动作计划；不提前声明提交结果。
+                        prefix = name.split()[0]
+                        decision['plan'] = {
+                            'goal': f'填写并提交 {prefix} 表单', 'scope': '',
+                            'terms': [name, f'Save {prefix}'],
+                            'successCondition': f'Saved {prefix} {value}',
+                            'allowedActions': ['fill', 'click'], 'maxActions': 2,
+                            'checkpoints': ['after-click'],
+                        }
             else:
                 assert 'Saved Plain Ada' in context['observation']['text'], context['observation']['text']
                 assert 'Saved Shadow Lin' in context['observation']['text'], context['observation']['text']
@@ -96,6 +107,8 @@ def run():
         env = dict(os.environ, PROOFRUN_CONTROL_URL=BASE, PROOFRUN_WORKER_TOKEN=WORKER,
                    PROOFRUN_MODEL_BASE_URL=f'http://127.0.0.1:{model.server_port}/v1', PROOFRUN_MODEL_API_KEY='fixture-only',
                    PROOFRUN_MODEL='local-protocol-fixture', PROOFRUN_MODEL_VISION='true', PROOFRUN_AGENT_COMMAND_MS='25000')
+        # 使用产品默认策略，并通过模型请求断言；不继承宿主机的显式回退配置。
+        env.pop('PROOFRUN_AGENT_EXECUTION_POLICY', None)
         worker = subprocess.run(['node', str(ROOT / 'apps/agent/dist/main.js'), 'once'], env=env, capture_output=True, text=True, timeout=230)
         assert worker.returncode == 0, (worker.stdout, worker.stderr)
         state = until(lambda: api('GET', '/v1/tasks/' + definition['taskId']), lambda value: value['report'] and all(e['closure_verified'] for e in value['executions']))
