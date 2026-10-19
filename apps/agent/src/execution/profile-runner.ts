@@ -22,7 +22,7 @@ const PROFILE_FATAL = new Set([
   'COMMAND_RESULT_UNKNOWN',
 ]);
 /** 人工期间保持轮询和续租，浏览器队列不持有长期锁。 */
-const CONTROL_POLL_MS = 150;
+const CONTROL_POLL_MS = 1000;
 
 /** 异步互斥队列；失败只释放当前租约，不使后续任务继承 rejected Promise。 */
 class SerialQueue {

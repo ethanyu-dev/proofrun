@@ -9,6 +9,8 @@ import type { ApiClient } from '../api';
 
 /** 完成前包含登录快照落盘，等待窗口应覆盖服务端保存命令和结果确认。 */
 const COMPLETION_ACK_MS = 150_000;
+/** 首帧超时只提示恢复入口，不撤销控制权或重放已提交的操作。 */
+const FIRST_FRAME_MS = 10_000;
 
 /** 当前介入的授权与待办，只通过认证连接获得。 */
 interface State {
@@ -77,6 +79,7 @@ export function HitlPage({
   }>();
   const [error, setError] = useState('');
   const [connected, setConnected] = useState(false);
+  const [frameTimedOut, setFrameTimedOut] = useState(false);
   const [done, setDone] = useState(false);
   const [busy, setBusy] = useState(false);
   const [checked, setChecked] = useState<number[]>([]);
@@ -263,9 +266,17 @@ export function HitlPage({
       typing.current = '';
     };
   }, [id, token, api, nodeProfile, attempt]);
+  const hasFrame = !!frame;
+  useEffect(() => {
+    setFrameTimedOut(false);
+    if (!connected || state?.mode !== 'HUMAN' || hasFrame || done) return;
+    const timer = setTimeout(() => setFrameTimedOut(true), FIRST_FRAME_MS);
+    return () => clearTimeout(timer);
+  }, [connected, state?.mode, hasFrame, done, attempt]);
   const expired = !!state && Date.parse(state.expiresAt) <= now;
-  const interactive =
-    connected && state?.mode === 'HUMAN' && !!frame && !done && !expired;
+  // 导航不依赖画面坐标；仅坐标输入要求首帧，避免空白页无法导航的闭环。
+  const authorized = connected && state?.mode === 'HUMAN' && !done && !expired;
+  const interactive = authorized && hasFrame;
   const controlling = interactive && remoteFocused;
   useHitlScreen({
     screen,
@@ -378,7 +389,9 @@ export function HitlPage({
               <div className="hitl-placeholder">
                 {state?.mode === 'REQUESTED'
                   ? 'Agent 正在完成当前操作，请稍候。'
-                  : '等待浏览器画面…'}
+                  : frameTimedOut
+                    ? '浏览器画面加载超时。可先前往目标网址，或重新连接画面。'
+                    : '等待浏览器画面…'}
               </div>
             )}
           </section>
@@ -424,7 +437,7 @@ export function HitlPage({
               <HitlNavigation
                 key={state?.targetUrl}
                 targetUrl={state?.targetUrl}
-                disabled={!interactive || busy || typingPending}
+                disabled={!authorized || busy || typingPending}
                 submit={enqueue}
               />
               <form
@@ -536,9 +549,10 @@ export function HitlPage({
                   {error}
                 </p>
               )}
-              {!connected && (
+              {(!connected || !hasFrame || frameTimedOut) && (
                 <button
                   className="button button-secondary"
+                  disabled={busy || typingPending || completing.current}
                   onClick={() => setAttempt((n) => n + 1)}
                 >
                   重新连接

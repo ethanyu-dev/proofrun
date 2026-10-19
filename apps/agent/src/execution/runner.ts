@@ -75,6 +75,8 @@ const MAX_WORKFLOW_RECOVERIES = 3;
 const MAX_REPEATED_RECORDS = 3;
 /** 证据上传与浏览器状态轮询不会占用新的模型调用。 */
 const POLL_MS = 150;
+/** 人工等待只需秒级状态刷新，续租由独立守卫负责，避免空转争用数据库。 */
+const HUMAN_POLL_MS = 1000;
 /** 导航后只有外壳菜单时最多补采两次，不把无关导航交给模型猜测；不是业务就绪保证。 */
 const SHELL_RETRIES = 2;
 const SHELL_WAIT_MS = 300;
@@ -688,7 +690,7 @@ class Execution {
           view.controlRevision,
           this.guard.signal,
         );
-      await pause(POLL_MS, this.guard.signal);
+      await pause(HUMAN_POLL_MS, this.guard.signal);
     }
   }
   /** 在统一安全点取得预算快照并登记有界审查提示；裁剪只影响发给模型的副本。 */

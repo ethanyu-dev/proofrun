@@ -62,10 +62,11 @@ export interface ExecutionContext {
   closure_verified: boolean;
 }
 
-/** 多表一起加锁，保证结束执行与接收结果不会分别更新出相互矛盾的状态。 */
+/** 写入路径多表一起加锁；状态快照使用 MVCC 读取，不能排队占满连接池并阻塞续期。 */
 export async function executionContext(
   client: PoolClient,
   id: string,
+  options: { lock?: boolean; resolveIdentity?: boolean } = {},
 ): Promise<ExecutionContext> {
   const result = await client.query<ExecutionContext>(
     `
@@ -73,14 +74,15 @@ export async function executionContext(
       t.definition,t.state AS task_state,t.deadline_at,t.cleanup_deadline_at,
       s.id AS session_id,s.state AS session_state,s.node_id,s.node_epoch,s.lease_id,s.fence,s.closure_verified
     FROM pr_executions e JOIN pr_tasks t ON t.id=e.task_id JOIN pr_sessions s ON s.execution_id=e.id
-    WHERE e.id=$1 FOR UPDATE OF e,t,s`,
+    WHERE e.id=$1${options.lock === false ? '' : ' FOR UPDATE OF e,t,s'}`,
     [id],
   );
   if (!result.rows[0])
     throw new ApiError(404, 'EXECUTION_MISSING', 'Execution not found');
   const context = result.rows[0];
-  context.definition =
-    (await selectedTask(client, context.definition)) ?? context.definition;
+  if (options.resolveIdentity !== false)
+    context.definition =
+      (await selectedTask(client, context.definition)) ?? context.definition;
   return context;
 }
 

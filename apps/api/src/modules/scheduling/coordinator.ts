@@ -4,6 +4,7 @@ import {
   type RequestRegistration,
 } from '../requests/registration.js';
 import { selectedTask } from '../identities/selection.js';
+import { staleRenewal } from './renewal.js';
 import type { IdentityLibrary } from '../identities/library.js';
 import { taskEvidenceKinds } from '@proofrun/contracts';
 import { taskOutcomes } from '../tasks/outcome.js';
@@ -981,7 +982,9 @@ export class Coordinator {
   /** 执行 worker 独立续期；节点心跳不能续期一个已经失联的 worker。 */
   async heartbeatExecution(id: string, token: string) {
     return this.db.transaction(async (client) => {
-      const context = await executionContext(client, id);
+      const context = await executionContext(client, id, {
+        resolveIdentity: false,
+      });
       this.authorize(context, token, true);
       const expires = new Date(
         Math.min(
@@ -1008,7 +1011,14 @@ export class Coordinator {
   /** worker 查看会话就绪和清理状态；不暴露数据库中的令牌摘要。 */
   async execution(id: string, token: string) {
     return this.db.transaction(async (client) => {
-      const context = await executionContext(client, id);
+      // 多次读取共享同一快照，但不取得写锁；真正的命令准入仍重新核验当前授权。
+      await client.query(
+        'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY',
+      );
+      const context = await executionContext(client, id, {
+        lock: false,
+        resolveIdentity: false,
+      });
       this.authorize(context, token, false);
       const artifacts = (
         await client.query(
@@ -1717,10 +1727,11 @@ export class Coordinator {
           [context.id],
         );
       } else if (
-        (event.effect === 'MAY_HAVE_HAPPENED' &&
+        !staleRenewal(row.kind as string, event) &&
+        ((event.effect === 'MAY_HAVE_HAPPENED' &&
           !recoverableObservationFailure(row.kind, event)) ||
-        (['session.open', 'session.renew'].includes(row.kind as string) &&
-          event.operationStatus !== 'SUCCEEDED')
+          (['session.open', 'session.renew'].includes(row.kind as string) &&
+            event.operationStatus !== 'SUCCEEDED'))
       ) {
         await stopExecution(
           client,
@@ -1851,8 +1862,9 @@ export class Coordinator {
             ),
           ],
         );
+        // 续期回执缺失只结束本条命令；新的心跳仍可续期，本地租约或 worker 真正过期时另行撤权。
         if (
-          command.kind !== 'session.close' &&
+          !['session.close', 'session.renew'].includes(command.kind) &&
           context.task_state === 'RUNNING' &&
           (command.first_sent_at || command.kind === 'session.open')
         )

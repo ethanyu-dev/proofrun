@@ -12,6 +12,8 @@ export class LeaseGuard {
   private readonly controller = new AbortController();
   private readonly heartbeat: Promise<void>;
   private leaseTimer: ReturnType<typeof setTimeout> | undefined;
+  /** 同一执行已确认的最长租约；旧状态快照不能回退它，截止后也不能复活。 */
+  private leaseExpiresAt = 0;
   private deadlineTimer: ReturnType<typeof setTimeout> | undefined;
   private deadline: number;
   /** 仅接受新控制代次，防止慢心跳覆盖已确认的暂停或恢复。 */
@@ -118,8 +120,19 @@ export class LeaseGuard {
     this.controller.abort(new AgentFault(code, message));
   }
   private arm(expires: string): void {
+    const next = Date.parse(expires);
+    if (!Number.isFinite(next)) {
+      this.fail('INVALID_EXECUTION_VIEW', '执行租约期限无效');
+      return;
+    }
+    if (this.leaseExpiresAt && this.leaseExpiresAt <= Date.now()) {
+      this.fail('LEASE_LOST', '执行租约已过期');
+      return;
+    }
+    if (next <= this.leaseExpiresAt) return;
+    this.leaseExpiresAt = next;
     clearTimeout(this.leaseTimer);
-    const remaining = Date.parse(expires) - Date.now();
+    const remaining = next - Date.now();
     if (remaining <= 0) {
       this.fail('LEASE_LOST', '执行租约已过期');
       return;

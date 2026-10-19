@@ -13,6 +13,32 @@ import { keyboardReceipt } from '../../apps/agent/dist/execution/keyboard-receip
 import { OperationJournal } from '../../apps/agent/dist/execution/operation-journal.js';
 import { config, grant, FakeControl, finish, modelServer } from './fixture.mjs';
 
+// 范围：真实租约定时器抵抗同代次旧快照回退，并拒绝过期后复活；控制面和网络由挂起夹具替代。
+test('新续期后到达的旧状态快照不能缩短租约，真正到期仍撤权', async () => {
+  const execution = grant();
+  execution.leaseExpiresAt = new Date(Date.now() + 150).toISOString();
+  const client = new FakeControl();
+  client.hangingHeartbeat = true;
+  const guard = new LeaseGuard(client, execution, new AbortController().signal);
+  try {
+    const newer = new Date(Date.now() + 500).toISOString();
+    assert.equal(guard.syncTiming({ leaseExpiresAt: newer }), true);
+    await pause(200);
+    guard.syncTiming({ leaseExpiresAt: execution.leaseExpiresAt });
+    assert.equal(guard.signal.aborted, false);
+    await pause(350);
+    assert.equal(guard.signal.aborted, true);
+    assert.equal(
+      guard.syncTiming({
+        leaseExpiresAt: new Date(Date.now() + 3000).toISOString(),
+      }),
+      false,
+    );
+  } finally {
+    await guard.close();
+  }
+});
+
 /** 每次调用独占一个本地模型 HTTP 端口，保证失败也关闭监听。 */
 async function run(decide, prepare = () => {}, overrides = {}) {
   const server = await modelServer(decide);

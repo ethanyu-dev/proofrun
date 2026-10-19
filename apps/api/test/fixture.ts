@@ -136,6 +136,9 @@ export class SimulatedNode {
   results = new Map<string, Record<string, unknown>>();
   calls = new Map<string, number>();
   ignoreClose = false;
+  /** 注入单条续期拒绝或暂扣回执；只模拟协议故障，不模拟节点的本地时钟。 */
+  renewalErrors: string[] = [];
+  holdRenewals = false;
   /** 只延后关闭事件，关闭命令仍确认成功，用于验证两类回执的乱序。 */
   holdClosedEvent = false;
   unknownWrite = false;
@@ -293,6 +296,24 @@ export class SimulatedNode {
       (this.calls.get(command.commandId) ?? 0) + 1,
     );
     const kind = command.command.type;
+    if (kind === 'session.renew') {
+      if (this.holdRenewals) return;
+      const code = this.renewalErrors.shift();
+      if (code) {
+        const { command: _, timeoutMs: __, ...identity } = command;
+        const result = {
+          ...identity,
+          type: 'command.result',
+          messageId: command.commandId,
+          operationStatus: 'FAILED',
+          effect: 'NOT_STARTED',
+          error: { code, message: '测试注入的续期拒绝' },
+        };
+        this.results.set(command.commandId, result);
+        this.send(result);
+        return;
+      }
+    }
     if (kind === 'session.open') this.sessions.set(command.sessionId, command);
     if (kind === 'browser.auth.save' && this.restartOnAuthSave)
       for (const relay of this.relays) relay.close();

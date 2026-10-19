@@ -45,6 +45,7 @@
   },
   "devDependencies": {
     "@types/node": "24.13.6",
+    "happy-dom": "21.0.3",
     "json-schema-to-typescript": "16.0.0",
     "prettier": "3.9.9",
     "tsx": "4.23.15",
