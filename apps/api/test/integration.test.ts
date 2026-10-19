@@ -2947,6 +2947,154 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       await cleaned(second.taskId);
     });
 
+    // 范围：真实数据库与网关保留迟到续期回执且允许后续动作；会话真实过期仍撤权，不模拟 Chrome。
+    await suite.test('迟到续期不能误杀有效会话，真正过期仍终止', async () => {
+      for (const code of [
+        'LEASE_EXPIRED',
+        'DEADLINE_EXCEEDED',
+        'SESSION_EXPIRED',
+      ]) {
+        const node = await addNode(`renew-${code}`);
+        node.renewalErrors.push(code);
+        const definition = task(`renew-${code}`);
+        await submit(definition);
+        const execution = await claim();
+        await ready(execution);
+        await until(
+          async () =>
+            (
+              await sql.query(
+                "SELECT 1 FROM pr_commands WHERE execution_id=$1 AND kind='session.renew' AND result#>>'{error,code}'=$2",
+                [execution.id, code],
+              )
+            ).rowCount,
+          Boolean,
+        );
+        if (code === 'SESSION_EXPIRED') {
+          await cleaned(definition.taskId);
+          assert.equal(
+            (await api('GET', `/v1/tasks/${definition.taskId}`)).data.state,
+            'ERROR',
+          );
+        } else {
+          assert.equal(
+            (await command(execution, { type: 'browser.observe' })).result
+              .operationStatus,
+            'SUCCEEDED',
+          );
+          assert.equal(
+            (await api('GET', `/v1/tasks/${definition.taskId}`)).data.state,
+            'RUNNING',
+          );
+          await api('POST', `/v1/tasks/${definition.taskId}/cancel`);
+          await cleaned(definition.taskId);
+        }
+      }
+    });
+
+    // 范围：投递过的续期回执缺失不会触发通用命令超时撤权；真正 worker 超时由已有回归覆盖。
+    await suite.test('单条续期回执超时后可由新心跳继续续期', async () => {
+      const node = await addNode('renew-receipt-timeout');
+      node.holdRenewals = true;
+      const definition = task('renew-receipt-timeout');
+      await submit(definition);
+      const execution = await claim();
+      await ready(execution);
+      const pending = await until<{ id: string }>(
+        async () =>
+          (
+            await sql.query(
+              "SELECT id FROM pr_commands WHERE execution_id=$1 AND kind='session.renew' AND first_sent_at IS NOT NULL AND result IS NULL LIMIT 1",
+              [execution.id],
+            )
+          ).rows[0],
+        Boolean,
+      );
+      await sql.query(
+        "UPDATE pr_commands SET deadline_at=clock_timestamp()-interval '1 second' WHERE id=$1",
+        [pending.id],
+      );
+      await until(
+        async () =>
+          (
+            await sql.query('SELECT result FROM pr_commands WHERE id=$1', [
+              pending.id,
+            ])
+          ).rows[0].result,
+        Boolean,
+      );
+      node.holdRenewals = false;
+      node.heartbeat();
+      await until(
+        async () =>
+          (
+            await sql.query(
+              "SELECT 1 FROM pr_commands WHERE execution_id=$1 AND kind='session.renew' AND result->>'operationStatus'='SUCCEEDED'",
+              [execution.id],
+            )
+          ).rowCount,
+        Boolean,
+      );
+      assert.equal(
+        (await command(execution, { type: 'browser.observe' })).result
+          .operationStatus,
+        'SUCCEEDED',
+      );
+      await api('POST', `/v1/tasks/${definition.taskId}/cancel`);
+      await cleaned(definition.taskId);
+    });
+
+    // 范围：真实行锁被持有时多路状态快照仍返回，另一个执行仍可续租；不声称覆盖生产吞吐量。
+    await suite.test(
+      '状态轮询不等待执行写锁，也不挤占其他执行续租',
+      async () => {
+        await addNode('read-snapshot', 2);
+        const definitions = [task('read-snapshot'), task('read-snapshot')];
+        for (const definition of definitions) await submit(definition);
+        const first = await claim();
+        const second = await claim();
+        await ready(first);
+        await ready(second);
+        const blocker = await sql.connect();
+        try {
+          await blocker.query('BEGIN');
+          await blocker.query(
+            'SELECT id FROM pr_executions WHERE id=$1 FOR UPDATE',
+            [first.id],
+          );
+          await Promise.all(
+            Array.from({ length: 20 }, async () => {
+              const response = await fetch(
+                `${base}/v1/executions/${first.id}`,
+                {
+                  headers: { authorization: `Bearer ${first.leaseToken}` },
+                  signal: AbortSignal.timeout(1500),
+                },
+              );
+              assert.equal(response.status, 200);
+              assert.equal((await response.json()).state, 'RUNNING');
+            }),
+          );
+          const response = await fetch(
+            `${base}/v1/executions/${second.id}/heartbeat`,
+            {
+              method: 'POST',
+              headers: { authorization: `Bearer ${second.leaseToken}` },
+              signal: AbortSignal.timeout(1500),
+            },
+          );
+          assert.equal(response.status, 200);
+        } finally {
+          await blocker.query('ROLLBACK');
+          blocker.release();
+          for (const definition of definitions) {
+            await api('POST', `/v1/tasks/${definition.taskId}/cancel`);
+            await cleaned(definition.taskId);
+          }
+        }
+      },
+    );
+
     // 范围：真实心跳事务等待 execution 时不阻塞命令所需的节点外键锁。
     // 用数据库锁构造稳定交错，不模拟生产吞吐量或所有可能的锁冲突。
     await suite.test('心跳与命令外键检查不形成锁循环', async () => {
