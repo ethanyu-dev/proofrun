@@ -412,6 +412,33 @@ test('v2 双跑命名空间与历史单组保持隔离', async () => {
   assert.equal(records.size, 3);
 });
 
+// 范围：部署从双组改为 JEV 后，旧 case 幂等重提仍保留双组，新 case 只创建一个任务；不连接 Railway 或数据库。
+test('切换为 JEV 单组不改写已经接收的双组 case', async () => {
+  const { service, records, tasks } = fixture({
+    ...PROFILE,
+    executionMode: 'parallel',
+  });
+  const [original] = await service.submit([INPUT]);
+  assert.equal(original!.comparison!.arms.length, 2);
+  const single = new CaseV2Service(
+    tasks,
+    { ...PROFILE, executionMode: 'jev' },
+    'https://proofrun.test',
+  );
+  const [repeated] = await single.submit([INPUT]);
+  assert.deepEqual(repeated!.comparison, original!.comparison);
+  assert.equal(records.size, 2);
+  const [fresh] = await single.submit([
+    { ...INPUT, caseId: 'single-after-migration' },
+  ]);
+  assert.equal(fresh!.comparison, undefined);
+  assert.equal(records.size, 3);
+  assert.equal(
+    records.get('case-v2-single-after-migration')!.definition.executionMode,
+    'jev',
+  );
+});
+
 // 范围：清理分段排序、身份冲突及最大 64 步协议；不连接数据库或浏览器。
 test('清理始终置后，业务与清理身份唯一且支持各 32 步', () => {
   const input = {
