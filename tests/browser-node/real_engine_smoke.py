@@ -16,8 +16,11 @@ import threading
 import time
 import uuid
 
+# 本地页面分别上报普通 DOM、Shadow DOM 与 iframe 的按键，不依赖浏览器关闭时的页面事件。
 HTML = b'''<!doctype html><html><title>ProofRun engine fixture</title><body>
-<div id="plain"></div><div id="outer"></div><script>
+<div id="plain"></div><div id="outer"></div><p id="keyboard"></p>
+<label>Redirect focus<input id="redirect"></label><script>
+window.recordKey = (prefix, key) => navigator.sendBeacon('/keys', JSON.stringify({prefix, key}));
 function form(root, prefix) {
   root.innerHTML = `<label>${prefix} name<input id="name"></label><button>Save ${prefix}</button><p role="status">Waiting</p>`;
   root.querySelector('button').onclick = async () => {
@@ -25,11 +28,26 @@ function form(root, prefix) {
     const response = await fetch('/submit', {method:'POST', body:JSON.stringify({prefix, name})});
     root.querySelector('[role=status]').textContent = response.ok ? `Saved ${prefix} ${name}` : 'Failed';
   };
+  root.querySelector('input').onkeydown = event => {
+    window.recordKey(prefix, event.key);
+    document.querySelector('#keyboard').textContent = `Key ${prefix} ${event.key}`;
+  };
+  root.querySelector('input').onblur = () => {
+    document.querySelector('#keyboard').textContent += ` Blur ${prefix}`;
+  };
 }
 form(document.querySelector('#plain'), 'Plain');
 const first = document.querySelector('#outer').attachShadow({mode:'open'});
 first.innerHTML = '<section></section>';
 form(first.querySelector('section').attachShadow({mode:'open'}), 'Shadow');
+document.querySelector('#redirect').onfocus = () => {
+  document.querySelector('#keyboard').textContent = 'Focus redirected without key';
+  document.querySelector('#plain input').focus();
+};
+const frame = document.createElement('iframe');
+frame.title = 'Keyboard frame';
+frame.srcdoc = `<label>Frame name<input onkeydown="parent.recordKey('Frame',event.key); parent.document.querySelector('#keyboard').textContent='Key Frame '+event.key" onblur="parent.document.querySelector('#keyboard').textContent+=' Blur Frame'"></label><button>After frame input</button>`;
+document.body.append(frame);
 </script></body></html>'''
 
 
@@ -44,7 +62,11 @@ class Fixture(BaseHTTPRequestHandler):
         self.wfile.write(HTML)
 
     def do_POST(self):
-        self.server.writes.append(json.loads(self.rfile.read(int(self.headers['Content-Length']))))
+        data = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+        if self.path == '/keys':
+            self.server.key_events.append(data)
+        else:
+            self.server.writes.append(data)
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b'{}')
@@ -59,6 +81,7 @@ def run():
     session = uuid.uuid4().hex
     server = ThreadingHTTPServer(('127.0.0.1', 0), Fixture)
     server.writes = []
+    server.key_events = []
     threading.Thread(target=server.serve_forever, daemon=True).start()
     log = (root / 'stderr.log').open('w')
     process = subprocess.Popen([str(binary), 'session-host', '--directory', str(root)],
@@ -79,10 +102,15 @@ def run():
         process.stdin.write(json.dumps(message) + '\n')
         process.stdin.flush()
 
-    def command(**operation):
+    def attempt(**operation):
+        """保留失败回执供边界断言；未知效果仍由真实 host 按原规则关闭。"""
         send({'type': 'run', 'command': operation, 'timeout_ms': 15000})
         message = receive()
         assert message['type'] == 'host.result', message
+        return message
+
+    def command(**operation):
+        message = attempt(**operation)
         assert 'Ok' in message['result'], message
         return message['result']['Ok']
 
@@ -112,19 +140,60 @@ def run():
                     arguments['value'] = name
                 command(**arguments)
             command(type='browser.wait', selector='[role="status"]', text=f'Saved {prefix} {name}')
+        # 范围：从其他输入框取得焦点后，定向 Tab 必须真实派发给目标并使其失焦；
+        # 同时覆盖两层 Shadow DOM、同源 iframe、过期观察拒绝与全局按键，不代表生产校验提示触发成功。
+        for prefix, other in [('Plain', 'Shadow'), ('Shadow', 'Plain'), ('Frame', 'Plain')]:
+            observation = command(type='browser.observe')
+            other_target = next(t['target'] for t in observation['targets'] if t.get('name') == f'{other} name')
+            command(type='browser.act', action='click', target=other_target, observationId=observation['observationId'])
+            observation = command(type='browser.observe')
+            assert observation['viewport']['targetedPress'] is True
+            target = next(t['target'] for t in observation['targets'] if t.get('name') == f'{prefix} name')
+            # 当前观察身份不能让虚构目标获得全局按键兜底，拒绝后原观察仍可用于有效目标。
+            missing = attempt(type='browser.act', action='press', target='dom-missing', value='Tab', observationId=observation['observationId'])
+            assert missing['result']['Err']['code'] == 'INVALID_TARGET', missing
+            assert missing['result']['Err']['effect'] == 'NOT_STARTED', missing
+            receipt = command(type='browser.act', action='press', target=target, value='Tab', observationId=observation['observationId'])
+            assert receipt['keyboard'] == {'scope': 'target', 'target': target, 'focusVerified': True}, receipt
+            stale = attempt(type='browser.act', action='press', target=target, value='Tab', observationId=observation['observationId'])
+            assert stale['result']['Err']['code'] == 'STALE_OBSERVATION', stale
+            assert stale['result']['Err']['effect'] == 'NOT_STARTED', stale
+            command(type='browser.wait', selector='#keyboard', text=f'Key {prefix} Tab Blur {prefix}')
+        global_press = command(type='browser.act', action='press', value='Escape')
+        assert global_press['keyboard'] == {'scope': 'current-focus', 'focusVerified': False}, global_press
         # 证据采集：检查真实 PNG 和页面标题；不测试节点的上传与存储回执。
         observation = command(type='browser.observe', screenshot=True)
         screenshot = Path(observation['localScreenshot'])
         assert screenshot.read_bytes().startswith(b'\x89PNG\r\n\x1a\n')
         assert observation['title'] == 'ProofRun engine fixture', observation
         assert server.writes == [{'prefix': 'Plain', 'name': 'Ada'}, {'prefix': 'Shadow', 'name': 'Lin'}], server.writes
+        # 范围：真实 focus 监听器夺走焦点时返回未确认并结束 host；不覆盖控制面资源回收。
+        redirect = next(t['target'] for t in observation['targets'] if t.get('name') == 'Redirect focus')
+        denied = attempt(type='browser.act', action='press', target=redirect, value='Tab', observationId=observation['observationId'])
+        assert denied['result']['Err']['code'] == 'KEYBOARD_FOCUS_UNCONFIRMED', denied
+        assert denied['result']['Err']['effect'] == 'MAY_HAVE_HAPPENED', denied
+        # 关闭父管道以释放 Tokio 已开始的阻塞 stdin 读取，避免把运行时退出等待误判为按键失败。
+        process.stdin.close()
+        assert process.wait(timeout=10) == 0
+        # 独立 HTTP 记录收到的键；无效目标、过期观察和焦点被抢走都不能增加 Tab 次数。
+        deadline = time.monotonic() + 3
+        while len(server.key_events) < 3 and time.monotonic() < deadline:
+            time.sleep(.05)
+        assert [event for event in server.key_events if event['key'] == 'Tab'] == [
+            {'prefix': prefix, 'key': 'Tab'} for prefix in ['Plain', 'Shadow', 'Frame']
+        ], server.key_events
         print(json.dumps({'passed': ['real native CLI and Chrome', 'fresh observation references',
                                      'plain and two-level open Shadow DOM forms', 'shadow condition wait',
-                                     'two independently counted business writes', 'PNG screenshot'],
+                                     'two independently counted business writes', 'PNG screenshot',
+                                     'targeted Tab focus and blur in DOM, Shadow DOM and iframe',
+                                     'stale press rejection and current-focus receipt',
+                                     'focus redirection stops key dispatch'],
                           'root': str(root), 'screenshot': str(screenshot)}, indent=2))
     finally:
         if process.poll() is None:
-            send({'type': 'close'})
+            if not process.stdin.closed:
+                send({'type': 'close'})
+                process.stdin.close()
             process.wait(timeout=15)
         process.stdin.close()
         log.close()

@@ -33,6 +33,13 @@ export interface RecentOperation {
   action?: string;
   /** 派发时的目标名称，不是可重放目标。 */
   targetName?: string;
+  /** 定向按键的请求目标，仅表示意图，不能作为实际焦点证据。 */
+  requestedTargetName?: string;
+  /** focusVerified 仅确认派发按键前的焦点，不证明失焦事件或业务校验结果。 */
+  keyboard?: {
+    scope: 'target' | 'current-focus' | 'unknown';
+    focusVerified: boolean;
+  };
   /** 执行器保留的输入摘要。 */
   value?: string;
   /** Cookie 清理只向模型返回名字和验证结果，不含值。 */

@@ -9,6 +9,8 @@ import { ControlClient } from '../../apps/agent/dist/client.js';
 import { AgentFault, pause } from '../../apps/agent/dist/http.js';
 import { LeaseGuard } from '../../apps/agent/dist/execution/lease.js';
 import { Workflow } from '../../apps/agent/dist/execution/workflow.js';
+import { keyboardReceipt } from '../../apps/agent/dist/execution/keyboard-receipt.js';
+import { OperationJournal } from '../../apps/agent/dist/execution/operation-journal.js';
 import { config, grant, FakeControl, finish, modelServer } from './fixture.mjs';
 
 /** 每次调用独占一个本地模型 HTTP 端口，保证失败也关闭监听。 */
@@ -31,6 +33,171 @@ async function run(decide, prepare = () => {}, overrides = {}) {
     await server.close();
   }
 }
+
+// 范围：真实 Agent 派发和上下文投影，节点聚焦由回执夹具模拟；真实按键另由本地 Chrome 场景覆盖。
+test('定向 press 绑定当前观察，并区分请求目标与节点确认焦点', async () => {
+  const { client, report } = await run(
+    (context, turn, body) => {
+      if (turn === 1) {
+        const schema = body.tools.find(
+          (tool) => tool.function.name === 'browser_act',
+        ).function.parameters;
+        const pressRule = schema.allOf.find(
+          (rule) => rule.if.properties.action.const === 'press',
+        );
+        assert.deepEqual(
+          pressRule.then.properties.target.enum,
+          context.observation.targets.map((target) => target.target),
+        );
+        return {
+          type: 'browser.act',
+          action: 'press',
+          target: '@e1',
+          value: 'Tab',
+        };
+      }
+      const press = context.recentOperations.find(
+        (op) => op.action === 'press',
+      );
+      assert.equal(press.requestedTargetName, '名称');
+      assert.equal(press.targetName, '名称');
+      assert.deepEqual(press.keyboard, {
+        scope: 'target',
+        focusVerified: true,
+      });
+      assert.deepEqual(
+        context.actionMemory.items.find((op) => op.action === 'press').keyboard,
+        press.keyboard,
+      );
+      return finish(context);
+    },
+    (client) => {
+      const command = client.command.bind(client);
+      client.command = async (...args) => {
+        const result = await command(...args);
+        if (args[2].type === 'browser.observe')
+          result.data.viewport = { targetedPress: true };
+        if (args[2].action === 'press')
+          result.data.keyboard = {
+            scope: 'target',
+            target: args[2].target,
+            focusVerified: true,
+          };
+        return result;
+      };
+    },
+  );
+  assert.equal(report.verdict, 'PASSED');
+  assert.equal(
+    client.calls.find((c) => c.operation.action === 'press').operation
+      .observationId,
+    client.observedIds[0],
+  );
+});
+
+// 范围：旧节点能力与过期目标在派发前拒绝；不证明模型会主动选择 click 后再 press。
+test('旧节点与虚构目标不能静默执行定向 press，全局按键保持可用', async () => {
+  for (const supported of [false, true]) {
+    const { client } = await run(
+      (context, turn, body) => {
+        if (turn === 1) {
+          if (!supported) {
+            const schema = body.tools.find(
+              (tool) => tool.function.name === 'browser_act',
+            ).function.parameters;
+            assert.deepEqual(
+              schema.allOf.find(
+                (rule) => rule.if.properties.action.const === 'press',
+              ).then,
+              { not: { required: ['target'] } },
+            );
+          }
+          return {
+            type: 'browser.act',
+            action: 'press',
+            target: supported ? '@stale' : '@e1',
+            value: 'Tab',
+          };
+        }
+        if (turn === 2) {
+          assert.match(
+            context.feedback,
+            supported ? /目标不属于当前观察/ : /不支持定向 press/,
+          );
+          return { type: 'browser.act', action: 'press', value: 'Escape' };
+        }
+        const press = context.recentOperations.find(
+          (op) => op.action === 'press',
+        );
+        assert.equal(press.targetName, undefined);
+        assert.deepEqual(press.keyboard, {
+          scope: 'current-focus',
+          focusVerified: false,
+        });
+        return finish(context);
+      },
+      (client) => {
+        const command = client.command.bind(client);
+        client.command = async (...args) => {
+          const result = await command(...args);
+          if (supported && args[2].type === 'browser.observe')
+            result.data.viewport = { targetedPress: true };
+          return result;
+        };
+      },
+    );
+    const presses = client.calls.filter((c) => c.operation.action === 'press');
+    assert.equal(presses.length, 1);
+    assert.equal(presses[0].operation.target, undefined);
+  }
+});
+
+// 范围：旧回执、错误目标和未确认执行不能伪造焦点证据，关键历史保留限制；不执行浏览器。
+test('无可靠节点确认时按键目标只保留为请求意图', () => {
+  for (const result of [
+    { operationStatus: 'SUCCEEDED', effect: 'COMPLETED', data: {} },
+    {
+      operationStatus: 'SUCCEEDED',
+      effect: 'COMPLETED',
+      data: {
+        keyboard: { scope: 'target', target: '@other', focusVerified: true },
+      },
+    },
+    {
+      operationStatus: 'UNKNOWN',
+      effect: 'MAY_HAVE_HAPPENED',
+      data: {
+        keyboard: { scope: 'target', target: '@e1', focusVerified: true },
+      },
+    },
+  ]) {
+    const receipt = keyboardReceipt('@e1', '邀请码', result);
+    assert.equal(receipt.targetName, undefined);
+    assert.equal(receipt.requestedTargetName, '邀请码');
+    assert.deepEqual(receipt.keyboard, {
+      scope: 'unknown',
+      focusVerified: false,
+    });
+    const journal = new OperationJournal();
+    journal.record({
+      commandId: 'press',
+      operation: 'browser.act',
+      action: 'press',
+      ...receipt,
+      operationStatus: result.operationStatus,
+      effect: result.effect,
+    });
+    for (let i = 0; i < 10; i++)
+      journal.record({
+        commandId: `observe-${i}`,
+        operation: 'browser.observe',
+        operationStatus: 'SUCCEEDED',
+        effect: 'COMPLETED',
+      });
+    assert.deepEqual(journal.critical().items[0].keyboard, receipt.keyboard);
+    assert.equal(journal.critical().items[0].targetName, undefined);
+  }
+});
 
 // 范围：真实模型 HTTP 协议、逐步刷新、动态观察身份与报告；浏览器和模型推理均为夹具。
 test('填写、提交、观察成功文本并生成可追溯报告', async () => {

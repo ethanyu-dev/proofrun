@@ -51,6 +51,7 @@ test('运行、预算、资源、模型和未知异常有独立分类', () => {
     NODE_SHUTDOWN: 'NODE_ERROR',
     SESSION_LEASE_EXPIRED: 'SESSION_ERROR',
     MODEL_REQUEST_FAILED: 'MODEL_ERROR',
+    MODEL_BLOCKED: 'EXECUTION_BLOCKED',
     INVALID_MODEL_DECISION: 'MODEL_ERROR',
     TRANSPORT_ERROR: 'SERVICE_ERROR',
     HTTP_ERROR: 'SERVICE_ERROR',
@@ -72,6 +73,26 @@ test('运行、预算、资源、模型和未知异常有独立分类', () => {
       reportCode: 'ENVIRONMENT_NOT_READY',
     }).category,
     'ENVIRONMENT_BLOCKED',
+  );
+});
+
+// 范围：正常阻塞与旧 AGENT_ERROR 包装均保留原因码；不覆盖真实模型服务或浏览器执行。
+test('MODEL_BLOCKED 属于执行受阻，独立终止原因仍有优先级', () => {
+  for (const facts of [
+    { state: 'COMPLETED', reportCode: 'MODEL_BLOCKED', disposition: 'BLOCKED' },
+    { state: 'ERROR', code: 'AGENT_ERROR', reportCode: 'MODEL_BLOCKED' },
+  ]) {
+    const outcome = executionOutcome(facts);
+    assert.equal(outcome.category, 'EXECUTION_BLOCKED');
+    assert.equal(outcome.reasonCode, 'MODEL_BLOCKED');
+  }
+  assert.equal(
+    executionOutcome({
+      state: 'TIMED_OUT',
+      code: 'HUMAN_INTERVENTION_TIMEOUT',
+      reportCode: 'MODEL_BLOCKED',
+    }).category,
+    'HUMAN_TIMEOUT',
   );
 });
 

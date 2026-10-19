@@ -15,6 +15,35 @@ const require = createRequire(
 const { createElement } = require('react');
 const { renderToStaticMarkup } = require('react-dom/server');
 
+// 范围：新分类和旧响应静态渲染均不误报服务异常；不模拟 API 部署或历史报告迁移。
+test('模型主动阻塞显示执行受阻并保留原始原因码', () => {
+  const current = executionOutcome({
+    state: 'COMPLETED',
+    reportCode: 'MODEL_BLOCKED',
+    disposition: 'BLOCKED',
+  });
+  for (const outcome of [
+    current,
+    { ...current, category: 'MODEL_ERROR' as const },
+  ]) {
+    const task = {
+      state: 'COMPLETED',
+      executionOutcome: outcome,
+      executions: [],
+    } as unknown as TaskDetail;
+    const status = renderToStaticMarkup(
+      createElement(TaskExecutionStatus, { task }),
+    );
+    const details = renderToStaticMarkup(
+      createElement(ExecutionOutcomeDetails, { outcome }),
+    );
+    assert.match(status, /执行受阻/);
+    assert.match(details, /执行受阻/);
+    assert.match(details, /MODEL_BLOCKED/);
+    assert.doesNotMatch(status + details, /模型服务异常/);
+  }
+});
+
 // 范围：服务端渲染只验证分类与原因独立展示，不代表真实人工超时或浏览器交互验收。
 test('阻塞状态不被原始 ERROR 覆盖，原始原因和终止原因同时可见', () => {
   const outcome = executionOutcome({

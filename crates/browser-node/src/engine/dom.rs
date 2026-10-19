@@ -28,6 +28,8 @@ const CDP_LIMIT: usize = 32 * 1024 * 1024;
 const INSPECT_CONTROL: &str = include_str!("inspect-control.js");
 /// 点击命中验证包含有界的复合下拉展示层归属检查。
 const CHECK_HIT: &str = include_str!("check-hit.js");
+/// 定向按键前确认真实焦点；聚焦不会隐式滚动，也不代表后续业务校验已触发。
+const FOCUS_FOR_PRESS: &str = include_str!("focus-for-press.js");
 /// 每个真实文档独立的只读观察环境，隔离页面框架对 DOM 包装对象的重写。
 const OBSERVATION_WORLD: &str = "proofrun-observation";
 /// 仅保存少量异常的首行及节点身份，避免堆栈撑大模型上下文。
@@ -983,6 +985,19 @@ impl Dom {
             ));
         }
         if ["check", "uncheck"].contains(&action) && state["checked"] == (action == "check") {
+            return Ok(());
+        }
+        if action == "focus" {
+            // focus 监听器可能转移焦点、导航或移除目标，派发后失败不能当作未执行重试。
+            *input_started = true;
+            let focused = self.call(Some(&target.session), "Runtime.callFunctionOn",
+                json!({"objectId":object_id,"functionDeclaration":FOCUS_FOR_PRESS,"returnByValue":true})).await?;
+            if focused.get("exceptionDetails").is_some() || focused["result"]["value"] != true {
+                return Err(Fault::unknown(
+                    "KEYBOARD_FOCUS_UNCONFIRMED",
+                    "target focus was not confirmed; key was not dispatched",
+                ));
+            }
             return Ok(());
         }
         if action == "select" {

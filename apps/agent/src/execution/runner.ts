@@ -54,6 +54,7 @@ import {
   type PreviousObservation,
 } from './context.js';
 import { OperationJournal } from './operation-journal.js';
+import { keyboardReceipt } from './keyboard-receipt.js';
 import {
   ObservationTracker,
   STALLED_ROUNDS,
@@ -412,9 +413,20 @@ class Execution {
       ...(operation.type === 'browser.act'
         ? {
             action: operation.action,
-            targetName:
-              this.current?.targets.find((t) => t.target === operation.target)
-                ?.name ?? '',
+            ...(operation.action === 'press'
+              ? keyboardReceipt(
+                  operation.target,
+                  this.current?.targets.find(
+                    (t) => t.target === operation.target,
+                  )?.name ?? '',
+                  result,
+                )
+              : {
+                  targetName:
+                    this.current?.targets.find(
+                      (t) => t.target === operation.target,
+                    )?.name ?? '',
+                }),
             ...(operation.value === undefined
               ? {}
               : { value: operation.value }),
@@ -902,6 +914,23 @@ class Execution {
         'INVALID_MODEL_DECISION',
         'scroll.value 只能是 up、down、left、right；不支持 top/bottom。幅度由执行器依据当前视口计算。',
       );
+    if (decision.action === 'press' && decision.target !== undefined) {
+      if (
+        !decision.value ||
+        !this.current?.targets.some((t) => t.target === decision.target)
+      )
+        throw invalid();
+      // 旧节点会忽略 press.target，不能把定向意图静默降级成向任意焦点按键。
+      if (
+        (this.current.viewport as { targetedPress?: boolean } | undefined)
+          ?.targetedPress !== true
+      )
+        throw new AgentFault(
+          'INVALID_MODEL_DECISION',
+          '当前节点不支持定向 press；先 click 聚焦目标并重新观察，再使用不带 target 的 press',
+        );
+      return { ...decision, observationId: this.current.observationId };
+    }
     if (['navigate', 'tab.new'].includes(decision.action)) {
       try {
         const url = new URL(decision.target ?? '');

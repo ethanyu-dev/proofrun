@@ -30,6 +30,41 @@ const CASE = {
   cleanup: [],
 };
 
+// 范围：请求页兼容旧 API 的 MODEL_ERROR 分类；只静态渲染，不改写历史报告或模拟部署。
+test('请求页的 MODEL_BLOCKED 与任务详情统一显示执行受阻', () => {
+  for (const category of ['MODEL_ERROR', 'EXECUTION_BLOCKED']) {
+    const value = {
+      requestId: 'blocked-request',
+      cases: [
+        {
+          caseId: 'blocked-case',
+          title: '受阻夹具',
+          reportStatus: 'INCONCLUSIVE',
+          executionOrigin: 'reused',
+          criteria: [],
+          arms: [
+            {
+              taskId: 'blocked-task',
+              executionMode: 'jev',
+              createdAt: '2026-10-19T00:00:00Z',
+              result: {
+                status: 'COMPLETED',
+                reportStatus: 'INCONCLUSIVE',
+                executionOutcome: { category, reasonCode: 'MODEL_BLOCKED' },
+              },
+            },
+          ],
+        },
+      ],
+    } as unknown as RequestResultV2;
+    const html = renderToStaticMarkup(
+      createElement(RequestCases, { api: new ApiClient('fixture'), value }),
+    );
+    assert.match(html, /执行受阻/);
+    assert.doesNotMatch(html, /模型服务异常/);
+  }
+});
+
 // 范围：草稿归一化后重试保留身份，未知字段不被忽略；不发送浏览器请求。
 test('数组粘贴转成稳定请求草稿，对象重读不生成新身份', () => {
   const request = parseVerificationRequest(JSON.stringify([CASE]));
