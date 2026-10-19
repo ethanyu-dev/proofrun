@@ -373,3 +373,94 @@
     justify-content: flex-start;
   }
 }
+
+/* 汇总、分析、逐 case 依次展开；颜色与文字同时表达业务验证状态。 */
+.request-report-overview,
+.request-agent-analysis {
+  margin-top: 18px;
+}
+.request-report-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.request-report-heading h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.request-report-counts {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 28px;
+  margin: 20px 0;
+}
+.request-report-total {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.request-report-total > strong {
+  font-size: 36px;
+  font-variant-numeric: tabular-nums;
+}
+.request-report-total strong span {
+  color: var(--color-muted);
+  font-size: 24px;
+  font-weight: 400;
+}
+.request-report-counts dl {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 28px;
+  margin: 0;
+}
+.request-report-counts dl > div {
+  display: grid;
+  gap: 8px;
+}
+.request-report-counts dd {
+  margin: 0;
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+}
+.verification-status {
+  display: inline-flex;
+  padding: 3px 9px;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.verification-status-success {
+  color: var(--color-success);
+  background: var(--color-success-surface);
+}
+.verification-status-failure {
+  color: var(--color-danger);
+  background: var(--color-danger-surface);
+}
+.verification-status-partial {
+  color: var(--color-warning);
+  background: var(--color-warning-surface);
+}
+.verification-status-pending {
+  color: var(--color-foreground);
+  background: var(--color-secondary);
+}
+.verification-status-unknown {
+  color: var(--color-muted);
+  background: var(--color-secondary);
+}
+.request-agent-analysis .report-summary {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 700px) {
+  .request-report-counts {
+    gap: 16px;
+  }
+  .case-verification-progress {
+    flex-wrap: wrap;
+  }
+}

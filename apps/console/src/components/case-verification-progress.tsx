@@ -1,3 +1,5 @@
+import { requestCaseVerification } from '@proofrun/contracts/request-verification';
+import { VerificationStatusBadge } from './verification-status';
 import {
   caseVerificationProgress,
   displayedCaseArm,
@@ -15,6 +17,9 @@ export function CaseVerificationProgress({ member }: { member: RequestCase }) {
         <ReportProgress counts={caseVerificationProgress(member)} />
         <span className="muted">通过</span>
       </span>
+      <VerificationStatusBadge
+        status={requestCaseVerification(member).status}
+      />
       {arm ? (
         <Status value={arm.result.status} />
       ) : (

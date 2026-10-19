@@ -8,7 +8,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./public-api.openapi.json": "./public-api.openapi.json"
+    "./public-api.openapi.json": "./public-api.openapi.json",
+    "./request-verification": {
+      "types": "./dist/request-verification.d.ts",
+      "default": "./dist/request-verification.js"
+    }
   },
   "files": [
     "dist",
