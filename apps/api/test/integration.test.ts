@@ -480,8 +480,8 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         assert.equal(metrics.data.automaticReady, 1);
       },
     );
-    // 范围：真实 HTTP 与数据库的默认预算、并发幂等、双组领取和清理；节点为协议夹具，不验证真实模型或业务副作用。
-    await suite.test('v2 默认预算与双跑完整生命周期', async (t) => {
+    // 范围：真实 HTTP 与数据库的默认预算、显式双跑、并发幂等、双组领取和清理；节点为协议夹具，不验证真实模型或业务副作用。
+    await suite.test('v2 默认预算与显式双跑完整生命周期', async (t) => {
       const profile: CaseProfile = config.caseProfile;
       const saved = structuredClone(profile);
       t.after(() => Object.assign(profile, saved));
@@ -491,7 +491,7 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         reuseAuth: true,
       };
       profile.budget = { maxActions: 30 };
-      delete profile.executionMode;
+      profile.executionMode = 'parallel';
       await addNode('budget-fixture', 2);
       const step = {
         type: 'verification',

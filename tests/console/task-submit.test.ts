@@ -77,6 +77,10 @@ test('提交页默认只要求粘贴 v2 JSON', () => {
   assert.match(html, /id="case-definition"/);
   assert.equal((html.match(/<textarea/g) ?? []).length, 1);
   assert.doesNotMatch(html, /任务目标|验收项 ID|最大动作次数/);
-  for (const label of ['双跑模式', '自动复用本站登录状态', '允许人工辅助'])
+  for (const label of [
+    '默认使用 LLM + JEV 单组执行',
+    '自动复用本站登录状态',
+    '允许人工辅助',
+  ])
     assert.ok(html.includes(label));
 });

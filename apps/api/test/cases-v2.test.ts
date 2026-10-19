@@ -64,13 +64,15 @@ const INPUT: VerificationCaseV2 = {
   ],
 };
 
-// 范围：新 v2 缺省配置与显式关闭映射到两组任务；不验证真实登录恢复、人工处理或节点并发。
-test('v2 默认双跑、复用登录并允许人工辅助，保留平台显式配置', () => {
+// 范围：新 v2 缺省配置映射到 JEV 单组，并保留显式模式与关闭选项；不验证真实登录恢复、人工处理或节点并发。
+test('v2 默认 JEV 单组、复用登录并允许人工辅助，保留平台显式配置', () => {
   const { executionMode: _, ...defaults } = PROFILE;
   const task = compileCase(INPUT, defaults);
   const arms = expandCaseTasks(task);
-  assert.equal(task.executionMode, 'parallel');
-  assert.equal(arms.length, 2);
+  assert.equal(task.executionMode, 'jev');
+  assert.equal(arms.length, 1);
+  assert.equal(task.stepBudget!.steps[0]!.maxModelCalls, 40);
+  assert.equal(task.stepBudget!.cleanup.maxModelCalls, 40);
   for (const arm of arms) {
     assert.equal(arm.environment.reuseAuth, true);
     assert.equal(arm.environment.allowIntervention, true);
@@ -341,11 +343,12 @@ test('v2 默认业务每步贡献 300 秒，清理不占业务预算', () => {
   });
 });
 
-// 范围：默认双跑、两组完整预算、各自原任务收尾、查询和取消、配置改变后幂等；不模拟数据库隔离与模型质量。
-test('v2 默认双跑返回两组独立结果，并取消两组', async () => {
+// 范围：显式双跑、两组完整预算、各自原任务收尾、查询和取消、配置改变后幂等；不模拟数据库隔离与模型质量。
+test('v2 显式双跑返回两组独立结果，并取消两组', async () => {
   const profile: CaseProfile = {
     environment: PROFILE.environment,
     budget: { maxActions: 30 },
+    executionMode: 'parallel',
     evidenceKinds: ['DOM'],
   };
   const { service, records, tasks } = fixture(profile);

@@ -119,7 +119,7 @@ export function newTaskDefinition(): VerificationTask {
     protocolVersion: '0.1',
     taskId: `task-${crypto.randomUUID()}`,
     objective: '',
-    executionMode: 'parallel',
+    executionMode: 'jev',
     target: { url: '' },
     environment: {
       id: 'default',

@@ -100,7 +100,7 @@ Agent：
 | `PROOFRUN_AGENT_EVIDENCE_MS`      | 可选，默认 `60000`；观察和 TRACE 完成后等待证据上传及可用确认，仍受任务总期限约束 |
 | `PROOFRUN_AGENT_CONCURRENCY`      | 初始可设为 `2`，同时确认节点容量和供应商配额                                      |
 
-Agent 是后台 worker，启动命令包含 `serve`，不提供 HTTP 健康端点。若使用 JEV 执行模式，再配置 `TYPESAFE_API_KEY` / `TYPESAFE_MODEL`；普通模型模式不需要它们。其它可选参数见根目录 [.env.example](../../.env.example)。
+Agent 是后台 worker，启动命令包含 `serve`，不提供 HTTP 健康端点。新建 case 默认使用 JEV 执行模式，需要配置 `TYPESAFE_API_KEY`，`TYPESAFE_MODEL` 默认 `jev-1.14.0`；显式纯 LLM 模式不需要它们。执行策略默认 `planned-v1`，可通过 `PROOFRUN_AGENT_EXECUTION_POLICY=legacy` 显式回退。其它可选参数见根目录 [.env.example](../../.env.example)。
 
 切换到 DeepSeek 时，按 [Agent 配置说明](../../apps/agent/README.md) 设置 `PROOFRUN_MODEL_THINKING=enabled`、`PROOFRUN_MODEL_REASONING_EFFORT=high` 与 `PROOFRUN_MODEL_MAX_TOKENS=8192`，直连官方接口使用 `PROOFRUN_MODEL_TOKEN_PARAMETER=max_tokens`。先部署支持推理参数的 Agent 与 API 版本，再确认变量变更已部署；原来已失败的任务需要另行重试，更新配置不会改变历史报告。输出上限包含推理 token，复杂调用仍可能截断，不能将提高上限视为增加步骤时间。
 

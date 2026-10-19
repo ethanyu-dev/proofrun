@@ -15,7 +15,7 @@ import type {
   VerificationTask,
 } from '@proofrun/contracts';
 import { ApiError, canonical } from '../../domain.js';
-import type { CaseProfile } from './profile.js';
+import { DEFAULT_CASE_EXECUTION_MODE, type CaseProfile } from './profile.js';
 
 /** 前缀将新版 case 与旧公开入口、普通内部任务隔离。 */
 export const V2_PREFIX = 'case-v2-';
@@ -79,7 +79,7 @@ export function compileCase(
   const stepBudget = compileStepBudget({
     steps: steps as NonNullable<VerificationTask['steps']>,
     cleanupStepIds: cleanupSteps.map((step) => step.stepId!),
-    executionMode: profile.executionMode ?? 'parallel',
+    executionMode: profile.executionMode ?? DEFAULT_CASE_EXECUTION_MODE,
   });
   const resolved = resolveExecutionPlan(input, profile.evidenceKinds);
   const sessionPlan = resolveSession(
@@ -139,7 +139,9 @@ export function compileCase(
     budget.maxActions + stepBudget.cleanup.maxActions > CASE_MAX_ACTIONS ||
     (stepBudget.steps.reduce((sum, step) => sum + step.maxModelCalls, 0) +
       (cleanupSteps.length ? stepBudget.cleanup.maxModelCalls : 0)) *
-      ((profile.executionMode ?? 'parallel') === 'parallel' ? 2 : 1) >
+      ((profile.executionMode ?? DEFAULT_CASE_EXECUTION_MODE) === 'parallel'
+        ? 2
+        : 1) >
       CASE_MAX_MODEL_CALLS
   )
     throw new ApiError(
@@ -179,7 +181,7 @@ export function compileCase(
         : {}),
     },
     cleanupStepIds: cleanupSteps.map((step) => step.stepId!),
-    executionMode: profile.executionMode ?? 'parallel',
+    executionMode: profile.executionMode ?? DEFAULT_CASE_EXECUTION_MODE,
     purpose: 'verification',
     steps: steps as NonNullable<VerificationTask['steps']>,
     acceptanceCriteria: stepCriteria(steps, profile.evidenceKinds),
