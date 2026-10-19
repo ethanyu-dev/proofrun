@@ -220,3 +220,14 @@ export const validateRequestRerun = ajv.compile<RequestRerun>(
 );
 export { summarizeRequest, summarizeRequestCase } from './request-summary.js';
 export type { RequestCaseFacts } from './request-summary.js';
+export {
+  requestCaseArm,
+  requestCaseVerification,
+  requestVerification,
+} from './request-verification.js';
+export type { VerificationStatus } from './request-verification.js';
+export type {
+  RequestAnalysis,
+  AnalysisGrant,
+  AnalysisContextPage,
+} from './request-analysis.js';

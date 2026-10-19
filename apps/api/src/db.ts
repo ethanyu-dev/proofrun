@@ -36,6 +36,7 @@ const MIGRATIONS = [
   '024-feishu-lifecycle.sql',
   '025-verification-requests.sql',
   '026-feishu-request-cards.sql',
+  '027-request-analysis.sql',
 ];
 
 /** 所有业务事务使用同一连接；独占连接单独维护控制面实例锁。 */

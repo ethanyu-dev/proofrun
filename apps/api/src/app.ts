@@ -1,3 +1,5 @@
+import { RequestAnalyses } from './modules/reports/request-analysis.js';
+import { analysisRoutes } from './modules/reports/analysis-routes.js';
 import { RequestReader } from './modules/requests/reader.js';
 import { RequestService } from './modules/requests/service.js';
 import { IdentityLibrary } from './modules/identities/library.js';
@@ -600,6 +602,7 @@ export async function buildApp(
     { preHandler: admin },
     (request) => coordinator.cancel(request.params.id),
   );
+  analysisRoutes(app, new RequestAnalyses(db, requestReader), admin, worker);
   app.post('/v1/worker/claim', { preHandler: worker }, (request) => {
     const body = parseRequest(request.body, 'worker.claim');
     return coordinator.claim(
