@@ -1,3 +1,4 @@
+import { requestMetrics } from '../reports/request-metrics.js';
 import { taskOutcomes } from '../tasks/outcome.js';
 import type { PoolClient } from 'pg';
 import {
@@ -5,6 +6,7 @@ import {
   summarizeRequest,
   summarizeRequestCase,
   type RequestResultV2,
+  type RequestMetrics,
   type RequestSummary,
   type RequestList,
   type VerificationTask,
@@ -160,6 +162,13 @@ export class RequestReader {
     const generatedAt = (
       await client.query<{ at: Date }>('SELECT transaction_timestamp() AS at')
     ).rows[0]!.at.toISOString();
+    const metrics = new Map<string, RequestMetrics>();
+    if (detail)
+      for (const row of rows)
+        metrics.set(
+          row.request_id,
+          await requestMetrics(client, row.request_id, new Date(generatedAt)),
+        );
     return rows.map((row) => {
       const groups = new Map<string, ArmRow[]>();
       for (const arm of arms)
@@ -254,6 +263,7 @@ export class RequestReader {
         createdAt: row.created_at.toISOString(),
         sourceRequestId: row.source_request_id,
         generatedAt,
+        ...(detail ? { metrics: metrics.get(row.request_id)! } : {}),
         ...summarizeRequest(cases),
         cases,
       };

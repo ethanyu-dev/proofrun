@@ -15,6 +15,8 @@ const SCHEMAS = {
   'case-result-v2': 'CaseResultV2',
   'verification-request': 'VerificationRequest',
   'request-summary': 'RequestSummary',
+  'token-usage': 'TokenUsage',
+  'request-metrics': 'RequestMetrics',
   'request-result-v2': 'RequestResultV2',
   'request-list': 'RequestList',
   'request-rerun': 'RequestRerun',

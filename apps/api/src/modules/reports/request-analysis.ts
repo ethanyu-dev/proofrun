@@ -1,3 +1,4 @@
+import { AnalysisCalls, analysisUsage } from './analysis-calls.js';
 import { randomUUID } from 'node:crypto';
 import {
   requestCaseArm,
@@ -32,11 +33,19 @@ export class RequestAnalyses {
   /** 查询本身不触发生成；页面可按需提交幂等生成请求。 */
   async get(id: string): Promise<RequestAnalysis | null> {
     await this.reader.get(id);
-    const result = await this.db.query<RequestAnalysis>(
-      `SELECT ${VIEW} FROM pr_request_analyses WHERE request_id=$1`,
-      [id],
-    );
-    return result.rows[0] ?? null;
+    return this.db.transaction(async (client) => {
+      await client.query(
+        'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY',
+      );
+      const result = await client.query<RequestAnalysis>(
+        `SELECT ${VIEW} FROM pr_request_analyses WHERE request_id=$1`,
+        [id],
+      );
+      const row = result.rows[0];
+      return row
+        ? { ...row, usage: await analysisUsage(client, id, row.revision) }
+        : null;
+    });
   }
 
   /** 只对结束的请求生成最终分析；显式重跑保留旧结论直到新结果可用。 */
@@ -176,6 +185,11 @@ export class RequestAnalyses {
           ? { record, offset: offset + PAGE_CHARS }
           : { record: record + 1, offset: 0 },
     };
+  }
+
+  /** 分析计量与总结结果分开写入，失败和重跑也保留已发生调用。 */
+  recordCall(id: string, callId: string, token: string, body: unknown) {
+    return new AnalysisCalls(this.db).write(id, callId, token, body);
   }
 
   /** 完成回执原子校验租约；供应商错误只接受安全统一说明。 */

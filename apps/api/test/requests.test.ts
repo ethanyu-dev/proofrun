@@ -316,6 +316,49 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
         assert.equal(grants.length, 1);
         const grant = grants[0];
         const base = '/v1/analyses/request-main';
+        // 用量先登记、后回写；重复交付不能双计，错凭据与非法用量被拒绝。
+        const usagePath = `${base}/model-calls/usage-first`;
+        const start = { phase: 'start', stage: 'review', model: 'fixture-llm' };
+        const finish = {
+          phase: 'finish',
+          status: 'RECEIVED',
+          promptTokens: 100,
+          completionTokens: 10,
+          elapsedMs: 25,
+          error: null,
+        };
+        assert.equal(
+          (await workerCall(usagePath, start, grant.token)).statusCode,
+          200,
+        );
+        assert.equal(
+          (await workerCall(usagePath, start, grant.token)).statusCode,
+          200,
+        );
+        assert.equal(
+          (await workerCall(usagePath, finish, 'invalid-token')).statusCode,
+          409,
+        );
+        assert.equal(
+          (
+            await workerCall(
+              usagePath,
+              { ...finish, promptTokens: -1 },
+              grant.token,
+            )
+          ).statusCode,
+          400,
+        );
+        assert.equal(
+          (
+            await workerCall(
+              usagePath,
+              { ...finish, privateData: 'not allowed' },
+              grant.token,
+            )
+          ).statusCode,
+          400,
+        );
         const getContext = (token: string, record = 0, offset = 0) =>
           workerCall(
             `${base}/context?caseIndex=0&record=${record}&offset=${offset}`,
@@ -375,6 +418,52 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
           await workerCall('/v1/worker/analyses/claim')
         ).json();
         assert.notEqual(recovered.token, grant.token);
+        // 原领取结束后的迟到回执仍只归原调用；不能给新代次派发调用或覆盖总结。
+        assert.equal(
+          (await workerCall(usagePath, finish, grant.token)).statusCode,
+          200,
+        );
+        assert.equal(
+          (await workerCall(usagePath, finish, grant.token)).statusCode,
+          200,
+        );
+        assert.equal(
+          (
+            await workerCall(
+              usagePath,
+              { ...finish, promptTokens: 999 },
+              grant.token,
+            )
+          ).statusCode,
+          409,
+        );
+        assert.equal(
+          (await workerCall(`${base}/model-calls/stale`, start, grant.token))
+            .statusCode,
+          409,
+        );
+        const secondPath = `${base}/model-calls/usage-second`;
+        assert.equal(
+          (
+            await workerCall(
+              secondPath,
+              { ...start, stage: 'final' },
+              recovered.token,
+            )
+          ).statusCode,
+          200,
+        );
+        assert.equal(
+          (
+            await workerCall(
+              secondPath,
+              { ...finish, promptTokens: 200, completionTokens: 20 },
+              recovered.token,
+            )
+          ).statusCode,
+          200,
+        );
+
         assert.equal(
           (
             await workerCall(
@@ -397,6 +486,14 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
         );
         const completed = (await call(path)).json();
         assert.equal(completed.status, 'SUCCEEDED');
+        assert.deepEqual(completed.usage.current, {
+          promptTokens: 300,
+          completionTokens: 30,
+          totalTokens: 330,
+          calls: 2,
+        });
+        assert.deepEqual(completed.usage.current, completed.usage.cumulative);
+
         assert.ok(completed.generatedAt);
         assert.equal(completed.token_hash, undefined);
         assert.equal(
@@ -407,6 +504,16 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
         assert.notEqual(rerun.revision, completed.revision);
         assert.equal(rerun.summary, completed.summary);
         const retry = (await workerCall('/v1/worker/analyses/claim')).json();
+        assert.equal(rerun.usage.current.totalTokens, null);
+        assert.equal(rerun.usage.cumulative.totalTokens, 330);
+        const retryPath = `${base}/model-calls/usage-retry`;
+        await workerCall(retryPath, start, retry.token);
+        await workerCall(
+          retryPath,
+          { ...finish, promptTokens: 50, completionTokens: 5 },
+          retry.token,
+        );
+
         assert.equal(
           (await workerCall(`${base}/complete`, { failed: true }, retry.token))
             .statusCode,
@@ -414,6 +521,15 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
         );
         assert.equal((await call(path)).json().status, 'FAILED');
         assert.equal((await call(path)).json().summary, completed.summary);
+        assert.equal((await call(path)).json().usage.current.totalTokens, 55);
+        assert.equal(
+          (await call(path)).json().usage.cumulative.totalTokens,
+          385,
+        );
+        const metrics = (await call('/v2/requests/request-main/report')).json()
+          .metrics;
+        assert.equal(metrics.analysis.totalTokens, 385);
+
         assert.equal(
           (await sql.query('SELECT count(*)::int AS n FROM pr_tasks')).rows[0]
             .n,
@@ -429,6 +545,110 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
           null,
         );
         assert.equal((await call(path)).json().status, 'FAILED');
+      },
+    );
+    // 范围：真实数据库关联、同一 JEV 执行内混合调用拆分及无报告用量；不运行真实模型或计费。
+    await suite.test(
+      '请求耗时按执行跨度，Tokens 按调用用途拆分且不重复累加报告',
+      async () => {
+        await sql.query(
+          "UPDATE pr_executions SET created_at='2026-10-19T00:00:00Z' WHERE id='analysis-trace'",
+        );
+        await sql.query(
+          "UPDATE pr_tasks SET finished_at='2026-10-19T00:05:00Z',report=jsonb_set(report,'{executionDetails}',$1) WHERE id='comparison-case-v2-alpha-jev'",
+          [
+            JSON.stringify({
+              model: 'JEV + llm',
+              promptTokens: 9999,
+              completionTokens: 9999,
+              modelCalls: 2,
+              elapsedMs: 1000,
+              reasonCode: null,
+              actions: 0,
+              commandIds: [],
+            }),
+          ],
+        );
+        await sql.query(
+          "UPDATE pr_model_calls SET record=record || $1::jsonb WHERE id='analysis-call'",
+          [
+            JSON.stringify({
+              purpose: 'JEV_SELECTION',
+              promptTokens: 1000,
+              completionTokens: 100,
+            }),
+          ],
+        );
+        await sql.query(
+          "INSERT INTO pr_model_calls(id,execution_id,call_index,record,start_hash) VALUES('usage-llm','analysis-trace',2,$1,'fixture')",
+          [
+            JSON.stringify({
+              purpose: 'FIELD_VALUE',
+              promptTokens: 2000,
+              completionTokens: 200,
+            }),
+          ],
+        );
+        const result = (await call('/v2/requests/request-main/report')).json();
+        assert.ok(
+          validateRequestResultV2(result),
+          JSON.stringify(validateRequestResultV2.errors),
+        );
+        assert.ok(result.metrics);
+        assert.equal(result.metrics.executionElapsedMs, 300000);
+        assert.equal(result.metrics.jev.totalTokens, 1100);
+        assert.equal(result.metrics.llm.totalTokens, 2200);
+        assert.equal(result.metrics.execution.totalTokens, 3300);
+        assert.equal(result.metrics.totalTokens, 3685);
+        assert.equal(result.metrics.execution.calls, 2);
+        // 第二组与首组重叠，整体验证为六分钟，既不是耗时相加，也不是取最长单组。
+        await sql.query(
+          "INSERT INTO pr_executions(id,task_id,worker_id,token_hash,lease_expires_at,state,created_at) VALUES('usage-parallel','case-v2-alpha','fixture','fixture',clock_timestamp(),'FINISHED','2026-10-19T00:02:00Z')",
+        );
+        await sql.query(
+          "UPDATE pr_tasks SET finished_at='2026-10-19T00:06:00Z' WHERE id='case-v2-alpha'",
+        );
+        assert.equal(
+          (await call('/v2/requests/request-main/report')).json().metrics
+            .executionElapsedMs,
+          360000,
+        );
+        // 供应商没有返回 usage 的错误调用只增加调用数，不产生虚构 Tokens。
+        await sql.query(
+          "INSERT INTO pr_model_calls(id,execution_id,call_index,record,start_hash) VALUES('usage-error','analysis-trace',3,$1,'fixture')",
+          [
+            JSON.stringify({
+              purpose: 'DECISION',
+              status: 'ERROR',
+              promptTokens: null,
+              completionTokens: null,
+            }),
+          ],
+        );
+        const withError = (
+          await call('/v2/requests/request-main/report')
+        ).json().metrics;
+        assert.equal(withError.execution.totalTokens, 3300);
+        assert.equal(withError.execution.calls, 3);
+
+        // 终态缺少最终报告时，逐次调用仍保留；不会把用量变成零。
+        const saved = (
+          await sql.query(
+            "SELECT report FROM pr_tasks WHERE id='comparison-case-v2-alpha-jev'",
+          )
+        ).rows[0].report;
+        await sql.query(
+          "UPDATE pr_tasks SET report=NULL WHERE id='comparison-case-v2-alpha-jev'",
+        );
+        assert.equal(
+          (await call('/v2/requests/request-main/report')).json().metrics
+            .execution.totalTokens,
+          3300,
+        );
+        await sql.query(
+          "UPDATE pr_tasks SET report=$1 WHERE id='comparison-case-v2-alpha-jev'",
+          [saved],
+        );
       },
     );
     // 范围：请求分页和过滤完整性，含微秒游标绑定；不测试浏览器列表交互。

@@ -1,3 +1,4 @@
+import { analysisModelRequest } from './analysis-model.js';
 import type { AnalysisGrant, AnalysisContextPage } from '@proofrun/contracts';
 import type { AgentConfig } from './config.js';
 import { AgentFault, jsonRequest, pause } from './http.js';
@@ -15,13 +16,14 @@ const MAX_FINAL_INPUT_CHARS = 100_000;
 /** 复用 worker 已配置的文本模型，模型服务配置不会进入控制面或前端。 */
 async function summarize(
   config: AgentConfig,
-  data: unknown,
+  grant: AnalysisGrant,
+  data: { phase: 'review' | 'final'; [key: string]: unknown },
   signal: AbortSignal,
 ): Promise<string> {
-  const reply = (await jsonRequest(
-    `${config.modelUrl}/chat/completions`,
-    config.modelKey,
-    'POST',
+  const reply = (await analysisModelRequest(
+    config,
+    grant,
+    data.phase,
     {
       ...reasoningParameters(config),
       model: config.model,
@@ -32,7 +34,6 @@ async function summarize(
         { role: 'user', content: JSON.stringify(data) },
       ],
     },
-    config.modelMs,
     signal,
   )) as {
     choices?: Array<{
@@ -77,6 +78,7 @@ export async function analyzeReport(
       if (buffer.length >= REVIEW_CHARS || !cursor) {
         notes = await summarize(
           config,
+          grant,
           {
             phase: 'review',
             caseIndex,
@@ -94,7 +96,7 @@ export async function analyzeReport(
   // 请求过大必须明确失败，不以只总结前几个 case 冒充完整结论。
   if (JSON.stringify(cases).length > MAX_FINAL_INPUT_CHARS)
     throw new AgentFault('ANALYSIS_TOO_LARGE', '请求的复盘笔记超出分析范围');
-  return summarize(config, { phase: 'final', cases }, signal);
+  return summarize(config, grant, { phase: 'final', cases }, signal);
 }
 
 /** 独立后台循环只领取分析任务，不改变 case 调度、执行预算或身份准备。 */

@@ -1,0 +1,31 @@
+{
+  "title": "TokenUsage",
+  "type": "object",
+  "additionalProperties": false,
+  "description": "累计供应商已返回用量；未采集字段为 null，不根据文本长度推算。",
+  "properties": {
+    "promptTokens": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "已返回的输入 Tokens。"
+    },
+    "completionTokens": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "已返回的输出 Tokens。"
+    },
+    "totalTokens": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "已返回输入与输出的合计；均未采集时为 null。"
+    },
+    "calls": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "已登记的实际模型调用次数，包含未回传用量的调用。"
+    }
+  },
+  "required": ["promptTokens", "completionTokens", "totalTokens", "calls"],
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://proofrun.invalid/contracts/0.1/token-usage.schema.json"
+}
