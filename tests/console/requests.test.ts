@@ -36,7 +36,7 @@ const CASE = {
   cleanup: [],
 };
 
-// 范围：任务页保留目标、各类步骤及选定执行进度，报告页保留结论；静态夹具不验证真实执行或操作权限。
+// 范围：任务页保留目标、步骤、进度及分阶段观看入口，报告页保留结论；静态夹具不验证真实视频连接、执行或操作权限。
 test('任务与报告分别承载目标进度和验收结果', () => {
   const steps = [
     { stepId: 'setup', type: 'setup', description: '准备登录', cleanup: false },
@@ -103,7 +103,9 @@ test('任务与报告分别承载目标进度和验收结果', () => {
   for (const description of ['准备登录', '检查页面', '恢复数据'])
     assert.ok(task.includes(description));
   assert.match(task, /split-jev\?request=split-request/);
-  assert.match(task, /执行详情与操作/);
+  assert.match(task, /查看执行详情/);
+  assert.match(task, /执行已结束，可查看执行过程与已保留的证据/);
+  assert.doesNotMatch(task, /观看实时视频/);
   assert.doesNotMatch(task, /报告专属|逐项验收|查看 DOM|split-llm/);
   const report = renderToStaticMarkup(
     createElement(RequestCases, { api: new ApiClient('fixture'), value }),
@@ -111,7 +113,25 @@ test('任务与报告分别承载目标进度和验收结果', () => {
   assert.match(report, /逐项验收/);
   assert.match(report, /报告专属结论/);
   assert.match(report, /报告专属实际观察/);
-  assert.doesNotMatch(report, /准备登录|恢复数据|步骤完成|执行详情与操作/);
+  assert.doesNotMatch(report, /准备登录|恢复数据|步骤完成|观看实时视频/);
+  const selectedArm = value.cases[0]!.arms[1]!;
+  for (const status of ['RUNNING', 'QUEUED'] as const) {
+    selectedArm.result.status = status;
+    const active = renderToStaticMarkup(
+      createElement(RequestTaskCases, { value }),
+    );
+    assert.match(active, /split-jev\?request=split-request/);
+    if (status === 'RUNNING') {
+      assert.match(active, /button button-primary/);
+      assert.match(active, /观看实时视频/);
+      assert.match(active, /实时观看浏览器画面/);
+      assert.match(active, /需要人工处理时可进入处理页/);
+    } else {
+      assert.match(active, /任务启动后，可实时观看浏览器画面/);
+      assert.match(active, /查看执行详情/);
+      assert.doesNotMatch(active, /观看实时视频/);
+    }
+  }
   value.cases[0]!.arms = [];
   const missing = renderToStaticMarkup(
     createElement(RequestTaskCases, { value }),
@@ -119,6 +139,7 @@ test('任务与报告分别承载目标进度和验收结果', () => {
   assert.match(missing, /暂无执行记录/);
   assert.match(missing, /显示预期标题/);
   assert.match(missing, /步骤完成 0 \/ 3/);
+  assert.doesNotMatch(missing, /request-execution-entry/);
 });
 
 // 范围：两个路由互相提供次要跳转且不再呈现双标签；不触发 HTTP 或页面导航。

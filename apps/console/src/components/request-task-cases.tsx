@@ -1,6 +1,7 @@
 import type { RequestResultV2 } from '@proofrun/contracts';
 import { displayedCaseArm } from '../request-presentation';
 import { OutcomeStatus } from './execution-outcome';
+import { RequestExecutionEntry } from './request-execution-entry';
 import { Status } from './ui';
 
 /** 步骤类型只帮助理解执行顺序，不替代验收判定。 */
@@ -63,16 +64,10 @@ export function RequestTaskCases({ value }: { value: RequestResultV2 }) {
                       <OutcomeStatus outcome={arm.result.executionOutcome} />
                     </p>
                   )}
-                  <p className="request-arm-links">
-                    <a
-                      href={`#/tasks/${encodeURIComponent(arm.taskId)}?request=${encodeURIComponent(value.requestId)}`}
-                    >
-                      执行详情与操作
-                    </a>
-                    <span className="muted">
-                      查看实时进度、人工介入与取消操作
-                    </span>
-                  </p>
+                  <RequestExecutionEntry
+                    arm={arm}
+                    requestId={value.requestId}
+                  />
                 </section>
               )}
               <h3 className="request-section-heading">
