@@ -40,7 +40,7 @@ export function RequestListPage({
   };
   const prefix = reports ? 'request-reports' : 'requests';
   return (
-    <>
+    <div className="request-list-page">
       <PageHeader
         title={reports ? '验证报告' : '验证任务'}
         description="按一次请求查看关联 case、通过数与当前完成状态。"
@@ -136,6 +136,6 @@ export function RequestListPage({
           下一页
         </button>
       </div>
-    </>
+    </div>
   );
 }

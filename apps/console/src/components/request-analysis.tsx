@@ -6,6 +6,7 @@ import type {
 import { ApiClient, errorMessage } from '../api';
 import { ErrorNotice, time } from './ui';
 import { ReportSummary } from './report-summary';
+import { AnalysisUsage } from './analysis-usage';
 
 /** 独立轮询不阻塞报告展示，首次自动生成幂等；失败后由用户显式重跑。 */
 export function RequestAnalysis({
@@ -15,7 +16,7 @@ export function RequestAnalysis({
 }: {
   api: ApiClient;
   value: RequestResultV2;
-  /** 与顶部汇总共享分析快照，重跑时同时刷新内容与用量。 */
+  /** 分析内容与用量共享快照，重跑时同时刷新。 */
   resource: {
     data: Analysis | null | undefined;
     loading: boolean;
@@ -76,7 +77,7 @@ export function RequestAnalysis({
         </button>
       </div>
       <p className="muted">
-        结合本次执行步骤与实际观察，总结失败 Case 及原因。
+        结合执行记录，分析失败、部分失败和结论不明的 Case。
       </p>
       <ErrorNotice
         message={error ?? resource.error ?? analysis?.error ?? undefined}
@@ -108,6 +109,10 @@ export function RequestAnalysis({
       {running && analysis?.summary && (
         <p role="status">正在重新分析，完成后更新结论。</p>
       )}
+      <AnalysisUsage
+        usage={analysis?.usage}
+        cumulative={value.metrics?.analysis}
+      />
     </section>
   );
 }

@@ -9,12 +9,30 @@
   min-width: 0;
 }
 /* 请求以留白和分隔线分组，case 使用紧凑行，避免多层卡片边框。 */
+.request-list-page .page-header {
+  margin-bottom: 20px;
+  gap: 12px;
+}
+.request-list-page .page-header h1 {
+  margin-block: 0 6px;
+}
+.request-list-page .page-header p {
+  margin-block: 0;
+}
+.request-list-page .toolbar {
+  padding: 12px 16px;
+  gap: 12px;
+}
+.request-list-page > .refresh-bar {
+  min-height: 36px;
+  font-size: 11px;
+}
 .request-list {
-  margin-block: 12px 20px;
+  margin-block: 0 16px;
 }
 .request-list-card {
   min-width: 0;
-  padding: 18px 0;
+  padding: 12px 0;
 }
 .request-list-card + .request-list-card {
   border-top: 1px solid var(--color-border);
@@ -24,14 +42,14 @@
   align-items: baseline;
   justify-content: space-between;
   gap: 12px 24px;
-  margin-bottom: 10px;
+  margin-bottom: 4px;
 }
 .request-card-title {
   min-width: 0;
 }
 .request-card-heading h2 {
-  margin: 0 0 4px;
-  font-size: 16px;
+  margin: 0 0 2px;
+  font-size: 15px;
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
@@ -68,7 +86,7 @@
   gap: 0;
 }
 .request-preview-member {
-  padding: 10px 0;
+  padding: 4px 0;
   min-width: 0;
 }
 .request-preview-member + .request-preview-member {
@@ -82,16 +100,17 @@
 }
 .request-member-heading > div {
   min-width: 0;
+  flex: 1;
 }
 .request-member-heading a {
-  font-size: 14px;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
   font-weight: 500;
   line-height: 1.6;
   overflow-wrap: anywhere;
-}
-.request-member-heading p {
-  margin: 2px 0 0;
-  font-size: 11px;
 }
 .request-index {
   display: inline-flex;
@@ -162,26 +181,49 @@
   color: var(--color-muted);
 }
 .request-criterion {
-  padding: 20px 0;
   border-top: 1px solid var(--color-border);
   overflow-wrap: anywhere;
 }
+.request-criterion:last-child {
+  border-bottom: 1px solid var(--color-border);
+}
 .request-criterion-heading {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) 24px;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 0;
+  cursor: pointer;
+  list-style: none;
+}
+.request-criterion-heading::-webkit-details-marker {
+  display: none;
+}
+.request-criterion-heading::before {
+  content: '›';
+  color: var(--color-muted);
+  justify-self: center;
+}
+.request-criterion[open] > .request-criterion-heading::before {
+  transform: rotate(90deg);
+}
+.request-criterion-heading:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
 }
 .request-criterion-heading h4 {
   font-size: 14px;
-  line-height: 1.8;
+  line-height: 1.6;
   font-weight: 600;
   margin: 0;
 }
-.request-criterion-heading > .status {
-  flex-shrink: 0;
+.request-criterion-heading > .criterion-result {
+  justify-self: center;
 }
-.request-criterion > p {
+.request-criterion-detail {
+  padding: 0 34px 14px 22px;
+}
+.request-criterion-detail > p {
   font-size: 12px;
   line-height: 1.7;
   margin: 8px 0 14px;
@@ -189,16 +231,38 @@
 .request-criterion button {
   margin: 6px 6px 0 0;
 }
-.request-step-group {
+.request-task-step {
   border-top: 1px solid var(--color-border);
   padding: 16px 0;
 }
-.request-step-group summary {
-  font-weight: 500;
+.request-task-step-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
 }
-.request-step-group section {
-  padding: 12px 0;
+.request-task-step h4 {
+  margin: 0;
+  font-size: 13px;
+}
+.request-task-step p,
+.request-task-goals {
+  font-size: 14px;
+  line-height: 1.8;
   overflow-wrap: anywhere;
+}
+.request-task-goals {
+  padding-left: 20px;
+}
+.request-task-goals li + li {
+  margin-top: 6px;
+}
+.request-task-progress {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  font-size: 12px;
 }
 /* 列表和详情使用同一紧凑进度展示，避免模式卡片占用主要阅读空间。 */
 .case-verification-progress,
@@ -223,44 +287,64 @@
   gap: 16px;
 }
 .request-preview-member .request-member-heading {
+  flex: 1;
+  min-width: 0;
   margin: 0;
-  gap: 10px;
+  gap: 8px;
+  align-items: center;
 }
 .request-preview-member .request-index {
   width: 22px;
   height: 24px;
   background: transparent;
 }
-/* 通过数和状态保留固定列宽，多行 case 也能纵向对齐。 */
+/* 三列分别容纳通过数、验证结论和执行状态，避免第三项换行撑高列表。 */
 .request-preview-member .case-verification-progress {
   display: grid;
-  grid-template-columns: 110px 80px;
-  gap: 16px;
+  grid-template-columns: 96px 72px 128px;
+  gap: 10px;
+  align-items: center;
+  justify-items: end;
 }
 .request-preview-member .case-pass-count {
   justify-content: flex-end;
+  flex-wrap: nowrap;
+  white-space: nowrap;
   gap: 6px;
 }
+.request-preview-member .report-progress {
+  font-size: 14px;
+}
 .request-preview-member .status {
-  justify-self: end;
+  padding: 3px 8px;
 }
 .request-record {
   font-size: 13px;
   line-height: 1.8;
 }
-@media (max-width: 700px) {
-  .request-card-heading {
-    gap: 10px;
-  }
+@media (max-width: 900px) {
+  /* 窄屏将状态移到下一行，保留长标题与状态全文，避免横向溢出。 */
   .request-preview-member {
     align-items: flex-start;
     flex-direction: column;
-    gap: 6px;
+    gap: 4px;
   }
   .request-preview-member .case-verification-progress {
     display: flex;
-    padding-left: 32px;
-    gap: 12px;
+    padding-left: 30px;
+    gap: 8px;
+    flex-shrink: 1;
+  }
+  .request-preview-member .request-member-heading {
+    width: 100%;
+  }
+  .request-preview-member .request-member-heading a {
+    white-space: normal;
+  }
+}
+@media (max-width: 700px) {
+  .request-card-heading {
+    gap: 10px;
   }
   .request-case-heading {
     flex-wrap: wrap;
@@ -334,21 +418,10 @@
   margin-top: 14px;
   border-bottom: 1px solid var(--color-border);
 }
-.request-detail-tabs {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-}
-.request-detail-tabs a {
+.request-detail-context {
   padding: 10px 0;
-  border-bottom: 2px solid transparent;
   font-size: 13px;
   color: var(--color-muted);
-}
-.request-detail-tabs a[aria-current='page'] {
-  border-bottom-color: var(--color-foreground);
-  color: var(--color-foreground);
-  font-weight: 500;
 }
 .request-detail-toolbar .refresh-bar {
   min-height: 36px;
@@ -498,14 +571,19 @@
 .report-usage-breakdown {
   display: flex;
   flex-wrap: wrap;
+  align-items: baseline;
   gap: 6px 18px;
   margin: 10px 0 0;
   font-size: 12px;
+  line-height: 1.5;
   font-variant-numeric: tabular-nums;
 }
+/* 中文标签与数字按文字基线对齐；窄屏整组换行，避免标签和数值错位。 */
 .report-usage-breakdown > div {
   display: flex;
+  align-items: baseline;
   gap: 6px;
+  white-space: nowrap;
 }
 .report-usage-breakdown dt {
   color: var(--color-muted);
@@ -520,4 +598,16 @@
 }
 .report-usage-detail .table-scroll {
   overflow-x: auto;
+}
+.report-usage-detail th,
+.report-usage-detail td {
+  white-space: nowrap;
+}
+/* 分析用量与正文留出间距，折叠入口保持与验证汇总一致。 */
+.analysis-usage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  margin-top: 16px;
+  min-width: 0;
 }

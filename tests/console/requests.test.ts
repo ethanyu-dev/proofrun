@@ -11,6 +11,8 @@ import {
   displayedCaseArm,
 } from '../../apps/console/src/request-presentation.ts';
 import { RequestCases } from '../../apps/console/src/components/request-cases.tsx';
+import { RequestTaskCases } from '../../apps/console/src/components/request-task-cases.tsx';
+import { RequestDetailPage } from '../../apps/console/src/pages/request-detail.tsx';
 
 /** 使用真实组件静态渲染；交互和布局另由浏览器检查覆盖。 */
 const require = createRequire(
@@ -33,6 +35,109 @@ const CASE = {
   ],
   cleanup: [],
 };
+
+// 范围：任务页保留目标、各类步骤及选定执行进度，报告页保留结论；静态夹具不验证真实执行或操作权限。
+test('任务与报告分别承载目标进度和验收结果', () => {
+  const steps = [
+    { stepId: 'setup', type: 'setup', description: '准备登录', cleanup: false },
+    {
+      stepId: 'verify',
+      type: 'verification',
+      description: '检查页面',
+      cleanup: false,
+    },
+    {
+      stepId: 'cleanup',
+      type: 'setup',
+      description: '恢复数据',
+      cleanup: true,
+    },
+  ].map((step) => ({ ...step, expected: [] }));
+  const value = {
+    requestId: 'split-request',
+    cases: [
+      {
+        caseId: 'split-case',
+        title: '分区夹具',
+        executionOrigin: 'created',
+        steps,
+        criteria: [
+          {
+            criterionId: 'c',
+            stepId: 'verify',
+            expectedResult: '显示预期标题',
+            description: '检查标题',
+          },
+        ],
+        arms: ['llm', 'jev'].map((mode) => ({
+          taskId: `split-${mode}`,
+          executionMode: mode,
+          createdAt: '2026-10-20T00:00:00Z',
+          result: {
+            status: 'COMPLETED',
+            reportStatus: 'FAILED',
+            steps: steps.map((step, i) => ({
+              stepId: step.stepId,
+              status: mode === 'llm' || i === 0 ? 'COMPLETED' : 'SKIPPED',
+            })),
+            result: {
+              summary: '报告专属结论',
+              criteria: [
+                {
+                  criterionId: 'c',
+                  verdict: 'FAILED',
+                  summary: '报告专属实际观察',
+                  evidenceRefs: [],
+                },
+              ],
+            },
+          },
+        })),
+      },
+    ],
+  } as unknown as RequestResultV2;
+  const task = renderToStaticMarkup(createElement(RequestTaskCases, { value }));
+  assert.match(task, /验证目标/);
+  assert.match(task, /显示预期标题/);
+  assert.match(task, /步骤完成 1 \/ 3/);
+  for (const description of ['准备登录', '检查页面', '恢复数据'])
+    assert.ok(task.includes(description));
+  assert.match(task, /split-jev\?request=split-request/);
+  assert.match(task, /执行详情与操作/);
+  assert.doesNotMatch(task, /报告专属|逐项验收|查看 DOM|split-llm/);
+  const report = renderToStaticMarkup(
+    createElement(RequestCases, { api: new ApiClient('fixture'), value }),
+  );
+  assert.match(report, /逐项验收/);
+  assert.match(report, /报告专属结论/);
+  assert.match(report, /报告专属实际观察/);
+  assert.doesNotMatch(report, /准备登录|恢复数据|步骤完成|执行详情与操作/);
+  value.cases[0]!.arms = [];
+  const missing = renderToStaticMarkup(
+    createElement(RequestTaskCases, { value }),
+  );
+  assert.match(missing, /暂无执行记录/);
+  assert.match(missing, /显示预期标题/);
+  assert.match(missing, /步骤完成 0 \/ 3/);
+});
+
+// 范围：两个路由互相提供次要跳转且不再呈现双标签；不触发 HTTP 或页面导航。
+test('任务与报告使用互相跳转入口替代页内标签', () => {
+  const api = new ApiClient('fixture');
+  for (const reports of [false, true]) {
+    const html = renderToStaticMarkup(
+      createElement(RequestDetailPage, { api, id: 'split-request', reports }),
+    );
+    assert.doesNotMatch(html, /总览与验证目标|request-detail-tabs|请求内容/);
+    assert.match(html, reports ? /查看任务详情/ : /查看验证报告/);
+    assert.match(
+      html,
+      reports
+        ? /href="#\/requests\/split-request"/
+        : /href="#\/request-reports\/split-request"/,
+    );
+  }
+});
 
 // 范围：请求页兼容旧 API 的 MODEL_ERROR 分类；只静态渲染，不改写历史报告或模拟部署。
 test('请求页的 MODEL_BLOCKED 与任务详情统一显示执行受阻', () => {
@@ -101,7 +206,7 @@ test('请求封装完整发送并跳到请求详情', async (context) => {
     `/requests/${request.requestId}`,
   );
 });
-// 范围：历史双跑只展示默认组的进度、状态和证据；静态夹具不证明浏览器交互或真实验收成功。
+// 范围：历史双跑只展示默认组，成功时省略执行摘要并默认折叠验收明细；静态夹具不证明浏览器交互或真实验收成功。
 test('case 直接展开，只展示选定执行的通过数和状态', () => {
   const criterion = {
     criterionId: 'c',
@@ -122,6 +227,7 @@ test('case 直接展开，只展示选定执行的通过数和状态', () => {
     archivedAt: '2026-10-19T01:00:00Z',
     result: {
       status: 'COMPLETED',
+      reportStatus: mode === 'jev' ? 'PASSED' : 'FAILED',
       steps: [],
       cleanup: null,
       result: {
@@ -165,10 +271,14 @@ test('case 直接展开，只展示选定执行的通过数和状态', () => {
   const details = renderToStaticMarkup(
     createElement(RequestCases, { api: new ApiClient('fixture'), value }),
   );
-  assert.match(details, /当前记录/);
+  assert.match(details, /<details class="request-criterion"><summary/);
+  assert.match(details, /夹具依据/);
   assert.match(details, /disabled=""[^>]*>证据已清理/);
   assert.match(details, /task-jev\?request=r/);
-  assert.doesNotMatch(details, /<details|另一组记录|task-llm|LLM|JEV|无法判定/);
+  assert.doesNotMatch(
+    details,
+    /<details[^>]* open|当前记录|复用已有执行|执行创建于|另一组记录|task-llm|LLM|JEV|无法判定/,
+  );
 });
 
 // 范围：分母包含缺失项，单组兼容、执行中步骤记录及重复结果；不检查后端生成报告的真实性。
