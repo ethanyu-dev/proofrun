@@ -25,6 +25,8 @@ export interface AnalysisGrant {
   /** 请求身份与冻结的成员数量。 */
   requestId: string;
   caseCount: number;
+  /** 仅复盘未成功的 case；索引对应冻结快照，跳过成功项不改变原有顺序。 */
+  caseIndices: number[];
   /** 单次领取凭据，不公开给控制台。 */
   token: string;
 }

@@ -1,5 +1,5 @@
 import { ReportUsage, ReportUsageDetails } from './report-usage';
-import type { RequestAnalysis, RequestResultV2 } from '@proofrun/contracts';
+import type { RequestResultV2 } from '@proofrun/contracts';
 import { requestVerification } from '@proofrun/contracts/request-verification';
 import {
   VerificationStatusBadge,
@@ -7,13 +7,7 @@ import {
 } from './verification-status';
 
 /** 顶部按 case 汇总，与下方当前展示执行组保持相同口径。 */
-export function RequestReportOverview({
-  value,
-  analysisUsage,
-}: {
-  value: RequestResultV2;
-  analysisUsage: RequestAnalysis['usage'];
-}) {
+export function RequestReportOverview({ value }: { value: RequestResultV2 }) {
   const counts = requestVerification(value);
   return (
     <section
@@ -49,10 +43,7 @@ export function RequestReportOverview({
         </div>
         <ReportUsage metrics={value.metrics} />
       </div>
-      <ReportUsageDetails
-        metrics={value.metrics}
-        analysisUsage={analysisUsage}
-      />
+      <ReportUsageDetails metrics={value.metrics} />
       <p className="muted">
         全部验收项通过才计入 Case
         通过数；部分失败表示已有明确失败且有部分验证通过。未完成或证据不足单独列出。

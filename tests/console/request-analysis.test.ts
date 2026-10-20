@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import test from 'node:test';
 import { Window } from 'happy-dom';
+import type { RequestResultV2 } from '@proofrun/contracts';
 import { ApiClient } from '../../apps/console/src/api.ts';
 import { RequestDetailPage } from '../../apps/console/src/pages/request-detail.tsx';
+import { RequestReportContent } from '../../apps/console/src/components/request-report-content.tsx';
 
 /** 真实 React 组件配合内存 DOM；HTTP 与分析文本使用夹具，不证明真实模型结论。 */
 const require = createRequire(
@@ -11,7 +13,7 @@ const require = createRequire(
 );
 const { createElement, act } = require('react');
 
-// 范围：页面顺序、自动生成去重、轮询和重跑旧结果展示；不覆盖视觉排版与真实服务。
+// 范围：用量分区、重跑旧结果展示和全成功时停止分析请求；不覆盖视觉排版与真实服务。
 test('报告按汇总、分析、case 展示，生成与重跑不阻塞结果', async (context) => {
   const window = new Window({
     url: 'http://localhost/#/request-reports/fixture',
@@ -40,6 +42,7 @@ test('报告按汇总、分析、case 展示，生成与重跑不阻塞结果', 
   const root = createRoot(container);
   context.mock.timers.enable({ apis: ['setTimeout'] });
   let analysis: any = null;
+  let analysisRequests = 0;
   const posts: any[] = [];
   const api = new ApiClient('fixture');
   context.mock.method(
@@ -84,6 +87,7 @@ test('报告按汇总、分析、case 展示，生成与重跑不阻塞结果', 
             },
           },
         };
+      analysisRequests++;
       if (body) {
         posts.push(body);
         analysis = {
@@ -118,10 +122,11 @@ test('报告按汇总、分析、case 展示，生成与重跑不阻塞结果', 
     assert.ok(text.indexOf('Agent 分析') < text.indexOf('case 验证结果'));
     assert.match(text, /未能判定/);
     assert.match(text, /4 分 33 秒/);
-    assert.match(text, /610,300/);
+    assert.match(text, /验证 Tokens 合计577,300/);
+    assert.doesNotMatch(text, /610,300/);
     assert.match(text, /JEV105,000/);
     assert.match(text, /LLM472,300/);
-    assert.match(text, /Agent 总结（累计）33,000/);
+    assert.match(text, /累计 Tokens33,000/);
     assert.doesNotMatch(text, /部分用量未知/);
     assert.deepEqual(posts, [{ rerun: false }]);
     await act(async () => context.mock.timers.tick(5000));
@@ -139,10 +144,10 @@ test('报告按汇总、分析、case 展示，生成与重跑不阻塞结果', 
           calls: 5,
         },
         cumulative: {
-          promptTokens: 30000,
-          completionTokens: 3000,
-          totalTokens: 33000,
-          calls: 5,
+          promptTokens: 31000,
+          completionTokens: 3100,
+          totalTokens: 34100,
+          calls: 6,
         },
       },
     };
@@ -151,15 +156,19 @@ test('报告按汇总、分析、case 展示，生成与重跑不阻塞结果', 
     const overview = container.querySelector(
       '[aria-label="测试报告总体汇总"]',
     )!;
+    const analysisPanel = container.querySelector('[aria-label="Agent 分析"]')!;
     const currentUsage = () =>
-      [...overview.querySelectorAll('tr')].find((row) =>
-        row.textContent!.startsWith('Agent 总结（本次）'),
+      [...analysisPanel.querySelectorAll('tr')].find((row) =>
+        row.textContent!.startsWith('Agent 分析（本次）'),
       )!.textContent!;
-    assert.match(currentUsage(), /Agent 总结（本次）30,0003,00033,0005/);
-    assert.doesNotMatch(
-      container.querySelector('[aria-label="Agent 分析"]')!.textContent!,
-      /Tokens/,
-    );
+    assert.match(currentUsage(), /Agent 分析（本次）30,0003,00033,0005/);
+    assert.doesNotMatch(overview.textContent!, /Agent|33,000|34,100/);
+    assert.match(analysisPanel.textContent!, /累计 Tokens34,100/);
+    const details = analysisPanel.querySelector('details')!;
+    assert.equal(details.open, false);
+    await act(async () => details.querySelector('summary')!.click());
+    assert.equal(details.open, true);
+    assert.equal(overview.querySelector('details')!.open, false);
     const button = [...container.querySelectorAll('button')].find(
       (button) => button.textContent === '重新分析',
     )!;
@@ -168,8 +177,9 @@ test('报告按汇总、分析、case 展示，生成与重跑不阻塞结果', 
     assert.match(container.textContent!, /上一版分析/);
     assert.match(container.textContent!, /已生成的简洁结论/);
     assert.equal(button.disabled, true);
-    assert.match(currentUsage(), /Agent 总结（本次）———0/);
-    assert.match(overview.textContent!, /Agent 总结（累计）33,000/);
+    assert.match(currentUsage(), /Agent 分析（本次）———0/);
+    assert.match(analysisPanel.textContent!, /累计 Tokens34,100/);
+    assert.equal(details.open, true);
     analysis = {
       ...analysis,
       status: 'FAILED',
@@ -178,6 +188,39 @@ test('报告按汇总、分析、case 展示，生成与重跑不阻塞结果', 
     await act(async () => context.mock.timers.tick(5000));
     assert.equal(button.disabled, false);
     assert.match(container.textContent!, /分析生成失败/);
+    // 已有分析内容或历史消耗不能让全成功报告继续展示分析卡片。
+    const successful = {
+      requestId: 'success',
+      cases: [
+        {
+          criteria: [{ criterionId: 'c' }],
+          arms: [
+            {
+              executionMode: 'jev',
+              result: {
+                status: 'COMPLETED',
+                reportStatus: 'PASSED',
+                result: { criteria: [{ criterionId: 'c', verdict: 'PASSED' }] },
+              },
+            },
+          ],
+        },
+      ],
+    } as unknown as RequestResultV2;
+    const requestsBeforeSuccess = analysisRequests;
+    await act(async () =>
+      root.render(
+        createElement(RequestReportContent, { api, value: successful }),
+      ),
+    );
+    assert.ok(container.querySelector('[aria-label="测试报告总体汇总"]'));
+    assert.equal(container.querySelector('[aria-label="Agent 分析"]'), null);
+    assert.doesNotMatch(
+      container.textContent!,
+      /重新分析|本次 Tokens|累计 Tokens/,
+    );
+    await act(async () => context.mock.timers.tick(5000));
+    assert.equal(analysisRequests, requestsBeforeSuccess);
   } finally {
     await act(async () => root.unmount());
     context.mock.timers.reset();

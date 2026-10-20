@@ -53,14 +53,17 @@ async function summarize(
   return text.trim();
 }
 
-/** 遍历每个 case 的全部存档分片，再汇总 case 笔记；任一片读取失败都不宣称完整分析。 */
+/** 仅遍历待分析 case，但保留其全部分片和前置过程；读取失败不发布局部结论。 */
 export async function analyzeReport(
   config: AgentConfig,
   grant: AnalysisGrant,
   signal: AbortSignal,
 ): Promise<string> {
   const cases: string[] = [];
-  for (let caseIndex = 0; caseIndex < grant.caseCount; caseIndex++) {
+  // 空集合或旧控制面缺少范围时明确失败，不能把没有异常资料误写成全部通过。
+  if (!grant.caseIndices?.length)
+    throw new AgentFault('INVALID_ANALYSIS', '缺少待分析的 case');
+  for (const caseIndex of grant.caseIndices) {
     let cursor: AnalysisContextPage['next'] = { record: 0, offset: 0 };
     let notes = '';
     let buffer = '';

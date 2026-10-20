@@ -1,8 +1,5 @@
-import type {
-  RequestAnalysis,
-  RequestMetrics,
-  TokenUsage,
-} from '@proofrun/contracts';
+import type { RequestMetrics, TokenUsage } from '@proofrun/contracts';
+import type { ReactNode } from 'react';
 
 /** 数字保留精确计数，避免大数缩写掩盖输入、输出合计关系。 */
 const TOKEN_FORMAT = new Intl.NumberFormat('zh-CN');
@@ -27,7 +24,7 @@ export function durationText(ms: number | null | undefined): string {
     .join(' ');
 }
 
-/** 状态计数旁并排显示耗时与总量，三类消耗用紧凑明细行表达。 */
+/** 顶部只展示验证执行用量，异步分析的消耗在分析卡片单独展示。 */
 export function ReportUsage({
   metrics,
 }: {
@@ -36,7 +33,6 @@ export function ReportUsage({
   const rows = [
     ['JEV', metrics?.jev],
     ['LLM', metrics?.llm],
-    ['Agent 总结（累计）', metrics?.analysis],
   ] as const;
   return (
     <div className="report-usage">
@@ -46,8 +42,8 @@ export function ReportUsage({
           <dd>{durationText(metrics?.executionElapsedMs)}</dd>
         </div>
         <div>
-          <dt>Tokens 合计</dt>
-          <dd>{tokenText(metrics?.totalTokens)}</dd>
+          <dt>验证 Tokens 合计</dt>
+          <dd>{tokenText(metrics?.execution.totalTokens)}</dd>
         </div>
       </dl>
       <dl className="report-usage-breakdown" aria-label="Tokens 拆分">
@@ -62,29 +58,39 @@ export function ReportUsage({
   );
 }
 
-/** 输入、输出及本次分析收进同一个明细入口，分析正文不重复展示用量。 */
+/** 验证明细包含所有执行组和清理，与顶部验证合计保持相同口径。 */
 export function ReportUsageDetails({
   metrics,
-  analysisUsage,
 }: {
   metrics: RequestMetrics | undefined;
-  analysisUsage: RequestAnalysis['usage'];
 }) {
   const rows: [string, TokenUsage | undefined][] = [
     ['JEV 验证', metrics?.jev],
     ['LLM 验证', metrics?.llm],
     ['验证执行合计', metrics?.execution],
-    ['Agent 总结（本次）', analysisUsage?.current],
-    ['Agent 总结（累计）', metrics?.analysis],
   ];
+  return (
+    <UsageDetails rows={rows}>
+      运行时间含人工等待与清理，不含首次排队和异步分析。验证 Tokens
+      合计包含所有执行组和清理，复用 Case 沿用原执行记录。
+    </UsageDetails>
+  );
+}
+
+/** 验证与分析复用相同的折叠表格，各自传入所属用量和口径说明。 */
+export function UsageDetails({
+  rows,
+  children,
+}: {
+  /** 行标题与已采集用量；未知值继续显示横线。 */
+  rows: [string, TokenUsage | undefined][];
+  /** 解释当前区域的计量范围。 */
+  children: ReactNode;
+}) {
   return (
     <details className="report-usage-detail">
       <summary>用量明细</summary>
-      <p className="muted">
-        运行时间含人工等待与清理，不含首次排队和异步分析。Tokens
-        合计为已记录的验证用量与全部总结用量；验证包含所有执行组和清理，复用
-        Case 沿用原执行记录。本次总结用量随重新分析更新，累计用量包含历次分析。
-      </p>
+      <p className="muted">{children}</p>
       <div className="table-scroll">
         <table>
           <thead>

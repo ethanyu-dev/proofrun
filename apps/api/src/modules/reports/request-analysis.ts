@@ -2,6 +2,7 @@ import { AnalysisCalls, analysisUsage } from './analysis-calls.js';
 import { randomUUID } from 'node:crypto';
 import {
   requestCaseArm,
+  requestCaseVerification,
   requestVerification,
   type RequestAnalysis,
   type RequestResultV2,
@@ -20,6 +21,14 @@ const PAGE_CHARS = 24_000;
 const MAX_SUMMARY_CHARS = 12_000;
 /** 公共视图不返回分析输入或领取凭据。 */
 const VIEW = `revision,status,summary,error,model,requested_at AS "requestedAt",generated_at AS "generatedAt"`;
+
+/** 使用与页面一致的判定口径；空请求或证据不足不能生成全部通过文案。 */
+function passedSummary(snapshot: RequestResultV2): string | null {
+  const overall = requestVerification(snapshot);
+  return overall.status === 'success'
+    ? `本次验证共 ${overall.total} 个 case，全部通过。`
+    : null;
+}
 
 /** 持久队列与 CAS 回执隔离分析和浏览器执行，重复打开报告不会重复消费模型。 */
 export class RequestAnalyses {
@@ -48,7 +57,7 @@ export class RequestAnalyses {
     });
   }
 
-  /** 只对结束的请求生成最终分析；显式重跑保留旧结论直到新结果可用。 */
+  /** 全成功直接保存固定结论；其余请求入队，显式重跑保留旧结论直到新结果可用。 */
   async enqueue(id: string, rerun: boolean) {
     const snapshot = await this.reader.get(id);
     if (snapshot.executionStatus !== 'FINISHED')
@@ -57,13 +66,25 @@ export class RequestAnalyses {
         'ANALYSIS_NOT_READY',
         '验证尚未结束，结束后会自动生成分析。',
       );
+    const summary = passedSummary(snapshot);
     await this.db.query(
-      `INSERT INTO pr_request_analyses(request_id,revision,status,snapshot)
-      VALUES($1,$2,'QUEUED',$3) ON CONFLICT(request_id) DO UPDATE SET
-      revision=EXCLUDED.revision,status='QUEUED',snapshot=EXCLUDED.snapshot,error=NULL,
+      `INSERT INTO pr_request_analyses(request_id,revision,status,snapshot,summary,generated_at)
+      VALUES($1,$2,$5,$3,$6,CASE WHEN $5='SUCCEEDED' THEN clock_timestamp() END)
+      ON CONFLICT(request_id) DO UPDATE SET
+      revision=EXCLUDED.revision,status=EXCLUDED.status,snapshot=EXCLUDED.snapshot,error=NULL,
+      summary=CASE WHEN $5='SUCCEEDED' THEN EXCLUDED.summary ELSE pr_request_analyses.summary END,
+      model=CASE WHEN $5='SUCCEEDED' THEN NULL ELSE pr_request_analyses.model END,
+      generated_at=CASE WHEN $5='SUCCEEDED' THEN EXCLUDED.generated_at ELSE pr_request_analyses.generated_at END,
       requested_at=clock_timestamp(),attempts=0,token_hash=NULL,lease_until=NULL,started_at=NULL
       WHERE $4 AND pr_request_analyses.status IN ('SUCCEEDED','FAILED')`,
-      [id, randomUUID(), JSON.stringify(snapshot), rerun],
+      [
+        id,
+        randomUUID(),
+        JSON.stringify(snapshot),
+        rerun,
+        summary === null ? 'QUEUED' : 'SUCCEEDED',
+        summary,
+      ],
     );
     return this.get(id);
   }
@@ -85,6 +106,16 @@ export class RequestAnalyses {
         ORDER BY requested_at FOR UPDATE SKIP LOCKED LIMIT 1`)
       ).rows[0];
       if (!row) return null;
+      // 升级前已入队的全成功报告也直接结束，不再派发空范围的模型分析。
+      const summary = passedSummary(row.snapshot);
+      if (summary !== null) {
+        await client.query(
+          `UPDATE pr_request_analyses SET status='SUCCEEDED',summary=$2,model=NULL,error=NULL,
+          generated_at=clock_timestamp(),token_hash=NULL,lease_until=NULL WHERE request_id=$1`,
+          [row.request_id, summary],
+        );
+        return null;
+      }
       const token = randomUUID();
       await client.query(
         `UPDATE pr_request_analyses SET status='RUNNING',token_hash=$2,
@@ -94,6 +125,10 @@ export class RequestAnalyses {
       return {
         requestId: row.request_id,
         caseCount: row.snapshot.cases.length,
+        // 未判定项也保留；历史缺失执行组不能被当成成功而跳过。
+        caseIndices: row.snapshot.cases.flatMap((member, index) =>
+          requestCaseVerification(member).status === 'success' ? [] : [index],
+        ),
         token,
       };
     });
@@ -150,6 +185,7 @@ export class RequestAnalyses {
       text = JSON.stringify({
         requestTitle: snapshot.title,
         overall: requestVerification(snapshot),
+        verification: requestCaseVerification(member),
         case: { ...member, arms: arm ? [arm] : [] },
         limitation: arm?.archivedAt
           ? '原始观察已归档清理，只能基于保留的步骤和报告总结。'

@@ -4,10 +4,11 @@ import type { ApiClient } from '../api';
 import { useResource } from '../use-resource';
 import { Empty, ErrorNotice, RefreshBar, time } from '../components/ui';
 import { RequestCases } from '../components/request-cases';
+import { RequestTaskCases } from '../components/request-task-cases';
 import { RequestExport } from '../components/request-export';
 import { RequestRerun } from '../components/request-rerun';
 
-/** 请求详情用紧凑标题和操作栏承载溯源、导航与刷新，结果保持直接展开。 */
+/** 任务与报告共享身份和刷新机制，但分别展示执行目标与验收结果。 */
 export function RequestDetailPage({
   api,
   id,
@@ -49,25 +50,22 @@ export function RequestDetailPage({
           >
             返回{reports ? '报告' : '任务'}
           </a>
-          {value && <RequestExport value={value} />}
-          {value && <RequestRerun key={id} api={api} value={value} />}
+          <a
+            className="request-detail-link"
+            href={`#/${reports ? 'requests' : 'request-reports'}/${encodeURIComponent(id)}`}
+          >
+            {reports ? '查看任务详情' : '查看验证报告'}
+          </a>
+          {reports && value && <RequestExport value={value} />}
+          {!reports && value && (
+            <RequestRerun key={id} api={api} value={value} />
+          )}
         </div>
       </header>
       <div className="request-detail-toolbar">
-        <nav className="request-detail-tabs" aria-label="请求内容">
-          <a
-            aria-current={!reports ? 'page' : undefined}
-            href={`#/requests/${encodeURIComponent(id)}`}
-          >
-            总览与验证目标
-          </a>
-          <a
-            aria-current={reports ? 'page' : undefined}
-            href={`#/request-reports/${encodeURIComponent(id)}`}
-          >
-            测试报告
-          </a>
-        </nav>
+        <span className="request-detail-context">
+          {reports ? '验证报告' : '验证任务详情'}
+        </span>
         <RefreshBar {...resource} />
       </div>
       <ErrorNotice message={resource.error} />
@@ -77,10 +75,14 @@ export function RequestDetailPage({
         <>
           {reports && <RequestReportContent key={id} api={api} value={value} />}
           <h2 className="request-section-heading">
-            {reports ? 'case 验证结果' : '关联 case 与验证目标'}
+            {reports ? 'case 验证结果' : 'case 目标与执行进度'}
             <span>{value.caseCount} 个 case</span>
           </h2>
-          <RequestCases api={api} value={value} />
+          {reports ? (
+            <RequestCases api={api} value={value} />
+          ) : (
+            <RequestTaskCases value={value} />
+          )}
         </>
       )}
     </div>

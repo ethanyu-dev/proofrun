@@ -32,7 +32,7 @@ export function RequestPreview({
   );
 }
 
-/** 直接展示 case 身份、通过数和完成状态，不折叠，也不呈现模式对比。 */
+/** case 使用单行摘要，悬停仅补全标题，列表不暴露内部标识。 */
 export function RequestCasePreview({
   value,
   reports = false,
@@ -51,10 +51,10 @@ export function RequestCasePreview({
             <div>
               <a
                 href={`#/${reports ? 'request-reports' : 'requests'}/${encodeURIComponent(value.requestId)}`}
+                title={member.title}
               >
                 {member.title}
               </a>
-              <p className="mono muted request-id">{member.caseId}</p>
             </div>
           </div>
           <CaseVerificationProgress member={member} />
