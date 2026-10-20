@@ -308,6 +308,7 @@ export interface RequestResultV2 {
       cleanup: boolean;
     }[];
   }[];
+  metrics?: RequestMetrics;
 }
 /**
  * 原单组公开结果，不能代表另一组。
@@ -1019,4 +1020,105 @@ export interface ExecutionOutcome {
    * 本轮固定等待截止时间，历史缺失为 null。
    */
   waitDeadline: string | null;
+}
+/**
+ * 详情与导出的同一快照统计；旧服务和列表可省略。
+ */
+export interface RequestMetrics {
+  /**
+   * 关联执行首次领取到最后任务结束的墙钟跨度，含人工等待、组间等待与清理，不含首次排队和异步分析；复用任务沿用原时间。
+   */
+  executionElapsedMs: number | null;
+  execution: TokenUsage;
+  jev: TokenUsage1;
+  llm: TokenUsage2;
+  analysis: TokenUsage3;
+  /**
+   * 验证执行与全部 Agent 分析已采集 Tokens 的合计。
+   */
+  totalTokens: number | null;
+}
+/**
+ * 所有关联验证执行的已采集用量，按任务去重，包含双组及历史独立清理。
+ */
+export interface TokenUsage {
+  /**
+   * 已返回的输入 Tokens。
+   */
+  promptTokens: number | null;
+  /**
+   * 已返回的输出 Tokens。
+   */
+  completionTokens: number | null;
+  /**
+   * 已返回输入与输出的合计；均未采集时为 null。
+   */
+  totalTokens: number | null;
+  /**
+   * 已登记的实际模型调用次数，包含未回传用量的调用。
+   */
+  calls: number;
+}
+/**
+ * 真实 JEV 候选选择调用，不按 Case 执行模式归类。
+ */
+export interface TokenUsage1 {
+  /**
+   * 已返回的输入 Tokens。
+   */
+  promptTokens: number | null;
+  /**
+   * 已返回的输出 Tokens。
+   */
+  completionTokens: number | null;
+  /**
+   * 已返回输入与输出的合计；均未采集时为 null。
+   */
+  totalTokens: number | null;
+  /**
+   * 已登记的实际模型调用次数，包含未回传用量的调用。
+   */
+  calls: number;
+}
+/**
+ * 验证中的文本决策和填写调用，不含报告分析。
+ */
+export interface TokenUsage2 {
+  /**
+   * 已返回的输入 Tokens。
+   */
+  promptTokens: number | null;
+  /**
+   * 已返回的输出 Tokens。
+   */
+  completionTokens: number | null;
+  /**
+   * 已返回输入与输出的合计；均未采集时为 null。
+   */
+  totalTokens: number | null;
+  /**
+   * 已登记的实际模型调用次数，包含未回传用量的调用。
+   */
+  calls: number;
+}
+/**
+ * 本请求全部分析代次、恢复及失败调用的累计用量。
+ */
+export interface TokenUsage3 {
+  /**
+   * 已返回的输入 Tokens。
+   */
+  promptTokens: number | null;
+  /**
+   * 已返回的输出 Tokens。
+   */
+  completionTokens: number | null;
+  /**
+   * 已返回输入与输出的合计；均未采集时为 null。
+   */
+  totalTokens: number | null;
+  /**
+   * 已登记的实际模型调用次数，包含未回传用量的调用。
+   */
+  calls: number;
 }

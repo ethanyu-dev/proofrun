@@ -393,8 +393,8 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 28px;
-  margin: 20px 0;
+  gap: 20px;
+  margin: 0;
 }
 .request-report-total {
   display: flex;
@@ -410,19 +410,22 @@
   font-size: 24px;
   font-weight: 400;
 }
+/* 状态与数量放在同一标签内，避免每项占两行；零值仍保留以便核对。 */
 .request-report-counts dl {
   display: flex;
   flex-wrap: wrap;
-  gap: 16px 28px;
+  gap: 6px;
   margin: 0;
 }
 .request-report-counts dl > div {
-  display: grid;
-  gap: 8px;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
 }
 .request-report-counts dd {
   margin: 0;
-  font-size: 22px;
+  font-size: 13px;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 .verification-status {
@@ -463,4 +466,58 @@
   .case-verification-progress {
     flex-wrap: wrap;
   }
+}
+
+/* Case 状态与用量共用顶部空间；窄屏换行后仍以紧凑文字显示分类消耗。 */
+.request-report-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 18px 32px;
+  margin: 16px 0 12px;
+}
+.report-usage {
+  flex: 1 1 300px;
+  min-width: 0;
+}
+.report-usage-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 28px;
+  margin: 0;
+}
+.report-usage-stats dt {
+  color: var(--color-muted);
+  font-size: 12px;
+}
+.report-usage-stats dd {
+  margin: 6px 0 0;
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+}
+.report-usage-breakdown {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 10px 0 0;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.report-usage-breakdown > div {
+  display: flex;
+  gap: 6px;
+}
+.report-usage-breakdown dt {
+  color: var(--color-muted);
+}
+.report-usage-breakdown dd {
+  margin: 0;
+}
+.report-usage-detail > summary {
+  cursor: pointer;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+.report-usage-detail .table-scroll {
+  overflow-x: auto;
 }

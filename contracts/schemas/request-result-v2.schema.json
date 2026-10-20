@@ -475,6 +475,10 @@
         ]
       },
       "description": "首次接收冻结的成员与顺序，不按当前筛选截断。"
+    },
+    "metrics": {
+      "$ref": "request-metrics.schema.json",
+      "description": "详情与导出的同一快照统计；旧服务和列表可省略。"
     }
   },
   "required": [

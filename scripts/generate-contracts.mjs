@@ -17,6 +17,8 @@ const names = [
   'case-result-v2',
   'verification-request',
   'request-summary',
+  'token-usage',
+  'request-metrics',
   'request-result-v2',
   'request-list',
   'request-rerun',

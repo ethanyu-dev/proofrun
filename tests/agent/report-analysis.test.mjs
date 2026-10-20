@@ -16,7 +16,12 @@ const CONFIG = {
 // 范围：跨片与多 case 的完整遍历、模型上下文和最终汇总，不运行真实模型。
 test('分析读取所有连续分片并保留前序笔记', async (context) => {
   const seen = [];
+  const calls = [];
   context.mock.method(globalThis, 'fetch', async (url, init) => {
+    if (url.includes('/model-calls/')) {
+      calls.push({ url, ...JSON.parse(init.body) });
+      return Response.json({ recorded: true });
+    }
     if (url.startsWith(CONFIG.apiUrl)) {
       const query = new URL(url).searchParams;
       const record = Number(query.get('record'));
@@ -38,10 +43,14 @@ test('分析读取所有连续分片并保留前序笔记', async (context) => {
       assert.equal(input.cases.length, 2);
       assert.match(input.cases[0], /last-observation-0/);
       assert.match(input.cases[1], /last-observation-1/);
-      return Response.json({ choices: [{ message: { content: '简洁结论' } }] });
+      return Response.json({
+        usage: { prompt_tokens: 10, completion_tokens: 2 },
+        choices: [{ message: { content: '简洁结论' } }],
+      });
     }
     if (input.endOfCase) assert.match(input.previous, /前序笔记/);
     return Response.json({
+      usage: { input_tokens: 10, output_tokens: 2 },
       choices: [
         { message: { content: input.endOfCase ? input.text : '前序笔记' } },
       ],
@@ -56,11 +65,24 @@ test('分析读取所有连续分片并保留前序笔记', async (context) => {
     '简洁结论',
   );
   assert.deepEqual(seen, ['0:0', '0:1', '1:0', '1:1']);
+  assert.equal(calls.filter((c) => c.phase === 'start').length, 5);
+  assert.equal(
+    calls.filter((c) => c.phase === 'start' && c.stage === 'final').length,
+    1,
+  );
+  const receipts = calls.filter((c) => c.phase === 'finish');
+  assert.equal(
+    receipts.reduce((n, c) => n + c.promptTokens + c.completionTokens, 0),
+    60,
+  );
+  assert.ok(receipts.every((c) => c.status === 'RECEIVED' && c.elapsedMs >= 0));
 });
 // 范围：空回复、截断回复和读取失败必须退出，不以局部资料生成“完整”分析。
 test('分析拒绝不完整模型回复及失效领取', async (context) => {
   for (const mode of ['empty', 'truncated', 'lease']) {
     context.mock.method(globalThis, 'fetch', async (url) => {
+      if (url.includes('/model-calls/'))
+        return Response.json({ recorded: true });
       if (url.startsWith(CONFIG.apiUrl))
         return mode === 'lease'
           ? Response.json({ code: 'ANALYSIS_LEASE_LOST' }, { status: 409 })
@@ -83,4 +105,81 @@ test('分析拒绝不完整模型回复及失效领取', async (context) => {
     );
     context.mock.restoreAll();
   }
+});
+
+// 范围：无效总结仍记账、回执重送不重复调用模型；不模拟供应商真实账单。
+test('无效总结保留用量且回执重送复用调用身份', async (context) => {
+  let modelCalls = 0;
+  const receipts = [];
+  context.mock.method(globalThis, 'fetch', async (url, init) => {
+    if (url.includes('/model-calls/')) {
+      const body = JSON.parse(init.body);
+      if (body.phase === 'finish') {
+        receipts.push({ url, ...body });
+        if (receipts.length === 1)
+          return Response.json({ code: 'UNAVAILABLE' }, { status: 503 });
+      }
+      return Response.json({ recorded: true });
+    }
+    if (url.startsWith(CONFIG.apiUrl))
+      return Response.json({ text: 'fact', next: null });
+    modelCalls++;
+    return Response.json({
+      usage: { prompt_tokens: 123, completion_tokens: 45 },
+      choices: [{ finish_reason: 'length', message: { content: '截断' } }],
+    });
+  });
+  await assert.rejects(
+    analyzeReport(
+      CONFIG,
+      { requestId: 'r', caseCount: 1, token: 'lease' },
+      new AbortController().signal,
+    ),
+    { code: 'INVALID_ANALYSIS' },
+  );
+  assert.equal(modelCalls, 1);
+  assert.equal(receipts.length, 2);
+  assert.deepEqual(receipts[0], receipts[1]);
+  assert.equal(receipts[0].promptTokens, 123);
+  assert.equal(receipts[0].completionTokens, 45);
+});
+
+// 范围：传输失败登记安全错误码与空用量，登记失败阻止派发；不推测失败调用的账单。
+test('模型失败与登记失败不伪造零用量', async (context) => {
+  const receipts = [];
+  let modelCalls = 0;
+  let rejectStart = false;
+  context.mock.method(globalThis, 'fetch', async (url, init) => {
+    if (url.includes('/model-calls/')) {
+      const body = JSON.parse(init.body);
+      if (body.phase === 'start' && rejectStart)
+        return Response.json({ code: 'ANALYSIS_LEASE_LOST' }, { status: 409 });
+      if (body.phase === 'finish') receipts.push(body);
+      return Response.json({ recorded: true });
+    }
+    if (url.startsWith(CONFIG.apiUrl))
+      return Response.json({ text: 'fact', next: null });
+    modelCalls++;
+    throw new Error('private-provider-detail');
+  });
+  await assert.rejects(
+    analyzeReport(
+      CONFIG,
+      { requestId: 'r', caseCount: 1, token: 'lease' },
+      new AbortController().signal,
+    ),
+  );
+  assert.equal(receipts[0].status, 'ERROR');
+  assert.equal(receipts[0].promptTokens, null);
+  assert.equal(receipts[0].completionTokens, null);
+  assert.ok(!JSON.stringify(receipts).includes('private-provider-detail'));
+  rejectStart = true;
+  await assert.rejects(
+    analyzeReport(
+      CONFIG,
+      { requestId: 'r', caseCount: 1, token: 'lease' },
+      new AbortController().signal,
+    ),
+  );
+  assert.equal(modelCalls, 1);
 });

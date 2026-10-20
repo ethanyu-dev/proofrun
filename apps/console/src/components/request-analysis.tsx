@@ -4,7 +4,6 @@ import type {
   RequestResultV2,
 } from '@proofrun/contracts';
 import { ApiClient, errorMessage } from '../api';
-import { useResource } from '../use-resource';
 import { ErrorNotice, time } from './ui';
 import { ReportSummary } from './report-summary';
 
@@ -12,12 +11,19 @@ import { ReportSummary } from './report-summary';
 export function RequestAnalysis({
   api,
   value,
+  resource,
 }: {
   api: ApiClient;
   value: RequestResultV2;
+  /** 与顶部汇总共享分析快照，重跑时同时刷新内容与用量。 */
+  resource: {
+    data: Analysis | null | undefined;
+    loading: boolean;
+    error: string | undefined;
+    refresh: () => void;
+  };
 }) {
   const path = `/v2/requests/${encodeURIComponent(value.requestId)}/analysis`;
-  const resource = useResource<Analysis | null>(api, path);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const autoRequested = useRef(false);

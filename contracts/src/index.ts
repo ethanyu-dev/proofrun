@@ -209,6 +209,10 @@ ajv.addSchema(readSchema('request-summary'), 'request-summary.schema.json');
 export const validateVerificationRequest = ajv.compile<VerificationRequest>(
   readSchema('verification-request'),
 );
+ajv.addSchema(readSchema('token-usage'), 'token-usage.schema.json');
+ajv.addSchema(readSchema('request-metrics'), 'request-metrics.schema.json');
+export type { TokenUsage } from './generated/token-usage.js';
+export type { RequestMetrics } from './generated/request-metrics.js';
 export const validateRequestResultV2 = ajv.compile<RequestResultV2>(
   readSchema('request-result-v2'),
 );
@@ -230,4 +234,5 @@ export type {
   RequestAnalysis,
   AnalysisGrant,
   AnalysisContextPage,
+  AnalysisCallWrite,
 } from './request-analysis.js';

@@ -1,0 +1,43 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://proofrun.invalid/contracts/0.1/request-metrics.schema.json",
+  "title": "RequestMetrics",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "executionElapsedMs": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "关联执行首次领取到最后任务结束的墙钟跨度，含人工等待、组间等待与清理，不含首次排队和异步分析；复用任务沿用原时间。"
+    },
+    "execution": {
+      "$ref": "token-usage.schema.json",
+      "description": "所有关联验证执行的已采集用量，按任务去重，包含双组及历史独立清理。"
+    },
+    "jev": {
+      "$ref": "token-usage.schema.json",
+      "description": "真实 JEV 候选选择调用，不按 Case 执行模式归类。"
+    },
+    "llm": {
+      "$ref": "token-usage.schema.json",
+      "description": "验证中的文本决策和填写调用，不含报告分析。"
+    },
+    "analysis": {
+      "$ref": "token-usage.schema.json",
+      "description": "本请求全部分析代次、恢复及失败调用的累计用量。"
+    },
+    "totalTokens": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "验证执行与全部 Agent 分析已采集 Tokens 的合计。"
+    }
+  },
+  "required": [
+    "executionElapsedMs",
+    "execution",
+    "jev",
+    "llm",
+    "analysis",
+    "totalTokens"
+  ]
+}

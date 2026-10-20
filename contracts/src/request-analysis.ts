@@ -1,3 +1,5 @@
+import type { TokenUsage } from './generated/token-usage.js';
+
 /** 分析属于请求的一次独立生成，不修改验收事实或触发浏览器重跑。 */
 export interface RequestAnalysis {
   /** 每次显式重跑更换代次，迟到回执不能覆盖新分析。 */
@@ -14,6 +16,8 @@ export interface RequestAnalysis {
   generatedAt: string | null;
   /** 实际分析模型，未生成时为空。 */
   model: string | null;
+  /** 当前生成代次与历史全部代次的实际用量；旧服务可省略。 */
+  usage?: { current: TokenUsage; cumulative: TokenUsage };
 }
 
 /** Worker 领取独立分析租约，不能用它操作浏览器。 */
@@ -37,3 +41,22 @@ export interface AnalysisContextPage {
     offset: number;
   } | null;
 }
+
+/** 每次分析模型调用先登记再回写，稳定身份允许网络重送，禁止覆盖已确认回执。 */
+export type AnalysisCallWrite =
+  | {
+      phase: 'start';
+      /** 仅标记用途与模型，不传输原始上下文或连接凭据。 */
+      stage: 'review' | 'final';
+      model: string;
+    }
+  | {
+      phase: 'finish';
+      status: 'RECEIVED' | 'ERROR';
+      /** 供应商未返回 usage 时保持 null。 */
+      promptTokens: number | null;
+      completionTokens: number | null;
+      elapsedMs: number;
+      /** 仅允许稳定错误码。 */
+      error: string | null;
+    };

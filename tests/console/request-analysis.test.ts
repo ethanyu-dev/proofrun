@@ -55,10 +55,54 @@ test('报告按汇总、分析、case 展示，生成与重跑不阻塞结果', 
           reportPhase: 'FINAL',
           caseCount: 0,
           cases: [],
+          metrics: {
+            executionElapsedMs: 273000,
+            totalTokens: 610300,
+            execution: {
+              promptTokens: 554787,
+              completionTokens: 22513,
+              totalTokens: 577300,
+              calls: 20,
+            },
+            jev: {
+              promptTokens: 100000,
+              completionTokens: 5000,
+              totalTokens: 105000,
+              calls: 12,
+            },
+            llm: {
+              promptTokens: 454787,
+              completionTokens: 17513,
+              totalTokens: 472300,
+              calls: 8,
+            },
+            analysis: {
+              promptTokens: 30000,
+              completionTokens: 3000,
+              totalTokens: 33000,
+              calls: 5,
+            },
+          },
         };
       if (body) {
         posts.push(body);
-        analysis = { ...analysis, status: 'QUEUED' };
+        analysis = {
+          ...analysis,
+          status: 'QUEUED',
+          ...(analysis?.usage
+            ? {
+                usage: {
+                  current: {
+                    promptTokens: null,
+                    completionTokens: null,
+                    totalTokens: null,
+                    calls: 0,
+                  },
+                  cumulative: analysis.usage.cumulative,
+                },
+              }
+            : {}),
+        };
       }
       return analysis;
     },
@@ -73,6 +117,12 @@ test('报告按汇总、分析、case 展示，生成与重跑不阻塞结果', 
     assert.ok(text.indexOf('测试报告总体汇总') < text.indexOf('Agent 分析'));
     assert.ok(text.indexOf('Agent 分析') < text.indexOf('case 验证结果'));
     assert.match(text, /未能判定/);
+    assert.match(text, /4 分 33 秒/);
+    assert.match(text, /610,300/);
+    assert.match(text, /JEV105,000/);
+    assert.match(text, /LLM472,300/);
+    assert.match(text, /Agent 总结（累计）33,000/);
+    assert.doesNotMatch(text, /部分用量未知/);
     assert.deepEqual(posts, [{ rerun: false }]);
     await act(async () => context.mock.timers.tick(5000));
     assert.equal(posts.length, 1);
@@ -81,9 +131,35 @@ test('报告按汇总、分析、case 展示，生成与重跑不阻塞结果', 
       summary: '已生成的简洁结论',
       generatedAt: '2026-10-19T01:00:00Z',
       model: 'fixture',
+      usage: {
+        current: {
+          promptTokens: 30000,
+          completionTokens: 3000,
+          totalTokens: 33000,
+          calls: 5,
+        },
+        cumulative: {
+          promptTokens: 30000,
+          completionTokens: 3000,
+          totalTokens: 33000,
+          calls: 5,
+        },
+      },
     };
     await act(async () => context.mock.timers.tick(5000));
     assert.match(container.textContent!, /已生成的简洁结论/);
+    const overview = container.querySelector(
+      '[aria-label="测试报告总体汇总"]',
+    )!;
+    const currentUsage = () =>
+      [...overview.querySelectorAll('tr')].find((row) =>
+        row.textContent!.startsWith('Agent 总结（本次）'),
+      )!.textContent!;
+    assert.match(currentUsage(), /Agent 总结（本次）30,0003,00033,0005/);
+    assert.doesNotMatch(
+      container.querySelector('[aria-label="Agent 分析"]')!.textContent!,
+      /Tokens/,
+    );
     const button = [...container.querySelectorAll('button')].find(
       (button) => button.textContent === '重新分析',
     )!;
@@ -92,6 +168,8 @@ test('报告按汇总、分析、case 展示，生成与重跑不阻塞结果', 
     assert.match(container.textContent!, /上一版分析/);
     assert.match(container.textContent!, /已生成的简洁结论/);
     assert.equal(button.disabled, true);
+    assert.match(currentUsage(), /Agent 总结（本次）———0/);
+    assert.match(overview.textContent!, /Agent 总结（累计）33,000/);
     analysis = {
       ...analysis,
       status: 'FAILED',

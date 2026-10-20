@@ -58,6 +58,16 @@ export function analysisRoutes(
         token(request.headers.authorization),
       ),
   );
+  app.post<{ Params: { id: string; callId: string } }>(
+    '/v1/analyses/:id/model-calls/:callId',
+    (request) =>
+      analyses.recordCall(
+        request.params.id,
+        request.params.callId,
+        token(request.headers.authorization),
+        request.body,
+      ),
+  );
   app.post<{ Params: { id: string } }>('/v1/analyses/:id/complete', (request) =>
     analyses.finish(
       request.params.id,
