@@ -13,8 +13,8 @@ const CONFIG = {
   maxTokens: 4096,
   tokenParameter: 'max_tokens',
 };
-// 范围：跨片与多 case 的完整遍历、模型上下文和最终汇总，不运行真实模型。
-test('分析读取所有连续分片并保留前序笔记', async (context) => {
+// 范围：跳过成功 case，保留异常 case 的完整跨片上下文和原索引；不验证真实模型的简洁性或归因质量。
+test('分析仅遍历指定异常 case 的全部分片并保留前序笔记', async (context) => {
   const seen = [];
   const calls = [];
   context.mock.method(globalThis, 'fetch', async (url, init) => {
@@ -40,9 +40,10 @@ test('分析读取所有连续分片并保留前序笔记', async (context) => {
     assert.equal(body.max_tokens, 4096);
     const input = JSON.parse(body.messages[1].content);
     if (input.phase === 'final') {
-      assert.equal(input.cases.length, 2);
-      assert.match(input.cases[0], /last-observation-0/);
-      assert.match(input.cases[1], /last-observation-1/);
+      assert.equal(input.cases.length, 3);
+      assert.match(input.cases[0], /last-observation-1/);
+      assert.match(input.cases[1], /last-observation-3/);
+      assert.match(input.cases[2], /last-observation-4/);
       return Response.json({
         usage: { prompt_tokens: 10, completion_tokens: 2 },
         choices: [{ message: { content: '简洁结论' } }],
@@ -59,13 +60,13 @@ test('分析读取所有连续分片并保留前序笔记', async (context) => {
   assert.equal(
     await analyzeReport(
       CONFIG,
-      { requestId: 'r', caseCount: 2, token: 'lease' },
+      { requestId: 'r', caseCount: 5, caseIndices: [1, 3, 4], token: 'lease' },
       new AbortController().signal,
     ),
     '简洁结论',
   );
-  assert.deepEqual(seen, ['0:0', '0:1', '1:0', '1:1']);
-  assert.equal(calls.filter((c) => c.phase === 'start').length, 5);
+  assert.deepEqual(seen, ['1:0', '1:1', '3:0', '3:1', '4:0', '4:1']);
+  assert.equal(calls.filter((c) => c.phase === 'start').length, 7);
   assert.equal(
     calls.filter((c) => c.phase === 'start' && c.stage === 'final').length,
     1,
@@ -73,9 +74,24 @@ test('分析读取所有连续分片并保留前序笔记', async (context) => {
   const receipts = calls.filter((c) => c.phase === 'finish');
   assert.equal(
     receipts.reduce((n, c) => n + c.promptTokens + c.completionTokens, 0),
-    60,
+    84,
   );
   assert.ok(receipts.every((c) => c.status === 'RECEIVED' && c.elapsedMs >= 0));
+});
+// 范围：缺少分析范围时不读取记录、不调用模型；全成功固定文案由 API 集成测试覆盖。
+test('空范围或旧领取缺少范围时不能生成无依据的结论', async (context) => {
+  context.mock.method(globalThis, 'fetch', async () => {
+    assert.fail('不应发出 HTTP 请求');
+  });
+  for (const caseIndices of [[], undefined])
+    await assert.rejects(
+      analyzeReport(
+        CONFIG,
+        { requestId: 'r', caseCount: 1, caseIndices, token: 'lease' },
+        new AbortController().signal,
+      ),
+      { code: 'INVALID_ANALYSIS' },
+    );
 });
 // 范围：空回复、截断回复和读取失败必须退出，不以局部资料生成“完整”分析。
 test('分析拒绝不完整模型回复及失效领取', async (context) => {
@@ -99,7 +115,7 @@ test('分析拒绝不完整模型回复及失效领取', async (context) => {
     await assert.rejects(
       analyzeReport(
         CONFIG,
-        { requestId: 'r', caseCount: 1, token: 'lease' },
+        { requestId: 'r', caseCount: 1, caseIndices: [0], token: 'lease' },
         new AbortController().signal,
       ),
     );
@@ -132,7 +148,7 @@ test('无效总结保留用量且回执重送复用调用身份', async (context
   await assert.rejects(
     analyzeReport(
       CONFIG,
-      { requestId: 'r', caseCount: 1, token: 'lease' },
+      { requestId: 'r', caseCount: 1, caseIndices: [0], token: 'lease' },
       new AbortController().signal,
     ),
     { code: 'INVALID_ANALYSIS' },
@@ -165,7 +181,7 @@ test('模型失败与登记失败不伪造零用量', async (context) => {
   await assert.rejects(
     analyzeReport(
       CONFIG,
-      { requestId: 'r', caseCount: 1, token: 'lease' },
+      { requestId: 'r', caseCount: 1, caseIndices: [0], token: 'lease' },
       new AbortController().signal,
     ),
   );
@@ -177,7 +193,7 @@ test('模型失败与登记失败不伪造零用量', async (context) => {
   await assert.rejects(
     analyzeReport(
       CONFIG,
-      { requestId: 'r', caseCount: 1, token: 'lease' },
+      { requestId: 'r', caseCount: 1, caseIndices: [0], token: 'lease' },
       new AbortController().signal,
     ),
   );

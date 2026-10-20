@@ -315,6 +315,7 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
         const grants = claims.map((reply) => reply.json()).filter(Boolean);
         assert.equal(grants.length, 1);
         const grant = grants[0];
+        assert.deepEqual(grant.caseIndices, [0, 1, 2]);
         const base = '/v1/analyses/request-main';
         // 用量先登记、后回写；重复交付不能双计，错凭据与非法用量被拒绝。
         const usagePath = `${base}/model-calls/usage-first`;
@@ -778,6 +779,154 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
           '/v1/tasks/case-v2-alpha/requests',
         ])
           assert.equal((await app.inject({ url: path })).statusCode, 401);
+      },
+    );
+    // 范围：真实数据库与 HTTP 验证分析范围、全成功直出、幂等及重跑；报告为注入夹具，不证明浏览器验收或模型输出质量。
+    await suite.test(
+      '只领取异常 case，全成功无需 worker 或模型即可生成固定结论',
+      async () => {
+        const cases = ['success', 'failure', 'partial', 'unknown'].map(
+          (status) => {
+            const value = example(`analysis-${status}`);
+            value.steps[0]!.expected = ['显示结果', '显示详情'];
+            return value;
+          },
+        );
+        const submitted = await call('/v2/cases', {
+          requestId: 'analysis-mixed',
+          cases,
+        });
+        assert.equal(submitted.statusCode, 202, submitted.body);
+        const snapshot = submitted.json<RequestResultV2>();
+        for (const [index, member] of snapshot.cases.entries()) {
+          for (const arm of member.arms) {
+            // 成功 case 的另一执行组故意失败，确保分析范围与页面一样只采用 JEV。
+            const verdicts =
+              index === 0
+                ? arm.executionMode === 'jev'
+                  ? ['PASSED', 'PASSED']
+                  : ['FAILED', 'FAILED']
+                : index === 1
+                  ? ['FAILED', 'FAILED']
+                  : index === 2
+                    ? ['PASSED', 'FAILED']
+                    : ['PASSED', 'INCONCLUSIVE'];
+            const report = {
+              protocolVersion: '0.1',
+              taskId: arm.taskId,
+              executionDisposition: index === 3 ? 'BLOCKED' : 'EXECUTED',
+              verdict:
+                index === 3
+                  ? null
+                  : verdicts.includes('FAILED')
+                    ? 'FAILED'
+                    : 'PASSED',
+              summary: '分析范围夹具',
+              criteria: member.criteria.map((criterion, i) => ({
+                criterionId: criterion.criterionId,
+                verdict: verdicts[i],
+                summary: '夹具观察',
+                evidenceRefs: [],
+              })),
+              artifacts: [],
+              steps: [],
+            };
+            await sql.query(
+              "UPDATE pr_tasks SET state='COMPLETED',report=$2,finished_at=clock_timestamp() WHERE id=$1",
+              [arm.taskId, report],
+            );
+          }
+        }
+        const workerCall = (
+          url: string,
+          body: object = {},
+          token = 'request-integration-worker-fixture',
+          method: 'POST' | 'GET' = 'POST',
+        ) =>
+          app.inject({
+            method,
+            url,
+            headers: { authorization: `Bearer ${token}` },
+            ...(method === 'POST' ? { payload: body } : {}),
+          });
+        const queued = await call('/v2/requests/analysis-mixed/analysis', {});
+        assert.equal(queued.json().status, 'QUEUED', queued.body);
+        const grant = (await workerCall('/v1/worker/analyses/claim')).json();
+        assert.equal(grant.requestId, 'analysis-mixed');
+        assert.equal(grant.caseCount, 4);
+        assert.deepEqual(grant.caseIndices, [1, 2, 3]);
+        for (const [index, status] of [
+          [1, 'failure'],
+          [2, 'partial'],
+          [3, 'unknown'],
+        ] as const) {
+          const page = await workerCall(
+            `/v1/analyses/analysis-mixed/context?caseIndex=${index}&record=0&offset=0`,
+            {},
+            grant.token,
+            'GET',
+          );
+          assert.equal(page.statusCode, 200, page.body);
+          const data = JSON.parse(page.json().text);
+          assert.equal(data.verification.status, status);
+          assert.equal(data.overall.success, 1);
+          assert.equal(data.case.arms.length, 1);
+          assert.equal(data.case.arms[0].executionMode, 'jev');
+          // 部分失败仍提供已通过项的上下文，不能在复盘前裁掉可能相关的前置事实。
+          assert.equal(data.case.arms[0].result.result.criteria.length, 2);
+        }
+        assert.equal(
+          (
+            await workerCall(
+              '/v1/analyses/analysis-mixed/complete',
+              { summary: '异常分析夹具', model: 'fixture' },
+              grant.token,
+            )
+          ).statusCode,
+          200,
+        );
+
+        const successRequest = await call('/v2/cases', {
+          requestId: 'analysis-success-only',
+          cases: [cases[0]],
+        });
+        assert.equal(successRequest.statusCode, 202, successRequest.body);
+        const path = '/v2/requests/analysis-success-only/analysis';
+        const generated = await Promise.all([call(path, {}), call(path, {})]);
+        const result = generated[0]!.json();
+        assert.equal(result.status, 'SUCCEEDED', generated[0]!.body);
+        assert.equal(result.summary, '本次验证共 1 个 case，全部通过。');
+        assert.equal(result.model, null);
+        assert.ok(result.generatedAt);
+        assert.equal(result.usage.current.calls, 0);
+        assert.equal(result.revision, generated[1]!.json().revision);
+        assert.equal((await call(path, {})).json().revision, result.revision);
+        assert.equal(
+          (await workerCall('/v1/worker/analyses/claim')).json(),
+          null,
+        );
+        // 重跑替换旧模型总结时不继续显示旧模型名，也不复用旧代次。
+        await sql.query(
+          "UPDATE pr_request_analyses SET summary='旧模型总结',model='old-model' WHERE request_id='analysis-success-only'",
+        );
+        const rerun = (await call(path, { rerun: true })).json();
+        assert.notEqual(rerun.revision, result.revision);
+        assert.equal(rerun.status, 'SUCCEEDED');
+        assert.equal(rerun.summary, result.summary);
+        assert.equal(rerun.model, null);
+        assert.equal(rerun.usage.current.calls, 0);
+        // 升级前已经入队的全成功报告也不派发模型任务。
+        await sql.query(
+          "UPDATE pr_request_analyses SET status='QUEUED',summary=NULL,generated_at=NULL WHERE request_id='analysis-success-only'",
+        );
+        assert.equal(
+          (await workerCall('/v1/worker/analyses/claim')).json(),
+          null,
+        );
+        const recovered = (await call(path)).json();
+        assert.equal(recovered.status, 'SUCCEEDED');
+        assert.equal(recovered.summary, result.summary);
+        assert.equal(recovered.usage.cumulative.calls, 0);
       },
     );
   } finally {
