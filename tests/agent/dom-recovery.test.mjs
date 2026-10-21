@@ -67,6 +67,101 @@ function preparationFailures(client, failures) {
   };
 }
 
+// 范围：等待拒绝后使用新观察且不重复提交；浏览器回执为夹具，真实截止时间另由 Linux 测试覆盖。
+test('有界等待未确认后重新观察，已经提交的表单不重放', async () => {
+  const client = new FakeControl();
+  const original = client.command.bind(client);
+  client.command = async (...args) => {
+    if (args[2].type !== 'browser.wait') return original(...args);
+    client.calls.push({ id: args[1], operation: args[2] });
+    return {
+      operationStatus: 'FAILED',
+      effect: 'NOT_STARTED',
+      error: { code: 'CONDITION_NOT_MET' },
+    };
+  };
+  let before;
+  const report = await run(grant(), client, (context, turn) => {
+    if (turn === 1)
+      return {
+        type: 'browser.act',
+        action: 'fill',
+        target: '@e1',
+        value: 'Alice',
+      };
+    if (turn === 2)
+      return { type: 'browser.act', action: 'click', target: '@e2' };
+    if (turn === 3) {
+      before = context.observation.observationId;
+      return {
+        type: 'browser.wait',
+        selector: 'body',
+        text: '不存在的完成文案',
+      };
+    }
+    assert.notEqual(context.observation.observationId, before);
+    assert.match(context.feedback, /BROWSER_WAIT_NOT_MET/);
+    assert.equal(client.submitted, true);
+    return finish(context);
+  });
+  assert.equal(report.verdict, 'PASSED');
+  assert.equal(
+    client.calls.filter((c) => c.operation.action === 'click').length,
+    1,
+  );
+});
+
+// 范围：错误预期不能导致无限轮询；只验证 Agent 限额，不代表真实页面超时率。
+test('连续未确认的等待在既有恢复上限内停止', async () => {
+  const client = new FakeControl();
+  const original = client.command.bind(client);
+  client.command = async (...args) => {
+    if (args[2].type !== 'browser.wait') return original(...args);
+    client.calls.push({ id: args[1], operation: args[2] });
+    return {
+      operationStatus: 'FAILED',
+      effect: 'NOT_STARTED',
+      error: { code: 'CONDITION_NOT_MET' },
+    };
+  };
+  const report = await run(grant(), client, () => ({
+    type: 'browser.wait',
+    selector: 'body',
+    text: '不存在',
+  }));
+  assert.equal(report.executionDetails.reasonCode, 'BROWSER_WAIT_NOT_MET');
+  assert.equal(
+    client.calls.filter((c) => c.operation.type === 'browser.wait').length,
+    3,
+  );
+  assert.notEqual(report.verdict, 'PASSED');
+});
+
+// 范围：未知等待回执仍终止，不能借相同错误码放宽副作用约束；不注入真实网络丢包。
+test('等待效果未知不能当成条件未满足恢复', async () => {
+  const client = new FakeControl();
+  const original = client.command.bind(client);
+  client.command = async (...args) => {
+    if (args[2].type !== 'browser.wait') return original(...args);
+    client.calls.push({ id: args[1], operation: args[2] });
+    return {
+      operationStatus: 'UNKNOWN',
+      effect: 'MAY_HAVE_HAPPENED',
+      error: { code: 'CONDITION_NOT_MET' },
+    };
+  };
+  const report = await run(grant(), client, () => ({
+    type: 'browser.wait',
+    selector: 'body',
+    text: '不存在',
+  }));
+  assert.equal(report.executionDetails.reasonCode, 'BROWSER_EFFECT_UNKNOWN');
+  assert.equal(
+    client.calls.filter((c) => c.operation.type === 'browser.wait').length,
+    1,
+  );
+});
+
 // 范围：前置失败后重新观察并由模型重新决策，不自动重发旧动作；不验证真实页面点击可靠性。
 test('点击准备故障后换用新观察，模型可以改选填写动作', async () => {
   const client = new FakeControl();

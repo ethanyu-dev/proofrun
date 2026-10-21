@@ -25,6 +25,10 @@ use tokio::{process::Command, time::Duration};
 pub const PINNED_AGENT_BROWSER_VERSION: &str = "0.38.1";
 /// CLI 配置内单次引擎调用的默认超时，单位毫秒；外层命令期限仍优先。
 const DEFAULT_ENGINE_TIMEOUT_MS: u64 = 8_000;
+/// 条件等待分段返回，错误的预期文案不能占满整条命令并触发控制面撤权。
+const CONDITION_WAIT_MS: u64 = 5_000;
+/// 为 host、节点和控制面交付明确回执预留时间；不延长调用方冻结的命令期限。
+const CONDITION_REPLY_RESERVE_MS: u64 = 1_000;
 /// 与流服务的初始视口一致；显式设置才能让 Chromium 实际尺寸和流元数据同步。
 const LIVE_VIEW_WIDTH: u32 = 1280;
 const LIVE_VIEW_HEIGHT: u32 = 720;
@@ -951,6 +955,10 @@ impl Engine {
             }
             BrowserCommand::BrowserAuthSave { .. } => self.save_auth(remaining()).await,
             BrowserCommand::BrowserWait { selector, text, .. } => {
+                let wait_deadline = process::boot_ms()
+                    + remaining()
+                        .saturating_sub(CONDITION_REPLY_RESERVE_MS)
+                        .min(CONDITION_WAIT_MS);
                 if self.dom.is_none() {
                     let endpoint = self
                         .cli(vec!["get".into(), "cdp-url".into()], remaining())
@@ -974,19 +982,22 @@ impl Engine {
 
                 if let Some(dom) = self.dom.as_mut() {
                     loop {
+                        if process::boot_ms() >= wait_deadline {
+                            return Err(Fault::rejected(
+                                "CONDITION_NOT_MET",
+                                "condition not confirmed within bounded wait; observe again",
+                            ));
+                        }
                         if dom
                             .condition(&selector, &text, self.frame.as_deref())
                             .await?
                         {
                             return Ok(json!({"conditionMet":true}));
                         }
-                        if process::boot_ms() >= deadline {
-                            return Err(Fault::rejected(
-                                "CONDITION_NOT_MET",
-                                "condition not met within command budget",
-                            ));
-                        }
-                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        tokio::time::sleep(Duration::from_millis(
+                            wait_deadline.saturating_sub(process::boot_ms()).min(100),
+                        ))
+                        .await;
                     }
                 }
 

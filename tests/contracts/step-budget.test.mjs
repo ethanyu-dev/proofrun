@@ -21,11 +21,11 @@ test('多验收项增加动作和模型额度，三十次动作封顶', () => {
     const plan = compileStepBudget(task);
     assert.deepEqual(
       plan.steps.map((s) => s.maxActions),
-      [10, 16, 24, 30, 10],
+      [12, 18, 26, 30, 10],
     );
     assert.deepEqual(
       plan.steps.map((s) => s.maxModelCalls),
-      [20, 32, 48, 60, 20].map((n) => n * (executionMode === 'jev' ? 2 : 1)),
+      [24, 36, 52, 60, 20].map((n) => n * (executionMode === 'jev' ? 2 : 1)),
     );
     assert(plan.steps.every((s) => s.timeoutMs === 300000));
     assert.equal(plan.cleanup.maxActions, 10);

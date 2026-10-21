@@ -6,6 +6,10 @@ export const PREPARATION_BLOCK_REVIEW =
 export const EXHAUSTED_RECOVERY_TOOL =
   '旧恢复计划已耗尽，必须同时提交针对剩余缺口的新 workflow.recovery，不能重送原计划。';
 
+/** 等待未命中只说明预期尚未确认；恢复须基于新观察，不能重放此前的业务写入。 */
+export const WAIT_NOT_MET_FEEDBACK =
+  '本次有界等待未确认预期文本。重新观察当前页面并核对等待条件；不能据此判定业务失败，也不要重复此前的提交。';
+
 /** 幂等重送已保存结论不能推进执行；保留补证机会，也给模型明确的退出路径。 */
 export const REPEATED_RECORD_FEEDBACK =
   'CRITERIA_ALREADY_RECORDED: 本批结论已保存，同判定重送不会更新说明或增加动作消耗。请继续具体未完成的取证；若已有充分证据完成全部步骤，使用 verification_finish（criteria 可以为空）；若缺口无法补齐，使用 verification_block 说明已尝试动作、现有证据和缺失前提。不要再次重送相同结论。';

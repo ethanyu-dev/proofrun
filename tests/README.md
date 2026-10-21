@@ -11,7 +11,7 @@ cargo clippy --locked --workspace --all-targets -- -D warnings
 pnpm build
 ```
 
-`pnpm check` 包含契约生成漂移、格式、类型、契约测试、验收材料审计测试、Agent 测试、Console 测试及 Rust 测试，不要求数据库或模型密钥。依赖版本以根目录工具链与锁文件为准。
+`pnpm check` 包含契约生成漂移、格式、类型、契约测试、验收材料审计测试、Agent 测试、业务测评工具测试、Console 测试及 Rust 测试，不要求数据库或模型密钥。依赖版本以根目录工具链与锁文件为准。
 
 ## 测试层次
 
@@ -72,6 +72,8 @@ node tests/browser-node/validate-events.mjs /absolute/path/to/events.jsonl
 人工输入网络隔离回归见 `browser-node/input_network_smoke.py`，使用同样的引擎与 Chrome 环境变量。真实浏览器的后台标签页阻塞二十二秒、前台接口持续等待时，验证前台点击完成、新请求证据保留及独立写入计数；不访问生产网站，也不证明某次线上超时的唯一原因。该场景已纳入完整 Linux 回归。
 
 ## Console 与真实环境
+
+业务端到端测评见 [场景说明](scenarios/README.md)：`pnpm test:e2e:harness` 验证独立判定与恢复逻辑，`pnpm test:e2e:linux` 跑真实浏览器和脚本模型，显式设置真实模型后可运行 12 个场景。判定核对持久化业务事实与证据正文，已知缺陷正确报告 FAILED 也算测评通过；不与单纯文件完整性审计混为一谈。
 
 页面联调入口、临时凭据和夹具回收见 [Console README](../apps/console/README.md#验证)；独立 Node 调试页见 [调试页 README](browser-node/debug-ui/README.md)。夹具 PNG 和协议状态不构成真实业务界面验收，也不能仅凭下载按钮存在就认定文件落盘。
 

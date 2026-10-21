@@ -10,6 +10,7 @@ import { execute } from '../../apps/agent/dist/execution/runner.js';
 import { ChatModel } from '../../apps/agent/dist/model/chat.js';
 import { JevModel } from '../../apps/agent/dist/model/jev.js';
 import { config, grant, FakeControl, finish, modelServer } from './fixture.mjs';
+import { compileStepBudget } from '../../contracts/dist/index.js';
 
 /** 合成观察用不同名称、语言和 URL 复用同一机制，不代表真实网站验收。 */
 function page(id, text = 'A', extra = {}) {
@@ -196,7 +197,49 @@ test('滚动幅度按能力和实际容器计算，旧节点兼容', () => {
       }),
       'list',
     ),
-    150,
+    180,
+  );
+});
+
+// 范围：合成列表几何可连续扫描至末端，并在冻结额度内保留导航、选择及查询；不替代真实虚拟 DOM 和模型测评。
+test('窄容器扫描保留重叠并给最终操作留下额度', () => {
+  const budget = compileStepBudget({
+    executionMode: 'llm',
+    steps: [
+      { stepId: 'verify', type: 'verification', expected: ['查询实际记录'] },
+    ],
+  }).steps[0];
+  const observation = page('list', '', {
+    targets: [{ target: 'list', scroll: { width: 300, height: 240 } }],
+  });
+  const stride = scrollDistance(observation, 'list');
+  const windows = [0];
+  while (windows.at(-1) + 240 < 1920) windows.push(windows.at(-1) + stride);
+  assert.ok(
+    windows.slice(1).every((position, i) => position < windows[i] + 240),
+    '相邻视口仍有重叠',
+  );
+  assert.ok(
+    windows.length - 1 + 3 <= budget.maxActions,
+    '导航及末尾选择、查询均计入预算',
+  );
+  assert.equal(scrollDistance(observation, 'list', true), 270);
+  assert.ok(
+    scrollDistance(
+      page('tiny', '', {
+        targets: [{ target: 'list', scroll: { width: 50, height: 50 } }],
+      }),
+      'list',
+    ) < 50,
+  );
+  assert.equal(
+    scrollDistance(
+      page('large', '', {
+        targets: [{ target: 'list', scroll: { width: 2000, height: 2000 } }],
+      }),
+      'list',
+    ),
+    1200,
   );
 });
 

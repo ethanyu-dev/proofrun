@@ -96,6 +96,8 @@ export interface ContextInput {
   cleanup?: boolean;
   /** 当前观察和控制代次下的前置结果；只含业务条件与来源，不含身份配方或凭据。 */
   preconditions: CheckResult[];
+  /** 同一执行中准备阶段确认且认证版本仍有效的人工事实；不替代当前步骤门禁或页面核实。 */
+  sessionPreconditions?: CheckResult[];
   /** 固定检查的结果及证据缺口，模型不能自行改变检查方法。 */
   policyChecks?: import('./policy-checks.js').PolicyResult[];
   /** 子项阅读来源与跨轮进度，不等同验收通过。 */
@@ -177,6 +179,7 @@ function contextData(input: ContextInput) {
     verificationReview: input.verificationReview,
     cleanup: input.cleanup === true,
     preconditions: structuredClone(input.preconditions),
+    sessionPreconditions: structuredClone(input.sessionPreconditions ?? []),
     workflow: input.workflow,
     executionGuidance: input.executionGuidance,
     interactionProgress: input.interactionProgress

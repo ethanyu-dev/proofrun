@@ -11,15 +11,21 @@ import {
   type EnvironmentCondition,
 } from './environment-handoff.js';
 import { CriteriaLedger } from './criteria.js';
-import { evaluateChecks, mergeChecks } from './identity.js';
+import {
+  evaluateChecks,
+  mergeChecks,
+  sessionIdentityFacts,
+} from './identity.js';
 import { stepLimit } from '@proofrun/contracts';
 import { SettlementBudget } from './settlement-budget.js';
 import { StepAllowance } from './step-budget.js';
 import { stepObjective } from '../prompts/step.js';
+import { HANDOFF_REVIEW_FEEDBACK } from '../prompts/action-replay.js';
 import { settlementRepairFeedback } from '../prompts/settlement.js';
 import {
   PREPARATION_BLOCK_REVIEW,
   REPEATED_RECORD_FEEDBACK,
+  WAIT_NOT_MET_FEEDBACK,
 } from '../prompts/recovery.js';
 import { randomUUID } from 'node:crypto';
 import {
@@ -460,6 +466,13 @@ class Execution {
         '读取页面 DOM 失败（DOM_ENGINE_FAILED）',
       );
     if (
+      operation.type === 'browser.wait' &&
+      result.operationStatus === 'FAILED' &&
+      result.effect === 'NOT_STARTED' &&
+      result.error?.code === 'CONDITION_NOT_MET'
+    )
+      throw new AgentFault('BROWSER_WAIT_NOT_MET', WAIT_NOT_MET_FEEDBACK);
+    if (
       result.effect === 'MAY_HAVE_HAPPENED' ||
       result.operationStatus === 'UNKNOWN'
     )
@@ -753,6 +766,16 @@ class Execution {
             budget: budgetRemaining,
           })
         : undefined;
+    const preconditions = [
+      ...this.platformChecks(),
+      ...evaluateChecks(
+        this.identityChecks(),
+        this.current!,
+        this.confirmedChecks,
+        this.controlRevision,
+        this.grant.task.executionPlan ? this.authRevision : undefined,
+      ),
+    ];
     return decisionContext({
       executionPolicy:
         this.config.executionPolicy === 'planned-v1'
@@ -788,16 +811,23 @@ class Execution {
       verificationReview,
       cleanup: this.isCleanup(),
       policyChecks: this.policyResults(),
-      preconditions: [
-        ...this.platformChecks(),
-        ...evaluateChecks(
-          this.identityChecks(),
-          this.current!,
-          this.confirmedChecks,
-          this.controlRevision,
-          this.grant.task.executionPlan ? this.authRevision : undefined,
-        ),
-      ],
+      preconditions,
+      sessionPreconditions:
+        this.isCleanup() || this.recheck
+          ? []
+          : sessionIdentityFacts(
+              this.stepResults
+                .slice(0, this.stepIndex)
+                .filter((result) =>
+                  this.grant.task.steps?.some(
+                    (step) =>
+                      step.stepId === result.stepId && step.type === 'setup',
+                  ),
+                ),
+              preconditions,
+              this.controlRevision,
+              this.grant.task.executionPlan ? this.authRevision : undefined,
+            ),
       workflow: this.workflow.view(),
       interactionProgress: this.interactions.view(
         this.config.executionPolicy === 'planned-v1' ? 4000 : 400,
@@ -1355,8 +1385,7 @@ class Execution {
             this.workflow.apply({ assessments }, new Set(this.evidence.keys()));
         }
       }
-      this.feedback =
-        '人工已交还控制权。请重新核实完整准备要求：已解决项提交新证据，其余未解决项明确说明原因；不得沿用旧账号证据或仅凭人工完成判定就绪。';
+      this.feedback = HANDOFF_REVIEW_FEEDBACK;
       return null;
     }
     const state = this.stepResults[this.stepIndex]!;
@@ -2522,6 +2551,7 @@ class Execution {
             'BROWSER_TARGET_OBSCURED',
             'BROWSER_STALE_OBSERVATION',
             'BROWSER_ACTION_PRECONDITION_FAILED',
+            'BROWSER_WAIT_NOT_MET',
           ].includes(error.code)
         ) {
           if (++obscured >= MAX_DECISION_ERRORS)
@@ -2602,8 +2632,9 @@ class Execution {
     await this.checkpoint();
     this.workflow.invalidateRecovery();
     this.tracker.reset();
-    this.feedback = null;
     await this.observe();
+    // 提示只描述交还边界；是否满足仍由当前代次前置结果和新观察决定。
+    this.feedback = HANDOFF_REVIEW_FEEDBACK;
   }
 
   /** 显式等待由执行器计时，期间继续续租并检查取消，不反复调用模型或增加写动作。 */
