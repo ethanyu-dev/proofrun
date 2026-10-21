@@ -38,6 +38,7 @@ const MIGRATIONS = [
   '026-feishu-request-cards.sql',
   '027-request-analysis.sql',
   '028-report-usage.sql',
+  '029-dashboard-statistics.sql',
 ];
 
 /** 所有业务事务使用同一连接；独占连接单独维护控制面实例锁。 */

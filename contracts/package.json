@@ -9,6 +9,10 @@
       "import": "./dist/index.js"
     },
     "./public-api.openapi.json": "./public-api.openapi.json",
+    "./dashboard": {
+      "types": "./dist/dashboard.d.ts",
+      "default": "./dist/dashboard.js"
+    },
     "./request-verification": {
       "types": "./dist/request-verification.d.ts",
       "default": "./dist/request-verification.js"

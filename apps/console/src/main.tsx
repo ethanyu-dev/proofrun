@@ -1,4 +1,5 @@
 import { RequestListPage } from './pages/request-list';
+import { DashboardPage } from './pages/dashboard';
 import { RequestDetailPage } from './pages/request-detail';
 import { StrictMode, useCallback, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -18,12 +19,14 @@ import './tokens.css';
 import './style.css';
 import './requests.css';
 import './identity-library.css';
+import './dashboard.css';
 
 /** 路由只接受协议允许的任务身份，未知路径显示明确的缺失页面。 */
 const TASK_ROUTE = /^\/tasks\/([A-Za-z0-9_-]{1,128})$/;
 /** 报告路由绑定单次任务身份，与任务详情保持独立导航。 */
 const REPORT_ROUTE = /^\/reports\/([A-Za-z0-9_-]{1,128})$/;
 const NAVIGATION = [
+  ['/dashboard', '验证看板'],
   ['/tasks', '验证任务'],
   ['/nodes', '执行节点'],
   ['/identities', '测试身份'],
@@ -76,6 +79,7 @@ function App() {
     /^\/(requests|request-reports)\/([A-Za-z0-9_-]{1,80})$/.exec(path);
   let page;
   if (!api) page = <Connect onConnect={connected} autoRestore={autoRestore} />;
+  else if (path === '/dashboard') page = <DashboardPage api={api} />;
   else if (path === '/tasks' || path === '/reports')
     page = (
       <RequestListPage key={path} api={api} reports={path === '/reports'} />
