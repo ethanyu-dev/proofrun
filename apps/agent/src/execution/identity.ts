@@ -3,6 +3,33 @@ import type { Observation } from '../evidence/observation.js';
 
 /** 前置结果来自观察或人工控制代次；不接受模型对角色的自由推断。 */
 export type CheckResult = NonNullable<StepResult['preconditions']>[number];
+/** 只携带同一执行内已完成准备步骤的人工事实；不把旧 DOM 或旧认证状态升级成当前事实。 */
+export function sessionIdentityFacts(
+  setupResults: StepResult[],
+  current: CheckResult[],
+  controlRevision: number,
+  authRevision?: number,
+): CheckResult[] {
+  const currentIds = new Set(current.map((check) => check.id));
+  const facts = new Map<string, CheckResult>();
+  for (const step of setupResults) {
+    for (const check of step.preconditions ?? []) {
+      if (currentIds.has(check.id)) continue;
+      // 新的同名结果无论是否满足都覆盖早期事实，防止撤销后的确认被复活。
+      facts.delete(check.id);
+      if (
+        step.status === 'COMPLETED' &&
+        check.source === 'human' &&
+        check.status === 'SATISFIED' &&
+        (authRevision === undefined
+          ? check.controlRevision === controlRevision
+          : check.authRevision === authRevision)
+      )
+        facts.set(check.id, structuredClone(check));
+    }
+  }
+  return [...facts.values()];
+}
 /** 身份条件与步骤条件合并后保持稳定顺序，同 ID 只能表示同一条件。 */
 export function mergeChecks(...groups: IdentityCheck[][]): IdentityCheck[] {
   const checks = new Map<string, IdentityCheck>();

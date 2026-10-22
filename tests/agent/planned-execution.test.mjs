@@ -676,3 +676,218 @@ test('批量面板采集跳过已取得正文的目标并统一登记', async ()
     await server.close();
   }
 });
+
+// 范围：仅剩三次动作时直接交文本层，既不调用候选服务也不补充预算；不证明真实模型能完成收尾。
+test('最后三次动作交文本层统筹定位和查询', async () => {
+  const request = input({
+    budgetRemaining: { actions: 3, modelCalls: 10, timeMs: 90_000 },
+    history: [
+      {
+        commandId: 'scroll',
+        operation: 'browser.act',
+        action: 'scroll',
+        operationStatus: 'SUCCEEDED',
+        effect: 'COMPLETED',
+      },
+    ],
+  });
+  assert.equal(request.context.executionPolicy.event.code, 'CHECKPOINT');
+  const result = await new PlannedModel(
+    {
+      decide: async (next) => {
+        assert.equal(next.context.budgetRemaining.actions, 3);
+        assert.equal(next.context.budgetRemaining.modelCalls, 10);
+        assert.match(next.context.executionPolicy.event.detail, /结果查询/);
+        return {
+          decision: { type: 'browser.act', action: 'click', target: 'name' },
+          promptTokens: 0,
+          completionTokens: 0,
+        };
+      },
+    },
+    { select: async () => assert.fail('不得消耗候选调用和最后的动作机会') },
+  ).decide(request, new AbortController().signal);
+  assert.equal(result.reviewed, true);
+  const normal = input({
+    budgetRemaining: { actions: 4, modelCalls: 10, timeMs: 90_000 },
+  });
+  assert.equal(normal.context.executionPolicy.event.code, 'CONTINUE');
+});
+
+// 范围：成功回执后的无变化滚动立即复核，已复核回执不重触发；不把其他动作无变化误归类为滚动故障。
+test('一次无变化滚动交回文本层而非等到动作耗尽', () => {
+  const c = input().context;
+  c.recentOperations = [
+    {
+      commandId: 'scroll',
+      operation: 'browser.act',
+      action: 'scroll',
+      operationStatus: 'SUCCEEDED',
+      effect: 'COMPLETED',
+    },
+  ];
+  c.changes = {
+    baseline: false,
+    added: [],
+    updated: [],
+    removedCount: 0,
+    text: '',
+    textTruncated: false,
+    refsTruncated: false,
+    unchangedRounds: 1,
+    repeatedStateVisits: 2,
+  };
+  assert.match(executionEvent(c).detail, /滚动后/);
+  c.executionPolicy.reviewedCommandId = 'scroll';
+  assert.equal(executionEvent(c).code, 'CONTINUE');
+  delete c.executionPolicy.reviewedCommandId;
+  c.recentOperations[0].action = 'fill';
+  assert.equal(executionEvent(c).code, 'CONTINUE');
+});
+
+// 范围：仅定位计划中新出现、可点击且名称匹配的当前目标触发复核；不把正文、隐藏控件、禁用项或旧目标当作已定位。
+test('目标进入当前可操作候选时提前结束候选连续定位', () => {
+  const c = input().context;
+  c.plan.phase = 'locate';
+  c.plan.terms = ['目标商品'];
+  c.recentOperations = [
+    {
+      commandId: 'scroll',
+      operation: 'browser.act',
+      action: 'scroll',
+      operationStatus: 'SUCCEEDED',
+      effect: 'COMPLETED',
+    },
+  ];
+  c.changes = {
+    baseline: false,
+    added: ['item'],
+    updated: [],
+    removedCount: 0,
+    text: '目标商品',
+    textTruncated: false,
+    refsTruncated: false,
+    unchangedRounds: 0,
+    repeatedStateVisits: 1,
+  };
+  c.observation.targets = [
+    {
+      target: 'item',
+      name: '目标商品 B',
+      role: 'button',
+      operations: ['click'],
+    },
+  ];
+  assert.match(executionEvent(c).detail, /已进入当前候选/);
+  for (const patch of [
+    { visible: false },
+    { disabled: true },
+    { operations: ['scroll'] },
+    { name: '其他商品' },
+  ]) {
+    const clone = structuredClone(c);
+    Object.assign(clone.observation.targets[0], patch);
+    assert.equal(executionEvent(clone).code, 'CONTINUE');
+  }
+  c.changes.added = [];
+  assert.equal(executionEvent(c).code, 'CONTINUE');
+  c.changes.added = ['item'];
+  c.executionPolicy.reviewedCommandId = 'scroll';
+  assert.equal(executionEvent(c).code, 'CONTINUE');
+});
+
+// 范围：两种 JEV 问题协议都保留容器动作和 REPLAN，撤下混淆的整页滚动；请求为夹具，不验证供应商判断。
+for (const expanded of [false, true])
+  test(`容器定位不混入整页滚动 expanded=${expanded}`, async () => {
+    const request = input();
+    request.context.plan.scope = '商品列表';
+    request.context.plan.allowedActions = ['scroll', 'click'];
+    request.observation.targets = [
+      {
+        target: 'new-container',
+        role: 'region',
+        name: '商品列表',
+        operations: ['scroll'],
+        scroll: {
+          x: 0,
+          y: 100,
+          width: 300,
+          height: 200,
+          scrollWidth: 300,
+          scrollHeight: 2000,
+        },
+      },
+    ];
+    request.context.observation = structuredClone(request.observation);
+    let calls = 0;
+    const selector = new JevSelector(
+      { ...config, jevExpandedActions: expanded },
+      'fixture',
+      'jev-test',
+      async (_u, _k, _m, body) => {
+        calls++;
+        assert.equal(body.questions.next.criteria.SCROLL_DOWN, undefined);
+        assert.equal(body.questions.next.criteria.SCROLL_UP, undefined);
+        assert('REPLAN' in body.questions.next.criteria);
+        const candidates = expanded
+          ? body.state.candidates
+          : body.questions.next.criteria;
+        assert(
+          Object.values(candidates).some(
+            (c) =>
+              c?.field?.name === '商品列表' && c.operation === 'SCROLL_DOWN',
+          ),
+        );
+        return answer(body, () => 'REPLAN');
+      },
+    );
+    assert.equal(
+      (await selector.select(request, new AbortController().signal)).kind,
+      'review',
+    );
+    assert.equal(calls, 1);
+  });
+
+// 范围：历史目标仅按当前唯一容器名称形成定位线索，歧义、失效回执和不相关动作均不绑定；不授权重放旧 target。
+test('容器滚动线索必须与当前唯一容器相符', async () => {
+  const { scopedScrollTarget } =
+    await import('../../apps/agent/dist/model/scroll-scope.js');
+  const c = input().context;
+  c.plan.allowedActions = ['scroll'];
+  const target = {
+    target: 'fresh',
+    name: '商品列表',
+    role: 'region',
+    operations: ['scroll'],
+  };
+  c.observation.targets = [target];
+  c.recentOperations = [
+    {
+      commandId: 'scroll',
+      operation: 'browser.act',
+      action: 'scroll',
+      targetName: '商品列表',
+      operationStatus: 'SUCCEEDED',
+      effect: 'COMPLETED',
+    },
+  ];
+  assert.equal(scopedScrollTarget(c, c.observation).target, 'fresh');
+  const otherScope = structuredClone(c);
+  otherScope.plan.scope = '另一区域';
+  assert.equal(
+    scopedScrollTarget(otherScope, otherScope.observation),
+    undefined,
+  );
+  for (const patch of [
+    { action: 'click' },
+    { targetName: '' },
+    { effect: 'NOT_STARTED' },
+    { operationStatus: 'FAILED' },
+  ]) {
+    const clone = structuredClone(c);
+    Object.assign(clone.recentOperations[0], patch);
+    assert.equal(scopedScrollTarget(clone, clone.observation), undefined);
+  }
+  c.observation.targets.push({ ...target, target: 'duplicate' });
+  assert.equal(scopedScrollTarget(c, c.observation), undefined);
+});

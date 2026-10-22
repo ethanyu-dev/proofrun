@@ -17,6 +17,8 @@
 
 ## 验收材料审计
 
+主动业务测评使用 `evaluate-e2e.mjs`，版本对比使用 `compare-e2e.mjs`。隔离环境、模型配置、预算、恢复与 12 个业务场景见 [端到端测评说明](../tests/scenarios/README.md)。它与下述已有任务的材料审计使用不同判定范围。
+
 ```sh
 # 首次使用先构建共享协议；审计只读本地材料，不调用模型或提交任务。
 pnpm --filter @proofrun/contracts build

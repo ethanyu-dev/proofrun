@@ -16,6 +16,8 @@ import type { AgentConfig } from '../config.js';
 const READING_BATCH = 4;
 /** 低预算时直接复核，避免候选和回退同时耗尽最后一次收尾机会。 */
 const REVIEW_CALL_RESERVE = 2;
+/** 定位接近额度尾部时由文本层统筹后续操作和取证，不增加原步骤额度。 */
+const REVIEW_ACTION_RESERVE = 3;
 /** 公共观察计数的复核阈值；终止阈值仍由原执行器管理。 */
 const UNCHANGED_REVIEW = 2;
 const REPEATED_REVIEW = 3;
@@ -83,6 +85,18 @@ export function executionEvent(context: DecisionContextData): ReviewEvent {
     };
   if (context.plan.remaining === 0)
     return { code: 'EXECUTION_EXCEPTION', detail: '局部计划额度耗尽' };
+  const last = context.recentOperations.findLast(
+    (op) => op.operation === 'browser.act',
+  );
+  if (
+    context.budgetRemaining.actions <= REVIEW_ACTION_RESERVE &&
+    (context.plan.phase === 'locate' || last?.action === 'scroll')
+  )
+    return {
+      code: 'CHECKPOINT',
+      detail:
+        '剩余动作须统筹定位、选择和结果查询；停止候选连续探索，在原额度内完成必要操作或明确缺口',
+    };
   if (
     (context.changes?.unchangedRounds ?? 0) >= UNCHANGED_REVIEW ||
     (context.changes?.repeatedStateVisits ?? 0) >= REPEATED_REVIEW
@@ -102,15 +116,43 @@ export function executionEvent(context: DecisionContextData): ReviewEvent {
       captured.some((i) => i.truncated))
   )
     return { code: 'CHECKPOINT', detail: '批量核对已采集面板及覆盖范围' };
-  const last = context.recentOperations.findLast(
-    (op) => op.operation === 'browser.act',
-  );
   if (
     last &&
     last.commandId !== context.executionPolicy?.reviewedCommandId &&
     last.operationStatus === 'SUCCEEDED' &&
     last.effect === 'COMPLETED'
   ) {
+    // 一次无效滚动即可消耗收尾额度；不等待通用的多轮停滞阈值。
+    if (last.action === 'scroll') {
+      if ((context.changes?.unchangedRounds ?? 0) > 0)
+        return {
+          code: 'CHECKPOINT',
+          detail:
+            '滚动后页面和容器未取得新变化，先核对滚动目标与方向，不重复相同探索',
+        };
+      // 只匹配本轮新进入候选的可点击控件；正文或历史提及不能宣布定位完成。
+      const added = new Set(context.changes?.added ?? []);
+      const located =
+        context.plan.phase === 'locate' &&
+        context.observation.targets.some(
+          (target) =>
+            added.has(target.target) &&
+            target.visible !== false &&
+            !target.disabled &&
+            target.operations?.includes('click') &&
+            context.plan!.terms.some(
+              (term) =>
+                term.trim() &&
+                target.name.toLowerCase().includes(term.trim().toLowerCase()),
+            ),
+        );
+      if (located)
+        return {
+          code: 'CHECKPOINT',
+          detail:
+            '定位词匹配的可操作目标已进入当前候选，核对身份并结束定位，为选择和结果查询保留额度',
+        };
+    }
     const checkpoint = ['fill', 'type'].includes(last.action ?? '')
       ? 'after-fill'
       : last.action === 'click'

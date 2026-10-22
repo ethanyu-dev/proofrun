@@ -23,6 +23,7 @@ import {
 } from './jev-image.js';
 import { jevBoxPoint, supportsJevBox } from './jev-box.js';
 import { decisionData, type DecisionInput } from './chat.js';
+import { scopedScrollTarget } from './scroll-scope.js';
 
 /** JEV 只提供有限候选判断；填充值和按证据验收使用配置中的文本模型。 */
 const ENDPOINT = 'https://api.typesafe.ai/v1/systemone';
@@ -210,9 +211,11 @@ export class JevSelector {
     // 变化排序后的动作共享一份简短字段说明，不重复完整 DOM 行。
     const controls: Record<string, unknown> = { ...JEV_CONTROL_CHOICES };
     if (
-      recovery?.allowedActions &&
-      !recovery.allowedActions.includes('scroll')
+      (recovery?.allowedActions &&
+        !recovery.allowedActions.includes('scroll')) ||
+      scopedScrollTarget(context, page)
     ) {
+      // 容器定位只提供定向滚动；整页换区仍可 REPLAN 交文本层决定，不消耗无效浏览器动作。
       delete controls.SCROLL_UP;
       delete controls.SCROLL_DOWN;
     }

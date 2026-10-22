@@ -4,8 +4,10 @@ import type { Observation } from '../evidence/observation.js';
 const MAX_LOCATIONS = 64;
 /** 每轮仅提供最相关的少量定位线索，限制上下文占用。 */
 const MAX_HINTS = 6;
-/** 相邻观察保留四分之一视口重叠，减少跨过内容的机会。 */
+/** 页面阅读保留四分之一视口重叠，避免改变整页阅读与历史位置估算。 */
 const SCROLL_FRACTION = 0.75;
+/** 容器按九成可视范围推进，保留重叠而不让窄列表耗费过多定位动作。 */
+const CONTAINER_SCROLL_FRACTION = 0.9;
 /** 与节点协议一致的单次滚动上限，单位为 CSS 像素。 */
 const MAX_SCROLL = 1200;
 
@@ -24,7 +26,15 @@ export function scrollDistance(
       : container.height
     : Number(viewport[horizontal ? 'width' : 'height']);
   return Number.isFinite(size) && size > 0
-    ? Math.round(Math.max(100, Math.min(MAX_SCROLL, size * SCROLL_FRACTION)))
+    ? Math.round(
+        Math.max(
+          container ? 1 : 100,
+          Math.min(
+            MAX_SCROLL,
+            size * (container ? CONTAINER_SCROLL_FRACTION : SCROLL_FRACTION),
+          ),
+        ),
+      )
     : 400;
 }
 

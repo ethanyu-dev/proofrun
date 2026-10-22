@@ -6,6 +6,12 @@ set -euo pipefail
 root_dir=$(cd "$(dirname "$0")/../.." && pwd)
 test_id="proofrun-control-test-$$"
 real_agent=${PROOFRUN_TEST_REAL_AGENT:-false}
+evaluation=${PROOFRUN_TEST_EVALUATION:-false}
+if [[ "$evaluation" == true ]]; then
+  test "$real_agent" == true
+  evaluation_output=${PROOFRUN_EVAL_OUTPUT:?需要独立的新结果目录}
+  mkdir -m 700 "$evaluation_output"
+fi
 if [[ "${PROOFRUN_TEST_FULL_LINUX:-false}" == true && "$real_agent" != true ]]; then
   echo '完整 Linux 回归需要 PROOFRUN_TEST_REAL_AGENT=true' >&2
   exit 1
@@ -23,8 +29,16 @@ postgres_name="$test_id-pg"
 node_name="$test_id-node"
 image_name="proofrun-node-systemd-test:local"
 cleanup() {
+  cleanup_status=$?
+  if [[ "$evaluation" == true ]]; then
+    if ! docker cp "$node_name:/tmp/proofrun-evaluation-output/." "$evaluation_output/" >/dev/null 2>&1; then
+      echo '测评材料复制失败，不能将本次运行视为完整交付' >&2
+      if [[ "$cleanup_status" == 0 ]]; then cleanup_status=1; fi
+    fi
+  fi
   docker rm -fv "$node_name" "$postgres_name" >/dev/null 2>&1 || true
   docker network rm "$network_name" >/dev/null 2>&1 || true
+  exit "$cleanup_status"
 }
 trap cleanup EXIT
 cd "$root_dir"
@@ -47,6 +61,7 @@ if [[ "$real_agent" == true ]]; then
   engine_env+=(PROOFRUN_AGENT_BROWSER_BIN=/opt/agent-browser PROOFRUN_CHROME_BIN=/usr/bin/chromium)
   driver="tests/agent/linux_real_browser.py"
   if [[ "${PROOFRUN_TEST_HITL:-false}" == true ]]; then driver="tests/hitl/linux_real_browser.py"; fi
+  if [[ "$evaluation" == true ]]; then driver="tests/scenarios/linux_evaluation.py"; fi
 fi
 docker network create --label proofrun.test=control-plane "$network_name" >/dev/null
 docker run -d --name "$postgres_name" --network "$network_name" --label proofrun.test=control-plane \
@@ -65,10 +80,19 @@ fi
 # macOS 自带 Bash 3 在 nounset 下不能直接展开空数组；未配置覆盖时不传入占位空参数。
 docker exec "$node_name" cargo ${toolchain[@]+"${toolchain[@]}"} --version
 docker exec "$node_name" cargo ${toolchain[@]+"${toolchain[@]}"} build --locked ${offline[@]+"${offline[@]}"} --workspace
-docker exec "$node_name" runuser -u proofrun -- \
+# 只传递评测所需白名单；不挂载开发凭据文件，也不将秘密展开到命令行。
+evaluation_env=()
+if [[ "$evaluation" == true ]]; then
+  for name in PROOFRUN_EVAL_HTTPS_PROXY PROOFRUN_EVAL_MODEL_KIND PROOFRUN_EVAL_MODE PROOFRUN_EVAL_SUITE PROOFRUN_EVAL_REPEAT PROOFRUN_EVAL_SAMPLE_MS PROOFRUN_EVAL_MAX_CALLS PROOFRUN_MODEL_BASE_URL PROOFRUN_MODEL_API_KEY PROOFRUN_MODEL PROOFRUN_MODEL_VISION PROOFRUN_MODEL_TOKEN_PARAMETER PROOFRUN_MODEL_THINKING PROOFRUN_MODEL_MAX_TOKENS PROOFRUN_MODEL_REASONING_EFFORT PROOFRUN_AGENT_EXECUTION_POLICY PROOFRUN_AGENT_EXECUTION_GUIDANCE TYPESAFE_API_KEY TYPESAFE_MODEL PROOFRUN_JEV_IMAGES PROOFRUN_JEV_BOX PROOFRUN_JEV_LONG_CONTEXT PROOFRUN_JEV_EXPANDED_ACTIONS; do
+    evaluation_env+=(-e "$name")
+  done
+fi
+docker exec ${evaluation_env[@]+"${evaluation_env[@]}"} "$node_name" runuser -u proofrun -- \
   env "${engine_env[@]}" \
   "PROOFRUN_DATABASE_URL=postgresql://postgres:proofrun-isolated-test@$postgres_name:5432/proofrun" \
   python3 "$driver"
+
+if [[ "$evaluation" == true ]]; then exit 0; fi
 
 if [[ "$real_agent" == true ]]; then
   # DOM 坐标与 Cookie 清理采用真实 Chromium，独立 profile；不接触生产站点。

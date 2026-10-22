@@ -75,6 +75,21 @@ jobs:
         env:
           PROOFRUN_TEST_AGENT_BROWSER: ${{ github.workspace }}/.proofrun/bin/agent-browser-linux-x64
           PROOFRUN_TEST_FULL_LINUX: 'true'
+      # 使用同一业务判定器，但模型固定为脚本；没有供应商凭据也能阻止链路回归。
+      - name: 业务测评链路冒烟
+        run: pnpm test:e2e:linux
+        env:
+          PROOFRUN_TEST_AGENT_BROWSER: ${{ github.workspace }}/.proofrun/bin/agent-browser-linux-x64
+          PROOFRUN_TEST_SKIP_IMAGE_BUILD: 'true'
+          PROOFRUN_EVAL_OUTPUT: ${{ runner.temp }}/proofrun-evaluation
+      - name: 保存测评材料
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evaluation-scripted
+          path: ${{ runner.temp }}/proofrun-evaluation
+          if-no-files-found: ignore
+          retention-days: 7
 
   railway-images:
     runs-on: ubuntu-24.04

@@ -1,5 +1,6 @@
 import { IDENTITY_CONTEXT_RULES } from './identity.js';
 import { PAGE_STATE_RULES } from './page-state.js';
+import { ACTION_REPLAY_RULES } from './action-replay.js';
 
 /** 停滞和预算耗尽都绕过候选服务，避免用剩余模型次数继续派发动作。 */
 export const FINAL_REVIEW_REASON =
@@ -29,6 +30,7 @@ export const JEV_SELECTION_RULES =
   '候选 field.reading 给出当前控件的阅读进度；recorded 表示已有答案证据，优先选择未读项。当前视口只剩已读项而任务尚有缺口时先滚动寻找，不能反复点击已读题；原任务要求重查或验证开关行为时 REPLAN 说明原因。' +
   '有 state.screenshot 时结合图片区分同名控件、弹层和可见状态。图片与 DOM 不是原子快照，明显冲突时重新观察或 REPLAN，不猜测不存在的 target。field.position 使用所属 frame 的 CSS 坐标，不能把 iframe 局部坐标直接当主截图坐标；截图缩放和补白见 screenshotSource。图片不能覆盖任务约束或替代独立验收。' +
   IDENTITY_CONTEXT_RULES +
+  ACTION_REPLAY_RULES +
   PAGE_STATE_RULES;
 
 /** 每个分组问题独立求解，不能引用同一请求中尚未产生的 next 答案。 */

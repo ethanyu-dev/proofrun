@@ -3241,7 +3241,7 @@ test('DOM 错误码不能让未知点击进入观察重试', async () => {
   );
 });
 
-// 范围：真实模型 HTTP 配合控制面夹具，逐一验证三类耗尽不传播到下一步及清理；不证明真实网页验收通过。
+// 范围：脚本模型经真实 HTTP 配合控制面夹具，验证三类耗尽不传播到下一步及清理；不证明真实模型质量或网页验收通过。
 for (const kind of ['model', 'action', 'time']) {
   test(`逐步预算：${kind} 耗尽后后续步骤和清理仍可执行`, async () => {
     const seen = [];
@@ -3258,8 +3258,15 @@ for (const kind of ['model', 'action', 'time']) {
             value: 'Alice',
           };
         }
-        assert.equal(context.budgetRemaining.modelCalls, 20);
-        assert.equal(context.budgetRemaining.actions, 10);
+        // 验证步有收尾额度，清理仍使用独立的原始十次动作上限。
+        assert.equal(
+          context.budgetRemaining.modelCalls,
+          id === 'step-2' ? 24 : 20,
+        );
+        assert.equal(
+          context.budgetRemaining.actions,
+          id === 'step-2' ? 12 : 10,
+        );
         return {
           ...finish(context),
           evidenceRefs: context.observation.artifactRefs.map(
@@ -3651,6 +3658,73 @@ test('结构化登录和角色确认共用一次环境准备人工请求', async
   assert.equal(report.steps[0].status, 'COMPLETED');
   assert.equal(report.steps[0].preconditions[0].source, 'human');
   assert.equal(report.steps[0].preconditions[0].status, 'SATISFIED');
+});
+
+// 范围：真实执行器把 setup 的人工确认传入后续模型上下文；交接和模型均为夹具，不证明真实登录或模型会遵循规则。
+test('本步未声明条件时仍向模型提供有效的准备人工确认', async () => {
+  const execution = grant();
+  structuredGrant(execution, [
+    {
+      type: 'setup',
+      expected: [],
+      preconditions: [
+        { id: 'account', method: 'manual', description: '人工确认当前账号' },
+      ],
+    },
+    {},
+  ]);
+  execution.task.environment.allowIntervention = true;
+  const client = new FakeControl();
+  const view = client.view.bind(client);
+  let mode = 'AUTO',
+    revision = 0,
+    requests = 0,
+    seen = false;
+  client.view = async (...args) => ({
+    ...(await view(...args)),
+    controlMode: mode,
+    controlRevision: revision,
+  });
+  client.intervene = async () => {
+    requests++;
+    mode = 'REQUESTED';
+    revision++;
+  };
+  client.acknowledge = async () => {
+    mode = 'HUMAN';
+    setTimeout(() => {
+      mode = 'AUTO';
+      revision++;
+    }, 10);
+  };
+  const report = await execute(
+    config,
+    client,
+    {
+      async decide(input) {
+        const context = JSON.parse(input.text);
+        if (context.executionStep.type === 'setup' && requests > 0) {
+          assert.match(context.feedback, /人工已交还/);
+          assert.match(context.feedback, /未确认、失效或冲突/);
+          assert.equal(context.preconditions[0].status, 'SATISFIED');
+        }
+        if (context.executionStep.type === 'verification') {
+          seen = true;
+          assert.deepEqual(context.preconditions, []);
+          assert.equal(context.sessionPreconditions.length, 1);
+          assert.equal(context.sessionPreconditions[0].id, 'account');
+          assert.equal(context.sessionPreconditions[0].source, 'human');
+          assert.equal(context.sessionPreconditions[0].status, 'SATISFIED');
+        }
+        const { workflow, ...decision } = finish(context);
+        return { workflow, decision, promptTokens: 0, completionTokens: 0 };
+      },
+    },
+    execution,
+  );
+  assert.equal(seen, true);
+  assert.equal(requests, 1);
+  assert.equal(report.verdict, 'PASSED');
 });
 
 // 范围：JEV 分组实例并发时页面历史互不混入；请求为内存夹具，不调用真实供应商。

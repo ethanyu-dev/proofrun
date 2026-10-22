@@ -1,5 +1,20 @@
 /** JSON 回复限额覆盖控制面单帧，图片使用独立的 8 MiB 限额。 */
 const MAX_JSON_BYTES = 2 * 1024 * 1024;
+/** 只映射运行时的封闭错误码；原始异常可能包含地址、代理凭据或请求正文。 */
+const TRANSPORT_CODES = new Map([
+  ['UND_ERR_CONNECT_TIMEOUT', 'TRANSPORT_CONNECT_TIMEOUT'],
+  ['UND_ERR_HEADERS_TIMEOUT', 'TRANSPORT_RESPONSE_TIMEOUT'],
+  ['UND_ERR_BODY_TIMEOUT', 'TRANSPORT_RESPONSE_TIMEOUT'],
+  ['ENOTFOUND', 'TRANSPORT_DNS_ERROR'],
+  ['EAI_AGAIN', 'TRANSPORT_DNS_ERROR'],
+  ['ECONNRESET', 'TRANSPORT_CONNECTION_RESET'],
+]);
+/** 细分传输错误仍沿用原有重试/模型回退策略，不增加调用预算。 */
+const TRANSIENT_TRANSPORT_CODES = new Set([
+  'TRANSPORT_ERROR',
+  'TRANSPORT_REQUEST_TIMEOUT',
+  ...TRANSPORT_CODES.values(),
+]);
 
 /** 错误只保留分类和状态码，不传播带 URL、密钥或页面内容的原始服务错误。 */
 export class AgentFault extends Error {
@@ -110,14 +125,20 @@ export async function jsonRequest(
   } catch (error) {
     if (signal?.aborted) throw signal.reason;
     if (error instanceof AgentFault) throw error;
-    throw new AgentFault('TRANSPORT_ERROR', '服务请求超时或连接中断');
+    const cause = (error as { cause?: { code?: unknown } } | null)?.cause;
+    const code = timeout.aborted
+      ? 'TRANSPORT_REQUEST_TIMEOUT'
+      : typeof cause?.code === 'string'
+        ? (TRANSPORT_CODES.get(cause.code) ?? 'TRANSPORT_ERROR')
+        : 'TRANSPORT_ERROR';
+    throw new AgentFault(code, '服务请求超时或连接中断');
   }
 }
 /** 只有传输失败和临时 HTTP 故障可重试，参数和权限拒绝不能被重试掩盖。 */
 export function transient(error: unknown): boolean {
   return (
     error instanceof AgentFault &&
-    (error.code === 'TRANSPORT_ERROR' ||
+    (TRANSIENT_TRANSPORT_CODES.has(error.code) ||
       error.status === 429 ||
       error.status >= 500)
   );

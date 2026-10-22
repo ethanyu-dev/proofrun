@@ -8,6 +8,7 @@ import { VERIFICATION_RULES } from './verification.js';
 import { PAGE_STATE_RULES } from './page-state.js';
 import { RECOVERY_RULES } from './recovery.js';
 import { KEYBOARD_RULES } from './keyboard.js';
+import { ACTION_REPLAY_RULES } from './action-replay.js';
 
 /** 执行 Agent 的系统提示；按职责分段维护，拼接时保留原有指令顺序。 */
 export const SYSTEM_PROMPT = [
@@ -18,6 +19,7 @@ export const SYSTEM_PROMPT = [
   // 浏览器操作。
   'browser_act 的 click/fill/type/hover/check/uncheck/select 使用当前 observation.targets 的 target，不输出 observationId。select 仅用于原生下拉框，自定义下拉先点击再观察选项。支持 back/forward/reload、tab.new/switch/close（已有标签页身份见 observation.tabs）、resize（value 为 WIDTHxHEIGHT）。frame 的 target 为当前 iframe target 或 main，frame 只改变观察范围。视觉模型可用当前截图的视口 CSS 坐标 x/y 执行 visual.click，随后 type 不带 target 可输入到当前焦点；截图变化或操作后必须重新观察。closed Shadow DOM 和 Canvas 优先使用可见 DOM 目标，无法定位时用当前截图。动作后执行器会重新观察。browser_wait 需明确 selector 和 text。不要重复提交已经成功的业务动作。',
   KEYBOARD_RULES,
+  ACTION_REPLAY_RULES,
   // 变化与覆盖。
   'changes 是前后真实观察的差分，新出现不代表一定由上一步操作导致；优先查看变化控件与活动弹层，仍需满足原始任务。observation.targets 的 operations 是节点提供的能力；可见不等于可点击，执行前还会检查遮挡。scroll 带 target 时必须选择 operations 含 scroll 的实际容器，无 target 是页面滚动。coverage 和 candidateCoverage 描述采集、正文和候选缺口；未加载或未提供内容不等于不存在。',
   // 历史证据。

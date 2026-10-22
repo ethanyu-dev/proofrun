@@ -30,7 +30,7 @@ Schema 与 OpenAPI 通过 `pnpm contracts:generate` 同步，`pnpm contracts:che
 | setup 或带验收项的等待      | 指定时长 + 五分钟    | 按步骤类型 | 按步骤类型          |
 | 整段后续清理                | 三分钟墙钟，共享     | 10         | LLM 20 / JEV+LLM 40 |
 
-verification 的 A = min(30, 10 + 2 × max(0, expected 项数 − 1))。例如 4 项验收为 16 次动作、LLM 32 次模型请求。按结构化项数分配，不根据模型自报复杂度增加额度。
+verification 的 A = min(30, 12 + 2 × max(0, expected 项数 − 1))。其中两次基础动作供定位后选择、提交或查询使用，仍计入同一份冻结额度；例如 4 项验收为 18 次动作、LLM 36 次模型请求。按结构化项数分配，不根据模型自报复杂度增加额度。已有任务不自动扩容，沿用创建时的冻结值。
 
 模型失败请求与重试均计数，自动导航占动作额度。步骤不能借用其他步骤额度；耗尽标为 BLOCKED，记录 `STEP_MODEL_BUDGET_EXCEEDED`、`STEP_ACTION_BUDGET_EXCEEDED` 或 `STEP_TIME_BUDGET_EXCEEDED`；共享首门禁未完成时跳过全部后续业务及清理，其他 setup 未完成只跳过本组验证并禁止清理，普通业务步骤则继续独立后续步骤。后续步骤仍核实自己的前置条件。无进展保护、单次调用超时、证据交付时限、上下文裁剪不随步骤数扩大。
 

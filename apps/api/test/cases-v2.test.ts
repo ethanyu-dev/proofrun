@@ -318,7 +318,7 @@ test('v2 默认业务每步贡献 300 秒，清理不占业务预算', () => {
   const profile: CaseProfile = { ...PROFILE, budget: { maxActions: 30 } };
   const task = compileCase(INPUT, profile);
   assert.equal(task.budget.timeoutMs, 900_000);
-  assert.equal(task.budget.maxActions, 30);
+  assert.equal(task.budget.maxActions, 34);
   assert.equal(cleanupTask(task), null);
   assert.equal(
     compileCase({ ...INPUT, steps: [INPUT.steps[0]!] }, profile).budget
@@ -335,7 +335,7 @@ test('v2 默认业务每步贡献 300 秒，清理不占业务预算', () => {
     profile,
   );
   assert.equal(waiting.budget.timeoutMs, 900_000);
-  assert.equal(waiting.stepBudget!.steps[0]!.maxModelCalls, 20);
+  assert.equal(waiting.stepBudget!.steps[0]!.maxModelCalls, 24);
   assert.deepEqual(task.stepBudget!.cleanup, {
     timeoutMs: 180_000,
     maxActions: 10,
@@ -562,7 +562,7 @@ test('v2 重跑保留原配置及整个 case，重试不重复创建', async () 
     assert.equal(fresh.report, null);
     assert.deepEqual(fresh.definition.budget, {
       timeoutMs: 900_000,
-      maxActions: 30,
+      maxActions: 34,
     });
     assert.deepEqual(
       fresh.definition.environment,
