@@ -1,5 +1,6 @@
 import { RequestAnalyses } from './modules/reports/request-analysis.js';
 import { analysisRoutes } from './modules/reports/analysis-routes.js';
+import { dashboardStatistics } from './modules/reports/dashboard.js';
 import { RequestReader } from './modules/requests/reader.js';
 import { RequestService } from './modules/requests/service.js';
 import { IdentityLibrary } from './modules/identities/library.js';
@@ -134,6 +135,11 @@ export async function buildApp(
   };
   app.get('/v1/admin/identities/metrics', { preHandler: admin }, () =>
     identityMetrics(db),
+  );
+  app.get<{ Querystring: Record<string, unknown> }>(
+    '/v1/admin/statistics',
+    { preHandler: admin },
+    (request) => dashboardStatistics(db, request.query),
   );
   app.get('/v1/admin/identities/settings', { preHandler: admin }, () =>
     identities.view(),

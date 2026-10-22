@@ -13,6 +13,10 @@ import { SimulatedNode, until } from './fixture.js';
 /** 凭据仅用于回环协议夹具，不连接真实节点或外部网站。 */
 const ADMIN = 'node-profile-console-admin-fixture-token'.padEnd(500, 'x');
 const WORKER = 'node-profile-worker-fixture-token';
+/** 给共享 CI 的数据库调度留出余量；仍需真实跨越初始租约才能完成慢启动验证。 */
+const STARTUP_LEASE_MS = 5000;
+/** 跨初始租约的等待独立于普通状态轮询，超时仍直接失败，不自动重试。 */
+const STARTUP_WAIT_MS = 15_000;
 
 // 范围：真实 HTTP、WS、数据库的鉴权、容量、保存和关闭；节点为协议夹具，不证明 Chrome 登录。
 test(
@@ -140,19 +144,68 @@ test(
         async () => {
           const execute = node.execute.bind(node);
           const send = node.send.bind(node);
-          const requests = new Map<string, number>();
+          // 冻结每次心跳的发送时间和占用，迟到续租必须按来源心跳核对，不能读取当前阶段。
+          const requests = new Map<
+            string,
+            { sentAt: number; admitted: boolean; mismatch: boolean }
+          >();
+          const receivedRenewals: {
+            requestId: string;
+            receivedAt: number;
+            previousExpires: number;
+          }[] = [];
           let opened: Parameters<typeof node.execute>[0] | undefined;
           let admitted = false;
           let mismatch = false;
-          let heartbeats = 0;
-          let renewals = 0;
+          const acknowledgedRequests = new Set<string>();
+          let lastRequestId = '';
           let expires = 0;
-          config.nodeLeaseMs = 1200;
+          config.nodeLeaseMs = STARTUP_LEASE_MS;
+          // ACK 在数据库事务提交后返回；按身份等待本阶段心跳，不能被上一阶段的迟到 ACK 提前放行。
+          const acknowledged = (raw: WebSocket.RawData) => {
+            const value = JSON.parse(raw.toString());
+            if (
+              value.type === 'ack' &&
+              typeof value.messageId === 'string' &&
+              value.messageId.startsWith('heartbeat:') &&
+              requests.has(value.messageId.slice('heartbeat:'.length))
+            )
+              acknowledgedRequests.add(
+                value.messageId.slice('heartbeat:'.length),
+              );
+          };
+          node.socket.on('message', acknowledged);
+          /** 显式发送并确认一次本阶段心跳，周期心跳仍用于后续持续续租。 */
+          const confirmedHeartbeat = async () => {
+            node.heartbeat();
+            const requestId = lastRequestId;
+            await until(() => acknowledgedRequests.has(requestId), Boolean);
+          };
+          // 断言在测试自身的异步流程执行；WS 回调只记录事实，避免未捕获异常取消整个父套件。
+          const renewals = () => {
+            for (const renewal of receivedRenewals) {
+              const request = requests.get(renewal.requestId);
+              assert.ok(request, '续租必须绑定本夹具发送的心跳');
+              assert.ok(
+                request.admitted && !request.mismatch,
+                '续租必须绑定已准入且租约匹配的心跳',
+              );
+              assert.ok(
+                renewal.receivedAt < renewal.previousExpires,
+                '续租必须早于上一段租约截止',
+              );
+            }
+            return receivedRenewals.length;
+          };
           node.send = (raw) => {
             const value = raw as any;
             if (value.type === 'node.heartbeat') {
-              heartbeats++;
-              requests.set(value.leaseRequestId, Date.now());
+              lastRequestId = value.leaseRequestId;
+              requests.set(value.leaseRequestId, {
+                sentAt: Date.now(),
+                admitted,
+                mismatch,
+              });
               if (opened && admitted)
                 value.occupied = [
                   {
@@ -170,47 +223,47 @@ test(
               opened = command;
               if (!expires)
                 expires =
-                  (requests.get(command.command.leaseRequestId) ?? Date.now()) +
+                  (requests.get(command.command.leaseRequestId)?.sentAt ?? 0) +
                   command.command.leaseTtlMs;
               return;
             }
             if (command.command.type === 'session.renew') {
-              assert.ok(admitted && !mismatch);
-              assert.ok(Date.now() < expires, '续租必须早于上一段租约截止');
+              receivedRenewals.push({
+                requestId: command.command.leaseRequestId,
+                receivedAt: Date.now(),
+                previousExpires: expires,
+              });
               expires = Math.max(
                 expires,
-                requests.get(command.command.leaseRequestId)! +
+                (requests.get(command.command.leaseRequestId)?.sentAt ?? 0) +
                   command.command.leaseTtlMs,
               );
-              renewals++;
             }
             execute(command);
           };
           try {
-            node.heartbeat();
+            await confirmedHeartbeat();
             const { id } = await api(path, {
               url: 'https://login.example.test/',
             });
             await until(() => opened, Boolean);
-            const first = heartbeats;
-            await until(
-              () => heartbeats,
-              (n) => n >= first + 1,
+            assert.ok(opened?.command.type === 'session.open');
+            assert.ok(
+              requests.has(opened.command.leaseRequestId),
+              '初始租约必须绑定已记录的心跳',
             );
-            assert.equal(renewals, 0);
+            await confirmedHeartbeat();
+            assert.equal(renewals(), 0);
             admitted = true;
             mismatch = true;
-            const beforeMismatch = heartbeats;
-            await until(
-              () => heartbeats,
-              (n) => n >= beforeMismatch + 1,
-            );
-            assert.equal(renewals, 0);
+            await confirmedHeartbeat();
+            assert.equal(renewals(), 0);
             mismatch = false;
             const initialExpires = expires;
             await until(
-              () => renewals,
+              renewals,
               (n) => n >= 4 && Date.now() > initialExpires,
+              STARTUP_WAIT_MS,
             );
             assert.ok(Date.now() < expires);
             assert.equal((await api(`/v1/node-profiles/${id}`)).ready, false);
@@ -233,14 +286,12 @@ test(
               () => api(`/v1/node-profiles/${id}`),
               (value) => value.closed,
             );
-            const finishedRenewals = renewals;
-            const beforeClosed = heartbeats;
-            await until(
-              () => heartbeats,
-              (n) => n >= beforeClosed + 2,
-            );
-            assert.equal(renewals, finishedRenewals);
+            const finishedRenewals = renewals();
+            await confirmedHeartbeat();
+            await confirmedHeartbeat();
+            assert.equal(renewals(), finishedRenewals);
           } finally {
+            node.socket.off('message', acknowledged);
             node.execute = execute;
             node.send = send;
             config.nodeLeaseMs = 10_000;

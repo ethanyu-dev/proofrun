@@ -36,6 +36,16 @@ pnpm dev:api
 
 远端使用同一个 HTTPS/WSS origin，由反向代理转发 HTTP 和 WebSocket Upgrade。API 自身默认仅监听回环地址。节点向外连接，控制面不需要访问业务内网。数据库与证据目录都必须持久化。
 
+## 验证看板统计
+
+管理员接口 `GET /v1/admin/statistics?period=week&date=2026-10-21` 返回自然周期汇总 `summary` 和补齐空白日期的 `days`。`period` 支持 `day`、`week`、`month`，默认 `week`；`date` 为周期内任意有效日期，默认北京时间今天，不接受未来日期。响应还包含 `startDate`、`endDate`、`timeZone` 和同一只读事务的 `generatedAt`，使用管理员鉴权及 `Cache-Control: no-store`。
+
+统计以北京时间自然日为边界，周一开始。Case 按逻辑执行首次提交日归属，双跑优先选 JEV，复用不重复累计，重跑新身份单独计数，普通任务按一个 Case 计数，独立清理排除。结果使用与现有报告一致的业务判定；`passRate` 是 `passed / finished` 的 0～1 比例，无已结束 Case 时为 `null`，周期值按分子分母总数重新计算。
+
+Tokens 分别查询执行调用和分析调用，按服务端开始记录时间累计，不连接请求成员，避免复用放大。`unmeasuredCalls` 标记输入或输出缺失的调用，合计仅包含已知部分；无调用与未上报通过 `calls` 区分。没有逐次调用的历史报告可按任务结束日回填汇总，`legacyUsageTasks` 返回回填数量；两类记录同时存在时只计调用。归档保留的模型用量继续参与统计。
+
+启动自动执行 `029-dashboard-statistics.sql`，增加调用时间和旧报告结束时间索引；无额外 Worker、聚合任务或模型调用。控制台须与 API 同步更新。统计和 UI 回归分别在 `apps/api/test/dashboard.test.ts` 与 `tests/console/dashboard.test.ts`，不代表供应商账单核验或生产规模性能验收。
+
 ## Case 飞书生命周期通知
 
 在飞书开放平台创建企业自建应用，开启机器人能力，申请 `im:message:send_as_bot` 权限并发布应用，再把应用机器人加入目标群。使用同一应用身份[发送消息](https://open.feishu.cn/document/server-docs/im-v1/message/create)和[更新卡片](https://open.feishu.cn/document/server-docs/im-v1/message-card/patch)，不需要配置事件订阅或卡片回调地址。
