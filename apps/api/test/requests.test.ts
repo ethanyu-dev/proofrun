@@ -929,6 +929,24 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
         assert.equal(recovered.usage.cumulative.calls, 0);
       },
     );
+    // 范围：真实 HTTP 创建、共享、原子重跑后的全部摘要字段与详情一致；不代表真实模型判定准确性。
+    await suite.test(
+      '所有已提交及重跑请求的列表摘要与详情逐字段一致',
+      async () => {
+        const list = await call('/v2/requests?limit=100');
+        assert.equal(list.statusCode, 200, list.body);
+        for (const item of list.json().requests) {
+          const detail = (await call(`/v2/requests/${item.requestId}`)).json();
+          for (const key of Object.keys(item))
+            if (key !== 'generatedAt')
+              assert.deepEqual(
+                item[key],
+                detail[key],
+                `${item.requestId}.${key}`,
+              );
+        }
+      },
+    );
   } finally {
     await app.close();
     await sql.end();

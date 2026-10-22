@@ -50,6 +50,8 @@ pnpm maintenance:api --days=30 --apply
 
 每次最多 100 个终态且会话确认关闭的任务，可重复运行。保留任务定义、报告结论、身份与去重摘要；删除过期证据和命令页面/输入内容，任务详情标明归档时间。孤立文件至少经过一天宽限期才清理。API 独占锁阻止维护和服务同时运行；CLI 不包含自动定时删除。
 
+请求列表摘要使用 PostgreSQL `pg_trgm` 扩展；升级前确认迁移账号可安装，或由管理员预先执行 `CREATE EXTENSION IF NOT EXISTS pg_trgm`。首次升级在 API 准入前分批回填历史请求，每批独立提交，中断后可继续。需要全量重建时停止 API，执行 `pnpm maintenance:api --request-summaries --apply`；省略 `--apply` 只查看数量。该入口不会清理证据或修改业务报告，详见[请求摘要设计](../apps/api/src/modules/requests/README.md)。
+
 节点停止后执行：
 
 ```sh

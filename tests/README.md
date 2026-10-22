@@ -109,6 +109,12 @@ pnpm test:agent:planned-browser
 
 ## 请求归属与报告汇总
 
+`apps/api/test/request-summary.test.ts` 使用独立 PostgreSQL 验证摘要与详情逐字段一致、全部任务终态、共享任务、双跑分歧、缺报告、清理隔离、回滚、确定命中的刷新锁竞争、微秒游标、分批重建和旧库迁移。报告直接注入，不代表真实模型或业务验收。
+
+列表性能可在独立测试 PostgreSQL 运行 `pnpm exec tsx apps/api/test/request-list.bench.ts`（需设置 `PROOFRUN_TEST_DATABASE_URL`）。工具创建并删除临时库，构造 1 万和 10 万个独立请求，分别测试普通分页、稀少失败状态和未命中搜索；每项串行三次及四客户端并发一次，输出原始耗时、中位数、最大值、首次回填与读取成本、增量刷新和 `EXPLAIN ANALYZE BUFFERS`。不调用模型；仅放宽造数语句期限，读取保留生产的单条 SQL 超时。并发测量前预先建立连接。机器、缓存和并发负载会影响结果，不用这些小样本推算生产 P95。
+
+对比旧查询路径时可将旧提交的 `reader.ts` 保存到忽略目录，保持其相对依赖可解析，以 `PROOFRUN_LIST_COMPARE_READER` 指向该模块，在同一临时库交替运行新旧读取器并逐字段比较响应；只忽略每次事务的快照时间。也可用 `PROOFRUN_LIST_BASELINE_READER` 单独运行旧版。基线与候选复用相同数据生成器、PostgreSQL 和预算，原始结果保留在 `.proofrun/`。旧读取器不维护摘要，因此不参与新摘要索引断言。
+
 - `apps/api/test/requests.test.ts` 使用独立临时 PostgreSQL 数据库和真实 HTTP 路由，覆盖三 case 双跑归属、同请求重试/重排、并发交叉批次、共享 case、关联写入故障整批回滚、报告部分/终态投影、缺报告、组间差异、微秒时间相同的分页、搜索完整性、原子重跑、旧数组与认证隔离。
 - `tests/contracts/request-summary.test.mjs` 覆盖唯一业务标准去重、跨 case 同名标准、混合单/双组、取消和超时缺报告、确认失败优先、覆盖差异、重复记录、准备受阻与清理异常的不同口径。
 - `tests/console/requests.test.ts` 覆盖请求草稿身份稳定性、真实 ApiClient 序列化、请求详情跳转、部分结果文本、两组来源、证据归档禁用及来源导航；静态渲染不替代浏览器检查。
