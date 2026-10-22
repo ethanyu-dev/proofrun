@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { Database } from './db.js';
 import { loadConfig } from './config.js';
 import { ID_PATTERN } from './domain.js';
+import { rebuildRequestSummaries } from './modules/requests/summary.js';
 
 /** 每次只处理一批，避免维护事务无界增长。 */
 const RETENTION_BATCH = 100;
@@ -103,20 +104,44 @@ if (
   process.argv[1]?.endsWith('/maintenance.js')
 ) {
   const args = process.argv.slice(2);
-  if (args.some((arg) => arg !== '--apply' && !/^--days=\d+$/.test(arg)))
-    throw new Error('Usage: maintenance --days=30 [--apply]');
+  if (
+    args.some(
+      (arg) =>
+        !['--apply', '--request-summaries'].includes(arg) &&
+        !/^--days=\d+$/.test(arg),
+    ) ||
+    (args.includes('--request-summaries') &&
+      args.some((arg) => arg.startsWith('--days=')))
+  )
+    throw new Error(
+      'Usage: maintenance (--days=30 | --request-summaries) [--apply]',
+    );
   const config = loadConfig();
   const db = new Database(config.databaseUrl);
   try {
     await db.start();
     console.log(
       JSON.stringify(
-        await retain(
-          db,
-          config.artifactDirectory,
-          Number(args.find((arg) => arg.startsWith('--days='))?.slice(7) ?? 30),
-          args.includes('--apply'),
-        ),
+        args.includes('--request-summaries')
+          ? {
+              applied: args.includes('--apply'),
+              requests: (
+                await db.query(
+                  'SELECT count(*)::int AS count FROM pr_verification_requests',
+                )
+              ).rows[0]!.count,
+              rebuilt: args.includes('--apply')
+                ? await rebuildRequestSummaries(db)
+                : 0,
+            }
+          : await retain(
+              db,
+              config.artifactDirectory,
+              Number(
+                args.find((arg) => arg.startsWith('--days='))?.slice(7) ?? 30,
+              ),
+              args.includes('--apply'),
+            ),
         null,
         2,
       ),

@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { drainRequestSummaries } from './modules/requests/summary.js';
 import pg, { type PoolClient, type QueryResultRow } from 'pg';
 
 /** 固定应用级锁，确保主备副本中只有持锁实例运行网关和调度器。 */
@@ -39,6 +40,7 @@ const MIGRATIONS = [
   '027-request-analysis.sql',
   '028-report-usage.sql',
   '029-dashboard-statistics.sql',
+  '030-request-summaries.sql',
 ];
 
 /** 所有业务事务使用同一连接；独占连接单独维护控制面实例锁。 */
@@ -118,6 +120,8 @@ export class Database {
         ]);
       }
     });
+    // 服务准入前完成迁移产生的失效摘要；每批独立提交，中断后从剩余标记继续。
+    await drainRequestSummaries(this);
   }
 
   /** 保持事务短小；传输和文件写入必须在事务之外完成。 */
