@@ -1085,7 +1085,16 @@ test(
             beforeComplete: () =>
               until(
                 () => api('GET', `/v1/tasks/${definition.taskId}`),
-                (value) => value.state === 'TIMED_OUT',
+                (value) => {
+                  // 已结束但分类错误时直接显示终态原因，避免把状态竞争隐藏为轮询超时。
+                  if (value.state !== 'RUNNING')
+                    assert.equal(
+                      value.state,
+                      'TIMED_OUT',
+                      JSON.stringify(value.error),
+                    );
+                  return value.state === 'TIMED_OUT';
+                },
               ),
           },
         );

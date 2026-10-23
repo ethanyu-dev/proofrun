@@ -2006,13 +2006,18 @@ export class Coordinator {
           !['session.close', 'session.renew'].includes(command.kind) &&
           context.task_state === 'RUNNING' &&
           (command.first_sent_at || command.kind === 'session.open')
-        )
+        ) {
+          // 两次扫描之间可能跨过任务截止；持锁后以当前期限判定，避免扫描顺序将任务超时误报成命令故障。
+          const timedOut = executionDeadline(context) <= Date.now();
           await stopExecution(
             client,
             context,
-            'ERROR',
-            'COMMAND_DEADLINE_EXCEEDED',
+            timedOut ? 'TIMED_OUT' : 'ERROR',
+            timedOut
+              ? executionTimeoutCode(context)
+              : 'COMMAND_DEADLINE_EXCEEDED',
           );
+        }
       });
     const cleanup = await this.db.query(
       `SELECT s.execution_id FROM pr_sessions s WHERE s.state='CLOSING' AND NOT s.closure_verified

@@ -2817,6 +2817,77 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       }
     });
 
+    // 范围：真实数据库/调度器在两次扫描之间跨过任务截止，终态仍是超时；只注入扫描时序，不运行真实浏览器。
+    await suite.test(
+      '命令扫描跨过任务截止时不误记为命令故障',
+      async (context) => {
+        const node = await addNode('deadline-scan-race');
+        const definition = task('deadline-scan-race');
+        await submit(definition);
+        const execution = await claim();
+        await ready(execution);
+        const commandId = randomUUID();
+        assert.equal(
+          (
+            await api(
+              'POST',
+              `/v1/executions/${execution.id}/commands`,
+              {
+                type: 'execution.command',
+                commandId,
+                timeoutMs: 15000,
+                command: {
+                  type: 'browser.wait',
+                  selector: '#pending',
+                  text: 'ready',
+                },
+              },
+              execution.leaseToken,
+            )
+          ).status,
+          202,
+        );
+        await until(() => node.calls.has(commandId), Boolean);
+        const query = Database.prototype.query;
+        let crossed = false;
+        context.mock.method(
+          Database.prototype,
+          'query',
+          async function (
+            this: Database,
+            statement: string,
+            values: unknown[] = [],
+          ) {
+            const result = await query.call(this, statement, values);
+            if (
+              !crossed &&
+              statement.startsWith(
+                'SELECT e.id FROM pr_executions e JOIN pr_tasks t',
+              )
+            ) {
+              crossed = true;
+              // 执行到期列表已读取，此时才让任务及在途命令同时过期，稳定复现下一阶段扫描的竞争。
+              await sql.query(
+                `WITH elapsed AS (
+                  UPDATE pr_tasks SET deadline_at=clock_timestamp()-interval '1 second' WHERE id=$1 RETURNING deadline_at
+                ) UPDATE pr_commands SET deadline_at=(SELECT deadline_at FROM elapsed) WHERE id=$2`,
+                [definition.taskId, commandId],
+              );
+            }
+            return result;
+          },
+        );
+        const ended = await until(
+          async () => (await api('GET', `/v1/tasks/${definition.taskId}`)).data,
+          (value) => value.state !== 'RUNNING',
+        );
+        assert.equal(crossed, true);
+        await cleaned(definition.taskId);
+        assert.equal(ended.state, 'TIMED_OUT', JSON.stringify(ended.error));
+        assert.equal(ended.error.code, 'TASK_DEADLINE_EXCEEDED');
+      },
+    );
+
     // 范围：投递过的续期回执缺失不会触发通用命令超时撤权；真正 worker 超时由已有回归覆盖。
     await suite.test('单条续期回执超时后可由新心跳继续续期', async () => {
       const node = await addNode('renew-receipt-timeout');
