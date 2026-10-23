@@ -52,7 +52,7 @@ export function TaskRerun({
         onClick={rerun}
         title={
           caseId
-            ? '沿用原步骤、清理和配置重跑整个 case；对照 case 同时重跑两组，保留历史结果。'
+            ? '保留 caseId，沿用步骤和配置新增一次运行；对照 case 同时重跑两组，保留历史结果。'
             : '沿用原配置创建新任务；对照任务同时重跑两组，保留历史结果。'
         }
       >

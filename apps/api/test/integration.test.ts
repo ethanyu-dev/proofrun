@@ -5270,7 +5270,7 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         assert.equal((await api('POST', path, { caseId }, WORKER)).status, 401);
         for (const invalid of [
           {},
-          { caseId: sourceId },
+          { caseId, runId: caseId },
           { caseId, extra: true },
           { caseId: 'a/b' },
           { caseId, timeBudget: {} },
@@ -5304,7 +5304,7 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         assert.equal(listing.length, 2);
         assert(
           listing.every(
-            (t: any) => t.caseId === caseId && t.state === 'QUEUED',
+            (t: any) => t.caseId === sourceId && t.state === 'QUEUED',
           ),
         );
         for (const arm of results[0]!.data.comparison.arms) {
@@ -5316,7 +5316,7 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
           assert.deepEqual(fresh.definition.caseV2Definition, {
             ...input,
             session: { mode: 'manual' },
-            caseId,
+            caseId: sourceId,
           });
           assert.deepEqual(fresh.definition.cleanupStepIds, ['cleanup-1']);
           assert.equal(fresh.definition.steps.at(-1).stepId, 'cleanup-1');
@@ -5330,9 +5330,11 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
             'CASE_ENDPOINT_REQUIRED',
           );
         }
-        const old = (await api('GET', `/v2/cases/${sourceId}`)).data;
+        const old = (
+          await api('GET', `/v2/cases/${sourceId}?runId=case-v2-${sourceId}`)
+        ).data;
         assert(old.comparison.arms.every((a: any) => a.status === 'CANCELLED'));
-        await api('POST', `/v2/cases/${caseId}/cancel`, {});
+        await api('POST', `/v2/cases/${sourceId}/cancel`, {});
         const retry = await api('POST', path, { caseId });
         assert(
           retry.data.comparison.arms.every(

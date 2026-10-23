@@ -193,9 +193,11 @@ export class Coordinator {
           [task.taskId, task, hash, task.budget.timeoutMs],
         );
         const existing = await client.query(
-          'SELECT definition_hash FROM pr_tasks WHERE id=$1',
+          'SELECT definition_hash,deleted_at FROM pr_tasks WHERE id=$1',
           [task.taskId],
         );
+        if (existing.rows[0]?.deleted_at)
+          throw new ApiError(409, 'TASK_DELETED', '该运行已删除，不能重新提交');
         if (existing.rows[0]?.definition_hash !== hash)
           throw new ApiError(
             409,
@@ -204,6 +206,40 @@ export class Coordinator {
           );
       }
     });
+  }
+
+  /** 兼容旧主任务身份；默认读取最新未删除运行，历史运行必须属于指定 case。 */
+  async caseTask(id: string, runId?: string) {
+    if (
+      typeof id !== 'string' ||
+      !/^[A-Za-z0-9_-]{1,80}$/.test(id) ||
+      (runId !== undefined &&
+        (typeof runId !== 'string' || !/^[A-Za-z0-9_-]{1,160}$/.test(runId)))
+    )
+      throw new ApiError(400, 'INVALID_RUN', '运行身份无效');
+    const row = (
+      await this.db.query<{ run_id: string }>(
+        `SELECT run_id FROM pr_case_runs
+      WHERE case_id=$1 AND deleted_at IS NULL AND ($2::text IS NULL OR run_id=$2)
+      ORDER BY created_at DESC,run_id DESC LIMIT 1`,
+        [id, runId ?? null],
+      )
+    ).rows[0];
+    if (!row)
+      throw new ApiError(404, 'CASE_MISSING', 'Case 不存在或运行已删除');
+    return this.task(row.run_id);
+  }
+
+  /** 历史只返回可见运行，报告和证据通过原任务详情读取。 */
+  async caseRuns(id: string) {
+    return (
+      await this.db.query(
+        `SELECT r.run_id AS "runId",r.run_id AS "taskId",t.state,r.created_at AS "createdAt",
+      t.finished_at AS "finishedAt" FROM pr_case_runs r JOIN pr_tasks t ON t.id=r.run_id
+      WHERE r.case_id=$1 AND r.deleted_at IS NULL ORDER BY r.created_at DESC,r.run_id DESC`,
+        [id],
+      )
+    ).rows;
   }
 
   /** 整批原子入队；锁按身份排序，交叉批次不会因请求顺序形成死锁。 */
@@ -231,11 +267,18 @@ export class Coordinator {
         )
           throw new ApiError(422, 'INVALID_CASE', '任务定义或预算无效');
         const existing = (
-          await client.query('SELECT definition FROM pr_tasks WHERE id=$1', [
-            task.taskId,
-          ])
+          await client.query(
+            'SELECT definition,deleted_at FROM pr_tasks WHERE id=$1 FOR UPDATE',
+            [task.taskId],
+          )
         ).rows[0];
         if (existing) {
+          if (existing.deleted_at)
+            throw new ApiError(
+              409,
+              'TASK_DELETED',
+              '该运行已删除，不能重新提交',
+            );
           if (request?.sourceRequestId)
             throw new ApiError(
               409,
@@ -351,7 +394,7 @@ export class Coordinator {
         );
         const saved = (
           await client.query(
-            'SELECT definition_hash FROM pr_tasks WHERE id=$1',
+            'SELECT definition_hash,deleted_at FROM pr_tasks WHERE id=$1',
             [definition.taskId],
           )
         ).rows[0];
@@ -444,7 +487,7 @@ export class Coordinator {
       throw new ApiError(
         400,
         'CASE_ENDPOINT_REQUIRED',
-        '结构化任务请使用新 caseId 通过 /v2/cases 重提，不支持在内部入口重跑',
+        '结构化任务请通过 /v2/cases/:id/rerun 新增运行，不支持在内部入口重跑',
       );
     if (definition.comparison) {
       if (runId === definition.comparison.id)
@@ -478,7 +521,7 @@ export class Coordinator {
       throw new ApiError(
         400,
         'CASE_ENDPOINT_REQUIRED',
-        '结构化任务请使用新 caseId 通过 /v2/cases 重提，不支持在内部入口重跑',
+        '结构化任务请通过 /v2/cases/:id/rerun 新增运行，不支持在内部入口重跑',
       );
     const tasks = this.comparisonTasks(
       {

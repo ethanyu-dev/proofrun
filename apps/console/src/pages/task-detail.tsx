@@ -1,3 +1,5 @@
+import { TaskDelete } from '../components/task-delete';
+import { CaseRunHistory } from '../components/case-run-history';
 import { RequestMemberships } from '../components/request-memberships';
 import { useEffect, useRef, useState } from 'react';
 import type { TaskDetail } from '@proofrun/contracts';
@@ -114,7 +116,25 @@ export function TaskDetailPage({ api, id }: { api: ApiClient; id: string }) {
             取消任务
           </button>
         )}
+        {task && (
+          <TaskDelete
+            api={api}
+            ids={[id]}
+            disabled={['QUEUED', 'RUNNING'].includes(task.state)}
+            onDeleted={() => {
+              location.hash = '#/tasks';
+            }}
+          />
+        )}
       </PageHeader>
+      {task?.definition.caseV2Definition && (
+        <CaseRunHistory
+          key={id}
+          api={api}
+          caseId={task.definition.caseV2Definition.caseId}
+          taskId={task.definition.comparison?.sourceTaskId ?? id}
+        />
+      )}
       <RequestMemberships api={api} taskId={id} />
       {!paired && <RefreshBar {...resource} />}
       <ErrorNotice message={resource.error} />

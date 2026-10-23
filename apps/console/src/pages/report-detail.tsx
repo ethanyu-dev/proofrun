@@ -1,3 +1,4 @@
+import { CaseRunHistory } from '../components/case-run-history';
 import { RequestMemberships } from '../components/request-memberships';
 import {
   TaskExecutionStatus,
@@ -52,6 +53,14 @@ export function ReportDetailPage({ api, id }: { api: ApiClient; id: string }) {
             : '查看任务详情'}
         </a>
       </PageHeader>
+      {resource.data?.definition.caseV2Definition && (
+        <CaseRunHistory
+          key={id}
+          api={api}
+          caseId={resource.data.definition.caseV2Definition.caseId}
+          taskId={resource.data.definition.comparison?.sourceTaskId ?? id}
+        />
+      )}
       <RequestMemberships api={api} taskId={id} />
       <RefreshBar {...resource} />
       <ErrorNotice message={resource.error} />

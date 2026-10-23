@@ -1,3 +1,4 @@
+import type { PoolClient } from 'pg';
 import type {
   RequestResultV2,
   RequestList,
@@ -70,23 +71,27 @@ export class RequestReader {
       await client.query(
         'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY',
       );
-      const rows = (
-        await client.query<RequestRow>(
-          'SELECT * FROM pr_verification_requests WHERE request_id=$1',
-          [id],
-        )
-      ).rows;
-      if (!rows.length)
-        throw new ApiError(404, 'REQUEST_MISSING', '请求不存在');
-      return (await this.projector.project(client, rows, true))[0]!;
+      return this.snapshot(client, id);
     });
+  }
+
+  /** 供已有事务冻结分析输入，避免持锁时再占用第二条连接。 */
+  async snapshot(client: PoolClient, id: string): Promise<RequestResultV2> {
+    const rows = (
+      await client.query<RequestRow>(
+        'SELECT * FROM pr_verification_requests WHERE request_id=$1 AND deleted_at IS NULL',
+        [id],
+      )
+    ).rows;
+    if (!rows.length) throw new ApiError(404, 'REQUEST_MISSING', '请求不存在');
+    return (await this.projector.project(client, rows, true))[0]!;
   }
 
   /** 反向导航显示全部关联，不假定共享 case 只有一个来源请求。 */
   async memberships(taskId: string) {
     return (
       await this.db.query<{ requestId: string; title: string }>(
-        `SELECT r.request_id AS "requestId",r.title FROM pr_verification_requests r JOIN pr_verification_request_arms a USING(request_id) WHERE a.task_id=$1 ORDER BY r.created_at DESC,r.request_id DESC`,
+        `SELECT r.request_id AS "requestId",r.title FROM pr_verification_requests r JOIN pr_verification_request_arms a USING(request_id) WHERE a.task_id=$1 AND r.deleted_at IS NULL ORDER BY r.created_at DESC,r.request_id DESC`,
         [taskId],
       )
     ).rows;
@@ -147,7 +152,10 @@ export class RequestReader {
       await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
       // 失效标记与原始事实在同一快照读取；并发刷新或写入冲突由 Database 重试整次读取。
       await refreshRequestSummaries(client);
-      const filters: string[] = [];
+      const filters: string[] = [
+        'r.deleted_at IS NULL',
+        'EXISTS(SELECT 1 FROM pr_verification_request_arms a JOIN pr_tasks t ON t.id=a.task_id WHERE a.request_id=r.request_id AND t.deleted_at IS NULL)',
+      ];
       const values: unknown[] = [];
       const parameter = (value: unknown) => {
         values.push(value);

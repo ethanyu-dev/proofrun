@@ -13,7 +13,11 @@ import {
 } from '@proofrun/contracts';
 import { Database } from '../../db.js';
 import { ApiError } from '../../domain.js';
-import { DASHBOARD_CASES_SQL, DASHBOARD_USAGE_SQL } from './dashboard-query.js';
+import {
+  DASHBOARD_CASES_SQL,
+  DASHBOARD_USAGE_SQL,
+  DASHBOARD_RUNS_SQL,
+} from './dashboard-query.js';
 
 /** 聚合行的 bigint 由 pg 以字符串返回，转换前不把空值当作零。 */
 interface UsageRow {
@@ -47,6 +51,7 @@ function emptyUsage(): DashboardUsage {
 /** 空白日也有完整字段，防止图表跨过零数据日造成趋势误读。 */
 function emptyMetrics(): DashboardMetrics {
   return {
+    runs: 0,
     cases: {
       total: 0,
       finished: 0,
@@ -106,6 +111,11 @@ export async function dashboardStatistics(
     ).rows[0]!.at.toISOString();
     const days = range.days.map((date) => ({ date, ...emptyMetrics() }));
     const byDate = new Map(days.map((day) => [day.date, day]));
+    const runs = await client.query<{ date: string }>(DASHBOARD_RUNS_SQL, [
+      range.from,
+      range.until,
+    ]);
+    for (const row of runs.rows) byDate.get(row.date)!.runs++;
     const cases = await client.query<{
       date: string;
       state: string;
@@ -163,6 +173,7 @@ export async function dashboardStatistics(
         summary.cases[field] += day.cases[field];
       for (const field of ['execution', 'analysis', 'tokens'] as const)
         mergeUsage(summary[field], day[field]);
+      summary.runs += day.runs;
       summary.legacyUsageTasks += day.legacyUsageTasks;
     }
     summary.cases.passRate = summary.cases.finished

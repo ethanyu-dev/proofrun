@@ -640,6 +640,10 @@
               },
               "executionOutcome": {
                 "$ref": "execution-outcome.schema.json"
+              },
+              "runId": {
+                "type": "string",
+                "description": "本次运行的主任务身份，历史记录按此身份读取。"
               }
             },
             "required": [
@@ -660,6 +664,14 @@
     },
     "executionOutcome": {
       "$ref": "execution-outcome.schema.json"
+    },
+    "runId": {
+      "type": "string",
+      "description": "本次运行的主任务身份，历史记录按此身份读取。"
+    },
+    "taskId": {
+      "type": "string",
+      "description": "本组实际任务身份；caseId 在重跑间保持不变。"
     }
   },
   "required": [

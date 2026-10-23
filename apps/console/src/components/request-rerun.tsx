@@ -25,7 +25,7 @@ export function RequestRerun({
       requestId: `request-${crypto.randomUUID()}`,
       caseIds: value.cases.map((c) => ({
         sourceCaseId: c.caseId,
-        caseId: `case-${crypto.randomUUID()}`,
+        runId: `run-${crypto.randomUUID()}`,
       })) as RerunInput['caseIds'],
     };
     const controller = new AbortController();
@@ -51,9 +51,9 @@ export function RequestRerun({
     <div>
       <button
         className="button button-secondary"
-        disabled={pending}
+        disabled={pending || !value.cases.length}
         onClick={() => void rerun()}
-        title="沿用各 case 冻结环境与执行模式，创建新请求和全部新 case；采用当前预算策略。"
+        title="沿用各 case 冻结环境与执行模式，创建新请求及运行记录，保留各 caseId；采用当前预算策略。"
       >
         {pending ? '正在创建重跑请求…' : '重跑整个请求'}
       </button>

@@ -21,7 +21,7 @@ export async function analysisUsage(
       prompt_tokens: string | null;
       completion_tokens: string | null;
     }>(
-      'SELECT revision,prompt_tokens,completion_tokens FROM pr_analysis_calls WHERE request_id=$1',
+      'SELECT revision,prompt_tokens,completion_tokens FROM pr_analysis_calls WHERE request_id=$1 AND excluded_at IS NULL',
       [id],
     )
   ).rows;

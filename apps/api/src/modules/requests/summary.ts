@@ -56,7 +56,7 @@ export async function refreshRequestSummaries(
       await client.query<{ request_id: string; terms: string[] }>(
         `SELECT c.request_id,array_agg(c.case_id ORDER BY c.position) || array_agg(t.definition->>'objective' ORDER BY c.position) AS terms
        FROM pr_verification_request_cases c JOIN pr_tasks t ON t.id=c.task_id
-       WHERE c.request_id=ANY($1::text[]) GROUP BY c.request_id`,
+       WHERE c.request_id=ANY($1::text[]) AND t.deleted_at IS NULL GROUP BY c.request_id`,
         [ids],
       )
     ).rows;

@@ -723,6 +723,8 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
         assert.equal(result.sourceRequestId, 'request-main');
         assert.equal(result.executionCounts.total, 6);
         assert.equal(result.cases[0]!.sourceCaseId, 'alpha');
+        assert.equal(result.cases[0]!.caseId, 'alpha');
+        assert.equal(result.cases[0]!.arms[0]!.taskId, 'case-run-rerun-alpha');
         assert.equal(result.reportStatus, null);
         assert.equal(
           (await call('/v2/requests/request-main/rerun', body)).statusCode,
@@ -741,7 +743,7 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
           requestId: 'bad-rerun',
           caseIds: [
             { sourceCaseId: 'alpha', caseId: 'unused-rerun' },
-            { sourceCaseId: 'beta', caseId: 'delta' },
+            { sourceCaseId: 'beta', caseId: 'rerun-alpha' },
             { sourceCaseId: 'gamma', caseId: 'unused-rerun-two' },
           ],
         };
@@ -753,7 +755,7 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
         assert.equal(
           (
             await sql.query(
-              "SELECT count(*)::int AS n FROM pr_tasks WHERE id='case-v2-unused-rerun'",
+              "SELECT count(*)::int AS n FROM pr_tasks WHERE id='case-run-unused-rerun'",
             )
           ).rows[0].n,
           0,

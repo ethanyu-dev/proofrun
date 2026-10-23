@@ -68,26 +68,21 @@ export class RequestService {
   /** 全部目标必须新建；完整映射与预算选择纳入请求幂等摘要。 */
   async rerun(id: string, input: unknown): Promise<RequestResultV2> {
     if (!validateRequestRerun(input) || input.requestId === id)
-      throw new ApiError(
-        400,
-        'INVALID_RERUN',
-        '需要新请求身份和完整 case 映射',
-      );
+      throw new ApiError(400, 'INVALID_RERUN', '需要新请求身份和完整运行映射');
     const source = await this.reader.get(id);
     const sourceIds = new Set(source.cases.map((c) => c.caseId));
     if (
       input.caseIds.length !== sourceIds.size ||
       new Set(input.caseIds.map((c) => c.sourceCaseId)).size !==
         sourceIds.size ||
-      new Set(input.caseIds.map((c) => c.caseId)).size !== sourceIds.size ||
-      input.caseIds.some(
-        (c) => !sourceIds.has(c.sourceCaseId) || sourceIds.has(c.caseId),
-      )
+      new Set(input.caseIds.map((c) => c.runId ?? c.caseId)).size !==
+        sourceIds.size ||
+      input.caseIds.some((c) => !sourceIds.has(c.sourceCaseId))
     )
       throw new ApiError(
         400,
         'INVALID_RERUN',
-        '映射必须覆盖全部来源，且目标身份互不重复并不同于全部旧身份',
+        '映射必须覆盖全部来源，且运行身份互不重复',
       );
     const parameters = {
       sourceRequestId: id,
@@ -101,7 +96,7 @@ export class RequestService {
     const replay = await this.replay(input.requestId, hash);
     if (replay) return replay;
     const mapping = new Map(
-      input.caseIds.map((c) => [c.sourceCaseId, c.caseId]),
+      input.caseIds.map((c) => [c.sourceCaseId, c.runId ?? c.caseId]),
     );
     const definitions = [];
     for (const member of source.cases)
@@ -119,7 +114,7 @@ export class RequestService {
       hash,
       sourceRequestId: id,
       sources: Object.fromEntries(
-        input.caseIds.map((c) => [c.caseId, c.sourceCaseId]),
+        input.caseIds.map((c) => [c.sourceCaseId, c.sourceCaseId]),
       ),
       rerunParameters: parameters,
     });

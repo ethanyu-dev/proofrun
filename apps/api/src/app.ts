@@ -1,3 +1,4 @@
+import { TaskLifecycle } from './modules/tasks/lifecycle.js';
 import { RequestAnalyses } from './modules/reports/request-analysis.js';
 import { analysisRoutes } from './modules/reports/analysis-routes.js';
 import { dashboardStatistics } from './modules/reports/dashboard.js';
@@ -73,8 +74,16 @@ export async function buildApp(
   );
   const coordinator = new Coordinator(db, config, artifacts);
   const tasks = new TaskReader(db);
+  const lifecycle = new TaskLifecycle(db);
   const cases = new CaseService(
-    coordinator,
+    {
+      submit: (definition) => coordinator.submit(definition),
+      task: async (id) => {
+        await lifecycle.visible(id);
+        return coordinator.task(id);
+      },
+      cancel: (id) => coordinator.cancel(id),
+    },
     config.caseProfile,
     config.publicUrl,
   );
@@ -474,9 +483,37 @@ export async function buildApp(
     (request) => requestReader.memberships(request.params.id),
   );
   app.get<{ Params: IdParams }>(
+    '/v2/cases/:id/runs',
+    { preHandler: admin },
+    async (request) => {
+      await coordinator.caseTask(request.params.id);
+      return { runs: await coordinator.caseRuns(request.params.id) };
+    },
+  );
+  app.post('/v1/tasks/delete', { preHandler: admin }, (request) =>
+    lifecycle.remove((request.body as { ids?: unknown })?.ids),
+  );
+  app.post<{ Params: IdParams }>(
+    '/v1/tasks/:id/delete',
+    { preHandler: admin },
+    (request) => lifecycle.remove([request.params.id]),
+  );
+  app.post('/v2/requests/delete', { preHandler: admin }, (request) =>
+    lifecycle.remove((request.body as { ids?: unknown })?.ids, true),
+  );
+  app.post<{ Params: IdParams }>(
+    '/v2/requests/:id/delete',
+    { preHandler: admin },
+    (request) => lifecycle.remove([request.params.id], true),
+  );
+  app.get<{ Params: IdParams }>(
     '/v2/cases/:id',
     { preHandler: admin },
-    (request) => casesV2.get(request.params.id),
+    (request) =>
+      casesV2.get(
+        request.params.id,
+        (request.query as { runId?: string }).runId,
+      ),
   );
   app.post<{ Params: IdParams }>(
     '/v2/cases/:id/rerun',
@@ -485,6 +522,7 @@ export async function buildApp(
       const body = request.body as
         | {
             caseId?: unknown;
+            runId?: unknown;
             budgetMode?: 'current' | 'original';
             timeBudget?: unknown;
           }
@@ -494,23 +532,25 @@ export async function buildApp(
         typeof body !== 'object' ||
         Array.isArray(body) ||
         Object.keys(body).some(
-          (key) => !['caseId', 'budgetMode', 'timeBudget'].includes(key),
+          (key) =>
+            !['caseId', 'runId', 'budgetMode', 'timeBudget'].includes(key),
         ) ||
         (body.budgetMode !== undefined &&
           !['current', 'original'].includes(body.budgetMode)) ||
-        !('caseId' in body)
+        (!('runId' in body) && !('caseId' in body)) ||
+        ('runId' in body && 'caseId' in body)
       )
         throw new ApiError(
           400,
           'INVALID_RERUN',
-          '重跑需要新的 caseId，budgetMode 可选 current 或 original',
+          '重跑需要 runId，budgetMode 可选 current 或 original；旧 caseId 参数兼容为运行幂等键',
         );
       return reply
         .code(202)
         .send(
           await casesV2.rerun(
             request.params.id,
-            body.caseId,
+            body.runId ?? body.caseId,
             body.budgetMode,
             body.timeBudget,
           ),
@@ -529,6 +569,7 @@ export async function buildApp(
       await casesV2.requireEvidence(
         request.params.id,
         request.params.artifactId,
+        (request.query as { runId?: string }).runId,
       );
       const artifact = await artifacts.read(request.params.artifactId);
       return reply.type(artifact.contentType).send(artifact.body);
@@ -558,7 +599,10 @@ export async function buildApp(
   app.get<{ Params: IdParams }>(
     '/v1/tasks/:id',
     { preHandler: admin },
-    (request) => coordinator.task(request.params.id),
+    async (request) => {
+      await lifecycle.visible(request.params.id);
+      return coordinator.task(request.params.id);
+    },
   );
   app.post<{ Params: IdParams }>(
     '/v1/tasks/:id/rerun',
@@ -571,6 +615,7 @@ export async function buildApp(
         Object.keys(body).length !== 1
       )
         throw new ApiError(400, 'INVALID_RERUN', '需要 runId');
+      await lifecycle.visible(request.params.id);
       return reply
         .code(202)
         .send(await coordinator.rerun(request.params.id, body.runId));
@@ -601,7 +646,10 @@ export async function buildApp(
   app.get<{ Params: IdParams }>(
     '/v1/tasks/:id/comparison',
     { preHandler: admin },
-    (request) => coordinator.comparison(request.params.id),
+    async (request) => {
+      await lifecycle.visible(request.params.id);
+      return coordinator.comparison(request.params.id);
+    },
   );
   app.post<{ Params: IdParams }>(
     '/v1/tasks/:id/cancel',

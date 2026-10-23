@@ -7,14 +7,10 @@ import {
   type VerificationReport,
   type VerificationTask,
 } from '@proofrun/contracts';
-import { ApiError, canonical } from '../../domain.js';
+import { ApiError, canonical, digest } from '../../domain.js';
 import type { Coordinator } from '../scheduling/coordinator.js';
 import { validateCaseProfile, type CaseProfile } from './profile.js';
-import {
-  extendRerunTimeBudget,
-  parseRerunTimeBudget,
-  type RerunTimeBudget,
-} from './rerun-budget.js';
+import { extendRerunTimeBudget, parseRerunTimeBudget } from './rerun-budget.js';
 import {
   caseArmIds,
   compileCase,
@@ -29,33 +25,29 @@ export class CaseV2Service {
     private readonly tasks: Pick<
       Coordinator,
       'submitCaseBatch' | 'task' | 'cancel' | 'caseCleanup'
-    >,
+    > &
+      Partial<Pick<Coordinator, 'caseTask'>>,
     /** 首次接收使用的平台配置；幂等重提使用已冻结快照。 */
     private readonly profile: CaseProfile | undefined,
     /** 构造同源公开证据地址，不透传内部报告地址。 */
     private readonly publicUrl: string,
     /** 提交前解析平台元数据，冻结后重提不访问外部库。 */
     private readonly identities?: CatalogSource,
-    /** 显式复现历史预算时才传入；默认重跑按当前策略编译。 */
-    private readonly originalBudget?: Pick<
-      VerificationTask,
-      'budget' | 'stepBudget'
-    >,
-    /** 仅作用于新身份；相同 caseId 重提仍返回首次冻结的预算。 */
-    private readonly timeBudget?: RerunTimeBudget,
   ) {}
 
   /** 身份不是任意内部任务路径；清理结果也只通过所属 case 读取。 */
-  private async stored(id: string) {
+  private async stored(id: string, runId?: string) {
     if (!/^[A-Za-z0-9_-]{1,80}$/.test(id))
       throw new ApiError(404, 'CASE_MISSING', 'Case not found');
-    const task = await this.tasks
-      .task(`${V2_PREFIX}${id}`)
-      .catch((error: unknown) => {
-        if (error instanceof ApiError && error.code === 'TASK_MISSING')
-          throw new ApiError(404, 'CASE_MISSING', 'Case not found');
-        throw error;
-      });
+    const task = await (
+      this.tasks.caseTask
+        ? this.tasks.caseTask(id, runId)
+        : this.tasks.task(runId ?? `${V2_PREFIX}${id}`)
+    ).catch((error: unknown) => {
+      if (error instanceof ApiError && error.code === 'TASK_MISSING')
+        throw new ApiError(404, 'CASE_MISSING', 'Case not found');
+      throw error;
+    });
     if (task.definition.caseV2Definition?.caseId !== id)
       throw new ApiError(404, 'CASE_MISSING', 'Case not found');
     return task;
@@ -65,6 +57,7 @@ export class CaseV2Service {
   private result(
     id: string,
     report: VerificationReport | null,
+    runId: string,
   ): CaseResultV2['result'] {
     return report
       ? {
@@ -78,7 +71,7 @@ export class CaseV2Service {
             id: a.id,
             kind: a.kind,
             sha256: a.sha256,
-            url: `${this.publicUrl}/v2/cases/${encodeURIComponent(id)}/evidence/${encodeURIComponent(a.id)}`,
+            url: `${this.publicUrl}/v2/cases/${encodeURIComponent(id)}/evidence/${encodeURIComponent(a.id)}?runId=${encodeURIComponent(runId)}`,
           })),
         }
       : null;
@@ -132,15 +125,6 @@ export class CaseV2Service {
           validateCaseProfile(this.profile),
           resolved,
         );
-        if (this.originalBudget) {
-          compiled.budget = structuredClone(this.originalBudget.budget);
-          if (this.originalBudget.stepBudget)
-            compiled.stepBudget = structuredClone(
-              this.originalBudget.stepBudget,
-            );
-          else delete compiled.stepBudget;
-        }
-        if (this.timeBudget) extendRerunTimeBudget(compiled, this.timeBudget);
         definitions.push(compiled);
       }
     }
@@ -156,20 +140,27 @@ export class CaseV2Service {
     );
   }
 
-  /** 重跑从主组冻结配置恢复整个 case；新身份重新编译收尾，不复制执行状态或报告。 */
+  /** 重跑从当前主组恢复定义；caseId 稳定，runId 独立冻结配置和执行结果。 */
   async prepareRerun(
     id: string,
-    caseId: unknown,
+    runId: unknown,
     budgetMode: 'current' | 'original' = 'current',
     timeBudget?: unknown,
   ): Promise<VerificationTask> {
-    if (
-      typeof caseId !== 'string' ||
-      !/^[A-Za-z0-9_-]{1,80}$/.test(caseId) ||
-      caseId === id
-    )
-      throw new ApiError(400, 'INVALID_RERUN', '重跑需要一个新的有效 caseId');
+    if (typeof runId !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(runId))
+      throw new ApiError(400, 'INVALID_RERUN', '重跑需要一个有效 runId');
     const time = parseRerunTimeBudget(timeBudget);
+    const taskId = `case-run-${runId}`;
+    const previous = await this.tasks.task(taskId).catch((error: unknown) => {
+      if (error instanceof ApiError && error.code === 'TASK_MISSING')
+        return null;
+      throw error;
+    });
+    if (previous) {
+      if (previous.definition.caseV2Definition?.caseId !== id)
+        throw new ApiError(409, 'CASE_CONFLICT', 'runId 已属于其他 case');
+      return previous.definition;
+    }
     const { definition } = await this.stored(id);
     const profile: CaseProfile = {
       // 历史快照省略开关时沿用旧语义，避免新建默认值改变重跑的登录与人工权限。
@@ -187,48 +178,49 @@ export class CaseV2Service {
         : (definition.executionMode ?? 'llm'),
       evidenceKinds: [...definition.acceptanceCriteria[0]!.evidenceKinds],
     };
-    // 复用提交的幂等检查与原子拆组；重试使用目标已冻结的配置，不产生额外任务。
-    const service = new CaseV2Service(
-      this.tasks,
-      profile,
-      this.publicUrl,
-      this.identities,
-      budgetMode === 'original'
-        ? {
-            budget: definition.budget,
-            ...(definition.stepBudget
-              ? { stepBudget: definition.stepBudget }
-              : {}),
-          }
-        : undefined,
-      time,
-    );
-    const [result] = await service.prepare([
-      { ...structuredClone(definition.caseV2Definition!), caseId },
-    ]);
-    return result!;
+    // 新运行独立编译配置，跳过同 case 的提交幂等分支，业务定义保持原身份。
+    const input = structuredClone(definition.caseV2Definition!);
+    let identities =
+      typeof this.identities === 'function' ? undefined : this.identities;
+    if (
+      typeof this.identities === 'function' &&
+      (!input.session ||
+        ['identity', 'pool', 'auto'].includes(input.session.mode))
+    )
+      identities = await this.identities(input.session);
+    const result = compileCase(input, validateCaseProfile(profile), identities);
+    result.taskId = taskId;
+    result.resourceKey = digest(canonical([result.resourceKey, taskId]));
+    if (budgetMode === 'original') {
+      result.budget = structuredClone(definition.budget);
+      if (definition.stepBudget)
+        result.stepBudget = structuredClone(definition.stepBudget);
+      else delete result.stepBudget;
+    }
+    if (time) extendRerunTimeBudget(result, time);
+    return result;
   }
 
   /** 单 case 仍走同一原子入队端口；请求重跑先准备所有定义再统一入队。 */
   async rerun(
     id: string,
-    caseId: unknown,
+    runId: unknown,
     budgetMode: 'current' | 'original' = 'current',
     timeBudget?: unknown,
   ): Promise<CaseResultV2> {
     const definition = await this.prepareRerun(
       id,
-      caseId,
+      runId,
       budgetMode,
       timeBudget,
     );
     await this.tasks.submitCaseBatch([definition]);
-    return this.get(definition.caseV2Definition!.caseId);
+    return this.get(id, definition.taskId);
   }
 
   /** 即使 worker 异常退出，已持久化的步骤结果仍可查询。 */
-  async get(id: string): Promise<CaseResultV2> {
-    const task = await this.stored(id);
+  async get(id: string, runId?: string): Promise<CaseResultV2> {
+    const task = await this.stored(id, runId);
     const primary = await this.project(id, task);
     if (!task.definition.comparison) return primary;
     const arms = await Promise.all(
@@ -293,6 +285,8 @@ export class CaseV2Service {
     }
     return {
       caseId: id,
+      runId: task.definition.comparison?.sourceTaskId ?? task.definition.taskId,
+      taskId: task.definition.taskId,
       status: task.state,
       ...(task.executionOutcome
         ? { executionOutcome: task.executionOutcome }
@@ -303,13 +297,22 @@ export class CaseV2Service {
         task.definition.acceptanceCriteria.map((c) => c.id),
         task.definition,
       ),
-      result: this.result(id, task.report),
+      result: this.result(
+        id,
+        task.report,
+        task.definition.comparison?.sourceTaskId ?? task.definition.taskId,
+      ),
       steps,
       cleanup: cleanup
         ? {
             taskId: cleanup.taskId,
             status: cleanup.status,
-            result: this.result(id, cleanup.report),
+            result: this.result(
+              id,
+              cleanup.report,
+              task.definition.comparison?.sourceTaskId ??
+                task.definition.taskId,
+            ),
           }
         : null,
     };
@@ -324,8 +327,12 @@ export class CaseV2Service {
   }
 
   /** 只接受已持久化报告或步骤记录实际引用的证据身份。 */
-  async requireEvidence(id: string, artifactId: string): Promise<void> {
-    const task = await this.stored(id);
+  async requireEvidence(
+    id: string,
+    artifactId: string,
+    runId?: string,
+  ): Promise<void> {
+    const task = await this.stored(id, runId);
     for (const taskId of caseArmIds(task.definition)) {
       const arm =
         taskId === task.definition.taskId

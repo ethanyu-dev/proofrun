@@ -215,7 +215,7 @@ const document = {
       parameters: [pathId],
       post: operation(
         'rerunRequestV2',
-        '以全新请求与 case 身份原子重跑全部成员',
+        '以新请求和运行身份原子重跑全部成员，保留 caseId',
         ref('RequestResultV2'),
         { status: '202', requestBody: body(ref('RequestRerun')) },
       ),
@@ -226,20 +226,94 @@ const document = {
         'getCaseV2',
         '读取步骤、验收与关联清理结果',
         ref('CaseResultV2'),
+        {
+          parameters: [
+            {
+              name: 'runId',
+              in: 'query',
+              schema: { type: 'string' },
+              description:
+                '省略时读取最新未删除运行；历史运行使用返回的 runId。',
+            },
+          ],
+        },
+      ),
+    },
+    '/v2/cases/{id}/runs': {
+      parameters: [pathId],
+      get: operation(
+        'listCaseRunsV2',
+        '按时间倒序读取未删除运行，包含旧数据首轮记录',
+        object({
+          runs: {
+            type: 'array',
+            items: object({
+              runId: { type: 'string' },
+              taskId: { type: 'string' },
+              state: { type: 'string' },
+              createdAt: { type: 'string', format: 'date-time' },
+              finishedAt: { type: ['string', 'null'], format: 'date-time' },
+            }),
+          },
+        }),
+      ),
+    },
+    '/v1/tasks/delete': {
+      post: operation(
+        'deleteTaskRuns',
+        '原子软删除一至一百条已结束运行及其双跑和清理记录',
+        object({
+          deletedTaskIds: { type: 'array', items: { type: 'string' } },
+          deletedRequestIds: { type: 'array', items: { type: 'string' } },
+        }),
+        {
+          requestBody: body(
+            object({
+              ids: {
+                type: 'array',
+                minItems: 1,
+                maxItems: 100,
+                items: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,160}$' },
+              },
+            }),
+          ),
+        },
+      ),
+    },
+    '/v2/requests/delete': {
+      post: operation(
+        'deleteRequestsV2',
+        '软删除请求，仍被其他请求引用的执行保留',
+        object({
+          deletedTaskIds: { type: 'array', items: { type: 'string' } },
+          deletedRequestIds: { type: 'array', items: { type: 'string' } },
+        }),
+        {
+          requestBody: body(
+            object({
+              ids: {
+                type: 'array',
+                minItems: 1,
+                maxItems: 100,
+                items: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,80}$' },
+              },
+            }),
+          ),
+        },
       ),
     },
     '/v2/cases/{id}/rerun': {
       parameters: [pathId],
       post: operation(
         'rerunCaseV2',
-        '使用新 caseId 重跑整个 case；默认采用当前预算策略，可选择原预算',
+        '保留 caseId 新增一次运行；默认采用当前预算策略，可选择原预算',
         ref('CaseResultV2'),
         {
           status: '202',
           requestBody: body(
             object(
               {
-                caseId: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,80}$' },
+                runId: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,80}$' },
                 budgetMode: {
                   enum: ['current', 'original'],
                   default: 'current',
@@ -265,10 +339,10 @@ const document = {
                   ),
                   minProperties: 1,
                   description:
-                    '只扩展新任务的时间额度；完整会话仍须在 24 小时内，相同 caseId 保留首次冻结值。',
+                    '只扩展新任务的时间额度；完整会话仍须在 24 小时内，相同 runId 保留首次冻结值。',
                 },
               },
-              ['caseId'],
+              ['runId'],
             ),
           ),
         },

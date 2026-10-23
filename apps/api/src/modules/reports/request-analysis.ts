@@ -47,7 +47,7 @@ export class RequestAnalyses {
         'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY',
       );
       const result = await client.query<RequestAnalysis>(
-        `SELECT ${VIEW} FROM pr_request_analyses WHERE request_id=$1`,
+        `SELECT ${VIEW} FROM pr_request_analyses WHERE request_id=$1 AND excluded_at IS NULL`,
         [id],
       );
       const row = result.rows[0];
@@ -59,33 +59,40 @@ export class RequestAnalyses {
 
   /** 全成功直接保存固定结论；其余请求入队，显式重跑保留旧结论直到新结果可用。 */
   async enqueue(id: string, rerun: boolean) {
-    const snapshot = await this.reader.get(id);
-    if (snapshot.executionStatus !== 'FINISHED')
-      throw new ApiError(
-        409,
-        'ANALYSIS_NOT_READY',
-        '验证尚未结束，结束后会自动生成分析。',
+    await this.db.transaction(async (client) => {
+      // 与成员删除串行化；获得锁后才冻结快照，避免删除后重新入队旧成员。
+      await client.query(
+        'SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
+        [`analysis:${id}`],
       );
-    const summary = passedSummary(snapshot);
-    await this.db.query(
-      `INSERT INTO pr_request_analyses(request_id,revision,status,snapshot,summary,generated_at)
+      const snapshot = await this.reader.snapshot(client, id);
+      if (!snapshot.cases.length || snapshot.executionStatus !== 'FINISHED')
+        throw new ApiError(
+          409,
+          'ANALYSIS_NOT_READY',
+          '验证尚未结束，结束后会自动生成分析。',
+        );
+      const summary = passedSummary(snapshot);
+      await client.query(
+        `INSERT INTO pr_request_analyses(request_id,revision,status,snapshot,summary,generated_at)
       VALUES($1,$2,$5,$3,$6,CASE WHEN $5='SUCCEEDED' THEN clock_timestamp() END)
       ON CONFLICT(request_id) DO UPDATE SET
-      revision=EXCLUDED.revision,status=EXCLUDED.status,snapshot=EXCLUDED.snapshot,error=NULL,
-      summary=CASE WHEN $5='SUCCEEDED' THEN EXCLUDED.summary ELSE pr_request_analyses.summary END,
-      model=CASE WHEN $5='SUCCEEDED' THEN NULL ELSE pr_request_analyses.model END,
-      generated_at=CASE WHEN $5='SUCCEEDED' THEN EXCLUDED.generated_at ELSE pr_request_analyses.generated_at END,
+      excluded_at=NULL,revision=EXCLUDED.revision,status=EXCLUDED.status,snapshot=EXCLUDED.snapshot,error=NULL,
+      summary=CASE WHEN $5='SUCCEEDED' OR pr_request_analyses.excluded_at IS NOT NULL THEN EXCLUDED.summary ELSE pr_request_analyses.summary END,
+      model=CASE WHEN $5='SUCCEEDED' OR pr_request_analyses.excluded_at IS NOT NULL THEN NULL ELSE pr_request_analyses.model END,
+      generated_at=CASE WHEN $5='SUCCEEDED' OR pr_request_analyses.excluded_at IS NOT NULL THEN EXCLUDED.generated_at ELSE pr_request_analyses.generated_at END,
       requested_at=clock_timestamp(),attempts=0,token_hash=NULL,lease_until=NULL,started_at=NULL
-      WHERE $4 AND pr_request_analyses.status IN ('SUCCEEDED','FAILED')`,
-      [
-        id,
-        randomUUID(),
-        JSON.stringify(snapshot),
-        rerun,
-        summary === null ? 'QUEUED' : 'SUCCEEDED',
-        summary,
-      ],
-    );
+      WHERE ($4 OR pr_request_analyses.excluded_at IS NOT NULL) AND pr_request_analyses.status IN ('SUCCEEDED','FAILED')`,
+        [
+          id,
+          randomUUID(),
+          JSON.stringify(snapshot),
+          rerun,
+          summary === null ? 'QUEUED' : 'SUCCEEDED',
+          summary,
+        ],
+      );
+    });
     return this.get(id);
   }
 
