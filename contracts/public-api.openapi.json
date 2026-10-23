@@ -3,7 +3,7 @@
   "info": {
     "title": "ProofRun Case API",
     "version": "0.1.0",
-    "description": "新接入使用 /v2/cases 批量提交结构化步骤，/v1/cases 保留兼容。环境、身份、预算及执行策略由平台管理。v2 每步独立 300 秒、10 次动作、20 次模型请求（JEV 40 次），耗尽后继续后续步骤，并双跑纯 LLM 与 JEV+LLM；comparison.arms 返回各组结果，顶层仅表示主组。接口需要部署管理员 Bearer 凭据，请仅由可信服务端保管；提交和取消会产生实际操作。由共享 Schema 生成，请勿手改。"
+    "description": "使用 /v2/cases 批量提交结构化步骤。环境、身份、预算及执行策略由平台管理。v2 每步独立 300 秒、10 次动作、20 次模型请求（JEV 40 次），耗尽后继续后续步骤，可按平台配置双跑纯 LLM 与 JEV+LLM；comparison.arms 返回各组结果，顶层仅表示主组。接口需要部署管理员 Bearer 凭据，请仅由可信服务端保管；提交和取消会产生实际操作。由共享 Schema 生成，请勿手改。"
   },
   "servers": [
     {
@@ -14,17 +14,13 @@
   ],
   "externalDocs": {
     "description": "HTTP 接入说明与 v2 协议",
-    "url": "https://github.com/ethanyu-dev/proofrun/blob/main/docs/public-api.md"
+    "url": "https://github.com/ethanyu-dev/proofrun/blob/main/docs/public-api-v2.md"
   },
   "security": [{ "AdminBearer": [] }],
   "tags": [
     {
       "name": "Case API v2",
       "description": "新接入使用：结构化步骤、批量提交与关联清理。"
-    },
-    {
-      "name": "Case API v1（兼容）",
-      "description": "保留已有单 case 调用，新的集成优先选择 v2。"
     }
   ],
   "paths": {
@@ -302,7 +298,7 @@
     "/v1/tasks/delete": {
       "post": {
         "operationId": "deleteTaskRuns",
-        "tags": ["Case API v1（兼容）"],
+        "tags": ["Case API v2"],
         "summary": "原子软删除一至一百条已结束运行及其双跑和清理记录",
         "responses": {
           "200": {
@@ -523,132 +519,6 @@
         "operationId": "downloadCaseEvidenceV2",
         "tags": ["Case API v2"],
         "summary": "读取主任务或关联清理结果的证据",
-        "responses": {
-          "200": {
-            "description": "截图为 PNG，其他证据为 JSON。",
-            "content": {
-              "image/png": {
-                "schema": { "type": "string", "format": "binary" }
-              },
-              "application/json": {
-                "schema": { "type": "object", "additionalProperties": true }
-              }
-            }
-          },
-          "default": { "$ref": "#/components/responses/Error" }
-        }
-      }
-    },
-    "/v1/cases": {
-      "post": {
-        "operationId": "submitCase",
-        "tags": ["Case API v1（兼容）"],
-        "summary": "幂等提交一次 case 验证",
-        "responses": {
-          "202": {
-            "description": "成功",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/CaseResult" }
-              }
-            }
-          },
-          "default": { "$ref": "#/components/responses/Error" }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": { "$ref": "#/components/schemas/VerificationCase" },
-              "example": {
-                "caseId": "notification-default-001",
-                "description": "验证通知设置中邮件通知的默认状态。只检查，不修改或保存。",
-                "url": "https://app.example.com/settings",
-                "steps": ["进入通知设置区域", "观察邮件通知开关，不点击开关"],
-                "acceptanceCriteria": [
-                  {
-                    "id": "email-enabled",
-                    "description": "在通知设置区域读取邮件通知开关状态。",
-                    "expectedResult": "邮件通知默认开启。"
-                  }
-                ]
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/cases/{id}": {
-      "parameters": [
-        {
-          "name": "id",
-          "in": "path",
-          "required": true,
-          "schema": { "type": "string" }
-        }
-      ],
-      "get": {
-        "operationId": "getCase",
-        "tags": ["Case API v1（兼容）"],
-        "summary": "读取 case 状态和结果",
-        "responses": {
-          "200": {
-            "description": "成功",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/CaseResult" }
-              }
-            }
-          },
-          "default": { "$ref": "#/components/responses/Error" }
-        }
-      }
-    },
-    "/v1/cases/{id}/cancel": {
-      "parameters": [
-        {
-          "name": "id",
-          "in": "path",
-          "required": true,
-          "schema": { "type": "string" }
-        }
-      ],
-      "post": {
-        "operationId": "cancelCase",
-        "tags": ["Case API v1（兼容）"],
-        "summary": "取消本次验证；已完成的业务操作不回滚",
-        "responses": {
-          "200": {
-            "description": "成功",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/CaseResult" }
-              }
-            }
-          },
-          "default": { "$ref": "#/components/responses/Error" }
-        }
-      }
-    },
-    "/v1/cases/{id}/evidence/{artifactId}": {
-      "parameters": [
-        {
-          "name": "id",
-          "in": "path",
-          "required": true,
-          "schema": { "type": "string" }
-        },
-        {
-          "name": "artifactId",
-          "in": "path",
-          "required": true,
-          "schema": { "type": "string" }
-        }
-      ],
-      "get": {
-        "operationId": "downloadCaseEvidence",
-        "tags": ["Case API v1（兼容）"],
-        "summary": "读取本 case 报告引用的证据",
         "responses": {
           "200": {
             "description": "截图为 PNG，其他证据为 JSON。",
@@ -903,254 +773,6 @@
             ]
           },
           "message": { "type": "string", "minLength": 1 }
-        }
-      },
-      "VerificationCase": {
-        "title": "VerificationCase",
-        "description": "上层定义的单次验证 case；环境、登录态、取证方式和预算由平台配置。",
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["caseId", "description", "url", "acceptanceCriteria"],
-        "properties": {
-          "caseId": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{1,100}$",
-            "description": "本次验证的幂等身份；再次执行使用新的身份。"
-          },
-          "description": {
-            "type": "string",
-            "minLength": 1,
-            "pattern": "\\S",
-            "description": "完整任务描述：验证目标、业务背景、涉及对象及必要约束。"
-          },
-          "url": {
-            "type": "string",
-            "format": "uri",
-            "pattern": "^https?://",
-            "description": "本次验证的 HTTP(S) 入口地址，由调用方明确提供，必须能从执行节点访问。"
-          },
-          "steps": {
-            "type": "array",
-            "minItems": 1,
-            "maxItems": 32,
-            "items": {
-              "type": "string",
-              "minLength": 1,
-              "pattern": "\\S",
-              "maxLength": 2000
-            },
-            "description": "可选的必要业务步骤；不要求提供选择器或固定页面点击路径。"
-          },
-          "acceptanceCriteria": {
-            "type": "array",
-            "minItems": 1,
-            "items": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": ["id", "description", "expectedResult"],
-              "properties": {
-                "id": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 128,
-                  "pattern": "\\S",
-                  "description": "任务内唯一的验收项身份，结果通过 criterionId 对应。"
-                },
-                "description": {
-                  "type": "string",
-                  "minLength": 1,
-                  "pattern": "\\S",
-                  "description": "检查对象、范围及必要观察时机。"
-                },
-                "expectedResult": {
-                  "type": "string",
-                  "minLength": 1,
-                  "pattern": "\\S",
-                  "description": "可以据证据判断的预期业务结果。"
-                }
-              }
-            },
-            "description": "上层定义的完整业务验收项；缺少标准时不由平台自行补写。"
-          }
-        }
-      },
-      "CaseResult": {
-        "title": "CaseResult",
-        "description": "case 的执行状态和业务结果，不返回内部任务配置或节点信息。",
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "caseId",
-          "status",
-          "result",
-          "reportStatus",
-          "criteriaCounts"
-        ],
-        "properties": {
-          "caseId": {
-            "type": "string",
-            "description": "原请求的本次验证身份。"
-          },
-          "status": {
-            "enum": [
-              "QUEUED",
-              "RUNNING",
-              "COMPLETED",
-              "CANCELLED",
-              "TIMED_OUT",
-              "ERROR"
-            ],
-            "description": "执行生命周期；COMPLETED 不直接表示业务通过。"
-          },
-          "result": {
-            "anyOf": [
-              { "type": "null" },
-              {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["outcome", "summary", "criteria", "evidence"],
-                "properties": {
-                  "outcome": {
-                    "enum": [
-                      "PASSED",
-                      "FAILED",
-                      "INCONCLUSIVE",
-                      "BLOCKED",
-                      "ERROR"
-                    ],
-                    "description": "整体业务结论；BLOCKED 和 ERROR 不表示产品失败。"
-                  },
-                  "summary": {
-                    "type": "string",
-                    "description": "基于本次证据的结果说明。"
-                  },
-                  "criteria": {
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "required": [
-                        "criterionId",
-                        "verdict",
-                        "summary",
-                        "evidenceRefs"
-                      ],
-                      "properties": {
-                        "criterionId": {
-                          "type": "string",
-                          "description": "对应原 acceptanceCriteria 中的 id。"
-                        },
-                        "verdict": {
-                          "enum": [
-                            "PASSED",
-                            "FAILED",
-                            "INCONCLUSIVE",
-                            "SKIPPED"
-                          ],
-                          "description": "逐项判断；未进行验收时为 SKIPPED。"
-                        },
-                        "summary": {
-                          "type": "string",
-                          "description": "该项结论及证据支持范围。"
-                        },
-                        "evidenceRefs": {
-                          "type": "array",
-                          "items": { "type": "string" },
-                          "description": "引用 evidence 数组中的证据身份。"
-                        }
-                      }
-                    },
-                    "description": "按原验收项身份返回逐项结论。"
-                  },
-                  "evidence": {
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "required": ["id", "kind", "url", "sha256"],
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "description": "平台登记的证据身份。"
-                        },
-                        "kind": {
-                          "enum": ["DOM", "SCREENSHOT", "NETWORK", "TRACE"],
-                          "description": "证据媒介，由平台取证配置决定。"
-                        },
-                        "url": {
-                          "type": "string",
-                          "format": "uri",
-                          "description": "本控制面的 case 证据地址，下载需要相同凭据。"
-                        },
-                        "sha256": {
-                          "type": "string",
-                          "pattern": "^[a-f0-9]{64}$",
-                          "description": "原始下载字节的 SHA-256 小写十六进制摘要。"
-                        }
-                      }
-                    },
-                    "description": "报告引用的证据，下载范围限定于当前 case。"
-                  }
-                }
-              }
-            ],
-            "description": "已交付的业务结果；尚无报告时为 null，包括部分异常终态。"
-          },
-          "reportStatus": {
-            "enum": ["PASSED", "FAILED", "INCONCLUSIVE", null],
-            "description": "验证报告状态：通过、未通过、无法判定；无报告时为 null。执行状态不等于验收结论，已确认失败优先于未覆盖项。"
-          },
-          "criteriaCounts": {
-            "anyOf": [
-              { "type": "null" },
-              {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "total",
-                  "passed",
-                  "failed",
-                  "inconclusive",
-                  "skipped"
-                ],
-                "properties": {
-                  "total": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "description": "本次定义的验收项总数。"
-                  },
-                  "passed": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "description": "通过项数。"
-                  },
-                  "failed": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "description": "未通过项数。"
-                  },
-                  "inconclusive": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "description": "已验收但无法判定的项数。"
-                  },
-                  "skipped": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "description": "未验收或报告缺失的项数。"
-                  }
-                }
-              }
-            ],
-            "description": "按本次验收定义统计，各分类之和等于 total；无报告时为 null。"
-          },
-          "queueReason": {
-            "anyOf": [
-              { "type": "null" },
-              { "$ref": "#/components/schemas/QueueReason" }
-            ],
-            "description": "最近一次领取检查发现的排队原因；成功领取后清空，取消或排队超时后保留。null 或缺失表示尚无诊断，不表示一定可执行。"
-          }
         }
       },
       "CaseStep": {

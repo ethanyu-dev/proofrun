@@ -9,7 +9,7 @@ export const DEFAULT_CASE_EXECUTION_MODE = 'jev';
 
 /** 平台执行配置仅从服务端加载，不接受 case 请求覆盖。 */
 export type CaseProfile = Pick<VerificationTask, 'environment'> & {
-  /** 省略总时长时按步骤数计算，动作上限仍由平台明确设置。 */
+  /** 保留既有配置文件结构；v2 实际额度由逐步策略编译，不使用此总预算。 */
   budget: { timeoutMs?: number; maxActions: number };
   /** 默认单组 LLM + JEV；v2 可显式选择 parallel 双跑。 */
   executionMode?: 'llm' | 'jev' | 'parallel';
@@ -31,20 +31,8 @@ const MAX_TASK_MS = 86_400_000;
 /** 单任务允许的最多浏览器动作数。 */
 const MAX_ACTIONS = 10_000;
 
-/** 每个业务步骤默认贡献五分钟预算，清理阶段由控制面单独计时。 */
-export const DEFAULT_STEP_MS = 300_000;
-
-/** 显式总时长优先；没有步骤的旧版任务按一步计算。 */
-export function caseBudget(
-  profile: CaseProfile,
-  stepCount: number,
-): VerificationTask['budget'] {
-  return {
-    ...profile.budget,
-    timeoutMs:
-      profile.budget.timeoutMs ?? DEFAULT_STEP_MS * Math.max(1, stepCount),
-  };
-}
+/** 配置结构探针的缺省时长，不参与 v2 实际额度计算。 */
+const PROFILE_VALIDATION_MS = 300_000;
 
 /** 复用内部任务约束，在服务启动时拒绝拼错字段和无效预算。 */
 export function validateCaseProfile(value: unknown): CaseProfile {
@@ -70,7 +58,7 @@ export function validateCaseProfile(value: unknown): CaseProfile {
     objective: '配置结构校验',
     environment: profile.environment,
     target: { url: PROFILE_VALIDATION_URL },
-    budget: { timeoutMs: DEFAULT_STEP_MS, ...profile.budget },
+    budget: { timeoutMs: PROFILE_VALIDATION_MS, ...profile.budget },
     executionMode: profile.executionMode ?? DEFAULT_CASE_EXECUTION_MODE,
     acceptanceCriteria: [
       {

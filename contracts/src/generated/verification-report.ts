@@ -1,7 +1,7 @@
 /* 根据 contracts/schemas 自动生成，请勿手改；修改 Schema 后运行 pnpm contracts:generate。 */
 
 /**
- * 平台内部执行报告；外部读取 CaseResult。结构有效不代表业务判断已被独立证实。
+ * 平台内部执行报告；外部读取 CaseResultV2。结构有效不代表业务判断已被独立证实。
  */
 export type VerificationReport = {
   protocolVersion: '0.1';

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ApiClient, errorMessage } from '../api';
 import { useResource } from '../use-resource';
 import { Empty, ErrorNotice, PageHeader } from '../components/ui';
-import { IdentityField } from '../components/identity-catalog-editor';
+import { IdentityField } from '../components/identity-field';
 import { IdentityCookieEditor } from '../components/identity-cookie-editor';
 import {
   identityCookiePayload,

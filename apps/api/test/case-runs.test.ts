@@ -454,32 +454,69 @@ test('稳定 case 运行历史与软删除集成', { timeout: 60_000 }, async (s
       );
       assert.equal((await call('/v1/tasks/ordinary-source')).statusCode, 200);
     });
-    // 范围：旧 v1 case 删除后不从兼容读取和幂等提交入口重新出现；不运行浏览器。
-    await suite.test('旧 case 兼容入口隐藏已删除记录并拒绝重提', async () => {
-      const input = {
-        caseId: 'legacy-v1',
-        description: '旧版夹具',
-        url: 'https://example.test',
-        steps: ['检查页面'],
-        acceptanceCriteria: [
-          { id: 'visible', description: '结果', expectedResult: '显示结果' },
-        ],
-      };
-      assert.equal((await call('/v1/cases', input)).statusCode, 202);
-      await sql.query(
-        "UPDATE pr_tasks SET state='COMPLETED',finished_at=clock_timestamp() WHERE definition#>>'{caseDefinition,caseId}'='legacy-v1'",
-      );
-      assert.equal(
-        (await call('/v1/tasks/case-legacy-v1/delete', {})).statusCode,
-        200,
-      );
-      assert.equal((await call('/v1/cases/legacy-v1')).statusCode, 404);
-      assert.equal((await call('/v1/cases', input)).statusCode, 409);
-      assert.equal(
-        (await call('/v1/tasks/case-legacy-v1/comparison')).statusCode,
-        404,
-      );
-    });
+    // 范围：实际应用路由均不再提供 v1 Case API，且请求不创建任务；不运行浏览器。
+    await suite.test(
+      'v1 Case API 的提交、查询、取消和证据入口均已移除',
+      async () => {
+        const before = await sql.query(
+          'SELECT count(*)::int AS count FROM pr_tasks',
+        );
+        for (const [path, body] of [
+          ['/v1/cases', { caseId: 'retired-v1' }],
+          ['/v1/cases/retired-v1', undefined],
+          ['/v1/cases/retired-v1/cancel', {}],
+          ['/v1/cases/retired-v1/evidence/artifact', undefined],
+        ] as const) {
+          const response = await call(path, body);
+          assert.equal(response.statusCode, 404, response.body);
+        }
+        const after = await sql.query(
+          'SELECT count(*)::int AS count FROM pr_tasks',
+        );
+        assert.deepEqual(after.rows, before.rows);
+      },
+    );
+    // 范围：直接注入历史 v1 快照验证内部读取与软删除；不恢复已移除的公开入口或运行浏览器。
+    await suite.test(
+      '历史 v1 case 仍能通过内部任务入口读取与删除',
+      async () => {
+        const definition = {
+          ...task('fixture'),
+          taskId: 'case-legacy-v1',
+          caseDefinition: {
+            caseId: 'legacy-v1',
+            description: '旧版夹具',
+            url: 'https://example.test',
+            steps: ['检查页面'],
+            acceptanceCriteria: [
+              {
+                id: 'visible',
+                description: '结果',
+                expectedResult: '显示结果',
+              },
+            ],
+          },
+        };
+        await sql.query(
+          `INSERT INTO pr_tasks(id,definition,definition_hash,state,deadline_at,finished_at)
+         VALUES($1,$2,$3,'COMPLETED',clock_timestamp(),clock_timestamp())`,
+          [definition.taskId, definition, digest(canonical(definition))],
+        );
+        assert.deepEqual(
+          (await read('/v1/tasks/case-legacy-v1')).definition.caseDefinition,
+          definition.caseDefinition,
+        );
+        assert.equal(
+          (await call('/v1/tasks/case-legacy-v1/delete', {})).statusCode,
+          200,
+        );
+        assert.equal((await call('/v1/tasks/case-legacy-v1')).statusCode, 404);
+        assert.equal(
+          (await call('/v1/tasks/case-legacy-v1/comparison')).statusCode,
+          404,
+        );
+      },
+    );
     // 范围：管理员权限与批量上限；无外部账户或生产数据访问。
     await suite.test('删除接口鉴权和参数边界', async () => {
       assert.equal(

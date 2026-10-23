@@ -4,15 +4,6 @@ import type { ApiClient } from '../api';
 import { ReportEvidenceButton, ReportEvidenceDrawer } from './report-evidence';
 import { ReportSummary } from './report-summary';
 
-/** 主画面只使用业务步骤的阻塞证据，不能用 cleanup 或会话最后一帧代替。 */
-export function blockedStep(task: TaskDetail): StepResult | undefined {
-  return (task.report?.steps ?? task.stepResults)?.find(
-    (step) =>
-      !task.definition.cleanupStepIds?.includes(step.stepId) &&
-      ['BLOCKED', 'ERROR'].includes(step.status),
-  );
-}
-
 /** 显示冻结的具体原因及当时截图；旧报告只回退到同一步最后登记的截图。 */
 export function BlockedEvidence({
   api,

@@ -1,3 +1,4 @@
+import { supportsDecisionType } from '../execution/decision-support.js';
 import type { DecisionContextData } from '../execution/context.js';
 import { OBSERVATION_REVIEW_ROUNDS } from '../evidence/changes.js';
 import type { AgentDecision } from '@proofrun/contracts';
@@ -30,6 +31,7 @@ export function decisionTools(
   return tools
     .filter(
       (tool) =>
+        supportsDecisionType(tool.type) &&
         (!context.verificationReview?.final ||
           (context.verificationReview?.reason === 'budget'
             ? [

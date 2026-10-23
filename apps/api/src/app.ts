@@ -39,7 +39,6 @@ import { TaskReader } from './modules/tasks/reader.js';
 import { LiveService } from './modules/hitl/live.js';
 import { ModelCalls } from './modules/reports/model-calls.js';
 import { CaseV2Service } from './modules/cases/v2.js';
-import { CaseService } from './modules/cases/service.js';
 import { registerPublicDocs } from './modules/docs/routes.js';
 
 /** 路由参数只参与参数化查询；证据路径另有独立的身份校验。 */
@@ -75,18 +74,6 @@ export async function buildApp(
   const coordinator = new Coordinator(db, config, artifacts);
   const tasks = new TaskReader(db);
   const lifecycle = new TaskLifecycle(db);
-  const cases = new CaseService(
-    {
-      submit: (definition) => coordinator.submit(definition),
-      task: async (id) => {
-        await lifecycle.visible(id);
-        return coordinator.task(id);
-      },
-      cancel: (id) => coordinator.cancel(id),
-    },
-    config.caseProfile,
-    config.publicUrl,
-  );
   const identities = new IdentitySettings(db, config);
   const library = new IdentityLibrary(db, config);
   const selection = new IdentitySelection(db);
@@ -421,30 +408,7 @@ export async function buildApp(
       gateway.accept(socket, authenticatedNodes.get(request)!);
     },
   );
-  // 上层只提交业务 case；原任务和节点入口继续服务内部控制台与执行组件。
-  app.post('/v1/cases', { preHandler: admin }, async (request, reply) =>
-    reply.code(202).send(await cases.submit(request.body)),
-  );
-  app.get<{ Params: IdParams }>(
-    '/v1/cases/:id',
-    { preHandler: admin },
-    (request) => cases.get(request.params.id),
-  );
-  app.post<{ Params: IdParams }>(
-    '/v1/cases/:id/cancel',
-    { preHandler: admin },
-    (request) => cases.cancel(request.params.id),
-  );
-  app.get<{ Params: IdParams & { artifactId: string } }>(
-    '/v1/cases/:id/evidence/:artifactId',
-    { preHandler: admin },
-    async (request, reply) => {
-      await cases.requireEvidence(request.params.id, request.params.artifactId);
-      const artifact = await artifacts.read(request.params.artifactId);
-      return reply.type(artifact.contentType).send(artifact.body);
-    },
-  );
-  // 新版批量入口与旧单 case 协议并存，批内定义原子接收。
+  // 公开入口只接收 v2 业务定义，批内任务原子接收。
   app.post('/v2/cases', { preHandler: admin }, async (request, reply) =>
     reply
       .code(202)

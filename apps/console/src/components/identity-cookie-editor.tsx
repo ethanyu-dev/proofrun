@@ -1,4 +1,4 @@
-import { IdentityField } from './identity-catalog-editor';
+import { IdentityField } from './identity-field';
 import {
   MAX_IDENTITY_COOKIES,
   newCookieDraft,

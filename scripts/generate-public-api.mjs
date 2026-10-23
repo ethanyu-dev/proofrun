@@ -8,8 +8,6 @@ const SCHEMAS = {
   'identity-check': 'IdentityCheck',
   'session-request': 'SessionRequest',
   'queue-reason': 'QueueReason',
-  'verification-case': 'VerificationCase',
-  'case-result': 'CaseResult',
   'case-step': 'CaseStep',
   'step-result': 'StepResult',
   'verification-case-v2': 'VerificationCaseV2',
@@ -23,9 +21,8 @@ const SCHEMAS = {
   'request-rerun': 'RequestRerun',
 };
 const OUTPUT = new URL('../contracts/public-api.openapi.json', import.meta.url);
-/** 在线文档优先展示新协议，并明确旧协议仍用于兼容调用。 */
+/** 在线文档只公布当前支持的 v2 业务接口。 */
 const TAG_V2 = 'Case API v2';
-const TAG_V1 = 'Case API v1（兼容）';
 /** 重跑时间参数仍受平台 24 小时会话上限约束；服务端另校验完整计划合计。 */
 const MAX_RERUN_TIME_MS = 86_400_000;
 
@@ -73,7 +70,7 @@ function operation(operationId, summary, schema, options = {}) {
   const { status = '200', ...rest } = options;
   return {
     operationId,
-    tags: [operationId.endsWith('V2') ? TAG_V2 : TAG_V1],
+    tags: [TAG_V2],
     summary,
     responses: { [status]: response(schema), default: error },
     ...rest,
@@ -95,22 +92,13 @@ schemas.Error = object({
   code: { type: 'string' },
   message: { type: 'string' },
 });
-const example = JSON.parse(
-  await readFile(
-    new URL('../contracts/examples/public-api/case.json', import.meta.url),
-    'utf8',
-  ),
-);
-const submitBody = body(ref('VerificationCase'));
-submitBody.content['application/json'].example = example;
-
 const document = {
   openapi: '3.1.0',
   info: {
     title: 'ProofRun Case API',
     version: '0.1.0',
     description:
-      '新接入使用 /v2/cases 批量提交结构化步骤，/v1/cases 保留兼容。环境、身份、预算及执行策略由平台管理。v2 每步独立 300 秒、10 次动作、20 次模型请求（JEV 40 次），耗尽后继续后续步骤，并双跑纯 LLM 与 JEV+LLM；comparison.arms 返回各组结果，顶层仅表示主组。接口需要部署管理员 Bearer 凭据，请仅由可信服务端保管；提交和取消会产生实际操作。由共享 Schema 生成，请勿手改。',
+      '使用 /v2/cases 批量提交结构化步骤。环境、身份、预算及执行策略由平台管理。v2 每步独立 300 秒、10 次动作、20 次模型请求（JEV 40 次），耗尽后继续后续步骤，可按平台配置双跑纯 LLM 与 JEV+LLM；comparison.arms 返回各组结果，顶层仅表示主组。接口需要部署管理员 Bearer 凭据，请仅由可信服务端保管；提交和取消会产生实际操作。由共享 Schema 生成，请勿手改。',
   },
   servers: [
     { url: 'https://api-proofrun.ethankit.com', description: '生产 HTTP API' },
@@ -118,17 +106,13 @@ const document = {
   ],
   externalDocs: {
     description: 'HTTP 接入说明与 v2 协议',
-    url: 'https://github.com/ethanyu-dev/proofrun/blob/main/docs/public-api.md',
+    url: 'https://github.com/ethanyu-dev/proofrun/blob/main/docs/public-api-v2.md',
   },
   security: [{ AdminBearer: [] }],
   tags: [
     {
       name: TAG_V2,
       description: '新接入使用：结构化步骤、批量提交与关联清理。',
-    },
-    {
-      name: TAG_V1,
-      description: '保留已有单 case 调用，新的集成优先选择 v2。',
     },
   ],
   paths: {
@@ -370,54 +354,6 @@ const document = {
         operationId: 'downloadCaseEvidenceV2',
         tags: [TAG_V2],
         summary: '读取主任务或关联清理结果的证据',
-        responses: {
-          200: {
-            description: '截图为 PNG，其他证据为 JSON。',
-            content: {
-              'image/png': { schema: { type: 'string', format: 'binary' } },
-              'application/json': {
-                schema: { type: 'object', additionalProperties: true },
-              },
-            },
-          },
-          default: error,
-        },
-      },
-    },
-    '/v1/cases': {
-      post: operation(
-        'submitCase',
-        '幂等提交一次 case 验证',
-        ref('CaseResult'),
-        { status: '202', requestBody: submitBody },
-      ),
-    },
-    '/v1/cases/{id}': {
-      parameters: [pathId],
-      get: operation('getCase', '读取 case 状态和结果', ref('CaseResult')),
-    },
-    '/v1/cases/{id}/cancel': {
-      parameters: [pathId],
-      post: operation(
-        'cancelCase',
-        '取消本次验证；已完成的业务操作不回滚',
-        ref('CaseResult'),
-      ),
-    },
-    '/v1/cases/{id}/evidence/{artifactId}': {
-      parameters: [
-        pathId,
-        {
-          name: 'artifactId',
-          in: 'path',
-          required: true,
-          schema: { type: 'string' },
-        },
-      ],
-      get: {
-        operationId: 'downloadCaseEvidence',
-        tags: [TAG_V1],
-        summary: '读取本 case 报告引用的证据',
         responses: {
           200: {
             description: '截图为 PNG，其他证据为 JSON。',

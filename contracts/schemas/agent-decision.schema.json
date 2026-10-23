@@ -325,6 +325,68 @@
       },
       "required": ["type", "mode", "summary"],
       "description": "仅共享环境准备阶段使用。依据原始 setup 与 policy 声明是否必须使用未登录访客；这是意图分类，不是登录事实证明，平台单独核实准备来源。"
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "按范围或字面词检索本执行已经登记的 DOM 原文；不是浏览器操作，也不自动证明业务结论。",
+      "properties": {
+        "type": {
+          "const": "evidence.read"
+        },
+        "artifactId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "start": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "end": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "query": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "required": ["type", "artifactId"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "一次规划同一页面的多个填写动作；逐动作核实当前目标、独立扣预算和记录回执。任何结构变化都中断剩余动作；提交必须单独执行。",
+      "properties": {
+        "type": {
+          "const": "browser.batch"
+        },
+        "actions": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 4,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "fill"
+              },
+              "target": {
+                "type": "string",
+                "minLength": 1
+              },
+              "value": {
+                "type": "string",
+                "maxLength": 10000
+              }
+            },
+            "required": ["action", "target", "value"]
+          }
+        }
+      },
+      "required": ["type", "actions"]
     }
   ]
 }

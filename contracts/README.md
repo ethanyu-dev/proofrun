@@ -1,18 +1,16 @@
 # @proofrun/contracts
 
-JSON Schema 是协议数据结构的源文件；TypeScript 类型由脚本生成并提交。新版上层调用使用 VerificationCaseV2 数组与 CaseResultV2，见[结构化 Case API](../docs/public-api-v2.md)；VerificationCase 与 CaseResult 继续服务旧 [v1 接口](../docs/public-api.md)。VerificationTask 和 VerificationReport 属于平台内部协议。NodeCommand、NodeEvent、ControlRequest、ExecutionGrant、AgentDecision 等内部协议由项目组件配套使用，不整体承诺为第三方稳定 API。
+JSON Schema 是协议数据结构的源文件；TypeScript 类型由脚本生成并提交。新版上层调用使用 VerificationCaseV2 数组与 CaseResultV2，见[结构化 Case API](../docs/public-api-v2.md)。v1 Case API 已移除；`verification-case.schema.json` 仅作为内部历史任务 `caseDefinition` 的依赖保留，不再导出 v1 提交和响应校验器。VerificationTask 和 VerificationReport 属于平台内部协议。NodeCommand、NodeEvent、ControlRequest、ExecutionGrant、AgentDecision 等内部协议由项目组件配套使用，不整体承诺为第三方稳定 API。
 
-v2 默认按每步 300 秒计算总预算并双跑纯 LLM / JEV+LLM，平台显式配置可覆盖。CaseResultV2 的可选 comparison.arms 返回各组结果；顶层保留主组投影，不代表汇总结论。
+v2 默认使用 JEV+LLM 单组，按逐步策略编译预算；平台可显式选择纯 LLM 或双跑。CaseResultV2 的可选 comparison.arms 返回各组结果；顶层保留主组投影，不代表汇总结论。
 
 节点和控制面请求的字段说明写在 Schema 的 `description` 中，生成器会把它们带入 TypeScript 类型注释；NodeCommand 的说明也会进入 Rust 构建期生成类型。不要直接改 `src/generated/` 或 Cargo 的 `OUT_DIR`。
 
-旧版公开 case 包含 caseId、description、必填 url、可选 steps 和 acceptanceCriteria；调用方指定待测入口，但不能指定环境、登录态、预算、取证策略或执行模式。平台配置与原始 case 一起存入内部任务快照，公开结果仅返回状态、验收结论和证据。
-
-`public-api.openapi.json` 是可独立导入的 OpenAPI 3.1 文档，由 `scripts/generate-public-api.mjs` 复用共享 Schema 生成。HTTP 方法、响应码和薄请求封装在该脚本维护，并与 `apps/api/src/app.ts` 和领域层同步。OpenAPI 包含 v1/v2 的 case 提交、查询、取消与证据下载；验收项 ID 唯一性和证据归属仍由领域层校验。现有生成和漂移检查命令同时覆盖 OpenAPI，不直接编辑生成文件。
+`public-api.openapi.json` 是可独立导入的 OpenAPI 3.1 文档，由 `scripts/generate-public-api.mjs` 复用共享 Schema 生成。HTTP 方法、响应码和薄请求封装在该脚本维护，并与 `apps/api/src/app.ts` 和领域层同步。OpenAPI 包含 v2 的 case 提交、查询、取消与证据下载；验收项 ID 唯一性和证据归属仍由领域层校验。现有生成和漂移检查命令同时覆盖 OpenAPI，不直接编辑生成文件。
 
 规范随 contracts 的生产包发布，API 从同一份生成文件提供 `/openapi.json` 和 `/docs/` 在线说明。仓库规范包含生产 HTTP API 地址，在线规范只将 `servers` 改为同源 `/`，其余内容保持一致；公开说明不会开放内部节点或 worker 接口，也不会注入管理员令牌。
 
-`examples/public-api/case.json`、`case-queued.json`、`case-blocked.json` 是业务输入与结果示例，不是真实环境验收结果。版本兼容规则见对外调用文档。平台部署配置见 `docs/case-platform-config.md`。
+`examples/public-api/cases-v2.json`、`request-v2.json` 是业务输入与结果示例，不是真实环境验收结果。版本兼容规则见对外调用文档。平台部署配置见 `docs/case-platform-config.md`。
 
 `src/index.ts` 提供 Ajv 校验器；生成的 TS 类型不能替代运行时校验。此包只验证结构。API 领域层进一步验证验收覆盖、证据存在和归属、整体 verdict 与逐项结果一致，集成测试在 apps/api/test 中。校验无法证明模型的业务判断正确。
 

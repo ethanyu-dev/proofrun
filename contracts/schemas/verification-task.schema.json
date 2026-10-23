@@ -13,7 +13,7 @@
   "properties": {
     "caseDefinition": {
       "$ref": "verification-case.schema.json",
-      "description": "case 入口保存的原始业务定义，用于幂等重提和隔离公开读取；普通内部任务省略。"
+      "description": "历史 v1 case 保存的原始业务定义；仅保留旧任务读取兼容，公开 v1 接口已移除。"
     },
     "protocolVersion": {
       "const": "0.1"
@@ -376,7 +376,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://proofrun.invalid/contracts/0.1/verification-task.schema.json",
   "title": "VerificationTask",
-  "description": "平台内部任务结构，含环境、调度和执行配置；外部调用使用 VerificationCase。",
+  "description": "平台内部任务结构，含环境、调度和执行配置；外部调用使用 VerificationCaseV2。",
   "allOf": [
     {
       "if": {

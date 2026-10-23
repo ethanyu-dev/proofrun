@@ -10,7 +10,7 @@
 
 **测试身份：[身份库配置与集成](apps/api/src/modules/identities/README.md)。Web 主导航「测试身份」只维护测试地址、Cookies、名称、可选类型、描述和并发数。薄身份 Agent 根据用例选取账号，任务复制完整 profile；只有 HITL 成功后发布新基准，无法处理时记录人工原因并结束 Case。**
 
-**原单 case 接入：[Case API](docs/public-api.md) · [OpenAPI](contracts/public-api.openapi.json) · [case 示例](contracts/examples/public-api/case.json)。** 调用方提交任务描述、待测 URL、可选步骤和验收项；环境、身份与预算由[平台配置](docs/case-platform-config.md)提供。
+**公开接入：[Case API v2](docs/public-api-v2.md) · [OpenAPI](contracts/public-api.openapi.json)。** 原 `/v1/cases` 已移除，迁移与历史记录读取见[接入说明](docs/public-api.md)；环境、身份与预算由[平台配置](docs/case-platform-config.md)提供。
 
 ## 项目结构
 

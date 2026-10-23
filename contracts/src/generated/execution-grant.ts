@@ -584,7 +584,7 @@ export interface ExecutionGrant {
   state: 'STARTING';
 }
 /**
- * case 入口保存的原始业务定义，用于幂等重提和隔离公开读取；普通内部任务省略。
+ * 历史 v1 case 保存的原始业务定义；仅保留旧任务读取兼容，公开 v1 接口已移除。
  */
 export interface VerificationCase {
   /**

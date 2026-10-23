@@ -4,21 +4,15 @@
 
 复制 [case-profile.example.json](../deploy/case-profile.example.json) 到部署私有配置目录，替换环境和预算，设置 `PROOFRUN_CASE_PROFILE_FILE=/absolute/path/case-profile.json` 后启动或重启 API。应用不会自动加载 .env。
 
-environment、budget、evidenceKinds 必填；executionMode 可选，V1/V2 默认 jev（LLM + JEV 单组），可显式选择 llm，v2 还支持 parallel 双跑。默认模式需要配置 TYPESAFE_API_KEY。budget.maxActions 和可选 timeoutMs 保留给旧版 `/v1/cases`：未指定时长时按每步五分钟计算，显式时长最多一天。**新建 v2 使用下述逐步策略，旧 profile 总预算不再覆盖 v2 步骤额度。** evidenceKinds 为非空取证类型集合。配置错误时启动失败；未配置时新 case 返回 503 CASE_NOT_CONFIGURED，已有 case 仍可查询、取消和幂等重提。
+environment、budget、evidenceKinds 必填；executionMode 可选，默认 jev（LLM + JEV 单组），可显式选择 llm 或 parallel 双跑。默认模式需要配置 TYPESAFE_API_KEY。budget 保留既有配置文件结构并继续校验其范围，**v2 实际额度由下述逐步策略编译，profile 总预算不覆盖步骤额度。** evidenceKinds 为非空取证类型集合。配置错误时启动失败；未配置时新 case 返回 503 CASE_NOT_CONFIGURED，已有 v2 case 仍可查询、取消和幂等重提。
 
-一套 API 当前绑定一份执行配置；多项目或多账号的上下文选择尚未实现。每次待测入口由 case.url 提供，不在平台配置中设置 target 或默认地址。调用方可以改变待测 URL，但不能覆盖平台环境和登录配置。登录身份、节点能力、视觉 worker 和网络可达性须由部署方准备；配置结构校验不证明真实环境可执行。新版业务步骤的人工等待暂停计时，恢复只补回实际等待时间，模型和动作计数不清零；清理墙钟不暂停。
+一套 API 当前绑定一份执行配置；待测入口由 case.entry 和各步骤 url 提供，不在平台配置中设置 target 或默认地址。调用方不能覆盖平台环境和执行策略。登录身份、节点能力、视觉 worker 和网络可达性须由部署方准备；配置结构校验不证明真实环境可执行。业务步骤的人工等待暂停计时，恢复只补回实际等待时间，模型和动作计数不清零；清理墙钟不暂停。
 
-此前配置文件中的 target 应删除；入口必须在 case 请求的 url 中提供。case.description 映射为内部任务的 objective，附带必要业务步骤。
-
-旧版 case 在内部映射为 `case-<caseId>` 任务，并把原始业务定义与首次解析的配置一起保存在同一任务快照。重提原 case 不读取新配置，不重复执行；不同定义使用同一 caseId 返回冲突。原任务队列、报告校验、超时和清理机制保持复用，没有第二套运行时或新数据库表。
-
-旧版公开响应只返回 CaseResult，不返回 VerificationTask、执行身份、登录配置、模型明细或清理进度。公开证据入口先检查该证据被本 case 报告引用；内部管理权限仍由现有管理员 token 管理，不是独立租户隔离。
-
-Schema 与 OpenAPI 通过 `pnpm contracts:generate` 同步，`pnpm contracts:check` 检查漂移。服务升级需同时构建 contracts 与 API；单纯更新文档不会给旧服务增加 `/v1/cases` 路由。
+`/v1/cases` 已移除，历史任务快照继续保留供内部读取；旧配置文件不需要因入口移除而修改字段。Schema 与 OpenAPI 通过 `pnpm contracts:generate` 同步，`pnpm contracts:check` 检查漂移，服务升级需同时构建 contracts 与 API。
 
 ## 结构化 case v2
 
-新版沿用同一平台配置，省略 executionMode 时默认创建 JEV+LLM 单组。显式 parallel 创建纯 LLM 和 JEV+LLM 两组，各自使用完整预算和独立会话；显式 llm 仅运行纯 LLM。新 v2 的 environment.reuseAuth 和 environment.allowIntervention 省略时均为 true，默认复用本站登录状态并允许人工辅助；部署方显式设置 false 时保留关闭。显式 `session.mode: "guest"` 仍按访客会话执行，不恢复登录。旧 `/v1/cases` 继续单组执行，省略模式时使用 jev，显式 parallel 为兼容旧入口仍使用 llm。已有任务幂等重提不受默认值或部署配置变更影响。
+新版沿用同一平台配置，省略 executionMode 时默认创建 JEV+LLM 单组。显式 parallel 创建纯 LLM 和 JEV+LLM 两组，各自使用完整预算和独立会话；显式 llm 仅运行纯 LLM。新 v2 的 environment.reuseAuth 和 environment.allowIntervention 省略时均为 true，默认复用本站登录状态并允许人工辅助；部署方显式设置 false 时保留关闭。显式 `session.mode: "guest"` 仍按访客会话执行，不恢复登录。已有任务幂等重提不受默认值或部署配置变更影响。
 
 新 v2 在接收时冻结 `stepBudget.version = 1`，API 与 Agent 使用相同额度：
 

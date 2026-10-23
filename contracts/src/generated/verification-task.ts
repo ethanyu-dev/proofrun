@@ -1,7 +1,7 @@
 /* 根据 contracts/schemas 自动生成，请勿手改；修改 Schema 后运行 pnpm contracts:generate。 */
 
 /**
- * 平台内部任务结构，含环境、调度和执行配置；外部调用使用 VerificationCase。
+ * 平台内部任务结构，含环境、调度和执行配置；外部调用使用 VerificationCaseV2。
  */
 export type VerificationTask = {
   caseDefinition?: VerificationCase;
@@ -556,7 +556,7 @@ export type SessionPlan = {
 };
 
 /**
- * case 入口保存的原始业务定义，用于幂等重提和隔离公开读取；普通内部任务省略。
+ * 历史 v1 case 保存的原始业务定义；仅保留旧任务读取兼容，公开 v1 接口已移除。
  */
 export interface VerificationCase {
   /**

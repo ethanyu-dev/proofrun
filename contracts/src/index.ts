@@ -38,20 +38,8 @@ for (const name of [
 ])
   ajv.addSchema(readSchema(name), `${name}.schema.json`);
 ajv.addSchema(readSchema('queue-reason'), 'queue-reason.schema.json');
-export type { VerificationCase } from './generated/verification-case.js';
-export type { CaseResult } from './generated/case-result.js';
-import type { VerificationCase } from './generated/verification-case.js';
-import type { CaseResult } from './generated/case-result.js';
-export const validateVerificationCase = ajv.compile<VerificationCase>(
-  readSchema('verification-case'),
-);
-ajv.addSchema(
-  { $ref: readSchema('verification-case').$id },
-  'verification-case.schema.json',
-);
-export const validateCaseResult = ajv.compile<CaseResult>(
-  readSchema('case-result'),
-);
+// 历史任务的 caseDefinition 仍依赖旧输入结构；不再导出 v1 提交与响应校验器。
+ajv.addSchema(readSchema('verification-case'), 'verification-case.schema.json');
 // 结构化协议先注册引用，所有执行组件共享同一份运行时约束。
 export type { CaseStep } from './generated/case-step.js';
 export type { StepResult } from './generated/step-result.js';

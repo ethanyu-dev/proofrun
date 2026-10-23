@@ -226,6 +226,72 @@ export type AgentDecision =
       type: 'verification.environment';
       mode: 'guest' | 'configured';
       summary: string;
+    }
+  | {
+      type: 'evidence.read';
+      artifactId: string;
+      start?: number;
+      end?: number;
+      query?: string;
+    }
+  | {
+      type: 'browser.batch';
+      /**
+       * @minItems 2
+       * @maxItems 4
+       */
+      actions:
+        | [
+            {
+              action: 'fill';
+              target: string;
+              value: string;
+            },
+            {
+              action: 'fill';
+              target: string;
+              value: string;
+            },
+          ]
+        | [
+            {
+              action: 'fill';
+              target: string;
+              value: string;
+            },
+            {
+              action: 'fill';
+              target: string;
+              value: string;
+            },
+            {
+              action: 'fill';
+              target: string;
+              value: string;
+            },
+          ]
+        | [
+            {
+              action: 'fill';
+              target: string;
+              value: string;
+            },
+            {
+              action: 'fill';
+              target: string;
+              value: string;
+            },
+            {
+              action: 'fill';
+              target: string;
+              value: string;
+            },
+            {
+              action: 'fill';
+              target: string;
+              value: string;
+            },
+          ];
     };
 
 export interface FinishVerification {

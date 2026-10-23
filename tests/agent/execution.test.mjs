@@ -1,4 +1,7 @@
-import { compileStepBudget } from '../../contracts/dist/index.js';
+import {
+  compileStepBudget,
+  validateAgentDecision,
+} from '../../contracts/dist/index.js';
 import { StepAllowance } from '../../apps/agent/dist/execution/step-budget.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -57,6 +60,96 @@ async function run(decide, prepare = () => {}, overrides = {}) {
     return { report, client, requests: server.requests };
   } finally {
     await server.close();
+  }
+}
+
+/** 两种协议均通过共享 Schema，但本执行器尚未提供对应能力。 */
+const pendingDecisions = [
+  {
+    type: 'evidence.read',
+    decision: (context) => ({
+      type: 'evidence.read',
+      artifactId: context.observation.artifactRefs[0].artifactId,
+      query: '名称',
+    }),
+  },
+  {
+    type: 'browser.batch',
+    decision: () => ({
+      type: 'browser.batch',
+      actions: [
+        { action: 'fill', target: '@e1', value: 'Alice' },
+        { action: 'fill', target: '@e1', value: 'Bob' },
+      ],
+    }),
+  },
+];
+
+for (const pending of pendingDecisions) {
+  // 范围：实际模型 HTTP 工具列表不暴露未实现能力，越界回复可纠错；供应商和浏览器均为夹具。
+  test(`${pending.type} 不公布给模型，越界回复后仍能使用合法工具完成`, async () => {
+    const { report, client, requests } = await run((context, turn, body) => {
+      const tools = body.tools.map((tool) => tool.function.name);
+      assert.ok(!tools.includes('evidence_read'));
+      assert.ok(!tools.includes('browser_batch'));
+      assert.ok(tools.includes('browser_act'));
+      assert.ok(tools.includes('browser_wait'));
+      if (turn === 1) return pending.decision(context);
+      assert.match(context.feedback, /已声明工具/);
+      return finish(context);
+    });
+    assert.equal(report.verdict, 'PASSED');
+    assert.equal(requests.length, 2);
+    assert.equal(client.calls.length, 2);
+    assert.deepEqual(
+      client.calls.map((call) => call.operation.type),
+      ['browser.act', 'browser.observe'],
+    );
+    assert.equal(client.calls[0].operation.action, 'navigate');
+  });
+
+  for (const executionPolicy of ['legacy', 'planned-v1']) {
+    // 范围：绕过 ChatModel 直接注入合法结构，验证执行端有界拒绝且不保存附带结论；不验证真实证据读取或批量填写。
+    test(`${executionPolicy} 执行端拒绝 ${pending.type}，不会派发节点或提交附带结论`, async () => {
+      const client = new FakeControl();
+      let turns = 0;
+      const report = await execute(
+        { ...config, executionPolicy, executionGuidance: true },
+        client,
+        {
+          async decide(input) {
+            const context = JSON.parse(input.text);
+            if (++turns > 1)
+              assert.match(context.feedback, /当前执行器尚不支持/);
+            const decision = pending.decision(context);
+            assert.ok(validateAgentDecision(decision));
+            return {
+              decision,
+              conclusions: finish(context).criteria,
+              workflow: finish(context).workflow,
+              promptTokens: 1,
+              completionTokens: 1,
+            };
+          },
+        },
+        grant(),
+      );
+      assert.equal(turns, 3);
+      assert.equal(report.executionDisposition, 'ERROR');
+      assert.equal(
+        report.executionDetails.reasonCode,
+        'INVALID_MODEL_DECISION',
+      );
+      assert.equal(report.executionDetails.modelCalls, 3);
+      assert.equal(report.executionDetails.actions, 1);
+      assert.ok(
+        report.criteria.every((criterion) => criterion.verdict !== 'PASSED'),
+      );
+      assert.equal(client.stepSnapshots.length, 0);
+      assert.equal(client.calls.length, 2);
+      assert.equal(client.calls[0].operation.action, 'navigate');
+      assert.equal(client.calls[1].operation.type, 'browser.observe');
+    });
   }
 }
 

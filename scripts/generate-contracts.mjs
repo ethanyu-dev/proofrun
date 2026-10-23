@@ -22,8 +22,8 @@ const names = [
   'request-result-v2',
   'request-list',
   'request-rerun',
+  // 历史任务快照仍引用旧输入结构，不代表继续提供 v1 Case API。
   'verification-case',
-  'case-result',
   'verification-task',
   'verification-report',
   'node-command',

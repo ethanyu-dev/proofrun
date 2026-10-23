@@ -1,4 +1,5 @@
 import { validatePlanInputs } from './plan-inputs.js';
+import { requireSupportedDecision } from './decision-support.js';
 import type { ReviewEvent } from './model-router.js';
 import { ExecutionGuidance } from './execution-guidance.js';
 import { scrollDistance, NavigationMemory } from './navigation-memory.js';
@@ -2009,6 +2010,7 @@ class Execution {
         const decision = output.decision;
         if (!validateAgentDecision(decision))
           throw new AgentFault('INVALID_MODEL_DECISION', '决定不满足工具协议');
+        requireSupportedDecision(decision);
         // 工具 schema 不能代替执行端围栏，忽略只读限制的动作绝不派发。
         if (
           finalReview &&
@@ -2412,7 +2414,15 @@ class Execution {
               '当前模型配置不支持截图输入',
             );
           operation = decision;
-        } else operation = decision;
+        } else if (decision.type === 'browser.wait') operation = decision;
+        else {
+          // 新增决定必须显式选择执行路径；遗漏分支在编译期失败，不能落入节点派发。
+          const unhandled: never = decision;
+          throw new AgentFault(
+            'INVALID_MODEL_DECISION',
+            `决定缺少执行分支：${String(unhandled)}`,
+          );
+        }
         // 从这里开始发生浏览器操作；其传输错误绝不能进入模型重试分支。
         errors = 0;
         this.feedback = null;

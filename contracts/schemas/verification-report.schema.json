@@ -226,7 +226,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://proofrun.invalid/contracts/0.1/verification-report.schema.json",
   "title": "VerificationReport",
-  "description": "平台内部执行报告；外部读取 CaseResult。结构有效不代表业务判断已被独立证实。",
+  "description": "平台内部执行报告；外部读取 CaseResultV2。结构有效不代表业务判断已被独立证实。",
   "allOf": [
     {
       "if": {
