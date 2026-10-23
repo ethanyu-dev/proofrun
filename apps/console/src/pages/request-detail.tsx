@@ -1,4 +1,3 @@
-import { TaskDelete } from '../components/task-delete';
 import { CaseRunHistory } from '../components/case-run-history';
 import { RequestReportContent } from '../components/request-report-content';
 import type { RequestResultV2 } from '@proofrun/contracts';
@@ -58,17 +57,6 @@ export function RequestDetailPage({
           >
             {reports ? '查看任务详情' : '查看验证报告'}
           </a>
-          {value && (
-            <TaskDelete
-              api={api}
-              ids={[id]}
-              requests
-              disabled={value.executionStatus !== 'FINISHED'}
-              onDeleted={() => {
-                location.hash = '#/tasks';
-              }}
-            />
-          )}
           {reports && value && <RequestExport value={value} />}
           {!reports && value && (
             <RequestRerun key={id} api={api} value={value} />
