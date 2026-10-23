@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, readdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import pg from 'pg';
@@ -143,7 +143,38 @@ test(
       caseProfile: profile,
       devPass: fixture.config,
     };
+    // 范围：从主分支已经使用的 v30 数据库升级，避免迁移编号碰撞跳过外部账号表。
+    const migrations = new URL('../migrations/', import.meta.url);
+    await sql.query(
+      'CREATE TABLE pr_migrations(version integer PRIMARY KEY,applied_at timestamptz NOT NULL DEFAULT clock_timestamp())',
+    );
+    for (const file of (await readdir(migrations))
+      .filter(
+        (file) =>
+          /^\d{3}-.*\.sql$/.test(file) && Number(file.slice(0, 3)) <= 30,
+      )
+      .sort()) {
+      await sql.query(await readFile(new URL(file, migrations), 'utf8'));
+      await sql.query('INSERT INTO pr_migrations(version) VALUES($1)', [
+        Number(file.slice(0, 3)),
+      ]);
+    }
+    assert.equal(
+      (await sql.query("SELECT to_regclass('pr_external_accounts') AS name"))
+        .rows[0].name,
+      null,
+    );
     let app = await buildApp(config, { logger: false });
+    assert.equal(
+      (await sql.query('SELECT max(version) AS version FROM pr_migrations'))
+        .rows[0].version,
+      31,
+    );
+    assert.equal(
+      (await sql.query("SELECT to_regclass('pr_external_accounts') AS name"))
+        .rows[0].name,
+      'pr_external_accounts',
+    );
     let base = await app.listen({ host: '127.0.0.1', port: 0 });
     config.publicUrl = base;
     let node = new SimulatedNode(base, 'external', 2);
@@ -467,6 +498,52 @@ test(
             (r) => r.state === 'ERROR',
           );
           fixture.state.wrongRecipient = false;
+        },
+      );
+      // 范围：API 重启后远端拒绝重新交付材料时，已知租约仍需交还；浏览器为未启动夹具。
+      await suite.test(
+        '恢复材料被拒绝时，已知租约不能永久停留在人工核实或等待状态',
+        async () => {
+          config.caseProfile!.executionMode = 'llm';
+          for (const code of [
+            'MATERIAL_REVOKED',
+            'TEMPORARY_UNAVAILABLE',
+          ] as const) {
+            const id = `restore-${code.toLowerCase()}`;
+            await api('/v2/cases', [example(id)]);
+            await claim();
+            await until(
+              () => row(id),
+              (r) => r?.state === 'ALLOCATED',
+            );
+            const lease = (await row(id)).lease_id;
+            for (const w of workers.splice(0)) await w.close().catch(() => {});
+            node.close();
+            await app.close();
+            fixture.state.replayError = code;
+            app = await buildApp(config, { logger: false });
+            base = await app.listen({ host: '127.0.0.1', port: 0 });
+            config.publicUrl = base;
+            node = new SimulatedNode(base, 'external', 2);
+            node.externalAccounts = true;
+            await node.pair(ADMIN);
+            await until(
+              async () => {
+                await hurry();
+                return row(id);
+              },
+              (r) => r.state === 'RELEASED',
+            );
+            const binding = await row(id);
+            assert.equal(binding.session_id, null);
+            assert.equal(binding.release_outcome, 'execution_error');
+            assert.ok(
+              fixture.state.releases.some(
+                (r) => r.lease_id === lease && r.usage_stopped,
+              ),
+            );
+            fixture.state.replayError = null;
+          }
         },
       );
     } finally {

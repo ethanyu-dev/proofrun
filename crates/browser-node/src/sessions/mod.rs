@@ -668,10 +668,8 @@ async fn supervise(
     if let Err(error) = &final_result {
         tracing::error!(session_id = %record.session_id, error, "session closure unverified");
     }
-    if final_result.is_ok() {
-        if cleanup_private_session(&config, &record).is_err() {
-            tracing::error!(session_id = %record.session_id, "私密会话清理失败");
-        }
+    if final_result.is_ok() && cleanup_private_session(&config, &record).is_err() {
+        tracing::error!(session_id = %record.session_id, "私密会话清理失败");
     }
     if let Some(mut io) = host
         && tokio::time::timeout(HOST_EXIT_TIMEOUT, io.child.wait())

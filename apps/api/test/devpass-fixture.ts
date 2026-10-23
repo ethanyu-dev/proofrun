@@ -36,6 +36,8 @@ export async function devPassFixture(directory: string) {
     version: 'material-1',
     /** 模拟材料接收方绑定错误；不改变已持久化的租约。 */
     wrongRecipient: false,
+    /** 恢复旧租约时模拟服务端材料拒绝，不代表已经释放额度。 */
+    replayError: null as 'MATERIAL_REVOKED' | 'TEMPORARY_UNAVAILABLE' | null,
     capacity: 1,
     dropGet: false,
     dropRelease: false,
@@ -75,7 +77,18 @@ export async function devPassFixture(directory: string) {
         const input = request.params.arguments as unknown as GetAccountInput;
         state.requests.push(input);
         let allocated = state.allocations.get(input.request_id);
-        if (
+        if (allocated && state.replayError) {
+          result = {
+            schema_version: '1',
+            status: 'error',
+            error: {
+              code: state.replayError,
+              message: '夹具拒绝恢复材料',
+              retryable: state.replayError === 'TEMPORARY_UNAVAILABLE',
+              retry_after_seconds: null,
+            },
+          };
+        } else if (
           !allocated &&
           [...state.allocations.values()].filter(
             (a) => !state.released.has(a.lease.id),

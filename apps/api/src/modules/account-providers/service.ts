@@ -514,6 +514,15 @@ export class ExternalAccounts {
             : result.error.retryable;
         const reason =
           result.status === 'unavailable' ? result.reason : result.error.code;
+        if (row.lease_id) {
+          // 恢复失败不代表旧租约已释放；保留可扫描的交还阶段，关闭事实仍由下一轮核实。
+          await this.fail(row.task_id, `EXTERNAL_ACCOUNT_${reason}`);
+          await this.db.query(
+            "UPDATE pr_external_accounts SET state='RELEASE_PENDING',reason=$2,retry_at=clock_timestamp() WHERE task_id=$1",
+            [row.task_id, reason],
+          );
+          return;
+        }
         await this.db.query(
           "UPDATE pr_external_accounts SET state=$2,reason=$3,reserved_until=clock_timestamp(),retry_at=clock_timestamp()+$4*interval '1 millisecond' WHERE task_id=$1",
           [
@@ -576,6 +585,10 @@ export class ExternalAccounts {
   /** 未执行业务的环境错误不生成产品失败；已开始任务沿用可靠关闭流程。 */
   private async fail(taskId: string, code: string): Promise<void> {
     await this.db.transaction(async (tx) => {
+      // 先锁任务再查询执行，防止领取恰好在查询之后提交而漏掉需关闭的会话。
+      await tx.query('SELECT id FROM pr_tasks WHERE id=$1 FOR UPDATE', [
+        taskId,
+      ]);
       const executions = await tx.query(
         'SELECT id FROM pr_executions WHERE task_id=$1',
         [taskId],
