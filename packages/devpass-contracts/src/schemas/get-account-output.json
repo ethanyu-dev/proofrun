@@ -1,0 +1,238 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "GetAccountOutput",
+  "type": "object",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1",
+          "type": "string"
+        },
+        "status": {
+          "const": "allocated",
+          "type": "string"
+        },
+        "account": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "platform": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "origin": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048,
+              "description": "凭据适用的精确源，不含业务路径。"
+            },
+            "role_description": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "description": "账号登记的能力标签，不代表页面实际验证通过。"
+              }
+            },
+            "note": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "hitl_case": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "concurrency": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "material": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": ["http_bearer", "browser_cookies", "browser_storage"]
+                },
+                "version": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "expires_at": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "delivery": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "format": {
+                      "const": "jwe",
+                      "type": "string"
+                    },
+                    "recipient_key_id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128
+                    },
+                    "ciphertext": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 262144,
+                      "description": "仅可信运行环境可以解密。"
+                    }
+                  },
+                  "required": ["format", "recipient_key_id", "ciphertext"]
+                }
+              },
+              "required": ["type", "version", "expires_at", "delivery"]
+            }
+          },
+          "required": [
+            "id",
+            "platform",
+            "origin",
+            "role_description",
+            "note",
+            "hitl_case",
+            "concurrency",
+            "material"
+          ],
+          "description": "冻结在本次租约中的账号描述，原始凭据仅存在于密文。"
+        },
+        "lease": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "issued_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "expires_at": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "required": ["id", "issued_at", "expires_at"]
+        }
+      },
+      "required": ["schema_version", "status", "account", "lease"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1",
+          "type": "string"
+        },
+        "status": {
+          "const": "unavailable",
+          "type": "string"
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "NO_MATCH",
+            "CAPACITY_EXHAUSTED",
+            "ACCOUNT_NOT_READY",
+            "MATERIAL_TYPE_UNSUPPORTED",
+            "MATERIAL_EXPIRED",
+            "MATERIAL_EXPIRES_TOO_SOON"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "retry_after_seconds": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        }
+      },
+      "required": [
+        "schema_version",
+        "status",
+        "reason",
+        "message",
+        "retry_after_seconds"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1",
+          "type": "string"
+        },
+        "status": {
+          "const": "error",
+          "type": "string"
+        },
+        "error": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "type": "string",
+              "enum": [
+                "FORBIDDEN",
+                "IDEMPOTENCY_CONFLICT",
+                "DURATION_NOT_ALLOWED",
+                "RECIPIENT_KEY_UNAVAILABLE",
+                "LEASE_NOT_FOUND",
+                "LEASE_EXPIRED",
+                "LEASE_CLOSED",
+                "MATERIAL_REVOKED",
+                "RELEASE_CONFLICT",
+                "RATE_LIMITED",
+                "TEMPORARY_UNAVAILABLE",
+                "INVALID_ARGUMENT"
+              ]
+            },
+            "message": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "retry_after_seconds": {
+              "type": ["integer", "null"],
+              "minimum": 0
+            }
+          },
+          "required": ["code", "message", "retryable", "retry_after_seconds"]
+        }
+      },
+      "required": ["schema_version", "status", "error"]
+    }
+  ]
+}

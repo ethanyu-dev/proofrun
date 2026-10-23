@@ -1,6 +1,7 @@
 import requestSchema from '../../../contracts/schemas/verification-request.schema.json';
 import type { VerificationRequest } from '@proofrun/contracts';
 import identityCheck from '../../../contracts/schemas/identity-check.schema.json';
+import externalSelector from '../../../contracts/schemas/external-account-selector.schema.json';
 import sessionRequest from '../../../contracts/schemas/session-request.schema.json';
 import sessionPlan from '../../../contracts/schemas/session-plan.schema.json';
 import Ajv from 'ajv';
@@ -16,6 +17,7 @@ const ajv = new Ajv({ allErrors: true });
 addFormats(ajv);
 // 任务的 caseDefinition 使用外部引用，浏览器校验器也须在编译任务前注册依赖。
 ajv.addSchema(identityCheck);
+ajv.addSchema(externalSelector);
 ajv.addSchema(sessionRequest);
 ajv.addSchema(sessionPlan);
 ajv.addSchema(caseSchema);

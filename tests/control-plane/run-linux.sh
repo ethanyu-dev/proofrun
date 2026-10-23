@@ -42,6 +42,7 @@ cleanup() {
 }
 trap cleanup EXIT
 cd "$root_dir"
+pnpm build:devpass
 pnpm --filter @proofrun/contracts build
 pnpm --filter @proofrun/api build
 if [[ "$real_agent" == true ]]; then pnpm --filter @proofrun/agent build; fi

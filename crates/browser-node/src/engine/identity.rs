@@ -228,6 +228,12 @@ impl Engine {
     }
     /// 首先核验恢复状态，失败后最多执行一次登录；结果不明不能自动重放提交。
     pub(super) async fn prepare_identity(&mut self, raw: &Value, deadline: u64) -> Result<Value> {
+        if self.config.external_account.is_some() {
+            return Err(Fault::rejected(
+                "EXTERNAL_ACCOUNT_PREPARATION_FORBIDDEN",
+                "外部账号不能切换登录配方",
+            ));
+        }
         if self.config.full_profile {
             return self.prepare_profile(raw, deadline).await;
         }

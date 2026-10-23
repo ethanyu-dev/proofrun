@@ -609,6 +609,17 @@ export async function buildApp(
     (request) => coordinator.cancel(request.params.id),
   );
   analysisRoutes(app, new RequestAnalyses(db, requestReader), admin, worker);
+  app.post<{ Params: IdParams }>(
+    '/v1/tasks/:id/account-feedback',
+    { preHandler: admin },
+    async (request) => {
+      await coordinator.externalAccounts.feedback(
+        request.params.id,
+        request.body,
+      );
+      return coordinator.task(request.params.id);
+    },
+  );
   app.post('/v1/worker/claim', { preHandler: worker }, (request) => {
     const body = parseRequest(request.body, 'worker.claim');
     return coordinator.claim(
@@ -868,6 +879,7 @@ export async function buildApp(
     ]);
   }
   app.addHook('onClose', async () => {
+    await coordinator.externalAccounts.close();
     await db.close();
   });
   return app;

@@ -105,6 +105,10 @@ export type NodeEvent =
          * 支持 Console 维护节点默认 profile，并供新身份复制。
          */
         nodeProfileManagement?: boolean;
+        /**
+         * 支持外部 Cookie 完整属性、临时隔离及不可续期账号硬期限。
+         */
+        externalAccounts?: boolean;
       };
       /**
        * 节点接受的租约和会话硬期限上限，控制面不得超额授权。

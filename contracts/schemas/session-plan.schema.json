@@ -6,7 +6,7 @@
       "const": 1
     },
     "mode": {
-      "enum": ["guest", "manual", "identity", "pool"]
+      "enum": ["guest", "manual", "identity", "pool", "external"]
     },
     "candidates": {
       "type": "array",
@@ -110,6 +110,25 @@
     "selectionReason": {
       "type": "string",
       "maxLength": 1000
+    },
+    "external": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "selector": {
+          "$ref": "external-account-selector.schema.json"
+        },
+        "origin": {
+          "type": "string",
+          "format": "uri"
+        },
+        "durationSeconds": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 7200
+        }
+      },
+      "required": ["selector", "origin", "durationSeconds"]
     }
   },
   "required": [
@@ -122,5 +141,38 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://proofrun.invalid/contracts/0.1/session-plan.schema.json",
   "title": "SessionPlan",
-  "description": "平台冻结的非敏感身份候选；分配在领取事务内完成，凭据只在节点解析。"
+  "description": "平台冻结的非敏感身份候选；分配在领取事务内完成，凭据只在节点解析。",
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "mode": {
+            "const": "external"
+          }
+        }
+      },
+      "then": {
+        "required": ["external"],
+        "properties": {
+          "external": {},
+          "candidates": {
+            "maxItems": 0,
+            "type": "array"
+          },
+          "requirements": {
+            "minItems": 1,
+            "type": "array"
+          },
+          "library": {
+            "const": false
+          }
+        }
+      },
+      "else": {
+        "not": {
+          "required": ["external"]
+        }
+      }
+    }
+  ]
 }

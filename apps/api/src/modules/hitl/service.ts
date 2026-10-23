@@ -60,6 +60,8 @@ interface Grant {
   fence: string;
   /** 会话实际使用的登录槽位，包含自动分配槽位。 */
   auth: unknown;
+  /** 外部账号硬期限不随人工等待暂停。 */
+  external_expires_at?: Date | null;
   /** 仅用于人工确认 Cookie 所属站点。 */
   target_url: string;
   /** 分组模式必须提交与本次待办完全对应的人工确认。 */
@@ -99,7 +101,7 @@ export class HitlService {
       await this.db.query<Grant>(
         `SELECT h.*,e.control_mode,e.control_revision,e.control_reason,
       t.definition->'profilePlan' AS profile_plan,t.definition->'target'->>'url' AS target_url,e.state AS execution_state,e.lease_expires_at,e.human_deadline_at,t.id AS task_id,t.state AS task_state,t.deadline_at,
-      s.auth_state AS auth,s.id AS session_id,s.node_id,s.node_epoch,s.lease_id,s.fence,s.state AS session_state,
+      s.external_expires_at,s.auth_state AS auth,s.id AS session_id,s.node_id,s.node_epoch,s.lease_id,s.fence,s.state AS session_state,
       EXISTS(SELECT 1 FROM pr_node_profiles p WHERE p.id=h.id) AS node_profile
       FROM pr_interventions h JOIN pr_executions e ON e.id=h.execution_id JOIN pr_tasks t ON t.id=e.task_id
       JOIN pr_sessions s ON s.execution_id=e.id WHERE h.id=$1`,
@@ -113,6 +115,8 @@ export class HitlService {
     if (
       (grant.human_deadline_at != null &&
         grant.human_deadline_at.getTime() <= Date.now()) ||
+      (grant.external_expires_at != null &&
+        grant.external_expires_at.getTime() <= Date.now()) ||
       grant.completed_at ||
       grant.expires_at.getTime() <= Date.now() ||
       grant.lease_expires_at.getTime() <= Date.now() ||

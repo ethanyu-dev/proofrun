@@ -1,4 +1,8 @@
 import {
+  loadDevPass,
+  type DevPassConfig,
+} from './modules/account-providers/config.js';
+import {
   providerUrl,
   type CatalogProviderConfig,
 } from './modules/identities/provider.js';
@@ -24,6 +28,8 @@ const DEFAULTS = {
 
 /** 控制面只支持一个活动实例；队列、租约和消息均持久化到数据库。 */
 export interface ApiConfig {
+  /** 受控的外部账号来源，密钥不进入任务。 */
+  devPass?: DevPassConfig;
   /** 可选飞书企业自建应用；未配置时关闭 Case 生命周期通知。 */
   feishu?: FeishuConfig;
   /** 每次人工请求的独立等待期限；默认三十分钟，旧等待不补造截止时间。 */
@@ -139,7 +145,9 @@ export function loadConfig(): ApiConfig {
     throw new Error(
       '飞书通知已改为企业自建应用，请移除旧 WEBHOOK_URL/SIGNING_SECRET 并配置 APP_ID、APP_SECRET、CHAT_ID',
     );
+  const devPass = loadDevPass(process.env.PROOFRUN_DEVPASS_CONFIG_FILE);
   return {
+    ...(devPass ? { devPass } : {}),
     ...(feishu ? { feishu } : {}),
     ...(caseProfile ? { caseProfile } : {}),
     ...(providerEndpoint

@@ -49,29 +49,85 @@ export async function identitySummary(
           : data?.status === 'READY'
             ? 'READY'
             : 'NEEDS_HUMAN';
+  const external = plan.external
+    ? (
+        await db.query(
+          'SELECT request_id,lease_id,account_id,material_version,expires_at,state,reason FROM pr_external_accounts WHERE task_id=$1',
+          [taskId],
+        )
+      ).rows[0]
+    : undefined;
+  const externalOpen = plan.external
+    ? (
+        await db.query(
+          "SELECT c.result,c.created_at,c.completed_at,t.error->>'code' AS task_error FROM pr_commands c JOIN pr_executions e ON e.id=c.execution_id JOIN pr_tasks t ON t.id=e.task_id WHERE e.task_id=$1 AND c.kind='session.open' ORDER BY c.created_at DESC LIMIT 1",
+          [taskId],
+        )
+      ).rows[0]
+    : undefined;
   return {
+    ...(external
+      ? {
+          external: {
+            requestId: external.request_id,
+            leaseId: external.lease_id,
+            accountId: external.account_id,
+            materialVersion: external.material_version,
+            expiresAt: external.expires_at?.toISOString() ?? null,
+            state: external.state,
+            reason: external.reason,
+          },
+        }
+      : {}),
     mode: plan.mode,
-    identityRef: identity?.id ?? null,
-    label: identity?.label ?? null,
-    leaseState: identity
-      ? identity.occupied
-        ? 'OCCUPIED'
-        : identity.state === 'QUEUED'
-          ? 'WAITING'
-          : 'RELEASED'
-      : plan.candidates.length
+    identityRef: external?.account_id ?? identity?.id ?? null,
+    label: plan.external
+      ? `DevPass · ${external?.account_id ?? '等待分配'}`
+      : (identity?.label ?? null),
+    leaseState: plan.external
+      ? !external || (external.state === 'REQUESTED' && !external.lease_id)
         ? 'WAITING'
-        : 'NOT_REQUIRED',
+        : external.state === 'RELEASED'
+          ? 'RELEASED'
+          : 'OCCUPIED'
+      : identity
+        ? identity.occupied
+          ? 'OCCUPIED'
+          : identity.state === 'QUEUED'
+            ? 'WAITING'
+            : 'RELEASED'
+        : plan.candidates.length
+          ? 'WAITING'
+          : 'NOT_REQUIRED',
     preparation: {
-      status,
-      source,
-      reasonCode:
-        typeof data?.reasonCode === 'string'
+      status: plan.external
+        ? externalOpen?.task_error === 'EXTERNAL_ACCOUNT_PROOF_MISMATCH'
+          ? 'ERROR'
+          : externalOpen?.result?.operationStatus === 'SUCCEEDED'
+            ? 'LOADED'
+            : externalOpen?.result
+              ? 'ERROR'
+              : external?.state === 'REVIEW'
+                ? 'ERROR'
+                : 'PENDING'
+        : status,
+      source: plan.external ? 'cookies' : source,
+      reasonCode: plan.external
+        ? (external?.reason ?? externalOpen?.task_error ?? null)
+        : typeof data?.reasonCode === 'string'
           ? data.reasonCode
           : (prep?.result?.error?.code ?? null),
-      durationMs: prep?.completed_at
-        ? Math.max(0, prep.completed_at.getTime() - prep.created_at.getTime())
-        : null,
+      durationMs: plan.external
+        ? externalOpen?.completed_at
+          ? Math.max(
+              0,
+              externalOpen.completed_at.getTime() -
+                externalOpen.created_at.getTime(),
+            )
+          : null
+        : prep?.completed_at
+          ? Math.max(0, prep.completed_at.getTime() - prep.created_at.getTime())
+          : null,
     },
     humanRequests: humans.rows.reduce((n, r) => n + r.count, 0),
     humanCompleted: humans.rows.reduce((n, r) => n + r.completed, 0),

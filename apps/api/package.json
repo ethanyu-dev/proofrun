@@ -16,11 +16,15 @@
     "fastify": "5.12.5",
     "pg": "8.23.0",
     "swagger-ui-dist": "5.33.0",
-    "ws": "8.21.3"
+    "ws": "8.21.3",
+    "@dev-pass/client": "workspace:*",
+    "@dev-pass/contracts": "workspace:*"
   },
   "devDependencies": {
     "@types/pg": "8.23.1",
-    "@types/ws": "8.18.1"
+    "@types/ws": "8.18.1",
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "jose": "^6.1.0"
   },
   "files": [
     "dist",

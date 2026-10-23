@@ -3,7 +3,7 @@
   "additionalProperties": false,
   "properties": {
     "mode": {
-      "enum": ["guest", "manual", "identity", "pool", "auto"]
+      "enum": ["guest", "manual", "identity", "pool", "auto", "external"]
     },
     "identityRef": {
       "type": "string",
@@ -19,6 +19,9 @@
         "$ref": "identity-check.schema.json"
       },
       "maxItems": 32
+    },
+    "external": {
+      "$ref": "external-account-selector.schema.json"
     }
   },
   "required": ["mode"],
@@ -56,6 +59,38 @@
             "type": "string",
             "pattern": "^[A-Za-z0-9_-]{1,80}$"
           }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "mode": {
+            "const": "external"
+          }
+        }
+      },
+      "then": {
+        "required": ["external", "requirements"],
+        "properties": {
+          "requirements": {
+            "type": "array",
+            "items": {
+              "$ref": "identity-check.schema.json"
+            },
+            "maxItems": 32,
+            "minItems": 1
+          },
+          "identityRef": false,
+          "poolRef": false,
+          "external": {
+            "$ref": "external-account-selector.schema.json"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "external": false
         }
       }
     }

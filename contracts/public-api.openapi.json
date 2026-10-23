@@ -508,6 +508,43 @@
       }
     },
     "schemas": {
+      "ExternalAccountSelector": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "provider": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,80}$" },
+          "platform": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "poolId": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "accountId": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "roles": {
+            "type": "array",
+            "maxItems": 32,
+            "uniqueItems": true,
+            "items": { "type": "string", "minLength": 1, "maxLength": 128 }
+          }
+        },
+        "required": ["provider", "platform"],
+        "anyOf": [
+          {
+            "required": ["poolId"],
+            "properties": {
+              "poolId": { "type": "string", "minLength": 1, "maxLength": 128 }
+            }
+          },
+          {
+            "required": ["accountId"],
+            "properties": {
+              "accountId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            }
+          }
+        ],
+        "title": "ExternalAccountSelector",
+        "description": "外部账号的无秘密选择条件；地址和密钥仅由部署配置提供。"
+      },
       "ExecutionOutcome": {
         "title": "ExecutionOutcome",
         "type": "object",
@@ -599,7 +636,9 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "mode": { "enum": ["guest", "manual", "identity", "pool", "auto"] },
+          "mode": {
+            "enum": ["guest", "manual", "identity", "pool", "auto", "external"]
+          },
           "identityRef": {
             "type": "string",
             "pattern": "^[A-Za-z0-9_-]{1,80}$"
@@ -609,7 +648,8 @@
             "type": "array",
             "items": { "$ref": "#/components/schemas/IdentityCheck" },
             "maxItems": 32
-          }
+          },
+          "external": { "$ref": "#/components/schemas/ExternalAccountSelector" }
         },
         "required": ["mode"],
         "allOf": [
@@ -636,6 +676,26 @@
                 }
               }
             }
+          },
+          {
+            "if": { "properties": { "mode": { "const": "external" } } },
+            "then": {
+              "required": ["external", "requirements"],
+              "properties": {
+                "requirements": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/IdentityCheck" },
+                  "maxItems": 32,
+                  "minItems": 1
+                },
+                "identityRef": false,
+                "poolRef": false,
+                "external": {
+                  "$ref": "#/components/schemas/ExternalAccountSelector"
+                }
+              }
+            },
+            "else": { "properties": { "external": false } }
           }
         ],
         "title": "SessionRequest",
@@ -661,7 +721,8 @@
               "NODE_ROTATING",
               "SESSION_BUDGET_UNSUPPORTED",
               "IDENTITY_BUSY",
-              "IDENTITY_UNAVAILABLE"
+              "IDENTITY_UNAVAILABLE",
+              "EXTERNAL_ACCOUNT_WAIT"
             ]
           },
           "message": { "type": "string", "minLength": 1 }

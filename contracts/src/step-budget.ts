@@ -88,7 +88,9 @@ export function businessBudget(
 export function sessionBudgetMs(task: VerificationTask): number {
   return (
     task.budget.timeoutMs +
-    (task.sessionPlan?.candidates.length ? task.sessionPlan.preparationMs : 0) +
+    (task.sessionPlan?.candidates.length || task.sessionPlan?.external
+      ? task.sessionPlan.preparationMs
+      : 0) +
     (task.stepBudget?.settleMs ?? 0) * (task.stepBudget?.steps.length ?? 0) +
     (task.cleanupStepIds?.length
       ? (task.stepBudget?.cleanup.timeoutMs ?? CLEANUP_LIMIT.timeoutMs)

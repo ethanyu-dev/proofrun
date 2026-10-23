@@ -2057,7 +2057,7 @@ class Execution {
           // 显式账号选择不能被自然语言推断覆盖；冲突留给人工调整任务定义。
           if (
             decision.mode === 'guest' &&
-            ['identity', 'pool'].includes(
+            ['identity', 'pool', 'external'].includes(
               this.grant.task.sessionPlan?.mode ?? '',
             )
           )

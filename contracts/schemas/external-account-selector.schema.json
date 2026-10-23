@@ -1,0 +1,62 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "provider": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,80}$"
+    },
+    "platform": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "poolId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "accountId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "roles": {
+      "type": "array",
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      }
+    }
+  },
+  "required": ["provider", "platform"],
+  "anyOf": [
+    {
+      "required": ["poolId"],
+      "properties": {
+        "poolId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
+    {
+      "required": ["accountId"],
+      "properties": {
+        "accountId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    }
+  ],
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://proofrun.invalid/contracts/0.1/external-account-selector.schema.json",
+  "title": "ExternalAccountSelector",
+  "description": "外部账号的无秘密选择条件；地址和密钥仅由部署配置提供。"
+}

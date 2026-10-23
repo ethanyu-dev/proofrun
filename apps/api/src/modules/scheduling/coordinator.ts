@@ -1,4 +1,8 @@
 import {
+  ExternalAccounts,
+  ACCOUNT_CLOSE_MARGIN_MS,
+} from '../account-providers/service.js';
+import {
   registerRequest,
   registerMembers,
   type RequestRegistration,
@@ -91,15 +95,21 @@ export class Coordinator {
   gateway!: NodeGateway;
   /** 凭据只在向已授权节点投递时读取，不进入持久命令正文。 */
   identityLibrary?: IdentityLibrary;
+  /** 外部申请异步执行，不阻塞节点租约投递。 */
+  readonly externalAccounts: ExternalAccounts;
   constructor(
     private readonly db: Database,
     private readonly config: ApiConfig,
     private readonly artifacts: ArtifactStore,
-  ) {}
+  ) {
+    this.externalAccounts = new ExternalAccounts(db, config.devPass);
+  }
 
   /** 接收上层定义的任务快照；相同身份只允许相同定义。 */
   async submit(task: VerificationTask) {
     if (
+      task.sessionPlan?.mode === 'external' ||
+      !!task.sessionPlan?.external ||
       task.steps ||
       task.profilePlan ||
       task.cleanupStepIds !== undefined ||
@@ -239,6 +249,7 @@ export class Coordinator {
             throw new ApiError(409, 'CASE_CONFLICT', 'caseId 已绑定另一份定义');
           continue;
         }
+        this.externalAccounts.validate(task);
         created.add(task.taskId);
         const source = task;
         for (const task of expandCaseTasks(source)) {
@@ -779,8 +790,8 @@ export class Coordinator {
             continue;
           }
           const reserved = await client.query(
-            'SELECT id FROM pr_sessions WHERE node_id=$1 AND NOT closure_verified',
-            [node.id],
+            `SELECT id FROM pr_sessions WHERE node_id=$1 AND NOT closure_verified UNION ALL SELECT 'reservation-'||task_id AS id FROM pr_external_accounts WHERE node_id=$1 AND task_id<>$2 AND session_id IS NULL AND state IN ('REQUESTED','ALLOCATED') AND reserved_until>clock_timestamp()`,
+            [node.id, task.taskId],
           );
           const occupied = new Set([
             ...reserved.rows.map((r) => r.id as string),
@@ -792,6 +803,17 @@ export class Coordinator {
           ) {
             queueCode = 'NODE_CAPACITY';
             continue;
+          }
+          const external = task.sessionPlan?.external
+            ? await this.externalAccounts.reserve(
+                client,
+                task,
+                node.id as string,
+              )
+            : null;
+          if (task.sessionPlan?.external && !external) {
+            queueCode = 'EXTERNAL_ACCOUNT_WAIT';
+            break;
           }
           if (auth && !task.environment.auth)
             await client.query(
@@ -824,7 +846,8 @@ export class Coordinator {
               Date.now() +
                 task.budget.timeoutMs +
                 task.stepBudget.settleMs * task.stepBudget.steps.length +
-                (task.sessionPlan?.candidates.length
+                (task.sessionPlan?.candidates.length ||
+                task.sessionPlan?.external
                   ? task.sessionPlan.preparationMs
                   : 0),
             );
@@ -869,6 +892,20 @@ export class Coordinator {
             ],
           );
           const context = await executionContext(client, executionId);
+          if (external) {
+            await this.externalAccounts.bind(
+              client,
+              task.taskId,
+              context.session_id,
+            );
+            context.external_expires_at = new Date(
+              external.expires_at!.getTime() - ACCOUNT_CLOSE_MARGIN_MS,
+            );
+            await client.query(
+              'UPDATE pr_sessions SET external_expires_at=$2 WHERE id=$1',
+              [context.session_id, context.external_expires_at],
+            );
+          }
           const remaining = Math.max(1, row.deadline_at.getTime() - Date.now());
           await insertCommand(
             client,
@@ -877,6 +914,21 @@ export class Coordinator {
               context,
               {
                 type: 'session.open',
+                ...(external
+                  ? {
+                      externalAccount: {
+                        leaseId: external.lease_id!,
+                        materialVersion: external.material_version!,
+                        origin: task.sessionPlan!.external!.origin,
+                        ttlMs: Math.max(
+                          1,
+                          external.expires_at!.getTime() -
+                            Date.now() -
+                            ACCOUNT_CLOSE_MARGIN_MS,
+                        ),
+                      },
+                    }
+                  : {}),
                 ...(task.environment.allowIntervention
                   ? { renewable: true }
                   : {}),
@@ -893,7 +945,10 @@ export class Coordinator {
                   heartbeat.limits.maxSessionMs,
                 ),
               },
-              Math.min(task.sessionPlan?.library ? 120_000 : 15_000, remaining),
+              Math.min(
+                task.sessionPlan?.library || external ? 120_000 : 15_000,
+                remaining,
+              ),
             ),
           );
           return {
@@ -919,6 +974,8 @@ export class Coordinator {
   private eligible(heartbeat: Heartbeat, task: VerificationTask): boolean {
     return (
       heartbeat.pool === task.environment.nodePool &&
+      (!task.sessionPlan?.external ||
+        heartbeat.capabilities.externalAccounts === true) &&
       (!task.sessionPlan?.library ||
         heartbeat.capabilities.fullProfile === true) &&
       (!task.executionPlan ||
@@ -1130,6 +1187,17 @@ export class Coordinator {
     );
     return this.db.transaction(async (client) => {
       const context = await executionContext(client, id);
+      if (
+        context.definition.sessionPlan?.external &&
+        ['browser.auth.save', 'browser.identity.prepare'].includes(
+          operation.type,
+        )
+      )
+        throw new ApiError(
+          403,
+          'EXTERNAL_ACCOUNT_SAVE_FORBIDDEN',
+          '外部账号仅限本次租约，不允许保存或切换登录配方',
+        );
       if (
         operation.type === 'browser.auth.save' &&
         context.definition.sessionPlan?.library &&
@@ -1718,6 +1786,33 @@ export class Coordinator {
         row.kind === 'session.open' &&
         event.operationStatus === 'SUCCEEDED'
       ) {
+        // 节点成功启动不等于注入了正确材料；公开回执必须绑定原会话与租约。
+        if (
+          request.command.type === 'session.open' &&
+          request.command.externalAccount
+        ) {
+          const proof = event.data?.environmentProof as
+            Record<string, unknown> | undefined;
+          const actual = proof?.externalAccount as
+            Record<string, unknown> | undefined;
+          const expected = request.command.externalAccount;
+          if (
+            proof?.sessionId !== request.sessionId ||
+            proof?.initialState !== 'external' ||
+            actual?.leaseId !== expected.leaseId ||
+            actual?.materialVersion !== expected.materialVersion ||
+            actual?.origin !== expected.origin ||
+            actual?.ttlMs !== expected.ttlMs
+          ) {
+            await stopExecution(
+              client,
+              context,
+              'ERROR',
+              'EXTERNAL_ACCOUNT_PROOF_MISMATCH',
+            );
+            return;
+          }
+        }
         await client.query(
           "UPDATE pr_sessions SET state='ACTIVE' WHERE id=$1 AND state='OPENING'",
           [context.session_id],
@@ -1806,6 +1901,7 @@ export class Coordinator {
         'DATABASE_UNAVAILABLE',
         'Database ownership unavailable',
       );
+    this.externalAccounts.kick();
     await this.expire();
     await this.deliver();
   }
@@ -1817,7 +1913,7 @@ export class Coordinator {
     );
     const expired = await this.db.query(
       `SELECT e.id FROM pr_executions e JOIN pr_tasks t ON t.id=e.task_id
-      WHERE e.state IN ('STARTING','RUNNING') AND (e.lease_expires_at<=clock_timestamp() OR t.cleanup_deadline_at<=clock_timestamp() OR (e.control_mode<>'AUTO' AND e.human_deadline_at<=clock_timestamp()) OR (e.control_mode='AUTO' AND t.deadline_at<=clock_timestamp())) LIMIT $1`,
+      WHERE e.state IN ('STARTING','RUNNING') AND (EXISTS(SELECT 1 FROM pr_sessions s WHERE s.execution_id=e.id AND s.external_expires_at<=clock_timestamp()) OR e.lease_expires_at<=clock_timestamp() OR t.cleanup_deadline_at<=clock_timestamp() OR (e.control_mode<>'AUTO' AND e.human_deadline_at<=clock_timestamp()) OR (e.control_mode='AUTO' AND t.deadline_at<=clock_timestamp())) LIMIT $1`,
       [BATCH_SIZE],
     );
     for (const row of expired.rows)
@@ -1947,6 +2043,21 @@ export class Coordinator {
         return envelope;
       });
       if (command) {
+        if (
+          command.command.type === 'session.open' &&
+          command.command.externalAccount
+        ) {
+          const task = (
+            await this.db.query<{ task_id: string }>(
+              'SELECT task_id FROM pr_executions WHERE id=$1',
+              [row.execution_id],
+            )
+          ).rows[0]!;
+          if (
+            !(await this.externalAccounts.attach(task.task_id, command.command))
+          )
+            continue;
+        }
         if (
           command.command.type === 'session.open' &&
           command.command.authState?.fullProfile &&

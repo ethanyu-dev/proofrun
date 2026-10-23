@@ -426,13 +426,133 @@ export type IdentityCheck = {
  * 只声明身份引用与条件，禁止携带密码或 Cookie；guest 不恢复认证。
  */
 export type SessionRequest = {
-  mode: 'guest' | 'manual' | 'identity' | 'pool' | 'auto';
+  mode: 'guest' | 'manual' | 'identity' | 'pool' | 'auto' | 'external';
   identityRef?: string;
   poolRef?: string;
   /**
    * @maxItems 32
    */
   requirements?: IdentityCheck[];
+  external?: ExternalAccountSelector;
+};
+/**
+ * 外部账号的无秘密选择条件；地址和密钥仅由部署配置提供。
+ */
+export type ExternalAccountSelector = (
+  | {
+      poolId: string;
+      [k: string]: unknown;
+    }
+  | {
+      accountId: string;
+      [k: string]: unknown;
+    }
+) & {
+  provider: string;
+  platform: string;
+  poolId?: string;
+  accountId?: string;
+  /**
+   * @maxItems 32
+   */
+  roles?: string[];
+};
+/**
+ * 平台冻结的非敏感身份候选；分配在领取事务内完成，凭据只在节点解析。
+ */
+export type SessionPlan = {
+  version: 1;
+  mode: 'guest' | 'manual' | 'identity' | 'pool' | 'external';
+  /**
+   * @maxItems 256
+   */
+  candidates: {
+    id: string;
+    label: string;
+    accountKey: string;
+    nodeId?: string;
+    stateId?: string;
+    /**
+     * @maxItems 16
+     */
+    origins:
+      | []
+      | [string]
+      | [string, string]
+      | [string, string, string]
+      | [string, string, string, string]
+      | [string, string, string, string, string]
+      | [string, string, string, string, string, string]
+      | [string, string, string, string, string, string, string]
+      | [string, string, string, string, string, string, string, string]
+      | [string, string, string, string, string, string, string, string, string]
+      | [string, string, string, string, string, string, string, string, string, string]
+      | [string, string, string, string, string, string, string, string, string, string, string]
+      | [string, string, string, string, string, string, string, string, string, string, string, string]
+      | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+      | [string, string, string, string, string, string, string, string, string, string, string, string, string, string]
+      | [
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+        ]
+      | [
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+        ];
+    /**
+     * @maxItems 32
+     */
+    checks: IdentityCheck[];
+    loginRef?: string;
+    maxConcurrent: number;
+    libraryVersion?: string;
+    description?: string;
+    identityType?: string;
+    url?: string;
+  }[];
+  /**
+   * @maxItems 32
+   */
+  requirements: IdentityCheck[];
+  preparationMs: number;
+  /**
+   * 使用页面身份库和完整 profile；选择由独立身份 Agent 完成。
+   */
+  library?: boolean;
+  selection?: 'pending' | 'selected' | 'human';
+  selectionReason?: string;
+  external?: {
+    selector: ExternalAccountSelector;
+    origin: string;
+    durationSeconds: number;
+  };
 };
 /**
  * 平台内部执行报告；外部读取 CaseResult。结构有效不代表业务判断已被独立证实。
@@ -559,7 +679,7 @@ export interface TaskDetail {
    */
   queueReason?: null | QueueReason;
   identity?: {
-    mode: 'guest' | 'manual' | 'identity' | 'pool';
+    mode: 'guest' | 'manual' | 'identity' | 'pool' | 'external';
     identityRef: string | null;
     label: string | null;
     leaseState: 'NOT_REQUIRED' | 'WAITING' | 'OCCUPIED' | 'RELEASED';
@@ -575,6 +695,15 @@ export interface TaskDetail {
       reason: string;
       count: number;
     }[];
+    external?: {
+      requestId: string;
+      leaseId: string | null;
+      accountId: string | null;
+      materialVersion: string | null;
+      expiresAt: string | null;
+      state: string;
+      reason: string | null;
+    };
   };
   executionOutcome?: ExecutionOutcome;
 }
@@ -700,98 +829,6 @@ export interface VerificationCaseV2 {
     }[];
   }[];
   session?: SessionRequest;
-}
-/**
- * 平台冻结的非敏感身份候选；分配在领取事务内完成，凭据只在节点解析。
- */
-export interface SessionPlan {
-  version: 1;
-  mode: 'guest' | 'manual' | 'identity' | 'pool';
-  /**
-   * @maxItems 256
-   */
-  candidates: {
-    id: string;
-    label: string;
-    accountKey: string;
-    nodeId?: string;
-    stateId?: string;
-    /**
-     * @maxItems 16
-     */
-    origins:
-      | []
-      | [string]
-      | [string, string]
-      | [string, string, string]
-      | [string, string, string, string]
-      | [string, string, string, string, string]
-      | [string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string, string, string, string, string, string]
-      | [
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-        ]
-      | [
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-        ];
-    /**
-     * @maxItems 32
-     */
-    checks: IdentityCheck[];
-    loginRef?: string;
-    maxConcurrent: number;
-    libraryVersion?: string;
-    description?: string;
-    identityType?: string;
-    url?: string;
-  }[];
-  /**
-   * @maxItems 32
-   */
-  requirements: IdentityCheck[];
-  preparationMs: number;
-  /**
-   * 使用页面身份库和完整 profile；选择由独立身份 Agent 完成。
-   */
-  library?: boolean;
-  selection?: 'pending' | 'selected' | 'human';
-  selectionReason?: string;
 }
 export interface ExecutionDetails {
   /**
@@ -1000,7 +1037,8 @@ export interface QueueReason {
     | 'NODE_ROTATING'
     | 'SESSION_BUDGET_UNSUPPORTED'
     | 'IDENTITY_BUSY'
-    | 'IDENTITY_UNAVAILABLE';
+    | 'IDENTITY_UNAVAILABLE'
+    | 'EXTERNAL_ACCOUNT_WAIT';
   message: string;
 }
 /**

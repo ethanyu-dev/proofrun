@@ -301,6 +301,45 @@ export interface OpenSession {
       httpOnly: boolean;
     }[];
   };
+  /**
+   * 外部账号期限锚定 leaseRequestId 的节点单调时钟，不受人工续期延长。
+   */
+  externalAccount?: {
+    leaseId: string;
+    materialVersion: string;
+    origin: string;
+    ttlMs: number;
+  };
+  /**
+   * 只在私密节点投递中附加，不得写入命令账本。
+   *
+   * @minItems 1
+   * @maxItems 64
+   */
+  externalCookies?: [
+    {
+      name: string;
+      value: string;
+      domain: string;
+      host_only: true;
+      path: string;
+      secure: boolean;
+      http_only: boolean;
+      same_site: 'Strict' | 'Lax' | 'None';
+      expires_at: string | null;
+    },
+    ...{
+      name: string;
+      value: string;
+      domain: string;
+      host_only: true;
+      path: string;
+      secure: boolean;
+      http_only: boolean;
+      same_site: 'Strict' | 'Lax' | 'None';
+      expires_at: string | null;
+    }[],
+  ];
 }
 /**
  * 延长仍然有效的会话租约，不排在浏览器操作队列后。

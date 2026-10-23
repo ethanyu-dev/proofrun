@@ -60,6 +60,8 @@ export interface ExecutionContext {
   fence: string;
   /** 只有核实关闭或确认创建前拒绝才允许释放容量。 */
   closure_verified: boolean;
+  /** 外部账号已扣除关闭余量的不可延长期限。 */
+  external_expires_at?: Date | null;
 }
 
 /** 写入路径多表一起加锁；状态快照使用 MVCC 读取，不能排队占满连接池并阻塞续期。 */
@@ -72,7 +74,7 @@ export async function executionContext(
     `
     SELECT e.id,e.task_id,e.token_hash,e.lease_expires_at,e.state AS execution_state,e.action_count,e.budget_state,e.control_mode,e.control_revision,e.control_reason,e.auth_revision,e.human_requested_at,e.human_deadline_at,
       t.definition,t.state AS task_state,t.deadline_at,t.cleanup_deadline_at,
-      s.id AS session_id,s.state AS session_state,s.node_id,s.node_epoch,s.lease_id,s.fence,s.closure_verified
+      s.id AS session_id,s.state AS session_state,s.node_id,s.node_epoch,s.lease_id,s.fence,s.closure_verified,s.external_expires_at
     FROM pr_executions e JOIN pr_tasks t ON t.id=e.task_id JOIN pr_sessions s ON s.execution_id=e.id
     WHERE e.id=$1${options.lock === false ? '' : ' FOR UPDATE OF e,t,s'}`,
     [id],
@@ -213,6 +215,10 @@ export async function releaseSession(
 ): Promise<void> {
   await client.query(
     "UPDATE pr_sessions SET state='CLOSED',closure_verified=true,closed_at=clock_timestamp() WHERE id=$1",
+    [context.session_id],
+  );
+  await client.query(
+    "UPDATE pr_external_accounts SET state='RELEASE_PENDING',retry_at=clock_timestamp() WHERE session_id=$1 AND state<>'RELEASED'",
     [context.session_id],
   );
   await client.query(

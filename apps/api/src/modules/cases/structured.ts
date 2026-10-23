@@ -1,5 +1,14 @@
+import {
+  ACCOUNT_HUMAN_MARGIN_MS,
+  ACCOUNT_CLOSE_MARGIN_MS,
+  ACCOUNT_MAX_SECONDS,
+} from '../account-providers/policy.js';
 import { resolveExecutionPlan } from './execution-plan.js';
-import { resolveSession, type IdentityCatalog } from '../identities/catalog.js';
+import {
+  resolveSession,
+  PREPARATION_MS,
+  type IdentityCatalog,
+} from '../identities/catalog.js';
 import {
   compileStepBudget,
   compileProfilePlan,
@@ -128,9 +137,36 @@ export function compileCase(
     }
   }
   const budget = businessBudget(stepBudget);
+  if (sessionPlan.external) {
+    if (profile.environment.auth)
+      throw new ApiError(
+        422,
+        'EXTERNAL_ACCOUNT_AUTH_CONFLICT',
+        '外部账号不能同时恢复本地登录槽',
+      );
+    // 五分钟人工余量及三十秒关闭余量不改变业务步骤额度；超过上限需拆分。
+    const duration = Math.ceil(
+      (budget.timeoutMs +
+        PREPARATION_MS +
+        stepBudget.settleMs * businessSteps.length +
+        (cleanupSteps.length ? stepBudget.cleanup.timeoutMs : 0) +
+        ACCOUNT_HUMAN_MARGIN_MS +
+        ACCOUNT_CLOSE_MARGIN_MS) /
+        1000,
+    );
+    if (duration > ACCOUNT_MAX_SECONDS)
+      throw new ApiError(
+        422,
+        'EXTERNAL_ACCOUNT_BUDGET',
+        '外部账号最长两小时，请拆分 Case',
+      );
+    sessionPlan.external.durationSeconds = Math.max(60, duration);
+  }
   if (
     budget.timeoutMs +
-      (sessionPlan.candidates.length || sessionPlan.library
+      (sessionPlan.candidates.length ||
+      sessionPlan.library ||
+      sessionPlan.external
         ? sessionPlan.preparationMs
         : 0) +
       stepBudget.settleMs * businessSteps.length +
