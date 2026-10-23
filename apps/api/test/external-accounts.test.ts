@@ -126,7 +126,9 @@ test(
     await admin.query(`CREATE DATABASE ${name}`);
     const url = new URL(process.env.PROOFRUN_TEST_DATABASE_URL);
     url.pathname = `/${name}`;
-    const sql = new pg.Pool({ connectionString: url.toString() });
+    // 夹具顺序查询使用单连接；Client.end 等待 socket 关闭，避免 Pool.end 返回后删库仍踢到旧连接。
+    const sql = new pg.Client({ connectionString: url.toString() });
+    await sql.connect();
     const directory = await mkdtemp(join(tmpdir(), 'proofrun-external-'));
     const fixture = await devPassFixture(directory);
     const config: ApiConfig = {
@@ -552,7 +554,8 @@ test(
       await app.close();
       await fixture.close();
       await sql.end();
-      await admin.query(`DROP DATABASE ${name} WITH (FORCE)`);
+      // 关闭不完整应暴露资源泄漏，不能强制断连制造清理阶段的异步错误。
+      await admin.query(`DROP DATABASE ${name}`);
       await admin.end();
       await rm(directory, { recursive: true, force: true });
     }
