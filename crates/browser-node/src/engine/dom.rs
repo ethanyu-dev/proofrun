@@ -1,6 +1,8 @@
 //! 通过会话私有 CDP 连接读取原生 DOM；元素身份绑定实际 backend node，不按名称重找替代节点。
 #[path = "dom_cookies.rs"]
 mod cookie_cleanup;
+#[path = "dom_inspection.rs"]
+mod inspection;
 #[path = "dom_network.rs"]
 mod network_capture;
 use crate::error::{Fault, Result};
@@ -509,6 +511,11 @@ impl Dom {
                         parent = nodes["parentIndex"][parent as usize].as_i64().unwrap_or(-1);
                     }
                 }
+                let mut candidates =
+                    inspection::candidates(nodes, strings, &visible, &clicks, &scroll_containers);
+                let mut inspections = self
+                    .inspect_controls(&session, context, nodes, &candidates)
+                    .await?;
                 for (i, name) in names.iter().enumerate() {
                     if !visible.contains(&i) {
                         continue;
@@ -522,43 +529,15 @@ impl Dom {
                         }
                         continue;
                     }
-                    // CDP 还列出 ::before/::after 布局节点；它们不是可独立解析和操作的 DOM 元素。
-                    if tag.starts_with('#')
-                        || tag.starts_with("::")
-                        || ["script", "style", "head"].contains(&tag.as_str())
-                    {
+                    let Some(control) = candidates.remove(&i) else {
                         continue;
-                    }
-                    let attrs = nodes["attributes"][i]
-                        .as_array()
-                        .map(|items| {
-                            items
-                                .chunks(2)
-                                .filter(|p| p.len() == 2)
-                                .map(|p| (string(&p[0]), string(&p[1])))
-                                .collect::<HashMap<_, _>>()
-                        })
-                        .unwrap_or_default();
-                    let role = attrs
-                        .get("role")
-                        .cloned()
-                        .unwrap_or_else(|| match tag.as_str() {
-                            "input" => {
-                                match attrs.get("type").map(String::as_str).unwrap_or("text") {
-                                    "checkbox" => "checkbox",
-                                    "radio" => "radio",
-                                    "button" | "submit" => "button",
-                                    _ => "textbox",
-                                }
-                                .into()
-                            }
-                            "textarea" => "textbox".into(),
-                            "select" => "combobox".into(),
-                            "a" => "link".into(),
-                            "iframe" => "iframe".into(),
-                            "button" | "option" => tag.clone(),
-                            _ => "element".into(),
-                        });
+                    };
+                    let inspection::Control {
+                        attrs,
+                        role,
+                        native_control,
+                        clickable,
+                    } = control;
                     let mut label = captions.get(&i).cloned().unwrap_or_default();
                     if tag == "input" || tag == "textarea" || tag == "select" {
                         let parent = nodes["parentIndex"][i].as_u64().map(|n| n as usize);
@@ -600,33 +579,7 @@ impl Dom {
                     } else {
                         field
                     };
-                    let native_control = [
-                        "input", "textarea", "select", "button", "a", "option", "summary", "iframe",
-                    ]
-                    .contains(&tag.as_str());
-                    let clickable = CONTROL_ROLES.contains(&role.as_str())
-                        || (clicks.contains(&i)
-                            && !["html", "body", "svg", "path"].contains(&tag.as_str()));
-                    let interactive = native_control
-                        || clickable
-                        || scroll_containers.contains(&i)
-                        || attrs.get("contenteditable").is_some_and(|v| v != "false");
-                    if !interactive
-                        || attrs
-                            .get("type")
-                            .is_some_and(|t| ["file", "hidden"].contains(&t.as_str()))
-                    {
-                        continue;
-                    }
-                    let resolved = self
-                        .call(
-                            Some(&session),
-                            "DOM.resolveNode",
-                            json!({"backendNodeId":nodes["backendNodeId"][i],"executionContextId":context}),
-                        )
-                        .await?;
-                    let object_id = resolved["object"]["objectId"].clone();
-                    let inspected = self.inspect(&session, &object_id).await?;
+                    let (object_id, inspected) = inspections.remove(&i).ok_or_else(fault)?;
                     let Some(facts) = inspected_facts(&inspected) else {
                         // 异常和未知不能计作隐藏；本轮不授予动作身份，由覆盖信息提示重新采集。
                         inspection_errors += 1;
@@ -719,7 +672,7 @@ impl Dom {
                         .unwrap_or(&name);
                     let name: String = name.chars().take(512).collect();
                     let value: String = value.chars().take(2048).collect();
-                    let marker = if interactive {
+                    let marker = {
                         let id = format!("dom-{}", self.targets.len() + 1);
                         // 比较身份绑定文档、frame 和实际节点；公开动作仍只接受本次 target。
                         let comparison_key = hex::encode(Sha256::digest(format!(
@@ -749,8 +702,6 @@ impl Dom {
                         );
                         descriptors.push(descriptor);
                         format!(" [target={id}]")
-                    } else {
-                        String::new()
                     };
                     push_bounded(
                         &mut text,
