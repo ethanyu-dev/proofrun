@@ -15,7 +15,7 @@ import { interventionToken } from '../scheduling/hitl-token.js';
 import { Coordinator } from '../scheduling/coordinator.js';
 import { NodeGateway } from '../nodes/gateway.js';
 import { validateHitlNavigation } from './navigation.js';
-import { sendHitlMessage } from './transport.js';
+import { discardHitlFrame, sendHitlMessage } from './transport.js';
 
 /** 画面独立于持久命令，丢弃慢客户端旧帧；输入严格串行且不自动重试。 */
 const FRAME_LIMIT = 2 * 1024 * 1024;
@@ -158,6 +158,7 @@ export class HitlService {
     sendHitlMessage(socket, value);
   }
   private end(viewer: Viewer): void {
+    discardHitlFrame(viewer.socket);
     clearInterval(viewer.timer);
     if (this.viewers.get(viewer.grant.id) === viewer)
       this.viewers.delete(viewer.grant.id);

@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { compileStepBudget } from '../../contracts/dist/index.js';
+import {
+  compileProfilePlan,
+  compileStepBudget,
+} from '../../contracts/dist/index.js';
 import { execute } from '../../apps/agent/dist/execution/runner.js';
 import { ChatModel } from '../../apps/agent/dist/model/chat.js';
 import { JevModel } from '../../apps/agent/dist/model/jev.js';
@@ -91,6 +94,152 @@ function scripted(decide = finish) {
       };
     },
   };
+}
+
+/** 模拟身份准备页与业务分组页分离；认证代次变化遵循控制面协议，不连接真实浏览器。 */
+class PreparedProfileControl extends PageControl {
+  /** 认证版本独立于人工控制权版本，首次自动准备也会推进。 */
+  authRevision = 0;
+  /** 每个分组首次访问从空白页开始，不能借用身份准备页的地址。 */
+  pages = new Map();
+  /** 交还时只确认实际请求的事项。 */
+  confirmation;
+
+  /** 同时暴露两种代次，避免把自动准备误当成人工交还。 */
+  async view(execution) {
+    return {
+      ...(await super.view(execution)),
+      authRevision: this.authRevision,
+      humanConfirmation: this.confirmation,
+    };
+  }
+
+  /** 身份准备只更新未分组页面，分组导航必须实际派发才改变本组地址。 */
+  async command(execution, id, operation, ...rest) {
+    if (operation.tabScope)
+      this.url = this.pages.get(operation.tabScope) ?? 'about:blank';
+    const result = await super.command(execution, id, operation, ...rest);
+    if (operation.type === 'browser.identity.prepare') {
+      assert.equal(operation.tabScope, undefined);
+      this.authRevision++;
+      this.url = operation.url;
+      result.data = {
+        status: 'LOADED',
+        source: 'profile',
+        reasonCode: 'NODE_TEMPLATE_LOADED',
+      };
+    }
+    if (operation.tabScope) this.pages.set(operation.tabScope, this.url);
+    return result;
+  }
+
+  /** 在交出控制权的时刻检查目标页，后续模型断言不能掩盖空白页交接。 */
+  async intervene(...args) {
+    assert.equal(
+      this.url,
+      args[0].task.target.url,
+      '交接前必须已导航到本组入口',
+    );
+    await super.intervene(...args);
+  }
+
+  /** 模拟人工改变地址与身份后交还，供后续观察确认没有多余导航。 */
+  async acknowledge() {
+    await super.acknowledge();
+    this.authRevision++;
+    this.pages.set('group-1', this.url);
+    this.confirmation = {
+      revision: this.revision,
+      authRevision: this.authRevision,
+      items: this.requestedItems.at(-1),
+    };
+  }
+}
+
+// 范围：自动身份准备推进认证代次后仍打开独立分组页，人工交还不覆盖当前页面；不验收真实登录或节点标签页实现。
+for (const selection of ['human', 'selected']) {
+  test(`身份准备后保留分组首次导航（${selection}）`, async () => {
+    const execution = caseGrant([
+      'http://intranet.test/referral',
+      'http://intranet.test/referral',
+    ]);
+    execution.task.target.url = execution.task.steps[0].url;
+    execution.task.steps[0].type = 'setup';
+    execution.task.steps[0].expected = [];
+    execution.task.acceptanceCriteria.shift();
+    execution.task.profilePlan = compileProfilePlan(execution.task.steps);
+    execution.task.stepBudget = compileStepBudget(execution.task);
+    execution.task.environment.allowIntervention = true;
+    execution.task.executionPlan = {
+      version: 1,
+      environment: {
+        mode: 'configured',
+        source: 'default',
+        basis: [],
+        resolverVersion: 1,
+      },
+      evidenceKinds: ['DOM'],
+    };
+    execution.task.sessionPlan = {
+      version: 1,
+      mode: 'identity',
+      library: true,
+      selection,
+      selectionReason: '需要人工准备测试账号',
+      preparationMs: 120000,
+      requirements: [],
+      candidates: [
+        {
+          id: 'fixture',
+          label: '测试账号',
+          accountKey: 'fixture',
+          origins: ['http://intranet.test'],
+          checks: [],
+          maxConcurrent: 1,
+        },
+      ],
+    };
+    const client = new PreparedProfileControl();
+    const report = await execute(
+      { ...config, executionPolicy: 'planned-v1' },
+      client,
+      {
+        async decide(input) {
+          const context = JSON.parse(input.text);
+          assert.equal(
+            context.observation.url,
+            selection === 'human'
+              ? 'http://intranet.test/zh/referral'
+              : execution.task.target.url,
+          );
+          const { workflow, ...decision } = finish(context);
+          return { decision, workflow, promptTokens: 0, completionTokens: 0 };
+        },
+      },
+      execution,
+    );
+    assert.equal(report.verdict, 'PASSED', JSON.stringify(report));
+    assert.equal(client.requestedItems.length, selection === 'human' ? 1 : 0);
+    assert.deepEqual(
+      client.calls
+        .filter((c) => c.operation.action === 'navigate')
+        .map((c) => c.operation),
+      [
+        {
+          type: 'browser.act',
+          action: 'navigate',
+          target: execution.task.target.url,
+          tabScope: 'group-1',
+        },
+      ],
+    );
+    if (selection === 'human')
+      assert(
+        client.calls
+          .slice(client.handoffs[0])
+          .every((c) => c.operation.type === 'browser.observe'),
+      );
+  });
 }
 
 // 范围：关键填写回执不会被观察/滚动挤掉，不保留输入值且超限标记省略；不验证真实字段值或业务提示。
@@ -257,23 +406,25 @@ test('人工完成后保留团队与语言，后续步骤收到确认事实但�
 });
 
 // 范围：交接早于首次导航时也保留人工页面；控制事件由夹具生成，不覆盖浏览器重启恢复。
-test('初始导航前已交还人工页面时不会再次打开目标网址', async () => {
-  const execution = caseGrant(['http://intranet.test/referral']);
-  const client = new PageControl();
-  await client.acknowledge();
-  const report = await execute(
-    config,
-    client,
-    scripted((context) => {
-      assert.equal(context.observation.url, client.url);
-      assert.match(context.observation.text, /人工准备好的页面/);
-      return finish(context);
-    }),
-    execution,
-  );
-  assert.equal(report.verdict, 'PASSED');
-  assert.equal(report.executionDetails.actions, 0);
-});
+for (const executionPolicy of [undefined, 'planned-v1']) {
+  test(`初始导航前已交还人工页面时不会再次打开目标网址（${executionPolicy ?? 'legacy'}）`, async () => {
+    const execution = caseGrant(['http://intranet.test/referral']);
+    const client = new PageControl();
+    await client.acknowledge();
+    const report = await execute(
+      { ...config, executionPolicy },
+      client,
+      scripted((context) => {
+        assert.equal(context.observation.url, client.url);
+        assert.match(context.observation.text, /人工准备好的页面/);
+        return finish(context);
+      }),
+      execution,
+    );
+    assert.equal(report.verdict, 'PASSED');
+    assert.equal(report.executionDetails.actions, 0);
+  });
+}
 
 // 范围：不同目标仍能进入，已到达的目标及站点重定向页面不会重复加载；不推断真实站点重定向规则。
 test('步骤明确更换网址时按需导航，同入口保留重定向后的页面', async () => {

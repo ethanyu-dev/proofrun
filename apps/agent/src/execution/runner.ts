@@ -685,8 +685,9 @@ class Execution {
           this.navigation = new NavigationMemory();
           if (!this.grant.task.executionPlan || authChanged)
             this.invalidateReadiness();
-          // 人工交还的是同一会话的当前页面；旧观察失效，但不能用导航覆盖处理结果。
-          this.pendingNavigation = undefined;
+          // 控制代次变化才表示交还页面；自动身份准备也会推进认证代次，
+          // 此时分组标签页可能尚为空白，不能取消其首次导航。旧观察和计划仍须失效。
+          if (changed) this.pendingNavigation = undefined;
           this.current = undefined;
           this.image = undefined;
           this.settlePending = false;
