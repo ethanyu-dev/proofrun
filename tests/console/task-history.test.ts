@@ -3,7 +3,6 @@ import test from 'node:test';
 import { createRequire } from 'node:module';
 import { Window } from 'happy-dom';
 import { ApiClient } from '../../apps/console/src/api.ts';
-import { TaskDelete } from '../../apps/console/src/components/task-delete.tsx';
 import { CaseRunHistory } from '../../apps/console/src/components/case-run-history.tsx';
 
 /** 使用 Console 的 React 与 DOM 夹具；所有 HTTP 均在测试内替换。 */
@@ -12,8 +11,8 @@ const require = createRequire(
 );
 const { createElement, act } = require('react');
 
-// 范围：确认、冻结批次、失败提示、成功刷新、历史深链接与运行中禁删；不证明真实数据库或视觉布局。
-test('软删除确认只提交冻结选择，历史运行链接固定身份', async (context) => {
+// 范围：历史运行深链接、当前运行标识及删除入口移除；使用模拟 HTTP，不证明真实数据库或视觉布局。
+test('历史运行链接固定身份且不提供删除入口', async (context) => {
   const window = new Window({ url: 'http://localhost/#/tasks' });
   const globals = {
     window,
@@ -39,8 +38,6 @@ test('软删除确认只提交冻结选择，历史运行链接固定身份', as
   const root = createRoot(container);
   const api = new ApiClient('fixture');
   const calls: { path: string; body: unknown }[] = [];
-  let fail = true;
-  let refreshed = 0;
   context.mock.method(
     api,
     'json',
@@ -65,39 +62,10 @@ test('软删除确认只提交冻结选择，历史运行链接固定身份', as
             },
           ],
         };
-      if (fail) throw new Error('会话尚未关闭');
-      return { deletedTaskIds: ['one', 'two'] };
+      throw new Error(`未预期的请求：${path}`);
     },
   );
-  const button = (label: string) =>
-    [...container.querySelectorAll('button')].find(
-      (b) => b.textContent === label,
-    )!;
-  const props = {
-    api,
-    ids: ['one', 'two'],
-    onDeleted: () => {
-      refreshed++;
-    },
-  };
   try {
-    await act(async () => root.render(createElement(TaskDelete, props)));
-    await act(async () => button('删除选中（2）').click());
-    assert.equal(calls.length, 0);
-    await act(async () =>
-      root.render(createElement(TaskDelete, { ...props, ids: ['third'] })),
-    );
-    await act(async () => button('确认删除').click());
-    assert.deepEqual(calls[0], {
-      path: '/v1/tasks/delete',
-      body: { ids: ['one', 'two'] },
-    });
-    assert.match(container.textContent!, /会话尚未关闭/);
-    assert.equal(refreshed, 0);
-    fail = false;
-    await act(async () => button('确认删除').click());
-    assert.equal(refreshed, 1);
-    assert.equal(container.querySelector('.confirm-panel'), null);
     await act(async () =>
       root.render(
         createElement(CaseRunHistory, {
@@ -112,8 +80,8 @@ test('软删除确认只提交冻结选择，历史运行链接固定身份', as
     assert.ok(container.querySelector('a[href="#/tasks/case-run-second"]'));
     assert.ok(container.querySelector('a[href="#/reports/case-v2-stable"]'));
     const rows = container.querySelectorAll('li');
-    assert.equal(rows[0]!.querySelector('button')!.disabled, true);
-    assert.equal(rows[1]!.querySelector('button')!.disabled, false);
+    assert.equal(container.querySelector('button'), null);
+    assert.doesNotMatch(container.textContent!, /删除/);
     assert.match(rows[1]!.textContent!, /当前查看/);
   } finally {
     await act(async () => root.unmount());

@@ -1,4 +1,3 @@
-import { TaskDelete } from '../components/task-delete';
 import { useListProgress } from '../use-list-progress';
 import { useState, type FormEvent } from 'react';
 import type { TaskList } from '@proofrun/contracts';
@@ -36,7 +35,6 @@ export function TaskListPage({
   reports?: boolean;
   ungrouped?: boolean;
 }) {
-  const [selected, setSelected] = useState<string[]>([]);
   const [state, setState] = useState('');
   const [draft, setDraft] = useState('');
   const [search, setSearch] = useState('');
@@ -53,15 +51,6 @@ export function TaskListPage({
     `/v1/tasks?${params}`,
     cursors.length === 1,
   );
-  const eligible =
-    resource.data?.tasks
-      .filter((task) => !['QUEUED', 'RUNNING'].includes(task.state))
-      .map((task) => task.id) ?? [];
-  const chosen = selected.filter((id) => eligible.includes(id));
-  const deleted = () => {
-    setSelected([]);
-    resource.refresh();
-  };
   const progress = useListProgress(
     api,
     resource.data,
@@ -125,7 +114,6 @@ export function TaskListPage({
           </select>
         </label>
       </div>
-      <TaskDelete api={api} ids={chosen} onDeleted={deleted} />
       <RefreshBar {...resource} />
       <ErrorNotice message={resource.error} />
       {progress.error && (
@@ -161,18 +149,6 @@ export function TaskListPage({
             </caption>
             <thead>
               <tr>
-                <th>
-                  <input
-                    type="checkbox"
-                    aria-label="选择本页已结束运行"
-                    checked={
-                      !!eligible.length && chosen.length === eligible.length
-                    }
-                    onChange={(e) =>
-                      setSelected(e.target.checked ? eligible : [])
-                    }
-                  />
-                </th>
                 <th>验证目标</th>
                 {reports ? (
                   <>
@@ -194,21 +170,6 @@ export function TaskListPage({
             <tbody>
               {resource.data.tasks.map((task) => (
                 <tr key={task.id}>
-                  <td>
-                    <input
-                      type="checkbox"
-                      aria-label={`选择运行 ${task.id}`}
-                      disabled={!eligible.includes(task.id)}
-                      checked={chosen.includes(task.id)}
-                      onChange={(e) =>
-                        setSelected(
-                          e.target.checked
-                            ? [...chosen, task.id]
-                            : chosen.filter((id) => id !== task.id),
-                        )
-                      }
-                    />
-                  </td>
                   <td className="task-cell">
                     <a
                       className="task-link"
@@ -273,12 +234,6 @@ export function TaskListPage({
                   )}
                   <td className="task-actions-cell">
                     <div className="task-list-actions">
-                      <TaskDelete
-                        api={api}
-                        ids={[task.id]}
-                        disabled={!eligible.includes(task.id)}
-                        onDeleted={deleted}
-                      />
                       <a
                         className="button button-secondary button-small"
                         href={`#/${reports ? 'reports' : 'tasks'}/${encodeURIComponent(task.id)}`}
