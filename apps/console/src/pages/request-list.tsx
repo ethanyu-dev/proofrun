@@ -1,4 +1,3 @@
-import { TaskDelete } from '../components/task-delete';
 import { RequestPreview } from '../components/request-preview';
 import { useState, type FormEvent } from 'react';
 import type { RequestList } from '@proofrun/contracts';
@@ -21,7 +20,6 @@ export function RequestListPage({
   api: ApiClient;
   reports?: boolean;
 }) {
-  const [selected, setSelected] = useState<string[]>([]);
   const [draft, setDraft] = useState('');
   const [search, setSearch] = useState('');
   const [state, setState] = useState('');
@@ -35,15 +33,6 @@ export function RequestListPage({
     `/v2/requests?${params}`,
     cursors.length === 1,
   );
-  const eligible =
-    resource.data?.requests
-      .filter((r) => r.executionStatus === 'FINISHED')
-      .map((r) => r.requestId) ?? [];
-  const chosen = selected.filter((id) => eligible.includes(id));
-  const deleted = () => {
-    setSelected([]);
-    resource.refresh();
-  };
   const submit = (event: FormEvent) => {
     event.preventDefault();
     setSearch(draft.trim());
@@ -90,16 +79,6 @@ export function RequestListPage({
         </label>
       </div>
       <div className="page-actions">
-        <label>
-          <input
-            type="checkbox"
-            aria-label="选择本页已结束请求"
-            checked={!!eligible.length && chosen.length === eligible.length}
-            onChange={(e) => setSelected(e.target.checked ? eligible : [])}
-          />
-          选择本页已结束请求
-        </label>
-        <TaskDelete api={api} ids={chosen} requests onDeleted={deleted} />
         <a href={reports ? '#/reports/executions' : '#/tasks/executions'}>
           查看全部运行明细
         </a>
@@ -115,26 +94,6 @@ export function RequestListPage({
           {resource.data.requests.map((value) => (
             <article className="request-list-card" key={value.requestId}>
               <header className="request-card-heading">
-                <input
-                  type="checkbox"
-                  aria-label={`选择请求 ${value.requestId}`}
-                  disabled={!eligible.includes(value.requestId)}
-                  checked={chosen.includes(value.requestId)}
-                  onChange={(e) =>
-                    setSelected(
-                      e.target.checked
-                        ? [...chosen, value.requestId]
-                        : chosen.filter((id) => id !== value.requestId),
-                    )
-                  }
-                />
-                <TaskDelete
-                  api={api}
-                  ids={[value.requestId]}
-                  requests
-                  disabled={!eligible.includes(value.requestId)}
-                  onDeleted={deleted}
-                />
                 <div className="request-card-title">
                   <h2>
                     <a

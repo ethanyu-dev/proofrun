@@ -1,7 +1,6 @@
 import type { ApiClient } from '../api';
 import { useResource } from '../use-resource';
 import { ErrorNotice, Status, time } from './ui';
-import { TaskDelete } from './task-delete';
 
 /** 每条历史链接固定运行身份；新运行出现后旧报告入口仍指向原记录。 */
 export function CaseRunHistory({
@@ -19,7 +18,7 @@ export function CaseRunHistory({
       runId: string;
       /** 主组详情与报告的固定路由身份。 */
       taskId: string;
-      /** 生命周期只决定操作可用性，不表示验收通过。 */
+      /** 生命周期用于展示执行状态，不表示验收通过。 */
       state: string;
       /** 本次运行的提交时间，用于区分历次执行。 */
       createdAt: string;
@@ -44,15 +43,6 @@ export function CaseRunHistory({
             <Status value={run.state} />{' '}
             {run.taskId === taskId && <span>当前查看</span>}{' '}
             <a href={`#/reports/${encodeURIComponent(run.taskId)}`}>查看报告</a>
-            <TaskDelete
-              api={api}
-              ids={[run.taskId]}
-              disabled={['QUEUED', 'RUNNING'].includes(run.state)}
-              onDeleted={() => {
-                if (run.taskId === taskId) location.hash = '#/tasks';
-                else resource.refresh();
-              }}
-            />
           </li>
         ))}
       </ul>
