@@ -122,6 +122,10 @@ export class SimulatedNode {
   identityPreparation = false;
   /** 完整 profile 能力仅用于新版控制面协议测试，磁盘复制由真实浏览器用例覆盖。 */
   fullProfile = false;
+  /** 仅模拟外部材料与期限协议，真实注入由节点浏览器测试覆盖。 */
+  externalAccounts = false;
+  /** 用于验证控制面拒绝缺少外部注入证明的回执。 */
+  externalProof = true;
   /** 只模拟节点模板维护协议；不代表磁盘快照或浏览器登录验收。 */
   nodeProfileManagement = false;
   /** 清理能力默认关闭，相关回归显式模拟升级后的节点。 */
@@ -279,6 +283,7 @@ export class SimulatedNode {
         trace: this.trace,
         identityPreparation: this.identityPreparation,
         fullProfile: this.fullProfile,
+        externalAccounts: this.externalAccounts,
         nodeProfileManagement: this.nodeProfileManagement,
         cookieCleanup: this.cookieCleanup,
       },
@@ -329,7 +334,15 @@ export class SimulatedNode {
     if (kind === 'session.open')
       data.environmentProof = {
         sessionId: command.sessionId,
-        initialState: 'empty',
+        initialState:
+          operation.type === 'session.open' && operation.externalAccount
+            ? 'external'
+            : 'empty',
+        ...(operation.type === 'session.open' &&
+        operation.externalAccount &&
+        this.externalProof
+          ? { externalAccount: operation.externalAccount }
+          : {}),
         authRestored: false,
       };
     if (kind === 'browser.identity.prepare')

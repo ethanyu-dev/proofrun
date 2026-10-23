@@ -126,13 +126,36 @@ export type IdentityCheck = {
  * 只声明身份引用与条件，禁止携带密码或 Cookie；guest 不恢复认证。
  */
 export type SessionRequest = {
-  mode: 'guest' | 'manual' | 'identity' | 'pool' | 'auto';
+  mode: 'guest' | 'manual' | 'identity' | 'pool' | 'auto' | 'external';
   identityRef?: string;
   poolRef?: string;
   /**
    * @maxItems 32
    */
   requirements?: IdentityCheck[];
+  external?: ExternalAccountSelector;
+};
+/**
+ * 外部账号的无秘密选择条件；地址和密钥仅由部署配置提供。
+ */
+export type ExternalAccountSelector = (
+  | {
+      poolId: string;
+      [k: string]: unknown;
+    }
+  | {
+      accountId: string;
+      [k: string]: unknown;
+    }
+) & {
+  provider: string;
+  platform: string;
+  poolId?: string;
+  accountId?: string;
+  /**
+   * @maxItems 32
+   */
+  roles?: string[];
 };
 
 export interface VerificationCaseV2 {

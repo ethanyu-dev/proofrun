@@ -19,6 +19,8 @@ use tokio::sync::Mutex;
 const DEPENDENCY_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 /// 外部身份字段的最大长度，避免把任意大字符串写入账本或 unit 标识。
 const MAX_IDENTIFIER_LENGTH: usize = 128;
+/// DevPass 不支持续租；硬期限最多两小时，绑定首次心跳的单调时钟。
+const MAX_EXTERNAL_ACCOUNT_MS: u64 = 7_200_000;
 
 /// 常驻节点主服务。全局状态来自控制面；这里仅持有本机身份、会话和恢复账本。
 pub struct Node {
@@ -65,6 +67,9 @@ impl Node {
             record
                 .close_reason
                 .get_or_insert_with(|| "NODE_RESTART_RECOVERY".into());
+            if closed.is_ok() {
+                crate::sessions::cleanup_private_session(&config, &record)?;
+            }
             store.save_session(record).await?;
             if let Err(error) = closed {
                 anyhow::bail!("recovery requires attention: {error}")
@@ -124,7 +129,7 @@ impl Node {
             "sessionId":record.session_id,"state":record.state,"leaseId":record.lease_id,"fence":record.fence
         })).collect();
         Ok(
-            json!({"type":"node.heartbeat","protocolVersion":"0.1","nodeId":self.id,"nodeEpoch":self.epoch,"runtime":crate::version::current(),"leaseRequestId":request,"pool":self.config.pool,"capacity":self.config.capacity,"limits":{"maxLeaseMs":self.config.max_lease_ms,"maxSessionMs":self.config.max_session_ms},"occupied":occupied,"capabilities":{"observe":true,"screenshot":true,"conditionWait":true,"writeActions":self.config.allow_unverified_writes,"engineWritesVerified":false,"networkEvidence":true,"environmentProof":true,"authState":true,"liveView":true,"renewableSessions":true,"identityPreparation":true,"fullProfile":true,"nodeProfileManagement":true,"cookieCleanup":true,"profileTabs":true,"trace":true}}),
+            json!({"type":"node.heartbeat","protocolVersion":"0.1","nodeId":self.id,"nodeEpoch":self.epoch,"runtime":crate::version::current(),"leaseRequestId":request,"pool":self.config.pool,"capacity":self.config.capacity,"limits":{"maxLeaseMs":self.config.max_lease_ms,"maxSessionMs":self.config.max_session_ms},"occupied":occupied,"capabilities":{"observe":true,"screenshot":true,"conditionWait":true,"writeActions":self.config.allow_unverified_writes,"engineWritesVerified":false,"networkEvidence":true,"environmentProof":true,"authState":true,"liveView":true,"renewableSessions":true,"identityPreparation":true,"fullProfile":true,"externalAccounts":true,"nodeProfileManagement":true,"cookieCleanup":true,"profileTabs":true,"trace":true}}),
         )
     }
     /// 将控制面的 TTL 锚定到对应心跳的发出时刻，网络延迟也消耗租约。
@@ -319,8 +324,30 @@ impl Node {
                     ));
                 }
                 let deadline = self.deadline(lease_request_id, *lease_ttl_ms).await?;
+                let raw = serde_json::to_value(&command.command).unwrap();
+                let account_deadline = if let Some(account) = raw.get("externalAccount") {
+                    let ttl = account["ttlMs"]
+                        .as_u64()
+                        .filter(|v| *v > 0 && *v <= MAX_EXTERNAL_ACCOUNT_MS)
+                        .ok_or_else(|| {
+                            Fault::rejected("INVALID_ACCOUNT_LEASE", "外部账号期限无效")
+                        })?;
+                    let requests = self.requests.lock().await;
+                    let sent = requests.get(lease_request_id).ok_or_else(|| {
+                        Fault::rejected("INVALID_ACCOUNT_LEASE", "外部账号心跳锚点缺失")
+                    })?;
+                    Some(sent + ttl)
+                } else {
+                    None
+                };
                 self.sessions
-                    .open(command, deadline, *max_duration_ms, command_deadline)
+                    .open(
+                        command,
+                        deadline,
+                        *max_duration_ms,
+                        command_deadline,
+                        account_deadline,
+                    )
                     .await
             }
             BrowserCommand::SessionClose => {

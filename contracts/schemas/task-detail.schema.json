@@ -248,7 +248,7 @@
       "additionalProperties": false,
       "properties": {
         "mode": {
-          "enum": ["guest", "manual", "identity", "pool"]
+          "enum": ["guest", "manual", "identity", "pool", "external"]
         },
         "identityRef": {
           "type": ["string", "null"]
@@ -309,6 +309,42 @@
             },
             "required": ["reason", "count"]
           }
+        },
+        "external": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "requestId": {
+              "type": "string"
+            },
+            "leaseId": {
+              "type": ["string", "null"]
+            },
+            "accountId": {
+              "type": ["string", "null"]
+            },
+            "materialVersion": {
+              "type": ["string", "null"]
+            },
+            "expiresAt": {
+              "type": ["string", "null"]
+            },
+            "state": {
+              "type": "string"
+            },
+            "reason": {
+              "type": ["string", "null"]
+            }
+          },
+          "required": [
+            "requestId",
+            "leaseId",
+            "accountId",
+            "materialVersion",
+            "expiresAt",
+            "state",
+            "reason"
+          ]
         }
       },
       "required": [

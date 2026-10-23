@@ -1,0 +1,135 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Material",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "http_bearer",
+          "type": "string"
+        },
+        "access_token": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        }
+      },
+      "required": ["type", "access_token"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "browser_cookies",
+          "type": "string"
+        },
+        "cookies": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "value": {
+                "type": "string",
+                "maxLength": 16384
+              },
+              "domain": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 253
+              },
+              "host_only": {
+                "type": "boolean",
+                "const": true
+              },
+              "path": {
+                "type": "string",
+                "pattern": "^/",
+                "maxLength": 2048
+              },
+              "secure": {
+                "type": "boolean"
+              },
+              "http_only": {
+                "type": "boolean"
+              },
+              "same_site": {
+                "type": "string",
+                "enum": ["Strict", "Lax", "None"]
+              },
+              "expires_at": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "name",
+              "value",
+              "domain",
+              "host_only",
+              "path",
+              "secure",
+              "http_only",
+              "same_site",
+              "expires_at"
+            ]
+          }
+        }
+      },
+      "required": ["type", "cookies"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "browser_storage",
+          "type": "string"
+        },
+        "entries": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "storage": {
+                "type": "string",
+                "enum": ["localStorage", "sessionStorage"]
+              },
+              "key": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              },
+              "value": {
+                "type": "string",
+                "maxLength": 65536
+              }
+            },
+            "required": ["storage", "key", "value"]
+          }
+        }
+      },
+      "required": ["type", "entries"]
+    }
+  ]
+}

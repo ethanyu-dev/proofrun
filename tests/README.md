@@ -122,3 +122,9 @@ pnpm test:agent:planned-browser
 2026-10-19 在隔离测试控制面完成浏览器检查：请求列表展开 case、详情和报告切换、执行详情返回来源请求、对象格式实际提交、整请求重跑、报告 JSON 下载与内容核对。390px 与 1280px 视口无横向溢出，浅/深色可读，未捕获控制台错误。测试使用构造报告，没有连接真实浏览器执行节点或模型，不能作为邀请活动等实际业务验收。
 
 运行方式：`pnpm test:contracts`、`pnpm test:console`，以及配置独立 `PROOFRUN_TEST_DATABASE_URL` 后执行 `pnpm test:api`。数据库测试自行创建和删除临时数据库，不使用生产任务数据。
+
+## DevPass 外部账号
+
+`PROOFRUN_TEST_DATABASE_URL=postgresql://... pnpm test:api` 包含外部账号协议集成测试，使用独立临时数据库与 MCP/JWE 夹具，不接触真实账号。覆盖恢复、关闭后交还、材料版本、到期、管理员反馈和错误启动回执。
+
+配置固定版本原生 CLI 的 `PROOFRUN_AGENT_BROWSER_BIN` 和 Chrome 的 `PROOFRUN_CHROME_BIN` 后运行 `pnpm test:identity:external`。该测试使用真实浏览器及本机 HTTP 页面，验证 Cookie path/httpOnly、私密种子删除、禁止保存共享身份和新会话隔离；不覆盖生产登录或 Linux 进程监管。

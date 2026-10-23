@@ -33,7 +33,7 @@ class Page(BaseHTTPRequestHandler):
 
 
 @contextmanager
-def host(root, state, restore, snapshot_id=None, optional=False, library=None, full_profile=False, seed=None, base_profile=None, node_template=False, template_state=None):
+def host(root, state, restore, snapshot_id=None, optional=False, library=None, full_profile=False, seed=None, base_profile=None, node_template=False, template_state=None, external_account=None):
     """每次使用独立 profile 与 daemon，验证任务目录隔离及指定基准恢复。"""
     session = uuid.uuid4().hex
     directory = root / session
@@ -53,17 +53,22 @@ def host(root, state, restore, snapshot_id=None, optional=False, library=None, f
     def send(value):
         process.stdin.write(json.dumps(value) + '\n')
         process.stdin.flush()
-    def command(**operation):
+    def raw_command(**operation):
         send({'type': 'run', 'command': operation, 'timeout_ms': 15000})
         message = receive()
-        assert 'Ok' in message['result'], message
-        return message['result']['Ok']
+        return message['result']
+    def command(**operation):
+        result = raw_command(**operation)
+        assert 'Ok' in result, result
+        return result['Ok']
+    command.raw = raw_command
     try:
         assert receive()['type'] == 'host.ready'
         boot_ms = int(float(Path('/proc/uptime').read_text().split()[0]) * 1000) if Path('/proc/uptime').exists() else 0
-        send({'type': 'init', 'config': {'binary': os.environ['PROOFRUN_AGENT_BROWSER_BIN'], 'chrome': os.environ['PROOFRUN_CHROME_BIN'], 'session': session, 'directory': str(directory), 'allow_unverified_writes': True, 'auth_state': str(state), 'restore_auth': restore, 'restore_auth_if_present': optional, 'auth_snapshot_id': snapshot_id, 'network_evidence': True, 'identity_library_file': str(library) if library else None, 'full_profile': full_profile, 'node_template': node_template, 'template_state': str(template_state) if template_state else None, 'identity_seed_file': str(seed) if seed else None, 'base_profile_directory': str(base_profile) if base_profile else None}, 'deadline_ms': boot_ms + 120000, 'startup_deadline_ms': boot_ms + 120000})
+        send({'type': 'init', 'config': {'binary': os.environ['PROOFRUN_AGENT_BROWSER_BIN'], 'chrome': os.environ['PROOFRUN_CHROME_BIN'], 'session': session, 'directory': str(directory), 'allow_unverified_writes': True, 'auth_state': str(state) if state else None, 'external_account': external_account, 'restore_auth': restore, 'restore_auth_if_present': optional, 'auth_snapshot_id': snapshot_id, 'network_evidence': True, 'identity_library_file': str(library) if library else None, 'full_profile': full_profile, 'node_template': node_template, 'template_state': str(template_state) if template_state else None, 'identity_seed_file': str(seed) if seed else None, 'base_profile_directory': str(base_profile) if base_profile else None}, 'deadline_ms': boot_ms + 120000, 'startup_deadline_ms': boot_ms + 120000})
         message = receive()
         assert 'Ok' in message['result'], message
+        command.opened = message['result']['Ok']
         yield command
     finally:
         if process.poll() is None:

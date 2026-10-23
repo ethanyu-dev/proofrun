@@ -5,6 +5,7 @@ export function TaskIdentity({ task }: { task: TaskDetail }) {
   const identity = task.identity;
   if (!identity) return null;
   const mode = {
+    external: 'DevPass 外部账号',
     guest: '访客（独立空白会话）',
     manual: '人工指定',
     identity: '指定测试身份',
@@ -73,6 +74,32 @@ export function TaskIdentity({ task }: { task: TaskDetail }) {
           </dd>
         </div>
       </dl>
+      {identity.external && (
+        <div>
+          <p>
+            外部租约：
+            {{
+              REQUESTED: '等待分配',
+              ALLOCATED: '已分配，等待浏览器',
+              IN_USE: '使用中',
+              RELEASE_PENDING: '等待停止确认或交还',
+              RELEASED: '已交还',
+              REVIEW: '需要核实',
+            }[identity.external.state] ?? identity.external.state}
+          </p>
+          <p>
+            申请编号：{identity.external.requestId} · 租约：
+            {identity.external.leaseId ?? '尚未取得'}
+          </p>
+          <p>
+            材料版本：{identity.external.materialVersion ?? '尚未取得'} · 到期：
+            {identity.external.expiresAt
+              ? new Date(identity.external.expiresAt).toLocaleString()
+              : '尚未取得'}
+          </p>
+          {identity.external.reason && <p>原因：{identity.external.reason}</p>}
+        </div>
+      )}
       {identity.preparation.reasonCode &&
         identity.preparation.status !== 'READY' && (
           <p>

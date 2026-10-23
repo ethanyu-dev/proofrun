@@ -5,6 +5,8 @@ import { sessionAuth, type SessionAuth } from './auth.js';
 
 /** 对外诊断仅使用固定说明，不泄露节点身份、登录槽名称或业务数据。 */
 const QUEUE_MESSAGES: Record<QueueReason['code'], string> = {
+  EXTERNAL_ACCOUNT_WAIT:
+    '等待 DevPass 账号分配与材料准备，具体原因见身份详情。',
   CLEANUP_PARENT_PENDING:
     '等待所属 case 结束并确认原浏览器会话关闭后执行清理。',
   CLEANUP_PARENT_MISSING:

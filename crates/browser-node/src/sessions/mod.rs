@@ -59,12 +59,14 @@ pub struct Session {
     pub fence: u64,
     /// 当前租约期限，使用跨进程一致的 CLOCK_BOOTTIME 毫秒。
     pub deadline: AtomicU64,
-    /// 普通会话的总时限；人工可续期会话为 u64::MAX，仍受 deadline 短租约限制。
+    /// 普通会话总时限；人工可续期也不能越过外部账号硬期限，始终受短租约限制。
     pub hard_deadline: u64,
     /// 登录槽与网络采集只在创建时绑定，恢复不复用旧会话。
     auth_state: Option<std::path::PathBuf>,
     /// 控制面私有种子只在节点内存与会话目录中使用。
     identity_seed: Option<serde_json::Value>,
+    /// 外部账号元数据仅绑定当前会话，不允许保存为共享 profile。
+    external_account: Option<serde_json::Value>,
     /// 新身份任务复制完整 profile，历史任务保留存储状态语义。
     full_profile: bool,
     /// Console 模板维护使用节点保留槽位，保存后由控制面关闭会话。
@@ -217,6 +219,7 @@ impl Sessions {
         deadline: u64,
         max_ms: u64,
         command_deadline: u64,
+        account_deadline: Option<u64>,
     ) -> Result<Value> {
         let id = command.session_id.clone();
         let lease_id = command.lease_id.clone();
@@ -280,15 +283,34 @@ impl Sessions {
                 ..
             }
         );
-        let hard_deadline = if renewable {
+        let hard_deadline = (if renewable {
             u64::MAX
         } else {
             process::boot_ms() + max_ms
-        };
+        })
+        .min(account_deadline.unwrap_or(u64::MAX));
         let (work, rx) = mpsc::channel(1);
         let (renew, renew_rx) = watch::channel(deadline.min(hard_deadline));
         let (closed_tx, closed) = watch::channel(None);
         let raw = serde_json::to_value(&command.command).unwrap();
+        let external_account = raw.get("externalAccount").cloned();
+        if external_account.is_some()
+            && (auth_state.is_some()
+                || raw.get("identitySeed").is_some()
+                || raw.get("externalCookies").is_none()
+                || hard_deadline <= process::boot_ms())
+        {
+            return Err(Fault::rejected(
+                "INVALID_EXTERNAL_ACCOUNT",
+                "外部账号必须使用独立材料与有效硬期限",
+            ));
+        }
+        if external_account.is_none() && raw.get("externalCookies").is_some() {
+            return Err(Fault::rejected(
+                "INVALID_EXTERNAL_ACCOUNT",
+                "外部 Cookie 缺少租约绑定",
+            ));
+        }
         let node_template = raw["authState"]["nodeTemplate"] == true;
         if node_template
             && (raw["authState"]["fullProfile"] != true
@@ -304,7 +326,12 @@ impl Sessions {
             fence,
             deadline: AtomicU64::new(deadline.min(hard_deadline)),
             hard_deadline,
-            identity_seed: raw.get("identitySeed").cloned(),
+            identity_seed: if external_account.is_some() {
+                Some(json!({"cookies":raw["externalCookies"]}))
+            } else {
+                raw.get("identitySeed").cloned()
+            },
+            external_account,
             full_profile: raw["authState"]["fullProfile"] == true,
             node_template,
             auth_state,
@@ -460,7 +487,12 @@ async fn start(
         config: EngineConfig {
             binary: config.agent_browser_bin.clone(),
             chrome: config.chrome_bin.clone(),
-            identity_library_file: config.identity_library_file.clone(),
+            identity_library_file: if session.external_account.is_some() {
+                None
+            } else {
+                config.identity_library_file.clone()
+            },
+            external_account: session.external_account.clone(),
             identity_seed_file: seed_path,
             full_profile: session.full_profile,
             node_template: session.node_template,
@@ -636,11 +668,8 @@ async fn supervise(
     if let Err(error) = &final_result {
         tracing::error!(session_id = %record.session_id, error, "session closure unverified");
     }
-    if final_result.is_ok() {
-        let _ = std::fs::remove_dir_all(crate::engine::socket_directory(&record.launch_id));
-        let directory = crate::artifacts::session_directory(&config, &record.launch_id);
-        let _ = std::fs::remove_dir_all(directory.join("profile"));
-        let _ = std::fs::remove_dir_all(directory.join("home"));
+    if final_result.is_ok() && cleanup_private_session(&config, &record).is_err() {
+        tracing::error!(session_id = %record.session_id, "私密会话清理失败");
     }
     if let Some(mut io) = host
         && tokio::time::timeout(HOST_EXIT_TIMEOUT, io.child.wait())
@@ -735,5 +764,78 @@ mod close_reason_tests {
             operation_close_reason("DOM_ENGINE_FAILED", false),
             "SESSION_OPERATION_FAILED"
         );
+    }
+}
+
+/// 仅在确认进程停止后清理私密材料，保留证据和去重账本。
+pub fn cleanup_private_session(config: &NodeConfig, record: &SessionRecord) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        record.launch_id.len() == 32 && record.launch_id.bytes().all(|b| b.is_ascii_hexdigit()),
+        "invalid launch identity"
+    );
+    let directory = crate::artifacts::session_directory(config, &record.launch_id);
+    if let Ok(info) = std::fs::symlink_metadata(&directory) {
+        anyhow::ensure!(
+            info.is_dir() && !info.file_type().is_symlink(),
+            "invalid session directory"
+        );
+    }
+    for path in [
+        directory.join("profile"),
+        directory.join("home"),
+        crate::engine::socket_directory(&record.launch_id),
+    ] {
+        match std::fs::remove_dir_all(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    match std::fs::remove_file(directory.join("identity-seed.json")) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+#[cfg(test)]
+mod external_tests {
+    use super::*;
+    /// 范围：真实 Session 续租不能越过外部账号硬期限；不启动浏览器或验证 systemd。
+    #[test]
+    fn renewal_never_extends_external_deadline() {
+        let now = process::boot_ms();
+        let (work, _) = mpsc::channel(1);
+        let (renew, _) = watch::channel(now + 1_000);
+        let (_, closed) = watch::channel(None);
+        let session = Session {
+            lease_id: "fixture".into(),
+            fence: 1,
+            deadline: AtomicU64::new(now + 1_000),
+            hard_deadline: now + 10_000,
+            auth_state: None,
+            identity_seed: None,
+            external_account: Some(json!({"leaseId":"fixture"})),
+            full_profile: false,
+            node_template: false,
+            restore_auth: false,
+            restore_auth_if_present: false,
+            auth_snapshot_id: None,
+            network_evidence: false,
+            live_view: true,
+            cancel: CancellationToken::new(),
+            close_reason: std::sync::Mutex::new(None),
+            work,
+            renew,
+            closed,
+            busy: Arc::new(Semaphore::new(1)),
+            stream_busy: Arc::new(Semaphore::new(1)),
+        };
+        session.renew(now + 100_000).unwrap();
+        assert_eq!(session.deadline.load(Ordering::SeqCst), now + 10_000);
+        session.renew(now + 500_000).unwrap();
+        assert_eq!(session.deadline.load(Ordering::SeqCst), now + 10_000);
+        session.cancel.cancel();
+        assert!(session.renew(now + 500_000).is_err());
     }
 }

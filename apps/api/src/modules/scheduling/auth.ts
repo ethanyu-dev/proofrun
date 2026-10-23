@@ -10,7 +10,7 @@ export type SessionAuth = NonNullable<
 /** 自动槽位按环境、资源池与站点隔离；显式槽位保留调用者指定的名称。 */
 export function sessionAuth(task: VerificationTask): SessionAuth | null {
   if (task.sessionPlan) {
-    if (task.sessionPlan.mode === 'guest') return null;
+    if (['guest', 'external'].includes(task.sessionPlan.mode)) return null;
     const identity = task.sessionPlan.candidates[0];
     if (task.sessionPlan.library) {
       const selected = identity ?? fallbackLibraryIdentity(task);

@@ -232,6 +232,10 @@
             "nodeProfileManagement": {
               "type": "boolean",
               "description": "支持 Console 维护节点默认 profile，并供新身份复制。"
+            },
+            "externalAccounts": {
+              "type": "boolean",
+              "description": "支持外部 Cookie 完整属性、临时隔离及不可续期账号硬期限。"
             }
           },
           "required": [

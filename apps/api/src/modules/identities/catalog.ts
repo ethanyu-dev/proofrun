@@ -182,6 +182,26 @@ export function resolveSession(
 ): SessionPlan {
   let selection = request ?? { mode: 'manual' as const };
   const target = new URL(entry);
+  if (request?.mode === 'external') {
+    if (!request.external || !request.requirements?.length)
+      throw new ApiError(
+        422,
+        'EXTERNAL_ACCOUNT_REQUIREMENTS',
+        '外部账号必须提供明确身份核验条件',
+      );
+    return {
+      version: 1,
+      mode: 'external',
+      candidates: [],
+      requirements: structuredClone(request.requirements),
+      preparationMs: PREPARATION_MS,
+      external: {
+        selector: structuredClone(request.external),
+        origin: target.origin,
+        durationSeconds: 60,
+      },
+    };
+  }
   if (catalog.selectionEnabled && !request) {
     return {
       version: 1,

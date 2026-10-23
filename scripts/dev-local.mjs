@@ -227,6 +227,7 @@ async function main() {
       mode: 0o600,
     });
   }
+  run('pnpm', ['build:devpass']);
   run('pnpm', ['contracts:generate']);
   run('pnpm', ['--filter', '@proofrun/contracts', 'build']);
   run('pnpm', ['--filter', './apps/*', '-r', 'build']);

@@ -145,6 +145,100 @@
               },
               "required": ["url", "cookies"],
               "description": "控制面仅在私有节点传输时注入，不写入任务、模型或命令账本。"
+            },
+            "externalAccount": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "leaseId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "materialVersion": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "origin": {
+                  "type": "string",
+                  "format": "uri"
+                },
+                "ttlMs": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 7200000
+                }
+              },
+              "required": ["leaseId", "materialVersion", "origin", "ttlMs"],
+              "description": "外部账号期限锚定 leaseRequestId 的节点单调时钟，不受人工续期延长。"
+            },
+            "externalCookies": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 64,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "value": {
+                    "type": "string",
+                    "maxLength": 16384
+                  },
+                  "domain": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 253
+                  },
+                  "host_only": {
+                    "type": "boolean",
+                    "const": true
+                  },
+                  "path": {
+                    "type": "string",
+                    "pattern": "^/",
+                    "maxLength": 2048
+                  },
+                  "secure": {
+                    "type": "boolean"
+                  },
+                  "http_only": {
+                    "type": "boolean"
+                  },
+                  "same_site": {
+                    "type": "string",
+                    "enum": ["Strict", "Lax", "None"]
+                  },
+                  "expires_at": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "name",
+                  "value",
+                  "domain",
+                  "host_only",
+                  "path",
+                  "secure",
+                  "http_only",
+                  "same_site",
+                  "expires_at"
+                ]
+              },
+              "description": "只在私密节点投递中附加，不得写入命令账本。"
             }
           },
           "required": ["type", "leaseRequestId", "leaseTtlMs", "maxDurationMs"],

@@ -42,6 +42,7 @@ pub async fn recover_reboot(config: &NodeConfig) -> Result<Value> {
         record
             .close_reason
             .get_or_insert_with(|| "NODE_RESTART_RECOVERY".into());
+        crate::sessions::cleanup_private_session(config, &record)?;
         store.save_session(record).await?;
     }
     store.recover_commands().await?;

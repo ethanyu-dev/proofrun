@@ -11,11 +11,16 @@ export function executionDeadline(context: {
   deadline_at: Date;
   cleanup_deadline_at?: Date | null;
   human_deadline_at?: Date | null;
+  external_expires_at?: Date | null;
 }): number {
   const business = ['REQUESTED', 'HUMAN'].includes(context.control_mode)
     ? (context.human_deadline_at?.getTime() ?? Infinity)
     : context.deadline_at.getTime();
-  return Math.min(business, context.cleanup_deadline_at?.getTime() ?? Infinity);
+  return Math.min(
+    business,
+    context.cleanup_deadline_at?.getTime() ?? Infinity,
+    context.external_expires_at?.getTime() ?? Infinity,
+  );
 }
 
 /** 多个期限同时过期时使用最早截止项，避免把清理超时误报成人工超时。 */
@@ -24,6 +29,8 @@ export function executionTimeoutCode(
   taskCode = 'TASK_DEADLINE_EXCEEDED',
 ): string {
   const deadline = executionDeadline(context);
+  if (context.external_expires_at?.getTime() === deadline)
+    return 'EXTERNAL_ACCOUNT_EXPIRED';
   if (context.cleanup_deadline_at?.getTime() === deadline)
     return 'CLEANUP_DEADLINE_EXCEEDED';
   if (

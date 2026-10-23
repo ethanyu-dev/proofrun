@@ -30,6 +30,7 @@ const readSchema = (name: string) =>
 export type { QueueReason } from './generated/queue-reason.js';
 export type { NodeRuntime } from './generated/node-runtime.js';
 for (const name of [
+  'external-account-selector',
   'node-runtime',
   'identity-check',
   'session-request',

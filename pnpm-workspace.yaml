@@ -1,6 +1,7 @@
 packages:
   - apps/*
   - contracts
+  - packages/*
 
 onlyBuiltDependencies:
   - esbuild

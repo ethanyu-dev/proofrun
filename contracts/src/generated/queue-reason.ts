@@ -16,6 +16,7 @@ export interface QueueReason {
     | 'NODE_ROTATING'
     | 'SESSION_BUDGET_UNSUPPORTED'
     | 'IDENTITY_BUSY'
-    | 'IDENTITY_UNAVAILABLE';
+    | 'IDENTITY_UNAVAILABLE'
+    | 'EXTERNAL_ACCOUNT_WAIT';
   message: string;
 }

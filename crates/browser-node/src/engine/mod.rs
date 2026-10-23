@@ -2,6 +2,7 @@
 //! CLI 结果不确定时结束该会话，避免后续动作与潜在副作用并发。
 mod cookies;
 mod dom;
+mod external_account;
 mod identity;
 mod profile;
 mod scroll;
@@ -56,6 +57,9 @@ pub struct EngineConfig {
     /// 完整基准使用节点生成路径，秘密种子只存会话私有文件。
     #[serde(default)]
     pub identity_seed_file: Option<PathBuf>,
+    /// 外部账号仅允许在本次隔离会话使用，禁止持久身份保存。
+    #[serde(default)]
+    pub external_account: Option<Value>,
     /// 是否启用完整 profile 版本，旧存储状态任务保持兼容。
     #[serde(default)]
     pub full_profile: bool,
@@ -131,6 +135,11 @@ pub struct Engine {
 impl Engine {
     /// 建立隔离目录并写入固定的 agent-browser 配置。
     pub fn new(config: EngineConfig) -> anyhow::Result<Self> {
+        if config.external_account.is_some()
+            && (config.auth_state.is_some() || config.restore_auth || config.full_profile)
+        {
+            anyhow::bail!("外部账号禁止恢复或发布本地身份基准");
+        }
         std::fs::create_dir_all(config.directory.join("home"))?;
         std::fs::create_dir_all(config.directory.join("artifacts"))?;
         let socket = socket_directory(&config.session);
@@ -294,6 +303,9 @@ impl Engine {
                 ));
             }
         }
+        if self.config.external_account.is_some() {
+            self.prepare_external_account(deadline).await?;
+        }
         if self.config.network_evidence {
             self.cli(
                 vec!["network".into(), "requests".into()],
@@ -328,9 +340,12 @@ impl Engine {
                 .await?;
             }
         }
-        Ok(
-            json!({"opened":true,"environmentProof":{"authRestored":auth_restored,"initialState":if auth_restored {"restored"} else {"empty"}}}),
-        )
+        let mut proof = json!({"authRestored":auth_restored,"initialState":if auth_restored {"restored"} else {"empty"}});
+        if let Some(account) = &self.config.external_account {
+            proof["initialState"] = json!("external");
+            proof["externalAccount"] = account.clone();
+        }
+        Ok(json!({"opened":true,"environmentProof":proof}))
     }
     /// 尽力请求引擎关闭；最终资源回收仍以 systemd/cgroup 核实为准。
     pub async fn close(&self) {
@@ -338,6 +353,12 @@ impl Engine {
     }
     /// 保存前由调用方核验身份；CAS 防止旧会话覆盖新状态。
     async fn save_auth(&mut self, timeout_ms: u64) -> Result<Value> {
+        if self.config.external_account.is_some() {
+            return Err(Fault::rejected(
+                "EXTERNAL_ACCOUNT_SAVE_FORBIDDEN",
+                "外部账号不能保存为本地身份基准",
+            ));
+        }
         if self.config.full_profile {
             return self.save_profile(timeout_ms).await;
         }
