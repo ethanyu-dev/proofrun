@@ -174,6 +174,10 @@ export function DashboardPage({ api }: { api: ApiClient }) {
               本周期暂无 Case 提交或模型调用。可切换上一周期查看历史记录。
             </p>
           )}
+          <p>
+            本周期运行次数：{NUMBER_FORMAT.format(summary.runs ?? 0)}
+            （包含重跑，已删除运行不计入）
+          </p>
           <DashboardCharts days={data.days} today={today} onDay={showDay} />
           <section
             className="panel dashboard-usage"
@@ -317,8 +321,9 @@ export function DashboardPage({ api }: { api: ApiClient }) {
                 Case，独立清理任务不计入 Case 数。
               </li>
               <li>
-                相同执行被多个请求复用只计一次；重跑的新身份计为新一次。历史双跑仅以
-                JEV 组判定 Case，缺少 JEV 时沿用实际组。
+                相同 case
+                只计一次，取最新未删除运行的结果；运行次数另计。历史双跑仅以 JEV
+                组判定 Case，缺少 JEV 时沿用实际组。
               </li>
               <li>
                 通过率 = 通过 Case / 已结束
@@ -330,7 +335,7 @@ export function DashboardPage({ api }: { api: ApiClient }) {
                 Tokens 与 Case 提交日期可能不同。
               </li>
               <li>
-                缺失的用量不按零估算；有缺失时合计只代表已知部分。旧报告无调用明细时按结束日回填，既无明细也无汇总的历史消耗无法统计。
+                删除的运行及其清理用量不计入统计；涉及已删除成员的旧分析整轮排除。缺失的用量不按零估算；有缺失时合计只代表已知部分。旧报告无调用明细时按结束日回填，既无明细也无汇总的历史消耗无法统计。
               </li>
             </ul>
           </details>

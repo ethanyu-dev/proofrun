@@ -14,7 +14,7 @@ const { renderToStaticMarkup } = require('react-dom/server');
 const api = new ApiClient('rerun-test-credential');
 
 // 范围：任一组按 case 身份调用新接口，重试复用新身份并跳转主组；请求由夹具接收，不证明服务端幂等。
-test('结构化重跑从 JEV 组跳转到新的完整 case', async (context) => {
+test('结构化重跑保持 case 身份并跳转到新的运行', async (context) => {
   const calls: { path: unknown; body: unknown }[] = [];
   context.mock.method(
     globalThis,
@@ -22,11 +22,12 @@ test('结构化重跑从 JEV 组跳转到新的完整 case', async (context) => 
     async (path: unknown, init: RequestInit) => {
       calls.push({ path, body: JSON.parse(String(init.body)) });
       return Response.json({
-        caseId: 'new-case',
+        caseId: 'old',
+        taskId: 'case-run-new-case',
         comparison: {
           arms: [
-            { taskId: 'case-v2-new-case' },
-            { taskId: 'comparison-case-v2-new-case-jev' },
+            { taskId: 'case-run-new-case' },
+            { taskId: 'comparison-case-run-new-case-jev' },
           ],
         },
       });
@@ -41,13 +42,13 @@ test('结构化重跑从 JEV 组跳转到新的完整 case', async (context) => 
         new AbortController().signal,
         'old',
       ),
-      'case-v2-new-case',
+      'case-run-new-case',
     );
   assert.deepEqual(
     calls,
     Array(2).fill({
       path: '/v2/cases/old/rerun',
-      body: { caseId: 'new-case' },
+      body: { runId: 'new-case' },
     }),
   );
   const html = renderToStaticMarkup(
@@ -63,14 +64,14 @@ test('单组 case 与普通任务保留各自重跑路径', async (context) => {
     paths.push(path);
     return Response.json(
       String(path).startsWith('/v2/')
-        ? { caseId: 'single' }
+        ? { caseId: 'old', taskId: 'case-run-single' }
         : { taskId: 'ordinary-new' },
     );
   });
   const signal = new AbortController().signal;
   assert.equal(
     await rerunTask(api, 'case-v2-old', 'single', signal, 'old'),
-    'case-v2-single',
+    'case-run-single',
   );
   assert.equal(
     await rerunTask(api, 'ordinary', 'ordinary-new', signal),

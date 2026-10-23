@@ -13,9 +13,13 @@ export async function rerunTask(
     const result = await api.json<CaseResultV2>(
       `/v2/cases/${encodeURIComponent(caseId)}/rerun`,
       signal,
-      { caseId: runId },
+      { runId },
     );
-    return result.comparison?.arms[0].taskId ?? `case-v2-${result.caseId}`;
+    return (
+      result.taskId ??
+      result.comparison?.arms[0].taskId ??
+      `case-v2-${result.caseId}`
+    );
   }
   const result = await api.json<{ taskId: string }>(
     `/v1/tasks/${encodeURIComponent(id)}/rerun`,

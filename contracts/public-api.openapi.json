@@ -184,7 +184,7 @@
       "post": {
         "operationId": "rerunRequestV2",
         "tags": ["Case API v2"],
-        "summary": "以全新请求与 case 身份原子重跑全部成员",
+        "summary": "以新请求和运行身份原子重跑全部成员，保留 caseId",
         "responses": {
           "202": {
             "description": "成功",
@@ -229,6 +229,183 @@
             }
           },
           "default": { "$ref": "#/components/responses/Error" }
+        },
+        "parameters": [
+          {
+            "name": "runId",
+            "in": "query",
+            "schema": { "type": "string" },
+            "description": "省略时读取最新未删除运行；历史运行使用返回的 runId。"
+          }
+        ]
+      }
+    },
+    "/v2/cases/{id}/runs": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string" }
+        }
+      ],
+      "get": {
+        "operationId": "listCaseRunsV2",
+        "tags": ["Case API v2"],
+        "summary": "按时间倒序读取未删除运行，包含旧数据首轮记录",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["runs"],
+                  "properties": {
+                    "runs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "runId",
+                          "taskId",
+                          "state",
+                          "createdAt",
+                          "finishedAt"
+                        ],
+                        "properties": {
+                          "runId": { "type": "string" },
+                          "taskId": { "type": "string" },
+                          "state": { "type": "string" },
+                          "createdAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "finishedAt": {
+                            "type": ["string", "null"],
+                            "format": "date-time"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/tasks/delete": {
+      "post": {
+        "operationId": "deleteTaskRuns",
+        "tags": ["Case API v1（兼容）"],
+        "summary": "原子软删除一至一百条已结束运行及其双跑和清理记录",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["deletedTaskIds", "deletedRequestIds"],
+                  "properties": {
+                    "deletedTaskIds": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    },
+                    "deletedRequestIds": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["ids"],
+                "properties": {
+                  "ids": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 100,
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_-]{1,160}$"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/requests/delete": {
+      "post": {
+        "operationId": "deleteRequestsV2",
+        "tags": ["Case API v2"],
+        "summary": "软删除请求，仍被其他请求引用的执行保留",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["deletedTaskIds", "deletedRequestIds"],
+                  "properties": {
+                    "deletedTaskIds": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    },
+                    "deletedRequestIds": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["ids"],
+                "properties": {
+                  "ids": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 100,
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_-]{1,80}$"
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -244,7 +421,7 @@
       "post": {
         "operationId": "rerunCaseV2",
         "tags": ["Case API v2"],
-        "summary": "使用新 caseId 重跑整个 case；默认采用当前预算策略，可选择原预算",
+        "summary": "保留 caseId 新增一次运行；默认采用当前预算策略，可选择原预算",
         "responses": {
           "202": {
             "description": "成功",
@@ -263,9 +440,9 @@
               "schema": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": ["caseId"],
+                "required": ["runId"],
                 "properties": {
-                  "caseId": {
+                  "runId": {
                     "type": "string",
                     "pattern": "^[A-Za-z0-9_-]{1,80}$"
                   },
@@ -292,7 +469,7 @@
                       }
                     },
                     "minProperties": 1,
-                    "description": "只扩展新任务的时间额度；完整会话仍须在 24 小时内，相同 caseId 保留首次冻结值。"
+                    "description": "只扩展新任务的时间额度；完整会话仍须在 24 小时内，相同 runId 保留首次冻结值。"
                   }
                 }
               }
@@ -2229,6 +2406,10 @@
                     "taskId": { "type": "string" },
                     "executionOutcome": {
                       "$ref": "#/components/schemas/ExecutionOutcome"
+                    },
+                    "runId": {
+                      "type": "string",
+                      "description": "本次运行的主任务身份，历史记录按此身份读取。"
                     }
                   },
                   "required": [
@@ -2249,6 +2430,14 @@
           },
           "executionOutcome": {
             "$ref": "#/components/schemas/ExecutionOutcome"
+          },
+          "runId": {
+            "type": "string",
+            "description": "本次运行的主任务身份，历史记录按此身份读取。"
+          },
+          "taskId": {
+            "type": "string",
+            "description": "本组实际任务身份；caseId 在重跑间保持不变。"
           }
         },
         "required": [
@@ -3170,14 +3359,23 @@
                 "caseId": {
                   "type": "string",
                   "pattern": "^[A-Za-z0-9_-]{1,80}$",
-                  "description": "全局 case 幂等身份，不改为请求内局部身份。"
+                  "description": "旧客户端兼容字段，仅作为运行幂等键，不再创建新 case。"
+                },
+                "runId": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,80}$",
+                  "description": "新运行幂等键；重试保持不变，caseId 不改变。"
                 }
               },
-              "required": ["sourceCaseId", "caseId"]
+              "required": ["sourceCaseId"],
+              "oneOf": [
+                { "required": ["runId"], "properties": { "runId": {} } },
+                { "required": ["caseId"], "properties": { "caseId": {} } }
+              ]
             },
             "minItems": 1,
             "maxItems": 32,
-            "description": "完整旧新身份映射，由服务端校验覆盖和唯一性。"
+            "description": "完整 case 与新运行映射，由服务端原子提交。"
           },
           "budgetMode": {
             "enum": ["current", "original"],

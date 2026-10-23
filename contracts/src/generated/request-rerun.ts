@@ -6,32 +6,102 @@ export interface RequestRerun {
    */
   requestId: string;
   /**
-   * 完整旧新身份映射，由服务端校验覆盖和唯一性。
+   * 完整 case 与新运行映射，由服务端原子提交。
    *
    * @minItems 1
    * @maxItems 32
    */
   caseIds: [
-    {
+    (
+      | {
+          runId: unknown;
+          [k: string]: unknown;
+        }
+      | {
+          caseId: unknown;
+          [k: string]: unknown;
+        }
+    ) & {
       /**
        * 整请求重跑对应的原 case；普通提交为 null。
        */
       sourceCaseId: string;
       /**
-       * 全局 case 幂等身份，不改为请求内局部身份。
+       * 旧客户端兼容字段，仅作为运行幂等键，不再创建新 case。
        */
-      caseId: string;
-    },
-    ...{
+      caseId?: string;
+      /**
+       * 新运行幂等键；重试保持不变，caseId 不改变。
+       */
+      runId?: string;
+    } & (
+        | {
+            runId: unknown;
+            [k: string]: unknown;
+          }
+        | {
+            caseId: unknown;
+            [k: string]: unknown;
+          }
+      ) & {
+        /**
+         * 整请求重跑对应的原 case；普通提交为 null。
+         */
+        sourceCaseId: string;
+        /**
+         * 旧客户端兼容字段，仅作为运行幂等键，不再创建新 case。
+         */
+        caseId?: string;
+        /**
+         * 新运行幂等键；重试保持不变，caseId 不改变。
+         */
+        runId?: string;
+      },
+    ...((
+      | {
+          runId: unknown;
+          [k: string]: unknown;
+        }
+      | {
+          caseId: unknown;
+          [k: string]: unknown;
+        }
+    ) & {
       /**
        * 整请求重跑对应的原 case；普通提交为 null。
        */
       sourceCaseId: string;
       /**
-       * 全局 case 幂等身份，不改为请求内局部身份。
+       * 旧客户端兼容字段，仅作为运行幂等键，不再创建新 case。
        */
-      caseId: string;
-    }[],
+      caseId?: string;
+      /**
+       * 新运行幂等键；重试保持不变，caseId 不改变。
+       */
+      runId?: string;
+    } & (
+        | {
+            runId: unknown;
+            [k: string]: unknown;
+          }
+        | {
+            caseId: unknown;
+            [k: string]: unknown;
+          }
+      ) & {
+        /**
+         * 整请求重跑对应的原 case；普通提交为 null。
+         */
+        sourceCaseId: string;
+        /**
+         * 旧客户端兼容字段，仅作为运行幂等键，不再创建新 case。
+         */
+        caseId?: string;
+        /**
+         * 新运行幂等键；重试保持不变，caseId 不改变。
+         */
+        runId?: string;
+      })[],
   ];
   /**
    * current 使用当前预算；original 沿用来源预算。

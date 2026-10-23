@@ -533,7 +533,7 @@ test('历史 v2 重跑不被新默认值开启登录复用或人工辅助', asyn
   delete original.definition.environment.reuseAuth;
   delete original.definition.environment.allowIntervention;
   await f.service.rerun(INPUT.caseId, 'historical-rerun');
-  const fresh = f.records.get('case-v2-historical-rerun')!;
+  const fresh = f.records.get('case-run-historical-rerun')!;
   assert.equal(fresh.definition.environment.reuseAuth, false);
   assert.equal(fresh.definition.environment.allowIntervention, false);
   assert.deepEqual(original.definition.environment, PROFILE.environment);
@@ -557,7 +557,7 @@ test('v2 重跑保留原配置及整个 case，重试不重复创建', async () 
     );
     const result = await changed.rerun(INPUT.caseId, 'new-case');
     assert(validateCaseResultV2(result));
-    const fresh = f.records.get('case-v2-new-case')!;
+    const fresh = f.records.get('case-run-new-case')!;
     assert.equal(fresh.state, 'QUEUED');
     assert.equal(fresh.report, null);
     assert.deepEqual(fresh.definition.budget, {
@@ -570,7 +570,6 @@ test('v2 重跑保留原配置及整个 case，重试不重复创建', async () 
     );
     assert.deepEqual(fresh.definition.caseV2Definition, {
       ...INPUT,
-      caseId: 'new-case',
     });
     assert.deepEqual(fresh.definition.cleanupStepIds, ['cleanup-1']);
     assert.equal(fresh.definition.steps!.at(-1)!.stepId, 'cleanup-1');
@@ -609,7 +608,7 @@ test('v2 重跑校验身份并沿用提交的冲突语义', async () => {
     undefined,
     'https://proofrun.test',
   );
-  for (const id of [undefined, INPUT.caseId, '', 'a/b', 'a'.repeat(81), 42])
+  for (const id of [undefined, '', 'a/b', 'a'.repeat(81), 42])
     await assert.rejects(
       service.rerun(INPUT.caseId, id),
       (e: unknown) => e instanceof ApiError && e.code === 'INVALID_RERUN',
@@ -618,12 +617,16 @@ test('v2 重跑校验身份并沿用提交的冲突语义', async () => {
     service.rerun('missing', 'fresh'),
     (e: unknown) => e instanceof ApiError && e.code === 'CASE_MISSING',
   );
+  await service.rerun('occupied', 'occupied');
   await assert.rejects(
     service.rerun(INPUT.caseId, 'occupied'),
     (e: unknown) => e instanceof ApiError && e.code === 'CASE_CONFLICT',
   );
-  assert.equal(f.records.size, 2);
-  assert.equal((await service.rerun(INPUT.caseId, 'fresh')).caseId, 'fresh');
+  assert.equal(f.records.size, 3);
+  assert.equal(
+    (await service.rerun(INPUT.caseId, 'fresh')).caseId,
+    INPUT.caseId,
+  );
 });
 
 // 范围：模式倍率、等待后准备检查额度、平台硬上限及显式历史预算复现；不验证模型质量或节点能力。
@@ -668,15 +671,15 @@ test('v2 新预算按步骤冻结，混合组请求加倍，超过上限直接�
   await f.service.rerun(INPUT.caseId, 'current-budget');
   await f.service.rerun(INPUT.caseId, 'original-budget', 'original');
   assert.equal(
-    f.records.get('case-v2-current-budget')!.definition.stepBudget!.version,
+    f.records.get('case-run-current-budget')!.definition.stepBudget!.version,
     1,
   );
   assert.equal(
-    f.records.get('case-v2-original-budget')!.definition.stepBudget,
+    f.records.get('case-run-original-budget')!.definition.stepBudget,
     undefined,
   );
   assert.deepEqual(
-    f.records.get('case-v2-original-budget')!.definition.budget,
+    f.records.get('case-run-original-budget')!.definition.budget,
     original.budget,
   );
 });
@@ -693,7 +696,7 @@ test('重跑可单独扩大步骤和清理时间且不改变动作额度或业�
     stepTimeoutMs: 900_000,
     cleanupTimeoutMs: 600_000,
   });
-  const fresh = f.records.get('case-v2-extended')!.definition;
+  const fresh = f.records.get('case-run-extended')!.definition;
   assert.deepEqual(
     fresh.stepBudget!.steps.map((s) => s.timeoutMs),
     [1_200_000, 900_000, 900_000],
@@ -702,7 +705,7 @@ test('重跑可单独扩大步骤和清理时间且不改变动作额度或业�
   assert.equal(fresh.budget.maxActions, before.budget.maxActions);
   assert.deepEqual(fresh.steps, before.steps);
   assert.deepEqual(fresh.acceptanceCriteria, before.acceptanceCriteria);
-  for (const arm of ['case-v2-extended', 'comparison-case-v2-extended-jev']) {
+  for (const arm of ['case-run-extended', 'comparison-case-run-extended-jev']) {
     const task = f.records.get(arm)!.definition;
     assert(validateVerificationTask(task));
     assert.equal(task.stepBudget!.cleanup.timeoutMs, 600_000);
@@ -722,7 +725,7 @@ test('重跑可单独扩大步骤和清理时间且不改变动作额度或业�
   await f.service.rerun(INPUT.caseId, 'extended', 'current', {
     stepTimeoutMs: 1_800_000,
   });
-  assert.deepEqual(f.records.get('case-v2-extended')!.definition, frozen);
+  assert.deepEqual(f.records.get('case-run-extended')!.definition, frozen);
   assert.deepEqual(source, before);
 });
 
@@ -766,7 +769,7 @@ test('历史总预算重跑扩容时生成逐步计划且保留旧动作上限',
   await f.service.rerun(INPUT.caseId, 'cleanup-time', 'original', {
     cleanupTimeoutMs: 600_000,
   });
-  const fresh = f.records.get('case-v2-cleanup-time')!.definition;
+  const fresh = f.records.get('case-run-cleanup-time')!.definition;
   assert.deepEqual(fresh.budget, { timeoutMs: 900_000, maxActions: 29 });
   assert.equal(fresh.stepBudget!.cleanup.timeoutMs, 600_000);
   assert(fresh.stepBudget!.steps.every((s) => s.timeoutMs === 300_000));
@@ -826,7 +829,7 @@ test('多组 v2 提交和重跑最多并发八组，保留历史任务的冻结�
     await f.service.rerun(input.caseId, 'new-parallelism');
     assert.equal(original.profilePlan!.maxConcurrency, 2);
     assert.equal(
-      f.records.get('case-v2-new-parallelism')!.definition.profilePlan!
+      f.records.get('case-run-new-parallelism')!.definition.profilePlan!
         .maxConcurrency,
       Math.min(count, 8),
     );

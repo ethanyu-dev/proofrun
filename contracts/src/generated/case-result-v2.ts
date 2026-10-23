@@ -339,6 +339,10 @@ export interface CaseResultV2 {
         executionMode: 'llm' | 'jev';
         taskId: string;
         executionOutcome?: ExecutionOutcome;
+        /**
+         * 本次运行的主任务身份，历史记录按此身份读取。
+         */
+        runId?: string;
       },
       {
         /**
@@ -506,10 +510,22 @@ export interface CaseResultV2 {
         executionMode: 'llm' | 'jev';
         taskId: string;
         executionOutcome?: ExecutionOutcome;
+        /**
+         * 本次运行的主任务身份，历史记录按此身份读取。
+         */
+        runId?: string;
       },
     ];
   };
   executionOutcome?: ExecutionOutcome;
+  /**
+   * 本次运行的主任务身份，历史记录按此身份读取。
+   */
+  runId?: string;
+  /**
+   * 本组实际任务身份；caseId 在重跑间保持不变。
+   */
+  taskId?: string;
 }
 export interface StepResult {
   /**

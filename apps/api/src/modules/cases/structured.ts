@@ -30,7 +30,7 @@ import { DEFAULT_CASE_EXECUTION_MODE, type CaseProfile } from './profile.js';
 export const V2_PREFIX = 'case-v2-';
 /** 主任务、双跑从组及清理的保留前缀，禁止普通任务占用这些服务端身份。 */
 export const CASE_TASK_ID =
-  /^(case-v2-|cleanup-case-v2-|comparison-case-v2-|cleanup-comparison-case-v2-)/;
+  /^(case-(?:v2|run)-|cleanup-case-(?:v2|run)-|comparison-case-(?:v2|run)-|cleanup-comparison-case-(?:v2|run)-)/;
 /** 批量提交必须有界，避免长事务和过量任务占用。 */
 export const MAX_CASE_BATCH = 32;
 

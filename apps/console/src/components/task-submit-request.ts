@@ -11,7 +11,10 @@ export async function submitCaseBatch(
   const results = await api.json<CaseResultV2[]>('/v2/cases', signal, cases);
   if (results.length !== 1) return '/tasks';
   const result = results[0]!;
-  const id = result.comparison?.arms[0].taskId ?? `case-v2-${result.caseId}`;
+  const id =
+    result.taskId ??
+    result.comparison?.arms[0].taskId ??
+    `case-v2-${result.caseId}`;
   return `/tasks/${encodeURIComponent(id)}`;
 }
 

@@ -17,7 +17,7 @@ requestId 必填，为 1–80 位字母、数字、下划线或短横线；title
 - `GET /v2/requests`：请求摘要列表，支持 q、executionStatus、reportStatus、limit（1–100，默认 25）及 cursor。q 按请求身份、标题、case 身份或目标搜索；命中一个成员仍返回整个请求的统计。游标绑定筛选条件，不能更换筛选后沿用。
 - `GET /v2/requests/{requestId}`：请求元数据、全部成员、冻结的步骤、各组进度和汇总。
 - `GET /v2/requests/{requestId}/report`：相同一致性快照的汇总报告，包含 case 矩阵、逐项两组结论、证据引用与清理情况。
-- `POST /v2/requests/{requestId}/rerun`：接收新 requestId、完整 `caseIds: [{ sourceCaseId, caseId }]` 映射，以及可选 budgetMode/timeBudget。所有目标 caseId 必须是新身份；整请求原子重建，不覆盖旧结果。重试沿用目标 requestId 和全部映射，参数改变返回 REQUEST_CONFLICT。
+- `POST /v2/requests/{requestId}/rerun`：接收新 requestId、完整 `caseIds: [{ sourceCaseId, runId }]` 映射，以及可选 budgetMode/timeBudget。每个 runId 是新运行身份，成员 caseId 保持不变；整请求原子重建，不覆盖旧结果。旧映射字段 caseId 兼容解释为运行幂等键。重试沿用目标 requestId 和全部映射，参数改变返回 REQUEST_CONFLICT。
 
 请求的 executionStatus 为 QUEUED / IN_PROGRESS / FINISHED，只表达执行进度；reportPhase 为 PENDING / PARTIAL / FINAL。所有要求组终止后为 FINAL，即使有子报告缺失。非 FINAL 的 reportStatus 为 null；已交付报告中的失败仍由 observedFailureCount 显示。FINAL 时，任一组已确认 FAILED 则汇总 FAILED，所有要求组均 PASSED 才 PASSED，否则 INCONCLUSIVE。两组相反的明确判断另计 confirmedDisagreementCount，不能将组间差异直接解释成产品根因。
 
@@ -118,15 +118,16 @@ executionPlan.evidenceKinds 是验收取证配置与全部步骤（含 setup、c
 
 ## 查询与结果
 
-`POST /v2/cases/{caseId}/rerun` 接收 `{"caseId":"新的-caseId"}`，返回 202 和新 case 的单个 `CaseResultV2`。沿用原业务定义、环境、取证类型和执行模式，默认按当前逐步预算策略生成新任务；可传 `budgetMode: "original"` 复现原预算，缺省为 `"current"`。不复制旧状态或报告。双跑整体重建两组，单组保留原模式。平台配置撤下后仍可重跑；如需采用当前环境配置，改用 `POST /v2/cases` 提交新身份。
+`POST /v2/cases/{caseId}/rerun` 接收 `{"runId":"本次运行的幂等键"}`，返回 202 和同一 case 的单个 `CaseResultV2`，其中 caseId 不变，taskId/runId 指向新运行。沿用原业务定义、环境、取证类型和执行模式，默认按当前逐步预算策略生成新任务；可传 `budgetMode: "original"` 复现原预算，缺省为 `"current"`。不复制旧状态或报告。双跑整体重建两组，单组保留原模式。平台配置撤下后仍可重跑；如需采用当前环境配置，改用 `POST /v2/cases` 提交新身份。
 
-可额外传 `timeBudget: {"stepTimeoutMs":900000,"cleanupTimeoutMs":600000}`，在所选预算基础上将每个业务步骤至少扩展到 15 分钟、整段清理至少扩展到 10 分钟。两个字段可单独提供，值必须为正整数毫秒；原本更长的步骤（包含等待）不会缩短。动作数、模型请求数及收尾额度不变，业务总时间重新汇总，完整会话仍受 24 小时上限约束。没有逐步预算的历史任务会在新身份上补编译逐步计划。相同目标 caseId 重提始终返回首次冻结的预算；改变额度需要另一个新 caseId。
+可额外传 `timeBudget: {"stepTimeoutMs":900000,"cleanupTimeoutMs":600000}`，在所选预算基础上将每个业务步骤至少扩展到 15 分钟、整段清理至少扩展到 10 分钟。两个字段可单独提供，值必须为正整数毫秒；原本更长的步骤（包含等待）不会缩短。动作数、模型请求数及收尾额度不变，业务总时间重新汇总，完整会话仍受 24 小时上限约束。没有逐步预算的历史任务会在新身份上补编译逐步计划。相同 runId 重提始终返回首次冻结的预算；改变额度需要另一个新 runId。
 
-新身份必须不同于原 caseId，格式与提交一致。相同新 caseId 和相同业务定义的重试返回已存在结果，不再执行；不同定义占用该身份时返回 409 CASE_CONFLICT。除上述时间下限外，请求不接受其他预算或步骤覆盖。Console 的列表和详情页统一显示“重跑整个 case”，从任一对照组点击均重跑整个 case，并跳转到新主任务。
+runId 为 1–80 位字母、数字、下划线或短横线，与 caseId 使用独立命名空间。相同 runId 的重试返回已存在运行，不再执行；其他 case 占用该运行身份时返回 409 CASE_CONFLICT。旧 caseId 请求参数兼容作为 runId，但不能同时传入两个字段。除上述时间下限外，请求不接受其他预算或步骤覆盖。Console 的列表和详情页统一显示“重跑整个 case”，从任一对照组点击均重跑整个 case，并跳转到新主任务。
 
-- `GET /v2/cases/{caseId}`：读取主任务状态、逐步结果和清理状态。
+- `GET /v2/cases/{caseId}`：读取最新未删除运行的状态、逐步结果和清理状态；可通过 `?runId=返回的运行身份` 指定历史运行。
+- `GET /v2/cases/{caseId}/runs`：按时间倒序读取未删除运行，旧记录自动作为首轮运行。
 - `POST /v2/cases/{caseId}/cancel`：取消该 case 的所有执行组，同时停止尚未执行的清理。历史独立清理任务保留旧语义。
-- `GET /v2/cases/{caseId}/evidence/{artifactId}`：读取主任务步骤记录、主任务报告或关联清理报告引用的证据。
+- `GET /v2/cases/{caseId}/evidence/{artifactId}`：读取指定运行的步骤记录、报告或关联清理报告引用的证据；历史链接携带 `?runId=运行身份`，避免最新运行改变证据归属。
 
 所有接口沿用部署管理员 Bearer 凭据。结果结构见 [CaseResultV2 Schema](../contracts/schemas/case-result-v2.schema.json) 与 [OpenAPI](../contracts/public-api.openapi.json)。
 
@@ -163,7 +164,7 @@ steps 按实际执行顺序包含清理步骤；cleanup 仍提供 taskId、statu
 
 双跑两组分别在自己的会话末尾清理。当前以 caseId 对应的主任务身份、平台 nodePool、登录槽（没有显式登录槽时使用 environment.id）、显式登录节点及 entry 的 origin 生成互斥键，双跑时进一步按组隔离。不同 caseId 即使环境、账号与站点相同，也不互相等待。两组从同一轮不可变登录快照启动，各自使用独立浏览器 profile；该键不隔离服务端业务数据，共用账号或业务对象的操作顺序仍需上游协调。
 
-升级前已经提交的任务继续使用冻结的独立清理定义；同 caseId 幂等重提不会转换执行方式或创建新执行。新提交的 case 使用同任务收尾；重新执行需要新 caseId。
+升级前已经提交的任务继续使用冻结的独立清理定义；同 caseId 幂等重提不会转换执行方式或创建新执行。新提交的 case 使用同任务收尾；重新执行沿用 caseId 并新增运行。
 
 恢复值必须由上游明确提供。例如“恢复名称为 Fixture Member”可执行；仅写“恢复原值”且未提供原值，不会自动生成历史快照或变量绑定。
 
@@ -177,3 +178,9 @@ steps 按实际执行顺序包含清理步骤；cleanup 仍提供 taskId、statu
 - 更新 contracts、API、Agent、Console 后部署；代码验证不替代真实业务环境验收。
 
 同 profile 的 tab 共享登录与站点存储；初始认证快照只加载一次，人工保存显式更新快照，运行结束不自动回写。网络/TRACE 当前为 profile 级证据，需要这类证据时分组串行。完整生命周期见 [架构说明](architecture.md#v2-profile-与-tab-分组)。
+
+## 历史运行软删除
+
+管理员通过 `POST /v1/tasks/{taskId}/delete` 删除一次完整运行，或通过 `POST /v1/tasks/delete` 提交 `{ "ids": ["taskId-1", "taskId-2"] }`，上限 100 个。双跑与历史独立清理共同删除；任一任务仍在运行、清理待执行或会话未核实关闭时整批返回 409。请求级入口为 `POST /v2/requests/{requestId}/delete` 与 `POST /v2/requests/delete`，仍被其他请求引用的执行保留。
+
+软删除保留底层记录，隐藏列表与详情，并排除 Case、运行次数、通过率、趋势及关联 Tokens。涉及删除成员的旧分析整轮失效，其调用用量排除；剩余成员可重新生成分析。删除最新运行后默认读取前一条未删除运行；重复删除幂等，删除的运行幂等键不可复活。历史上不同 caseId 的旧重跑不会自动合并。

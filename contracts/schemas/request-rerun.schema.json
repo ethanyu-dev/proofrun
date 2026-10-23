@@ -24,14 +24,33 @@
           "caseId": {
             "type": "string",
             "pattern": "^[A-Za-z0-9_-]{1,80}$",
-            "description": "全局 case 幂等身份，不改为请求内局部身份。"
+            "description": "旧客户端兼容字段，仅作为运行幂等键，不再创建新 case。"
+          },
+          "runId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,80}$",
+            "description": "新运行幂等键；重试保持不变，caseId 不改变。"
           }
         },
-        "required": ["sourceCaseId", "caseId"]
+        "required": ["sourceCaseId"],
+        "oneOf": [
+          {
+            "required": ["runId"],
+            "properties": {
+              "runId": {}
+            }
+          },
+          {
+            "required": ["caseId"],
+            "properties": {
+              "caseId": {}
+            }
+          }
+        ]
       },
       "minItems": 1,
       "maxItems": 32,
-      "description": "完整旧新身份映射，由服务端校验覆盖和唯一性。"
+      "description": "完整 case 与新运行映射，由服务端原子提交。"
     },
     "budgetMode": {
       "enum": ["current", "original"],

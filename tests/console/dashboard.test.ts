@@ -38,6 +38,7 @@ function response(path: string): DashboardStatistics {
     unmeasuredCalls: 0,
   };
   const metrics = {
+    runs: 1,
     cases: {
       total: 1,
       passed: 0,

@@ -82,6 +82,7 @@ export class RequestProjector {
   private report(
     caseId: string,
     report: VerificationReport | null,
+    runId: string,
   ): CaseResultV2['result'] {
     return report
       ? {
@@ -99,7 +100,7 @@ export class RequestProjector {
             id: a.id,
             kind: a.kind,
             sha256: a.sha256,
-            url: `${this.publicUrl}/v2/cases/${encodeURIComponent(caseId)}/evidence/${encodeURIComponent(a.id)}`,
+            url: `${this.publicUrl}/v2/cases/${encodeURIComponent(caseId)}/evidence/${encodeURIComponent(a.id)}?runId=${encodeURIComponent(runId)}`,
           })),
         }
       : null;
@@ -131,7 +132,7 @@ export class RequestProjector {
       FROM pr_verification_request_arms a JOIN pr_verification_request_cases c USING(request_id,case_id)
       JOIN pr_tasks t ON t.id=a.task_id
       LEFT JOIN pr_case_cleanups legacy ON legacy.parent_task_id=t.id LEFT JOIN pr_tasks clean ON clean.id=legacy.task_id
-      WHERE a.request_id=ANY($1::text[]) ORDER BY c.position,CASE a.execution_mode WHEN 'llm' THEN 0 ELSE 1 END`,
+      WHERE a.request_id=ANY($1::text[]) AND t.deleted_at IS NULL ORDER BY c.position,CASE a.execution_mode WHEN 'llm' THEN 0 ELSE 1 END`,
         [rows.map((r) => r.request_id)],
       )
     ).rows;
@@ -227,13 +228,21 @@ export class RequestProjector {
                   arm.definition.acceptanceCriteria.map((c) => c.id),
                   arm.definition,
                 ),
-                result: this.report(arm.case_id, arm.report),
+                result: this.report(
+                  arm.case_id,
+                  arm.report,
+                  arm.definition.comparison?.sourceTaskId ?? arm.task_id,
+                ),
                 steps,
                 cleanup: cleanup
                   ? {
                       taskId: cleanup.taskId,
                       status: cleanup.status,
-                      result: this.report(arm.case_id, cleanup.report),
+                      result: this.report(
+                        arm.case_id,
+                        cleanup.report,
+                        arm.definition.comparison?.sourceTaskId ?? arm.task_id,
+                      ),
                     }
                   : null,
               },
