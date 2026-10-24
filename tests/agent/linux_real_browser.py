@@ -38,7 +38,7 @@ class ModelFixture(BaseHTTPRequestHandler):
             assert body['parallel_tool_calls'] is False
             content = body['messages'][1]['content']
             context = json.loads(content[0]['text'])
-            assert context['executionPolicy']['version'] == 'planned-v1'
+            assert set(context) == {'task', 'state', 'page', 'history', 'evidence', 'budget', 'feedback'}
             image = content[1]['image_url']['url']
             assert base64.b64decode(image.split(',', 1)[1]).startswith(b'\x89PNG\r\n\x1a\n')
             turn = len(self.server.contexts)
@@ -49,27 +49,19 @@ class ModelFixture(BaseHTTPRequestHandler):
                     decision = {'type': 'browser.wait', 'selector': '[role="status"]', 'text': value}
                 else:
                     role = 'textbox' if action == 'fill' else 'button'
-                    target = next(item['target'] for item in context['observation']['targets'] if item['role'] == role and item['name'] == name)
+                    target = next(item['target'] for item in context['page']['targets'] if item['role'] == role and item['name'] == name)
                     decision = {'type': 'browser.act', 'action': action, 'target': target}
                     if value:
                         decision['value'] = value
-                    if action == 'fill':
-                        # 每个表单的填写与点击共享两次动作计划；不提前声明提交结果。
-                        prefix = name.split()[0]
-                        decision['plan'] = {
-                            'goal': f'填写并提交 {prefix} 表单', 'scope': '',
-                            'terms': [name, f'Save {prefix}'],
-                            'successCondition': f'Saved {prefix} {value}',
-                            'allowedActions': ['fill', 'click'], 'maxActions': 2,
-                            'checkpoints': ['after-click'],
-                        }
             else:
-                assert 'Saved Plain Ada' in context['observation']['text'], context['observation']['text']
-                assert 'Saved Shadow Lin' in context['observation']['text'], context['observation']['text']
-                refs = [item['artifactId'] for item in context['observation']['artifactRefs']]
+                assert 'Saved Plain Ada' in context['page']['text'], context['page']['text']
+                assert 'Saved Shadow Lin' in context['page']['text'], context['page']['text']
+                refs = [item['artifactId'] for item in context['page']['artifactRefs']]
                 decision = {'type': 'verification.finish', 'summary': '真实页面夹具的两个表单均显示提交成功',
                             'criteria': [{'criterionId': c['id'], 'verdict': 'PASSED', 'summary': c['expectedResult'], 'evidenceRefs': refs}
-                                         for c in context['task']['acceptanceCriteria']]}
+                                         for c in context['task']['criteria']]}
+            if 'criteria' in decision:
+                decision['progress'] = {'criteria': decision.pop('criteria')}
             response = {'choices': [{'finish_reason': 'tool_calls', 'message': {'role': 'assistant', 'tool_calls': [
                 {'type': 'function', 'function': {'name': decision['type'].replace('.', '_'), 'arguments': json.dumps({k: v for k, v in decision.items() if k != 'type'})}}]}}],
                         'usage': {'prompt_tokens': 100, 'completion_tokens': 30}}

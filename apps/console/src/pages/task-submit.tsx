@@ -164,9 +164,8 @@ export function TaskSubmitPage({ api }: { api: ApiClient }) {
                 的请求对象。数组会自动生成请求身份，缺少的 caseId 自动生成。
               </p>
               <p className="muted">
-                默认使用 LLM + JEV
-                单组执行、自动复用本站登录状态、允许人工辅助。
-                执行设置由平台配置管理，可显式选择纯 LLM 或双跑对比。
+                使用 LLM
+                单组执行，按测试身份来源准备独立会话；人工辅助由平台配置授权。
               </p>
               <textarea
                 id="case-definition"

@@ -2,7 +2,7 @@
 
 JSON Schema 是协议数据结构的源文件；TypeScript 类型由脚本生成并提交。新版上层调用使用 VerificationCaseV2 数组与 CaseResultV2，见[结构化 Case API](../docs/public-api-v2.md)；VerificationCase 与 CaseResult 继续服务旧 [v1 接口](../docs/public-api.md)。VerificationTask 和 VerificationReport 属于平台内部协议。NodeCommand、NodeEvent、ControlRequest、ExecutionGrant、AgentDecision 等内部协议由项目组件配套使用，不整体承诺为第三方稳定 API。
 
-v2 默认按每步 300 秒计算总预算并双跑纯 LLM / JEV+LLM，平台显式配置可覆盖。CaseResultV2 的可选 comparison.arms 返回各组结果；顶层保留主组投影，不代表汇总结论。
+v2 新任务只使用 LLM，按步骤冻结独立时间、动作和模型预算，平台旧总预算不覆盖新 v2 策略。CaseResultV2 的可选 comparison.arms 只用于历史双跑读取；顶层保留主组投影，不代表历史双组汇总结论。
 
 节点和控制面请求的字段说明写在 Schema 的 `description` 中，生成器会把它们带入 TypeScript 类型注释；NodeCommand 的说明也会进入 Rust 构建期生成类型。不要直接改 `src/generated/` 或 Cargo 的 `OUT_DIR`。
 
@@ -26,7 +26,7 @@ pnpm test:contracts
 
 schema 的 `proofrun.invalid` 标识是离线协议标识，不是线上文档服务，也不应发生远端 schema 拉取。
 
-ExecutionGrant 明确执行令牌、节点会话与任务硬期限；AgentDecision 只包含模型可提出的浏览器意图和验收结论，身份由执行器补充。报告可携带执行原因、调用数、动作数、命令身份和服务返回的 token 计数；指标来自 worker，不代表独立计费审计。旧任务 BLOCKED/ERROR 的标准项只能为 SKIPPED；结构化任务通过 steps 保留前面已完成的验收，未执行项仍为 SKIPPED。
+ExecutionGrant 明确执行令牌、节点会话与任务硬期限；AgentDecision 包含模型可提出的浏览器意图和统一 progress，身份由执行器补充，旧 plan/workflow/conclusions 字段不再接受。报告可携带执行原因、调用数、动作数、命令身份和服务返回的 token 计数；指标来自 worker，不代表独立计费审计。BLOCKED/ERROR 可保留已校验证据的独立验收结果，但整体 verdict 必须为 null；未执行项为 SKIPPED，结构化任务通过 steps 保存逐步结果。
 
 ## Console 读取协议
 

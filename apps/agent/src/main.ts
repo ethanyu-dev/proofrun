@@ -1,14 +1,12 @@
 import { serveReportAnalyses } from './report-analysis.js';
-import { plannedModel } from './execution/model-router.js';
 import { prepareIdentitySelection } from './model/identity-selector.js';
 import { readFile } from 'node:fs/promises';
 import { validateVerificationTask } from '@proofrun/contracts';
 import { ControlClient } from './client.js';
-import { DEFAULT_JEV_MODEL, loadConfig } from './config.js';
+import { loadConfig } from './config.js';
 import { execute } from './execution/runner.js';
 import { AgentFault, pause } from './http.js';
 import { ChatModel } from './model/chat.js';
-import { JevModel } from './model/jev.js';
 import { executionStrategy } from './model/strategy.js';
 
 /** CLI 只管理 worker 进程；浏览器创建、清理与并发额度始终由控制面和 Node 管理。 */
@@ -38,29 +36,10 @@ async function worker(once: boolean, slot: number): Promise<void> {
         await prepareIdentitySelection(config, controller.signal);
         const grant = await client.claim(controller.signal);
         if (grant) {
-          const jev = executionStrategy(grant.task) === 'jev';
-          const model =
-            config.executionPolicy === 'planned-v1'
-              ? plannedModel(
-                  config,
-                  jev,
-                  process.env.TYPESAFE_API_KEY ?? '',
-                  process.env.TYPESAFE_MODEL,
-                )
-              : jev
-                ? new JevModel(
-                    config,
-                    process.env.TYPESAFE_API_KEY ?? '',
-                    process.env.TYPESAFE_MODEL,
-                  )
-                : new ChatModel(config);
+          executionStrategy(grant.task);
+          const model = new ChatModel(config);
           const report = await execute(
-            {
-              ...config,
-              model: jev
-                ? `JEV (${process.env.TYPESAFE_MODEL ?? DEFAULT_JEV_MODEL}) + ${config.model}`
-                : config.model,
-            },
+            config,
             client,
             model,
             grant,

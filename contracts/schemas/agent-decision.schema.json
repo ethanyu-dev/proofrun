@@ -278,7 +278,7 @@
               }
             ]
           },
-          "minItems": 1
+          "minItems": 0
         }
       },
       "required": ["type", "summary", "criteria"],

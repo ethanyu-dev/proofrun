@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ApiClient, errorMessage } from '../api';
 import { ErrorNotice } from '../components/ui';
-import { HitlPage } from './hitl';
 import {
   NodeProfileOutcome,
   type NodeProfileStatus,
@@ -49,9 +48,9 @@ export function NodeProfilePage({ api, id }: { api: ApiClient; id: string }) {
       clearTimeout(timer);
     };
   }, [api, id, attempt]);
-  if (status?.ready && !closing) return <HitlPage api={api} id={id} />;
   return (
     <section className="panel" aria-label="节点默认 profile">
+      <p>节点模板维护已停用。此页面仅供查看历史状态和关闭遗留会话。</p>
       <NodeProfileOutcome status={status} closing={closing} />
       <ErrorNotice message={error} />
       <div className="page-actions">
@@ -82,7 +81,7 @@ export function NodeProfilePage({ api, id }: { api: ApiClient; id: string }) {
               }
             }}
           >
-            不保存并关闭
+            关闭遗留会话
           </button>
         )}
         <a className="button button-secondary" href="#/nodes">

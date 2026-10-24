@@ -1,12 +1,12 @@
 import type { VerificationTask } from '@proofrun/contracts';
 import { AgentFault } from '../http.js';
 
-/** 新任务以显式策略为准，历史对照任务沿用组标识；未拆组请求不能作为单任务执行。 */
-export function executionStrategy(task: VerificationTask): 'llm' | 'jev' {
-  if (task.executionMode === 'parallel')
+/** 新执行只有 LLM；历史模式可读取，但必须重新提交为当前策略后执行。 */
+export function executionStrategy(task: VerificationTask): 'llm' {
+  if ((task.executionMode && task.executionMode !== 'llm') || task.comparison)
     throw new AgentFault(
-      'UNEXPANDED_PARALLEL_TASK',
-      '并行任务必须先由控制面拆分',
+      'EXECUTION_MODE_RETIRED',
+      '历史 JEV/双跑任务不能直接执行，请使用 LLM 创建新运行',
     );
-  return task.executionMode ?? task.comparison?.arm ?? 'llm';
+  return 'llm';
 }

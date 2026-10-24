@@ -11,9 +11,6 @@
 | `download-test-engine.mjs`                | 下载固定原生引擎并核对摘要                                                                         |
 | `accept-task.mjs`                         | 提交既定任务、等待执行与关闭、导出报告和摘要匹配证据                                               |
 | `audit-acceptance.mjs`                    | 离线审计已有导出的一致性、证据摘要、验收引用和用量                                                 |
-| `test-jev.mjs`                            | 历史观察的 JEV 建议测试，支持仅准备输入                                                            |
-| `compare-jev.mjs`                         | 相同历史输入下交替请求 JEV 与文本模型                                                              |
-| `replay-agent-baseline.mjs`               | 使用原 Agent 提示与工具协议重放历史观察                                                            |
 
 ## 验收材料审计
 
@@ -33,82 +30,10 @@ pnpm --silent audit:acceptance .proofrun/acceptance/* > .proofrun/acceptance-aud
 
 耗时与调用数来自报告。token 为已记录用量，缺失时返回 null，不补成零；用量完整性与费用保持未知。历史样本可能使用不同任务、预算和版本，不自动合并为 JEV/LLM 胜率或当前版本基线。真实任务验收仍需按[部署说明](../deploy/README.md#业务验收)绑定版本、配置及独立业务复核。
 
-## JEV 回放与对比
+## 本地配置
 
-```sh
-# 六个页面状态，各重复三轮；产生真实供应商请求，不执行浏览器动作。
-pnpm test:jev:compare
-# 使用 Agent 协议重放三个表单状态，同样会产生真实模型请求。
-pnpm test:jev:agent-baseline
-```
+模型配置放在被 Git 忽略的 `.proofrun/local.env`。使用 `PROOFRUN_MODEL_BASE_URL`、`PROOFRUN_MODEL_API_KEY` 和 `PROOFRUN_MODEL`；视觉按模型能力设置 `PROOFRUN_MODEL_VISION`。新执行只有 llm，JEV、旧执行策略与相应回放脚本已退役。
 
-对比器使用本机既有表单和价格页面的历史任务证据；输入缺失时应先准备对应证据，不能把缺失输入当作模型失败。模型与网络会变化，重跑数值不保证相同；建议选择准确性不等于实际任务成功率。实时双会话使用 [并行对比](../docs/parallel-comparison.md)。
+`pnpm dev:local` 启动 API、Agent 和 Console；API 使用该环境文件配置的数据库。启用 Docker 预览节点时，启动器写入开发覆盖项，使用当前 Cargo 构建与本地配置。需要 HTTP 代理时设置 `NODE_USE_ENV_PROXY=1`、`HTTP_PROXY`、`HTTPS_PROXY` 和适当的 `NO_PROXY`，修改后重启 Agent。
 
-## 配置与运行
-
-将 TypeSafe 密钥配置到被 Git 忽略的 `.proofrun/local.env`：
-
-```dotenv
-TYPESAFE_API_KEY=你的真实密钥
-TYPESAFE_MODEL=jev-1.14.0
-```
-
-本地启动会透传 `PROOFRUN_JEV_*` 开关。启用 `PROOFRUN_JEV_IMAGES=true` 和 `PROOFRUN_JEV_EXPANDED_ACTIONS=true` 后，JEV 可接收当前截图并使用扩展候选；Box 仍由 `PROOFRUN_JEV_BOX` 单独控制。已有环境文件中的 `TYPESAFE_MODEL` 会覆盖默认版本，应同步检查。
-
-启用 Docker 预览节点时，启动器为该节点写入 `90-local-build.conf` 开发覆盖项，使用本次 Cargo 构建的二进制及 `local-node.toml`，避免旧发布版覆盖项让服务继续运行历史版本。API 仍连接 `.proofrun/local.env` 配置的数据库。
-
-使用 `pnpm dev:local` 时，若 JEV 需要本机 HTTP 代理，可在同一文件中追加以下配置（端口按本机代理修改）。启动脚本将这些设置传给 Agent；Node 24 的 `fetch` 需要 `NODE_USE_ENV_PROXY=1` 才会使用代理。`NO_PROXY` 中列出控制面及需要直连的文本模型域名，Docker 中的浏览器代理由节点单独配置。修改后需重启 Agent 才能生效。
-
-```dotenv
-NODE_USE_ENV_PROXY=1
-HTTP_PROXY=http://127.0.0.1:8234
-HTTPS_PROXY=http://127.0.0.1:8234
-NO_PROXY=localhost,127.0.0.1,::1,apiproxy.paigod.work
-```
-
-配置方法参考 [TypeSafe Quick Start](https://docs.typesafe.ai/introduction/quickstart.md)。该密钥用于 TypeSafe 模型服务；Console 访问凭据和现有其他模型的密钥不能直接替代它。
-
-```bash
-# 从仓库根目录执行；真实请求最多三次，失败即停止，不自动重试。
-pnpm test:jev
-
-# 只检查证据并生成请求文件，不调用模型。
-pnpm test:jev --prepare
-```
-
-环境文件位于其他位置时：
-
-```bash
-node --env-file=/absolute/path/to/jev.env scripts/test-jev.mjs
-```
-
-默认输入为 `.proofrun/acceptance/novita-glm-pricing-bfb1f1c8`。可以通过 `PROOFRUN_JEV_SOURCE_DIR` 指向同格式的证据目录；必须包含搜索框和 Dedicated Endpoints 选中状态的页面快照。
-
-## 测试边界
-
-| 测试             | 检查内容                                   | 不覆盖的范围                         |
-| ---------------- | ------------------------------------------ | ------------------------------------ |
-| 搜索框选择       | 给定明确子目标，是否选择填写 Search models | 填写值生成、搜索结果、价格准确性     |
-| 切换栏目         | 是否建议点击 SERVERLESS ENDPOINTS          | 实际点击、导航、页面加载             |
-| 完整目标的下一步 | 原始 GLM 任务下的动作建议和完成倾向        | 没有唯一动作标签，不据此判定业务成功 |
-
-输入属于真实网站的历史观察；JEV 服务调用是真实调用。测试程序不会执行浏览器操作，不会让当前 LLM 消费建议，也不属于完整的 ProofRun 实时闭环。元素能力仅按历史角色构造为建议候选，可执行性尚未验证。页面文字限制为 6,000 字符并明确标记截断。
-
-每次输出到 `.proofrun/jev-tests/<时间-唯一标识>/`：
-
-- `*.request.json`：发给模型的实际请求，不含 Authorization。
-- `result.json`：输入证据摘要、实际模型、延迟、用量、选择概率、置信度、目标和预期匹配结果。
-
-`MATCHED_EXPECTATION` 仅表示定向建议匹配，`EXPLORATORY_ONLY` 仅表示探索性调用完成。HTTP 错误、非法响应或网络错误会单独记录；不将服务失败计作建议错误。完整任务是否通过，需要后续接入执行循环并核验实际证据。
-
-Jev 离线证据建议与对照脚本默认固定 `jev-1.14.0`，已有 `.proofrun/local.env` 中的 `TYPESAFE_MODEL` 会覆盖默认值。脚本继续使用各自的短上下文；worker 的实验长上下文配置见 [Agent README](../apps/agent/README.md#jev-版本与实验长上下文)。
-
-## 通用执行策略真实模型回归
-
-先在浏览器节点启动 `tests/agent/guidance-browser-fixture.py`，再在本地控制面启用 `PROOFRUN_AGENT_EXECUTION_GUIDANCE=true`。
-
-```sh
-PROOFRUN_CONTROL_URL=http://127.0.0.1:4101 node --env-file=.proofrun/local.env scripts/test-execution-guidance.mjs
-```
-
-默认运行 JEV；`PROOFRUN_GUIDANCE_MODE=llm` 可验证相同任务在文本决策模式中的共享机制。脚本仅允许本地控制面，依次提交长页面、嵌套列表和分阶段配置任务，保存真实任务与调用，并以非零退出码报告未通过、缺少策略诊断或资源未关闭。真实请求产生正常模型用量；本地夹具结果不能替代外部网站回归。通过节点的 `/metrics` 另外确认禁止提交的计数为零。
+`pnpm test:agent:browser` 使用真实 Rust session-host/Chrome 和本地 HTTP 表单，模型回复由脚本提供，验证逐轮填写、唯一提交和结果观察。真实模型的业务测评使用 `eval:e2e`；两者不能互相替代。

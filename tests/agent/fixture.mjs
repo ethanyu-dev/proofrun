@@ -146,29 +146,26 @@ export class FakeControl {
 export function finish(context) {
   return {
     type: 'verification.finish',
-    ...(context.executionStep?.type === 'setup' && !context.cleanup
+    ...(['PREPARING', 'CHECKING'].includes(context.state.phase) &&
+    !(context.state.phase === 'CLEANUP')
       ? {
-          evidenceRefs: context.observation.artifactRefs.map(
-            (a) => a.artifactId,
-          ),
+          evidenceRefs: context.page.artifactRefs.map((a) => a.artifactId),
           workflow: {
-            assessments: context.workflow.steps.map((step) => ({
+            assessments: context.state.requirements.map((step) => ({
               stepId: step.id,
               outcome: 'complete',
               summary: '夹具声明准备条件已核实，不代表真实账号验证',
-              evidenceRefs: context.observation.artifactRefs.map(
-                (a) => a.artifactId,
-              ),
+              evidenceRefs: context.page.artifactRefs.map((a) => a.artifactId),
             })),
           },
         }
       : {}),
     summary: '夹具完成协议验证',
-    criteria: context.task.acceptanceCriteria.map((c) => ({
+    criteria: context.task.criteria.map((c) => ({
       criterionId: c.id,
       verdict: 'PASSED',
       summary: '观察到预期结果',
-      evidenceRefs: context.observation.artifactRefs.map((a) => a.artifactId),
+      evidenceRefs: context.page.artifactRefs.map((a) => a.artifactId),
     })),
   };
 }
@@ -201,13 +198,7 @@ export async function modelServer(decide) {
                       type: 'function',
                       function: {
                         name: value.type.replaceAll('.', '_'),
-                        arguments: JSON.stringify(
-                          Object.fromEntries(
-                            Object.entries(value).filter(
-                              ([key]) => key !== 'type',
-                            ),
-                          ),
-                        ),
+                        arguments: JSON.stringify(modelArguments(value)),
                       },
                     },
                   ],
@@ -232,5 +223,51 @@ export async function modelServer(decide) {
       server.closeAllConnections();
       await new Promise((resolve) => server.close(resolve));
     },
+  };
+}
+
+/** 夹具使用领域决定构造新模型协议；raw 回复绕过转换以覆盖非法协议。 */
+export function modelArguments(value) {
+  const { type, criteria, conclusions, workflow, ...args } = value;
+  const progress = {
+    ...(workflow && !Array.isArray(workflow)
+      ? Object.fromEntries(
+          Object.entries(workflow).filter(
+            ([key]) =>
+              ![
+                'assessments',
+                'readings',
+                'revisitReason',
+                'recovery',
+              ].includes(key),
+          ),
+        )
+      : {}),
+    ...(criteria !== undefined || conclusions !== undefined
+      ? { criteria: conclusions ?? criteria }
+      : {}),
+    ...(workflow?.assessments
+      ? {
+          requirements: workflow.assessments.map(
+            ({ stepId, outcome, ...item }) => ({
+              ...item,
+              id: stepId,
+              status: outcome,
+            }),
+          ),
+        }
+      : {}),
+    ...(workflow?.readings ? { readings: workflow.readings } : {}),
+  };
+  return {
+    ...args,
+    ...(Array.isArray(workflow)
+      ? { progress: workflow }
+      : Object.keys(progress).length
+        ? { progress }
+        : {}),
+    ...(workflow?.revisitReason
+      ? { revisitReason: workflow.revisitReason }
+      : {}),
   };
 }

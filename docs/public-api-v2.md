@@ -1,6 +1,6 @@
 # 结构化 Case API v2
 
-`POST /v2/cases` 支持请求对象封装和兼容数组；cases 中每个对象是一个独立 case，默认创建 JEV+LLM 单组任务；平台显式配置 parallel 时创建纯 LLM 与 JEV+LLM 两组。不同 caseId 及同一 case 的两组可按平台容量并行执行；每个对象是独立 profile 维度；内部先按 `exec_order` 稳定排序，再以 setup 拆成独占 tab 的分组，默认两个组并发、组内串行。不同账号或有冲突的环境应放在不同对象，存在先后依赖的步骤放在同一分组。不会为每个步骤创建独立任务。
+`POST /v2/cases` 支持请求对象封装和兼容数组；cases 中每个对象是一个独立 case，默认创建 LLM 单组任务，旧 jev/parallel 不再接受。不同 caseId 可按平台容量并行执行；每个对象是独立 profile 维度；内部先按 `exec_order` 稳定排序，再以 setup 拆成独占 tab 的分组，最多八个组并发、组内串行。不同账号或有冲突的环境应放在不同对象，存在先后依赖的步骤放在同一分组。不会为每个步骤创建独立任务。
 
 旧 `/v1/cases` 单 case 接口继续保留。新旧请求格式不混用；内部 `/v1/tasks` 不接收新版 case、结构化步骤或清理任务，也不支持从内部入口对它们自动重跑或追加双组对照。重新执行可使用下述 case 重跑接口，或通过新版提交接口提交新的 caseId。
 
@@ -79,7 +79,7 @@ setup 通过后，普通 verification 步骤的 FAILED/INCONCLUSIVE、BLOCKED �
 
 新提交和重跑的 case 在 session.open 前生成 executionPlan.version=1。显式 session 优先；未指定时，仅从 setup 的 description/policy 识别无否定、无引用、无条件语气的明确访客要求。依据保存在 environment.basis，source 为 explicit / inferred / default。不能明确判断时保留 manual；明确的访客与已登录要求或显式非访客 session 冲突，返回 422 ENVIRONMENT_CONFIG_CONFLICT。此解析是保守规则，不覆盖任意自然语言；需要确定行为时显式写 `"session":{"mode":"guest"}`。
 
-访客会话不恢复也不保存登录槽。节点回执提供绑定 sessionId 的 environmentProof；缺失或显示曾恢复登录状态时，执行器报告 ENVIRONMENT_PROOF_MISSING，模型声明不能替代准备证明。没有 executionPlan 的历史冻结任务保留旧逻辑，读取不会迁移；重跑是按新规则编译的新任务，可能需要解决原定义中的环境冲突。
+访客会话不恢复也不保存登录槽。节点回执提供绑定 sessionId 的 environmentProof；缺失或显示曾恢复登录状态时，执行器报告 ENVIRONMENT_PROOF_MISSING，模型声明不能替代准备证明。没有 executionPlan 的历史冻结任务保留原结构，读取不会迁移；新执行仍不支持旧引擎或本地登录快照；重跑是按新规则编译的新任务，可能需要解决原定义中的环境冲突。
 
 步骤及 cleanup 可配置 policyChecks，id 在步骤内唯一，policyIndex 是原 policy 的零起始索引。同一 policy 的多个检查必须全部满足。例如：
 
@@ -110,7 +110,7 @@ executionPlan.evidenceKinds 是验收取证配置与全部步骤（含 setup、c
 
 显式等待自动计入本步额度：无验收项使用等待时长加 30 秒取证，不调用模型；带验收项在等待时长上另加五分钟。领取后才启用业务预算，排队不扣减步骤额度。
 
-新 v2 每个业务步骤独立五分钟。准备步骤为 10 次动作、20 次模型请求；验证步骤为 12 次动作（包含两次定位后选择、查询的收尾额度），每增加一项验收再增加两次动作，最多 30 次。验证模型请求额度为动作额度的两倍，JEV+LLM 再翻倍。新规则只在创建时编译，既有任务沿用冻结额度。步骤不能互借额度，耗尽后记录 BLOCKED 和具体原因；普通业务可继续独立后续步骤，setup 未完成则跳过本组后续验证并禁止 profile 清理。旧 profile 总预算只用于旧版 case。cleanup 整段独立三分钟、10 次动作和 20/40 次模型请求，业务耗尽不侵占它的额度。人工等待暂停业务计时，恢复剩余额度，不清零计数；清理墙钟不暂停。每个业务步骤另预留两分钟供在途调用和取证落库，不能用于派发新操作。取消、租约丢失、未知浏览器效果仍终止执行。
+新 v2 每个业务步骤独立五分钟。准备步骤为 10 次动作、20 次模型请求；验证步骤为 12 次动作（包含两次定位后选择、查询的收尾额度），每增加一项验收再增加两次动作，最多 30 次。验证模型请求额度为动作额度的两倍。新规则只在创建时编译，既有任务沿用冻结额度。步骤不能互借额度，耗尽后记录 BLOCKED 和具体原因；普通业务可继续独立后续步骤，setup 未完成则跳过本组后续验证并禁止 profile 清理。旧 profile 总预算只用于旧版 case。cleanup 整段独立三分钟、10 次动作和 20 次模型请求，业务耗尽不侵占它的额度。人工等待暂停业务计时，恢复剩余额度，不清零计数；清理墙钟不暂停。每个业务步骤另预留两分钟供在途调用和取证落库，不能用于派发新操作。取消、租约丢失、未知浏览器效果仍终止执行。
 
 节点默认会话硬期限为一小时，必须覆盖全部业务、逐步收尾预留和清理；不足时排队原因显示 SESSION_BUDGET_UNSUPPORTED。会话预算超过一天的 case 直接拒绝，不削减后续步骤额度。长 case 需提高 max_session_ms 或拆分。请求不接受自定义预算或模式，详见[平台预算规则](case-platform-config.md)。
 
@@ -118,7 +118,7 @@ executionPlan.evidenceKinds 是验收取证配置与全部步骤（含 setup、c
 
 ## 查询与结果
 
-`POST /v2/cases/{caseId}/rerun` 接收 `{"runId":"本次运行的幂等键"}`，返回 202 和同一 case 的单个 `CaseResultV2`，其中 caseId 不变，taskId/runId 指向新运行。沿用原业务定义、环境、取证类型和执行模式，默认按当前逐步预算策略生成新任务；可传 `budgetMode: "original"` 复现原预算，缺省为 `"current"`。不复制旧状态或报告。双跑整体重建两组，单组保留原模式。平台配置撤下后仍可重跑；如需采用当前环境配置，改用 `POST /v2/cases` 提交新身份。
+`POST /v2/cases/{caseId}/rerun` 接收 `{"runId":"本次运行的幂等键"}`，返回 202 和同一 case 的单个 `CaseResultV2`，其中 caseId 不变，taskId/runId 指向新运行。沿用原业务定义、环境和取证类型，新运行统一使用 LLM，默认按当前逐步预算策略生成新任务；可传 `budgetMode: "original"` 复现原预算，缺省为 `"current"`。不复制旧状态或报告。历史双跑只创建一个新的 LLM 运行；旧 JEV/双跑使用 original 预算时返回 RERUN_BUDGET_INCOMPATIBLE。平台配置撤下后仍可重跑；如需采用当前环境配置，改用 `POST /v2/cases` 提交新身份。
 
 可额外传 `timeBudget: {"stepTimeoutMs":900000,"cleanupTimeoutMs":600000}`，在所选预算基础上将每个业务步骤至少扩展到 15 分钟、整段清理至少扩展到 10 分钟。两个字段可单独提供，值必须为正整数毫秒；原本更长的步骤（包含等待）不会缩短。动作数、模型请求数及收尾额度不变，业务总时间重新汇总，完整会话仍受 24 小时上限约束。没有逐步预算的历史任务会在新身份上补编译逐步计划。相同 runId 重提始终返回首次冻结的预算；改变额度需要另一个新 runId。
 
@@ -131,7 +131,7 @@ runId 为 1–80 位字母、数字、下划线或短横线，与 caseId 使用�
 
 所有接口沿用部署管理员 Bearer 凭据。结果结构见 [CaseResultV2 Schema](../contracts/schemas/case-result-v2.schema.json) 与 [OpenAPI](../contracts/public-api.openapi.json)。
 
-响应包含 caseId、status、reportStatus、criteriaCounts、result、steps、cleanup。双跑时额外返回 `comparison: { id, arms }`；arms 按 llm、jev 顺序分别包含 taskId、executionMode 和各自的完整 case 结果（含步骤、清理及排队原因）。顶层字段保持纯 LLM 主组的原有投影，不能用顶层完成或通过推断另一组的状态。单组及历史单组任务省略 comparison。查询、幂等重提和取消均返回相同结构；证据入口允许读取两组及各自清理中已记录的证据。status 为原任务生命周期；result 为原有 outcome、summary、criteria、evidence 结构，无报告时为 null。steps 包含 stepId、status、summary、evidenceRefs、criteria、startedAt、finishedAt；新任务另有 groupId 与 phase，标识 tab 分组及准备/检查/验证阶段。步骤状态为 PENDING、RUNNING、COMPLETED、BLOCKED、ERROR、SKIPPED。
+响应包含 caseId、status、reportStatus、criteriaCounts、result、steps、cleanup。历史双跑额外返回 `comparison: { id, arms }`；arms 按 llm、jev 顺序分别包含 taskId、executionMode 和各自的完整 case 结果（含步骤、清理及排队原因）。顶层字段保持纯 LLM 主组的原有投影，不能用顶层完成或通过推断另一组的状态。单组及历史单组任务省略 comparison。查询、幂等重提和取消均返回相同结构；证据入口允许读取两组及各自清理中已记录的证据。status 为原任务生命周期；result 为原有 outcome、summary、criteria、evidence 结构，无报告时为 null。steps 包含 stepId、status、summary、evidenceRefs、criteria、startedAt、finishedAt；新任务另有 groupId 与 phase，标识 tab 分组及准备/检查/验证阶段。步骤状态为 PENDING、RUNNING、COMPLETED、BLOCKED、ERROR、SKIPPED。
 
 `reportStatus` 是与 Console 验证报告一致的结论，新增字段不改变原有 `status`、`result.outcome` 或清理结果的语义。提交、查询、幂等重提与取消响应均返回：
 
@@ -162,7 +162,7 @@ cleanup 中每项必填 url、exec_order、description，可选 stepId、policy�
 
 steps 按实际执行顺序包含清理步骤；cleanup 仍提供 taskId、status、result 摘要，其中 taskId 就是该组原任务的身份，PENDING 表示尚未进入收尾阶段。清理摘要单独投影自己的步骤结论，result 在原任务报告交付前为 null。原任务报告覆盖业务和清理，清理的 expected 计入总验收项；清理受阻或错误会使整体 outcome 不完整，但不会抹掉已完成的业务验收结论。
 
-双跑两组分别在自己的会话末尾清理。当前以 caseId 对应的主任务身份、平台 nodePool、登录槽（没有显式登录槽时使用 environment.id）、显式登录节点及 entry 的 origin 生成互斥键，双跑时进一步按组隔离。不同 caseId 即使环境、账号与站点相同，也不互相等待。两组从同一轮不可变登录快照启动，各自使用独立浏览器 profile；该键不隔离服务端业务数据，共用账号或业务对象的操作顺序仍需上游协调。
+新任务在自己的临时会话末尾清理。互斥键绑定 case 运行范围、资源池、环境及 entry 的 origin；旧显式登录槽字段仅参与稳定身份计算，不触发恢复或保存。不同 caseId 不因此互相等待，身份库账号容量另行约束；该键不隔离服务端业务数据，共用账号或业务对象的操作顺序仍需上游协调。历史双跑清理和结果只按原记录读取。
 
 升级前已经提交的任务继续使用冻结的独立清理定义；同 caseId 幂等重提不会转换执行方式或创建新执行。新提交的 case 使用同任务收尾；重新执行沿用 caseId 并新增运行。
 
@@ -177,7 +177,7 @@ steps 按实际执行顺序包含清理步骤；cleanup 仍提供 taskId、statu
 - Console 的 JSON 模式可直接提交 case 数组，详情展示步骤、约束、执行结果以及同任务清理状态（历史独立清理仍显示链接）。普通表单继续编辑原内部任务。
 - 更新 contracts、API、Agent、Console 后部署；代码验证不替代真实业务环境验收。
 
-同 profile 的 tab 共享登录与站点存储；初始认证快照只加载一次，人工保存显式更新快照，运行结束不自动回写。网络/TRACE 当前为 profile 级证据，需要这类证据时分组串行。完整生命周期见 [架构说明](architecture.md#v2-profile-与-tab-分组)。
+同 profile 的 tab 共享登录与站点存储；身份材料只注入当前临时会话，人工处理不会保存快照或重启浏览器，运行结束不回写身份来源。网络/TRACE 当前为 profile 级证据，需要这类证据时分组串行。完整生命周期见 [架构说明](architecture.md#v2-profile-与-tab-分组)。
 
 ## 历史运行软删除
 

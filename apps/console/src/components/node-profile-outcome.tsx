@@ -36,7 +36,7 @@ export function NodeProfileOutcome({
             ? '维护会话已关闭'
             : status?.closing || closing
               ? '正在关闭浏览器…'
-              : '正在打开维护浏览器…'}
+              : '历史维护会话'}
       </h1>
       {status?.failure && (
         <div role="alert">
@@ -61,15 +61,15 @@ export function NodeProfileOutcome({
             ? '已保留较新的节点默认 profile。'
             : status?.closed || status?.failure
               ? '本次没有确认发布新的节点默认 profile；之前已保存的模板不会因此被删除。'
-              : '浏览器打开后可前往网页、完成登录，再保存为节点默认模板。'}
+              : '维护入口已停用，仅保留历史记录与关闭操作。'}
       </p>
       {status?.failure && (
         <p>
           {status.closed
-            ? '浏览器已关闭。返回节点管理可重新创建维护会话。'
+            ? '浏览器已关闭，维护入口已停用。'
             : status.closing
               ? '正在等待浏览器关闭确认。'
-              : '请先关闭当前维护会话，再返回节点管理重试。'}
+              : '请关闭当前遗留维护会话。'}
         </p>
       )}
     </>

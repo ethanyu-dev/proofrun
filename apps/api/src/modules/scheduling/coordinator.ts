@@ -60,9 +60,8 @@ import {
   type CommandResult,
   type Heartbeat,
 } from '../../domain.js';
-import { authPlacement, recordQueueReason } from './placement.js';
+import { identityPlacement, recordQueueReason } from './placement.js';
 import { cleanupPlacement } from './cleanup-placement.js';
-import { sessionAuth } from './auth.js';
 import {
   routingSnapshot,
   resolveRoute,
@@ -107,6 +106,8 @@ export class Coordinator {
 
   /** 接收上层定义的任务快照；相同身份只允许相同定义。 */
   async submit(task: VerificationTask) {
+    if (task.executionMode && task.executionMode !== 'llm')
+      throw new ApiError(422, 'EXECUTION_MODE_RETIRED', '新任务只支持 llm');
     if (
       task.sessionPlan?.mode === 'external' ||
       !!task.sessionPlan?.external ||
@@ -151,17 +152,6 @@ export class Coordinator {
         'UNSUPPORTED_EVIDENCE',
         'This release supports DOM, SCREENSHOT, NETWORK and TRACE evidence',
       );
-    if (task.executionMode === 'parallel') {
-      if (task.taskId.length > 100)
-        throw new ApiError(
-          422,
-          'INVALID_TASK',
-          '并行任务 ID 最长为 100 个字符',
-        );
-      const tasks = this.comparisonTasks(task, task.taskId, task.taskId);
-      await this.enqueue(tasks, task.taskId);
-      return this.task(tasks[0]!.taskId);
-    }
     await this.enqueue([task], task.taskId);
     return this.task(task.taskId);
   }
@@ -462,22 +452,7 @@ export class Coordinator {
     });
   }
 
-  /** 并行组分别携带实际策略，不能继承来源任务的单组模式；两组从同一不可变登录快照启动。 */
-  private comparisonTasks(
-    definition: VerificationTask,
-    id: string,
-    sourceTaskId: string,
-  ): VerificationTask[] {
-    return (['llm', 'jev'] as const).map((arm) => ({
-      ...definition,
-      taskId: `${id}-${arm}`,
-      // 旧对照入口不补写新字段，保证升级后以相同身份重试仍匹配原定义摘要。
-      ...(definition.executionMode ? { executionMode: arm } : {}),
-      comparison: { id, arm, sourceTaskId },
-    }));
-  }
-
-  /** 重跑创建独立任务，保留原配置；对照任务成对重建，避免丢失 JEV 执行策略。 */
+  /** 内部重跑创建独立 LLM 任务；结构化 Case 必须使用 v2 重跑入口。 */
   async rerun(sourceId: string, runId: string) {
     if (!/^[A-Za-z0-9_-]{1,100}$/.test(runId) || runId === sourceId)
       throw new ApiError(400, 'INVALID_RERUN', '重跑需要一个新的有效任务身份');
@@ -489,53 +464,22 @@ export class Coordinator {
         'CASE_ENDPOINT_REQUIRED',
         '结构化任务请通过 /v2/cases/:id/rerun 新增运行，不支持在内部入口重跑',
       );
-    if (definition.comparison) {
-      if (runId === definition.comparison.id)
-        throw new ApiError(400, 'INVALID_RERUN', '重跑需要新的对照组身份');
-      return this.compare(sourceId, runId);
-    }
-    await this.submit({ ...definition, taskId: runId });
+    const { comparison: _comparison, ...business } = definition;
+    await this.submit({ ...business, taskId: runId, executionMode: 'llm' });
     return { taskId: runId };
   }
 
-  /** 同一事务创建两份不可变任务；幂等身份防止响应丢失后重复运行业务操作。 */
-  async compare(sourceId: string, comparisonId: string, maxActions?: number) {
-    if (
-      !/^[A-Za-z0-9_-]{1,100}$/.test(comparisonId) ||
-      CASE_TASK_ID.test(comparisonId)
-    )
-      throw new ApiError(400, 'INVALID_COMPARISON', '无效的对比身份');
-    // 预算变更仅用于本轮两份新任务，原任务定义和历史报告保持不可变。
-    if (
-      maxActions !== undefined &&
-      (!Number.isSafeInteger(maxActions) || maxActions < 1 || maxActions > 1000)
-    )
-      throw new ApiError(
-        400,
-        'INVALID_COMPARISON',
-        '动作上限必须为 1–1000 的整数',
-      );
-    const source = await this.task(sourceId);
-    const definition = source.definition as VerificationTask;
-    if (definition.steps)
-      throw new ApiError(
-        400,
-        'CASE_ENDPOINT_REQUIRED',
-        '结构化任务请通过 /v2/cases/:id/rerun 新增运行，不支持在内部入口重跑',
-      );
-    const tasks = this.comparisonTasks(
-      {
-        ...definition,
-        budget: {
-          ...definition.budget,
-          maxActions: maxActions ?? definition.budget.maxActions,
-        },
-      },
-      comparisonId,
-      sourceId,
+  /** 旧双跑写入入口明确拒绝，不再创建任务。 */
+  async compare(
+    _sourceId: string,
+    _comparisonId: string,
+    _maxActions?: number,
+  ) {
+    throw new ApiError(
+      410,
+      'EXECUTION_MODE_RETIRED',
+      '双跑入口已停用，请创建 LLM 运行',
     );
-    await this.enqueue(tasks, comparisonId);
-    return { id: comparisonId, taskId: tasks[0]!.taskId };
   }
 
   /** 组身份由不可变任务定义确定，不允许页面随意拼接另一组执行。 */
@@ -668,6 +612,11 @@ export class Coordinator {
         const selected = await selectedTask(client, row.definition);
         if (!selected) continue;
         let task = selected;
+        if (
+          task.comparison ||
+          (task.executionMode && task.executionMode !== 'llm')
+        )
+          continue;
         if (task.executionPlan && executionPlanVersion !== 1) continue;
         if (task.steps && !structuredSteps) continue;
         if (task.stepBudget && stepBudgetVersion !== 1) continue;
@@ -767,16 +716,14 @@ export class Coordinator {
             continue;
           }
         }
-        const placement = await authPlacement(client, task, routedNode);
-        if (!placement) continue;
+        const placement = identityPlacement(task, routedNode);
         if (placement.conflict) {
           await recordQueueReason(client, task.taskId, placement.conflict);
           continue;
         }
-        const { auth, preferredNode } = placement;
-        // 清理归属来自主任务执行记录，不随自动登录偏好、容量或重新配置迁移。
+        // 清理归属来自主任务执行记录，不随容量或重新配置迁移。
         const requiredNode = cleanup.requiredNode ?? placement.requiredNode;
-        // 路由和本轮快照是硬约束；自动槽位只在合格候选中优先，容量不足时可继续选择。
+        // 路由和显式身份节点是硬约束，合格节点按当前占用排序。
         const candidates = live
           .filter(
             (c) =>
@@ -786,8 +733,6 @@ export class Coordinator {
           )
           .sort(
             (a, b) =>
-              Number(b.nodeId === preferredNode) -
-                Number(a.nodeId === preferredNode) ||
               a.heartbeat!.occupied.length - b.heartbeat!.occupied.length,
           );
         let queueCode: QueueReason['code'] = 'NO_ELIGIBLE_NODE';
@@ -858,11 +803,6 @@ export class Coordinator {
             queueCode = 'EXTERNAL_ACCOUNT_WAIT';
             break;
           }
-          if (auth && !task.environment.auth)
-            await client.query(
-              'INSERT INTO pr_auth_bindings(scope,node_id) VALUES($1,$2) ON CONFLICT(scope) DO UPDATE SET node_id=EXCLUDED.node_id',
-              [auth.stateId, node.id],
-            );
           const fence = Number(node.fence) + 1;
           if (fence > MAX_FENCE)
             throw new ApiError(
@@ -929,7 +869,7 @@ export class Coordinator {
               randomUUID(),
               fence,
               heartbeat.leaseRequestId,
-              auth,
+              null,
               // 冻结分配时的进程版本，后续升级或回退不改写该执行的诊断事实。
               heartbeat.runtime ?? null,
             ],
@@ -978,7 +918,6 @@ export class Coordinator {
                 liveView:
                   task.environment.allowIntervention === true ||
                   !!task.comparison,
-                ...(auth ? { authState: auth } : {}),
                 networkEvidence: taskEvidenceKinds(task).includes('NETWORK'),
                 leaseRequestId: heartbeat.leaseRequestId,
                 leaseTtlMs: this.leaseTtl(context, heartbeat),
@@ -1019,8 +958,7 @@ export class Coordinator {
       heartbeat.pool === task.environment.nodePool &&
       (!task.sessionPlan?.external ||
         heartbeat.capabilities.externalAccounts === true) &&
-      (!task.sessionPlan?.library ||
-        heartbeat.capabilities.fullProfile === true) &&
+      heartbeat.capabilities.ephemeralProfiles === true &&
       (!task.executionPlan ||
         heartbeat.capabilities.environmentProof === true) &&
       (!task.profilePlan || heartbeat.capabilities.profileTabs === true) &&
@@ -1029,7 +967,6 @@ export class Coordinator {
         heartbeat.capabilities.liveView === true) &&
       (!task.environment.allowIntervention ||
         heartbeat.capabilities.renewableSessions === true) &&
-      (!sessionAuth(task) || heartbeat.capabilities.authState === true) &&
       (!task.sessionPlan?.candidates.length ||
         heartbeat.capabilities.identityPreparation === true) &&
       (!taskEvidenceKinds(task).includes('NETWORK') ||
@@ -1241,16 +1178,8 @@ export class Coordinator {
           'EXTERNAL_ACCOUNT_SAVE_FORBIDDEN',
           '外部账号仅限本次租约，不允许保存或切换登录配方',
         );
-      if (
-        operation.type === 'browser.auth.save' &&
-        context.definition.sessionPlan?.library &&
-        !hitlCompletion
-      )
-        throw new ApiError(
-          403,
-          'HITL_COMPLETION_REQUIRED',
-          '完整基准只能在人工处理完成时发布',
-        );
+      if (operation.type === 'browser.auth.save')
+        throw new ApiError(410, 'AUTH_SAVE_RETIRED', '案例不再保存身份基准');
       if (token !== null) this.authorize(context, token, false);
       const existing = (
         await client.query(
@@ -1394,7 +1323,7 @@ export class Coordinator {
           executionDeadline(context) - Date.now(),
         ),
       );
-      // 人工点击、输入、导航的身份影响无法可靠推断；只读观察、滚动、保存快照不改变认证版本。
+      // 人工点击、输入、导航的身份影响无法可靠推断；只读观察和滚动不改变认证版本。
       const authChanged =
         [
           'browser.cookies.set',
@@ -1730,7 +1659,7 @@ export class Coordinator {
       )
         continue;
       // 开启命令发出不等于节点已准入；只有心跳确认同租约的本机会话后才给启动阶段续租。
-      // 既避免慢 profile 恢复耗尽短租约，也避免提前续租触发 SESSION_MISSING。
+      // 既避免浏览器初始化耗尽短租约，也避免提前续租触发 SESSION_MISSING。
       if (
         context.session_state === 'OPENING' &&
         !heartbeat.occupied.some(
@@ -2101,11 +2030,7 @@ export class Coordinator {
           )
             continue;
         }
-        if (
-          command.command.type === 'session.open' &&
-          command.command.authState?.fullProfile &&
-          this.identityLibrary
-        ) {
+        if (command.command.type === 'session.open' && this.identityLibrary) {
           const assigned = (
             await this.db.query<{
               identity: NonNullable<

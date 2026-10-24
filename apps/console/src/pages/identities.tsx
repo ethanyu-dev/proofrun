@@ -90,7 +90,7 @@ export function IdentitiesPage({ api }: { api: ApiClient }) {
                 </span>
               </h2>
               <p className="muted">
-                维护账号信息；只有人工处理成功后才更新浏览器基准。
+                维护身份材料和核验条件；人工处理仅修改当前临时会话。
               </p>
             </div>
             <div className="page-actions">
@@ -134,12 +134,7 @@ export function IdentitiesPage({ api }: { api: ApiClient }) {
                     </div>
                     <div>
                       <dt>Cookies</dt>
-                      <dd>
-                        {entry.cookiesConfigured ? '已配置' : '未配置'}
-                        {entry.baselineReady
-                          ? ' · 已有人工确认的浏览器基准'
-                          : ''}
-                      </dd>
+                      <dd>{entry.cookiesConfigured ? '已配置' : '未配置'}</dd>
                     </div>
                     <div>
                       <dt>身份类型</dt>
@@ -183,7 +178,7 @@ export function IdentitiesPage({ api }: { api: ApiClient }) {
   );
 }
 
-/** Cookie 不回显；通过明确的编辑状态区分保留、替换与清空，修改后创建新基准版本。 */
+/** Cookie 不回显；区分保留、替换与清空，修改后更新身份材料版本。 */
 export function IdentityForm({
   api,
   entry,

@@ -54,22 +54,22 @@ pub struct EngineConfig {
     /// 私有登录配置路径；会话命令仅可引用其中的封闭标识。
     #[serde(default)]
     pub identity_library_file: Option<PathBuf>,
-    /// 完整基准使用节点生成路径，秘密种子只存会话私有文件。
+    /// 秘密种子只存会话私有文件，注入后删除。
     #[serde(default)]
     pub identity_seed_file: Option<PathBuf>,
     /// 外部账号仅允许在本次隔离会话使用，禁止持久身份保存。
     #[serde(default)]
     pub external_account: Option<Value>,
-    /// 是否启用完整 profile 版本，旧存储状态任务保持兼容。
+    /// 仅解码旧 host 配置以明确拒绝持久状态恢复，不参与新会话。
     #[serde(default)]
     pub full_profile: bool,
-    /// 节点模板维护只发布并关闭；普通 HITL 保存后仍重启任务浏览器。
+    /// 仅解码旧 host 配置以明确拒绝持久状态恢复，不参与新会话。
     #[serde(default)]
     pub node_template: bool,
-    /// 节点托管模板槽位；初次身份优先复制它，缺失时才使用配置目录。
+    /// 仅解码旧 host 配置以明确拒绝持久状态恢复，不参与新会话。
     #[serde(default)]
     pub template_state: Option<PathBuf>,
-    /// 首次身份准备时复制的已关闭环境基准。
+    /// 仅解码旧 host 配置以明确拒绝持久状态恢复，不参与新会话。
     #[serde(default)]
     pub base_profile_directory: Option<PathBuf>,
     /// 随本次会话生成的引擎 session 名，隔离 daemon 和 socket。
@@ -78,16 +78,16 @@ pub struct EngineConfig {
     pub directory: PathBuf,
     /// 开发测试写动作开关，不代表生产写入语义已验证。
     pub allow_unverified_writes: bool,
-    /// 绑定任务的节点私有状态文件，外部命令不能指定任意文件路径。
+    /// 仅解码旧 host 配置以明确拒绝持久状态恢复，不参与新会话。
     #[serde(default)]
     pub auth_state: Option<PathBuf>,
-    /// 首次登录允许无状态启动；复用任务要求状态必须存在。
+    /// 仅解码旧 host 配置以明确拒绝持久状态恢复，不参与新会话。
     #[serde(default)]
     pub restore_auth: bool,
-    /// 自动复用可在首次没有快照时启动空白会话。
+    /// 仅解码旧 host 配置以明确拒绝持久状态恢复，不参与新会话。
     #[serde(default)]
     pub restore_auth_if_present: bool,
-    /// 同一对照轮次固定同一份初始快照，避免启动先后影响比较。
+    /// 仅解码旧 host 配置以明确拒绝持久状态恢复，不参与新会话。
     #[serde(default)]
     pub auth_snapshot_id: Option<String>,
     /// 只有要求网络证据的任务才打开请求跟踪。
@@ -107,14 +107,6 @@ pub struct Engine {
     active_scope: Option<String>,
     /// CLI、Chrome 和会话目录配置。
     config: EngineConfig,
-    /// 当前会话允许更新的共享快照版本；并发会话更新后不得覆盖。
-    auth_version: Option<String>,
-    /// 初始化只执行一次，人工交还重启不能重新覆盖任务目录。
-    profile_initialized: bool,
-    /// 恢复身份基准时不能再注入较旧的初始 Cookie。
-    profile_restored: bool,
-    /// 已复制托管模板时，无显式 Cookie 种子的身份应保留其中的登录。
-    template_restored: bool,
     /// 当前有效观察身份；执行动作后清空。
     observation: Option<String>,
     /// 平台 target 到引擎短期 ref 的映射，不能作为公共协议暴露。
@@ -123,8 +115,6 @@ pub struct Engine {
     dom: Option<dom::Dom>,
     /// Trace 使用独立连接，观察刷新不能中断采集。
     trace: Option<dom::Dom>,
-    /// 人工交还重启产生的取证分段，停止取证时统一交付。
-    trace_segments: Vec<PathBuf>,
     /// 最近截图的视口身份和采集时间，视觉输入必须匹配。
     visual: Option<visual::VisualObservation>,
     /// 只有当前观察列出的标签页才能切换或关闭。
@@ -135,10 +125,16 @@ pub struct Engine {
 impl Engine {
     /// 建立隔离目录并写入固定的 agent-browser 配置。
     pub fn new(config: EngineConfig) -> anyhow::Result<Self> {
-        if config.external_account.is_some()
-            && (config.auth_state.is_some() || config.restore_auth || config.full_profile)
+        if config.auth_state.is_some()
+            || config.restore_auth
+            || config.restore_auth_if_present
+            || config.auth_snapshot_id.is_some()
+            || config.full_profile
+            || config.node_template
+            || config.base_profile_directory.is_some()
+            || config.template_state.is_some()
         {
-            anyhow::bail!("外部账号禁止恢复或发布本地身份基准");
+            anyhow::bail!("浏览器会话不再恢复或发布本地身份基准");
         }
         std::fs::create_dir_all(config.directory.join("home"))?;
         std::fs::create_dir_all(config.directory.join("artifacts"))?;
@@ -166,15 +162,10 @@ impl Engine {
             networks: HashMap::new(),
             active_scope: None,
             config,
-            auth_version: None,
-            profile_initialized: false,
-            profile_restored: false,
-            template_restored: false,
             observation: None,
             targets: HashMap::new(),
             dom: None,
             trace: None,
-            trace_segments: Vec::new(),
             visual: None,
             tabs: Vec::new(),
             frame: None,
@@ -209,100 +200,11 @@ impl Engine {
     /// 创建本会话独立浏览器，并打开内部空白页作为初始状态。
     pub async fn open(&mut self, timeout_ms: u64) -> Result<Value> {
         let deadline = process::boot_ms() + timeout_ms;
-        if self.config.full_profile && !self.profile_initialized {
-            let state = self
-                .config
-                .auth_state
-                .as_ref()
-                .ok_or_else(|| Fault::rejected("PROFILE_BASELINE_MISSING", "身份基准未绑定"))?;
-            let (version, template_restored) = crate::profile_snapshots::restore_with_template(
-                state,
-                self.config.auth_snapshot_id.as_deref(),
-                &self.config.directory.join("profile"),
-                self.config.base_profile_directory.as_deref(),
-                if self.config.node_template {
-                    None
-                } else {
-                    self.config.template_state.as_deref()
-                },
-            )
-            .map_err(|_| Fault::rejected("PROFILE_COPY_FAILED", "完整浏览器基准无法复制"))?;
-            self.auth_version = version;
-            self.template_restored = template_restored;
-            self.profile_restored = self.auth_version.is_some();
-            self.profile_initialized = true;
-        }
         self.cli(
             vec!["open".into(), "about:blank".into()],
             deadline.saturating_sub(process::boot_ms()),
         )
         .await?;
-        if self.config.full_profile {
-            let state = self
-                .config
-                .directory
-                .join("profile")
-                .join(".proofrun-session-state.json");
-            if state.exists() {
-                crate::auth::check_state(&state).map_err(|_| {
-                    Fault::rejected("PROFILE_STATE_INVALID", "完整基准的会话状态无效")
-                })?;
-                self.cli(
-                    vec![
-                        "state".into(),
-                        "load".into(),
-                        state.to_string_lossy().into_owned(),
-                    ],
-                    deadline.saturating_sub(process::boot_ms()),
-                )
-                .await?;
-            }
-        }
-        let mut auth_restored = self.profile_restored || self.template_restored;
-        if !self.config.full_profile {
-            if let Some(path) = &self.config.auth_state {
-                let snapshot = crate::auth::snapshot(path, self.config.auth_snapshot_id.as_deref())
-                    .map_err(|_| {
-                        Fault::rejected(
-                            "AUTH_STATE_UNAVAILABLE",
-                            "private authentication snapshot is unavailable",
-                        )
-                    })?;
-                self.auth_version = snapshot.version;
-                if self.config.restore_auth {
-                    if let Some(state) = snapshot.state {
-                        let local = self.config.directory.join("home").join("auth-start.json");
-                        crate::auth::private_write(&local, &serde_json::to_vec(&state).unwrap())
-                            .map_err(|_| {
-                                Fault::rejected(
-                                    "AUTH_STATE_UNAVAILABLE",
-                                    "cannot prepare private authentication snapshot",
-                                )
-                            })?;
-                        self.cli(
-                            vec![
-                                "state".into(),
-                                "load".into(),
-                                local.to_string_lossy().into(),
-                            ],
-                            deadline.saturating_sub(process::boot_ms()),
-                        )
-                        .await?;
-                        auth_restored = true;
-                    } else if !self.config.restore_auth_if_present {
-                        return Err(Fault::rejected(
-                            "AUTH_STATE_MISSING",
-                            "private authentication state is unavailable",
-                        ));
-                    }
-                }
-            } else if self.config.restore_auth {
-                return Err(Fault::rejected(
-                    "AUTH_STATE_MISSING",
-                    "authentication state is not configured",
-                ));
-            }
-        }
         if self.config.external_account.is_some() {
             self.prepare_external_account(deadline).await?;
         }
@@ -340,7 +242,7 @@ impl Engine {
                 .await?;
             }
         }
-        let mut proof = json!({"authRestored":auth_restored,"initialState":if auth_restored {"restored"} else {"empty"}});
+        let mut proof = json!({"authRestored":false,"initialState":"empty"});
         if let Some(account) = &self.config.external_account {
             proof["initialState"] = json!("external");
             proof["externalAccount"] = account.clone();
@@ -350,53 +252,6 @@ impl Engine {
     /// 尽力请求引擎关闭；最终资源回收仍以 systemd/cgroup 核实为准。
     pub async fn close(&self) {
         let _ = self.cli(vec!["close".into()], 2000).await;
-    }
-    /// 保存前由调用方核验身份；CAS 防止旧会话覆盖新状态。
-    async fn save_auth(&mut self, timeout_ms: u64) -> Result<Value> {
-        if self.config.external_account.is_some() {
-            return Err(Fault::rejected(
-                "EXTERNAL_ACCOUNT_SAVE_FORBIDDEN",
-                "外部账号不能保存为本地身份基准",
-            ));
-        }
-        if self.config.full_profile {
-            return self.save_profile(timeout_ms).await;
-        }
-        let destination = self.config.auth_state.clone().ok_or_else(|| {
-            Fault::rejected("AUTH_STATE_MISSING", "task has no authentication slot")
-        })?;
-        crate::auth::prepare_parent(&destination).map_err(|_| {
-            Fault::rejected(
-                "AUTH_STATE_UNAVAILABLE",
-                "private authentication directory unavailable",
-            )
-        })?;
-        let temporary = destination.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
-        let saved = self
-            .cli(
-                vec![
-                    "state".into(),
-                    "save".into(),
-                    temporary.to_string_lossy().into(),
-                ],
-                timeout_ms,
-            )
-            .await;
-        if saved.is_err() {
-            let _ = std::fs::remove_file(&temporary);
-        }
-        saved?;
-        let committed =
-            crate::auth::commit_if_current(&temporary, &destination, &mut self.auth_version)
-                .map_err(|_| {
-                    Fault::unknown(
-                        "AUTH_STATE_SAVE_FAILED",
-                        "authentication save result is uncertain",
-                    )
-                })?;
-        Ok(
-            json!({"saved":committed,"reason":if committed { "SAVED" } else { "NEWER_STATE_PRESERVED" }}),
-        )
     }
     /// 将封闭的公共操作映射到固定 CLI 命令，并规范化观察和结果。
     pub async fn execute(&mut self, operation: BrowserCommand, timeout_ms: u64) -> Result<Value> {
@@ -932,7 +787,6 @@ impl Engine {
                         Fault::rejected("TRACE_INACTIVE", "trace was not started")
                     })?;
                     trace.trace_stop(&path).await?;
-                    self.merge_trace_segments(&path)?;
                     Ok(json!({"localTrace":path}))
                 }
             }
@@ -974,7 +828,9 @@ impl Engine {
                     Ok(json!({"written":true}))
                 }
             }
-            BrowserCommand::BrowserAuthSave { .. } => self.save_auth(remaining()).await,
+            BrowserCommand::BrowserAuthSave { .. } => {
+                Err(Fault::rejected("AUTH_SAVE_RETIRED", "案例不再保存身份基准"))
+            }
             BrowserCommand::BrowserWait { selector, text, .. } => {
                 let wait_deadline = process::boot_ms()
                     + remaining()

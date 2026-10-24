@@ -6,7 +6,6 @@ import {
 } from '../../contracts/dist/index.js';
 import { execute } from '../../apps/agent/dist/execution/runner.js';
 import { ChatModel } from '../../apps/agent/dist/model/chat.js';
-import { JevModel } from '../../apps/agent/dist/model/jev.js';
 import { OperationJournal } from '../../apps/agent/dist/execution/operation-journal.js';
 import { config, grant, FakeControl, finish, modelServer } from './fixture.mjs';
 
@@ -201,13 +200,13 @@ for (const selection of ['human', 'selected']) {
     };
     const client = new PreparedProfileControl();
     const report = await execute(
-      { ...config, executionPolicy: 'planned-v1' },
+      config,
       client,
       {
         async decide(input) {
           const context = JSON.parse(input.text);
           assert.equal(
-            context.observation.url,
+            context.page.url,
             selection === 'human'
               ? 'http://intranet.test/zh/referral'
               : execution.task.target.url,
@@ -307,8 +306,11 @@ test('填写后跨多轮阅读仍保留动作事实，下一步骤不沿用', as
     config,
     client,
     scripted((context) => {
-      if (context.executionStep.stepId === 'step-2') {
-        assert.deepEqual(context.actionMemory, { items: [], omitted: 0 });
+      if (context.task.stepId === 'step-2') {
+        assert.equal(
+          context.history.commands.some((item) => item.action === 'fill'),
+          false,
+        );
         return finish(context);
       }
       turns++;
@@ -322,12 +324,7 @@ test('填写后跨多轮阅读仍保留动作事实，下一步骤不沿用', as
       if (turns <= 6)
         return { type: 'browser.act', action: 'scroll', value: 'down' };
       assert(
-        !context.recentOperations.some(
-          (operation) => operation.action === 'fill',
-        ),
-      );
-      assert(
-        context.actionMemory.items.some(
+        context.history.commands.some(
           (operation) =>
             operation.action === 'fill' &&
             operation.operationStatus === 'SUCCEEDED',
@@ -357,22 +354,27 @@ test('人工完成后保留团队与语言，后续步骤收到确认事实但�
   const client = new PageControl();
   const observations = [];
   const server = await modelServer((context, turn, body) => {
-    assert.equal(context.observation.url, 'http://intranet.test/zh/referral');
-    assert.equal(context.observation.text, client.pageText);
-    assert.match(context.observation.text, /人工准备好的页面/);
+    assert.equal(context.page.url, 'http://intranet.test/zh/referral');
+    assert.equal(context.page.text, client.pageText);
+    assert.match(context.page.text, /人工准备好的页面/);
     assert.equal(context.task.sessionPlan, undefined);
-    assert.deepEqual(context.preconditions, [
-      {
-        id: 'role',
-        description: '非所有者且未绑定 GitHub',
-        status: 'SATISFIED',
-        source: 'human',
-        evidenceRefs: [],
-        controlRevision: 2,
-      },
-    ]);
+    assert.deepEqual(
+      context.state.conditions
+        .filter((item) => item.scope === 'current')
+        .map(({ scope: _scope, ...item }) => item),
+      [
+        {
+          id: 'role',
+          description: '非所有者且未绑定 GitHub',
+          status: 'SATISFIED',
+          source: 'human',
+          evidenceRefs: [],
+          controlRevision: 2,
+        },
+      ],
+    );
     assert.match(body.messages[0].content, /前置条件满足不等于验收通过/);
-    observations.push(context.observation.observationId);
+    observations.push(context.page.observationId);
     const result = finish(context);
     if (turn === 2) result.criteria[0].verdict = 'FAILED';
     return result;
@@ -406,25 +408,23 @@ test('人工完成后保留团队与语言，后续步骤收到确认事实但�
 });
 
 // 范围：交接早于首次导航时也保留人工页面；控制事件由夹具生成，不覆盖浏览器重启恢复。
-for (const executionPolicy of [undefined, 'planned-v1']) {
-  test(`初始导航前已交还人工页面时不会再次打开目标网址（${executionPolicy ?? 'legacy'}）`, async () => {
-    const execution = caseGrant(['http://intranet.test/referral']);
-    const client = new PageControl();
-    await client.acknowledge();
-    const report = await execute(
-      { ...config, executionPolicy },
-      client,
-      scripted((context) => {
-        assert.equal(context.observation.url, client.url);
-        assert.match(context.observation.text, /人工准备好的页面/);
-        return finish(context);
-      }),
-      execution,
-    );
-    assert.equal(report.verdict, 'PASSED');
-    assert.equal(report.executionDetails.actions, 0);
-  });
-}
+test('初始导航前已交还人工页面时不会再次打开目标网址', async () => {
+  const execution = caseGrant(['http://intranet.test/referral']);
+  const client = new PageControl();
+  await client.acknowledge();
+  const report = await execute(
+    config,
+    client,
+    scripted((context) => {
+      assert.equal(context.page.url, client.url);
+      assert.match(context.page.text, /人工准备好的页面/);
+      return finish(context);
+    }),
+    execution,
+  );
+  assert.equal(report.verdict, 'PASSED');
+  assert.equal(report.executionDetails.actions, 0);
+});
 
 // 范围：不同目标仍能进入，已到达的目标及站点重定向页面不会重复加载；不推断真实站点重定向规则。
 test('步骤明确更换网址时按需导航，同入口保留重定向后的页面', async () => {
@@ -442,14 +442,14 @@ test('步骤明确更换网址时按需导航，同入口保留重定向后的�
     client,
     scripted((context) => {
       const index = seen.length;
-      seen.push(context.observation.url);
+      seen.push(context.page.url);
       if (index === 1) {
         // 模拟站点内导航留下的语言路由，下一步仍声明原入口 b。
         client.url = 'http://intranet.test/zh/b';
         client.pageText = '保留团队空间';
       }
       if (index === 2) {
-        assert.match(context.observation.text, /保留团队空间/);
+        assert.match(context.page.text, /保留团队空间/);
         // 模拟上一步已到达后续步骤的目标地址。
         client.url = urls[3];
       }
@@ -489,12 +489,9 @@ test('步骤切换期间人工交还页面会取消待执行导航', async () =>
     config,
     client,
     scripted((context) => {
-      if (context.executionStep.stepId === 'step-2') {
-        assert.equal(
-          context.observation.url,
-          'http://intranet.test/zh/referral',
-        );
-        assert.match(context.observation.text, /人工准备好的页面/);
+      if (context.task.stepId === 'step-2') {
+        assert.equal(context.page.url, 'http://intranet.test/zh/referral');
+        assert.match(context.page.text, /人工准备好的页面/);
       }
       return finish(context);
     }),
@@ -526,7 +523,11 @@ test('只传递当前步骤适用的确认，新条件仍需确认，清理不�
     config,
     client,
     scripted((context) => {
-      seen.push(context.preconditions);
+      seen.push(
+        context.state.conditions
+          .filter((item) => item.scope === 'current')
+          .map(({ scope: _scope, ...item }) => item),
+      );
       return finish(context);
     }),
     execution,
@@ -538,79 +539,4 @@ test('只传递当前步骤适用的确认，新条件仍需确认，清理不�
   assert.equal(seen[1][0].id, 'github');
   assert.equal(seen[1][0].controlRevision, 4);
   assert.deepEqual(seen[2], []);
-});
-
-// 范围：人工事实贯通 JEV 候选请求及 LLM 审查；供应商回答为夹具，不证明推理质量。
-test('JEV 与文本审查收到同一份人工确认条件', async () => {
-  const preconditions = [
-    {
-      id: 'role',
-      description: '非所有者',
-      source: 'human',
-      status: 'SATISFIED',
-      controlRevision: 2,
-      evidenceRefs: [],
-    },
-  ];
-  let selections = 0,
-    reviews = 0;
-  const model = new JevModel(
-    config,
-    'fixture-key',
-    'fixture-jev',
-    async (_url, _key, _method, body) => {
-      selections++;
-      assert.deepEqual(body.state.preconditions, preconditions);
-      assert.match(body.questions.next.instructions.rules, /source=human/);
-      return {
-        answers: {
-          next: {
-            choice: 'VERIFY',
-            confidence: 1,
-            probabilities: Object.fromEntries(
-              Object.keys(body.questions.next.criteria).map((id) => [
-                id,
-                id === 'VERIFY' ? 1 : 0,
-              ]),
-            ),
-          },
-        },
-      };
-    },
-    {
-      async decide(input) {
-        reviews++;
-        assert.deepEqual(JSON.parse(input.text).preconditions, preconditions);
-        return {
-          decision: {
-            type: 'verification.block',
-            summary: '夹具未提供业务证据',
-          },
-          promptTokens: 0,
-          completionTokens: 0,
-        };
-      },
-    },
-  );
-  await model.decide(
-    {
-      text: JSON.stringify({
-        task: { taskId: 'fixture', objective: '检查文案' },
-        observation: {
-          observationId: 'page',
-          url: 'http://intranet.test/referral',
-          text: '团队页面',
-          targets: [],
-          artifactRefs: [],
-        },
-        recentOperations: [],
-        budgetRemaining: { actions: 10 },
-        feedback: null,
-        preconditions,
-      }),
-    },
-    new AbortController().signal,
-  );
-  assert.equal(selections, 1);
-  assert.equal(reviews, 1);
 });

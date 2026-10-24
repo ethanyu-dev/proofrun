@@ -4,7 +4,7 @@ import type { DecisionInput } from './chat.js';
 import { AgentFault } from '../http.js';
 
 /** 回复只保留供应商模型版本、决定与用量字段，不保存传输头、认证配置或供应商诊断附属数据。 */
-const RESPONSE_FIELDS = ['model', 'choices', 'answers', 'usage'] as const;
+const RESPONSE_FIELDS = ['model', 'choices', 'usage'] as const;
 /** 只传播稳定错误码，禁止把底层异常正文、URL 或凭据带入报告。 */
 const ERROR_CODE = /^[A-Z_]{1,80}$/;
 
@@ -15,7 +15,7 @@ function tokens(value: unknown): number | null {
     : null;
 }
 
-/** 记录一次真实 HTTP 请求，包括混合策略子调用；图片原文改为可核查的截图引用。 */
+/** 记录一次模型 HTTP 请求；Chat Completions 图片原文改为可核查的截图引用。 */
 export async function modelRequest(
   input: DecisionInput,
   model: string,
@@ -26,19 +26,13 @@ export async function modelRequest(
   // 原始摘要对应实际派发正文；展示副本中的图片只替换 base64，不改变模型收到的内容。
   const raw = JSON.stringify(body);
   let imagesOmitted = 0;
-  let context: { observation?: { artifactRefs?: unknown[] } } = {};
+  let context: { page?: { artifactRefs?: unknown[] } } = {};
   try {
     context = JSON.parse(input.text);
   } catch {
-    /* 填写子请求不要求通用上下文。 */
+    /* 无法解析时不补造图片归属；原始请求仍按摘要记录。 */
   }
   const request = JSON.stringify(body, (key, value) => {
-    if (key === 'data_base64' && typeof value === 'string') {
-      imagesOmitted++;
-      return {
-        omitted: '图片通过 state.screenshotSource 的原始证据和派生摘要核查',
-      };
-    }
     if (
       key === 'image_url' &&
       value &&
@@ -47,7 +41,7 @@ export async function modelRequest(
     ) {
       imagesOmitted++;
       return {
-        evidenceRefs: context.observation?.artifactRefs ?? [],
+        evidenceRefs: context.page?.artifactRefs ?? [],
         omitted: '图片通过已有证据查看',
       };
     }

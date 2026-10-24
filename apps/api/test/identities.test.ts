@@ -5,7 +5,6 @@ import {
   resolveSession,
   type IdentityCatalog,
 } from '../src/modules/identities/catalog.js';
-import { sessionAuth } from '../src/modules/scheduling/auth.js';
 import { task } from './fixture.js';
 import type { VerificationTask } from '@proofrun/contracts';
 
@@ -41,30 +40,24 @@ const catalog: IdentityCatalog = {
 };
 const env = { id: 'test', nodePool: 'test' };
 
-// 范围：访客与明确关闭复用的人工会话隔离历史站点槽；不启动 Chromium 或真实人工登录。
-test('访客不恢复状态，关闭复用的人工会话不共享账号槽', () => {
-  const base = task('one') as VerificationTask;
-  base.environment.reuseAuth = true;
-  base.sessionPlan = resolveSession(
+// 范围：访客与未指定身份的会话不绑定账号候选；不启动 Chromium 或验证真实登录。
+test('访客与默认人工会话不绑定历史身份', () => {
+  const guest = resolveSession(
     catalog,
     { mode: 'guest' },
     'https://example.test',
     env,
   );
-  assert.equal(sessionAuth(base), null);
-  base.sessionPlan = resolveSession(
+  assert.equal(guest.mode, 'guest');
+  assert.deepEqual(guest.candidates, []);
+  const manual = resolveSession(
     catalog,
     undefined,
     'https://example.test',
     env,
   );
-  base.environment.reuseAuth = false;
-  const first = sessionAuth(base)!;
-  assert.equal(first.restore, false);
-  assert.notEqual(
-    sessionAuth({ ...base, taskId: 'two' })!.stateId,
-    first.stateId,
-  );
+  assert.equal(manual.mode, 'manual');
+  assert.deepEqual(manual.candidates, []);
 });
 
 // 范围：站点边界、规则冲突与条件不可替换；不验证浏览器实际身份。

@@ -21,7 +21,6 @@ import {
   selectedTask,
 } from '../src/modules/identities/selection.js';
 import { resolveSession } from '../src/modules/identities/catalog.js';
-import { sessionAuth } from '../src/modules/scheduling/auth.js';
 import { ExecutionControl } from '../src/modules/scheduling/control.js';
 import { taskOutcomes } from '../src/modules/tasks/outcome.js';
 import { task, until } from './fixture.js';
@@ -178,8 +177,6 @@ test('薄身份库冻结种子、版本冲突、共享选择及人工无法执�
         ]);
       }
     });
-    assert.equal(sessionAuth(chosen!)!.fullProfile, true);
-    assert.ok(sessionAuth(chosen!)!.stateId.length <= 128);
     await db.query(
       "INSERT INTO pr_nodes(id,name,pool,credential_hash) VALUES('node','fixture','fixture','fixture')",
     );
@@ -211,19 +208,8 @@ test('薄身份库冻结种子、版本冲突、共享选择及人工无法执�
       "INSERT INTO pr_tasks(id,definition,definition_hash,state,deadline_at) VALUES($1,$2,'fixture','QUEUED',clock_timestamp()+interval '1 hour')",
       [publicTask.taskId, publicTask],
     );
-    const publicSlot = sessionAuth(publicTask)!;
-    await library.published(publicTask.taskId, 'node');
-    const published = (await library.catalog()).identities.find(
-      (item) => item.stateId === publicSlot.stateId,
-    );
-    assert.ok(published);
-    assert.equal(
-      sessionAuth({
-        ...publicTask,
-        sessionPlan: { ...publicTask.sessionPlan, candidates: [published] },
-      })!.stateId,
-      publicSlot.stateId,
-    );
+    // 范围：缺少候选的案例不创建持久槽位或自动发布账号；不验证真实人工登录。
+    assert.equal((await library.catalog()).identities.length, 1);
     const control = new ExecutionControl(db, 'fixture-admin');
     await assert.rejects(
       control.unable('execution', 1, ' ', 'https://control.test'),

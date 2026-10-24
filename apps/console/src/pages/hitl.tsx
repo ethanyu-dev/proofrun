@@ -5,9 +5,8 @@ import { HitlInputQueue, type BatchResult } from './hitl-input';
 import { screenPoint, useHitlScreen } from './hitl-screen';
 import { HitlNavigation, remainingTime } from './hitl-navigation';
 import { HitlCookies } from './hitl-cookies';
-import type { ApiClient } from '../api';
 
-/** 完成前包含登录快照落盘，等待窗口应覆盖服务端保存命令和结果确认。 */
+/** 等待控制权交还确认；超时后通过重连核查，避免重复提交。 */
 const COMPLETION_ACK_MS = 150_000;
 /** 首帧超时只提示恢复入口，不撤销控制权或重放已提交的操作。 */
 const FIRST_FRAME_MS = 10_000;
@@ -26,8 +25,6 @@ interface State {
   mode: string;
   /** 本轮操作授权的截止时间。 */
   expiresAt: string;
-  /** 仅绑定登录槽的任务可显式保存登录状态。 */
-  canSaveAuth: boolean;
   /** 旧服务端未返回目标地址时不显示 Cookie 表单。 */
   targetUrl?: string;
 }
@@ -46,19 +43,8 @@ const KEYS = new Set([
   'End',
 ]);
 
-/** 共用人工操作界面；任务入口使用专属令牌，节点模板入口使用 Console 会话。 */
-export function HitlPage({
-  id,
-  token,
-  api,
-}: {
-  id: string;
-  token?: string;
-  api?: ApiClient;
-}) {
-  const nodeProfile = !!api;
-  // Console 已有主内容容器，复用界面时不嵌套 main 地标。
-  const Container = nodeProfile ? 'section' : 'main';
+/** 人工处理当前任务的临时浏览器，确认后交还 Agent。 */
+export function HitlPage({ id, token }: { id: string; token?: string }) {
   const [remoteFocused, setRemoteFocused] = useState(false);
   const [now, setNow] = useState(Date.now);
   const screen = useRef<HTMLImageElement | null>(null);
@@ -68,7 +54,6 @@ export function HitlPage({
   }, []);
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<State>();
-  const [authResult, setAuthResult] = useState('');
   const [unable, setUnable] = useState(false);
   const [unableReason, setUnableReason] = useState('');
   const [unableResult, setUnableResult] = useState('');
@@ -93,7 +78,7 @@ export function HitlPage({
     input.current = new HitlInputQueue(
       (item) => {
         if (socket.current?.readyState !== WebSocket.OPEN) return false;
-        // 输入可能改变认证环境，必须在操作完成后重新勾选；纯滚动与保存不清空。
+        // 输入可能改变认证环境，必须在操作完成后重新勾选；纯滚动不清空。
         if (
           (item.command.type === 'browser.input' &&
             item.command.action !== 'scroll') ||
@@ -166,11 +151,10 @@ export function HitlPage({
     setFrame(undefined);
     const url = new URL('/v1/hitl/connect', location.href);
     url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = api ? api.nodeProfile(id) : new WebSocket(url);
+    const ws = new WebSocket(url);
     socket.current = ws;
-    if (!api)
-      ws.onopen = () =>
-        ws.send(JSON.stringify({ type: 'authenticate', id, token }));
+    ws.onopen = () =>
+      ws.send(JSON.stringify({ type: 'authenticate', id, token }));
     ws.onmessage = (event) => {
       const message = JSON.parse(event.data) as HitlServer;
       if (message.type === 'state') {
@@ -203,19 +187,6 @@ export function HitlPage({
         clearTimeout(completionTimer.current);
         ws.close();
       } else if (message.type === 'completed') {
-        setAuthResult(
-          nodeProfile
-            ? message.authStatus === 'saved'
-              ? '节点默认 profile 已保存，浏览器已关闭。'
-              : message.authStatus === 'newer'
-                ? '已保留较新的节点默认 profile，浏览器已关闭。'
-                : '浏览器已关闭。'
-            : message.authStatus === 'saved'
-              ? '登录状态已保存，下次任务可复用。'
-              : message.authStatus === 'newer'
-                ? '已保留其他会话更新的登录状态。'
-                : '',
-        );
         completed.current = true;
         setDone(true);
         setConnected(false);
@@ -226,7 +197,7 @@ export function HitlPage({
         clearTimeout(completionTimer.current);
         ws.close();
         // 脚本打开的处理 tab 可自动关闭；浏览器禁止关闭时保留明确的完成页。
-        if (!nodeProfile) window.close();
+        window.close();
       }
     };
     ws.onclose = () => {
@@ -244,9 +215,7 @@ export function HitlPage({
             previous ||
             (hadPendingInput
               ? '连接中断，操作结果未确认；重新连接后先检查页面。'
-              : nodeProfile
-                ? '连接已断开，请重新连接。维护会话到期后会自动关闭。'
-                : '连接已断开。关闭此页不会自动恢复 Agent。'),
+              : '连接已断开。关闭此页不会自动恢复 Agent。'),
         );
       input.current!.reset();
       clearTimeout(completionTimer.current);
@@ -265,7 +234,7 @@ export function HitlPage({
       clearTimeout(typingTimer.current);
       typing.current = '';
     };
-  }, [id, token, api, nodeProfile, attempt]);
+  }, [id, token, attempt]);
   const hasFrame = !!frame;
   useEffect(() => {
     setFrameTimedOut(false);
@@ -288,24 +257,18 @@ export function HitlPage({
     release: () => setRemoteFocused(false),
   });
   return (
-    <Container className="hitl-page">
+    <main className="hitl-page">
       {done ? (
         <section className="panel hitl-done">
           <h1>{unableResult ? '人为判定无法执行' : '处理已完成'}</h1>
-          <p>
-            {nodeProfile
-              ? authResult
-              : unableResult ||
-                `浏览器已交还 Agent。${authResult}可以关闭此页。`}
-          </p>
+          <p>{unableResult || '浏览器已交还 Agent，可以关闭此页。'}</p>
           <button
             className="button button-primary"
             onClick={() => {
-              if (nodeProfile) location.hash = '/nodes';
-              else window.close();
+              window.close();
             }}
           >
-            {nodeProfile ? '返回节点管理' : '关闭页面'}
+            关闭页面
           </button>
         </section>
       ) : (
@@ -501,12 +464,10 @@ export function HitlPage({
               <h1>{state?.reason ?? '正在连接处理任务'}</h1>
               {state && (
                 <>
-                  {!nodeProfile && <p className="muted">任务 {state.taskId}</p>}
+                  <p className="muted">任务 {state.taskId}</p>
                   <p className="note">
                     有效至 {new Date(state.expiresAt).toLocaleString()}
-                    {nodeProfile
-                      ? '，到期后自动关闭；保存后供该节点后续新身份使用。'
-                      : '，业务步骤的人工等待不计时，完成后继续执行；后续清理仍受三分钟期限约束。'}
+                    ，业务步骤的人工等待不计时，完成后继续执行；后续清理仍受三分钟期限约束。
                     <strong
                       className={
                         Date.parse(state.expiresAt) - now <= 60000
@@ -558,28 +519,6 @@ export function HitlPage({
                   重新连接
                 </button>
               )}
-              {nodeProfile && !connected && (
-                <button
-                  className="button button-secondary"
-                  disabled={busy}
-                  onClick={async () => {
-                    setBusy(true);
-                    try {
-                      await api!.json(
-                        `/v1/node-profiles/${id}/close`,
-                        new AbortController().signal,
-                        {},
-                      );
-                      location.reload();
-                    } catch {
-                      setError('关闭结果未确认，请返回节点管理查看会话状态。');
-                      setBusy(false);
-                    }
-                  }}
-                >
-                  关闭维护会话
-                </button>
-              )}
               <button
                 className="button button-primary"
                 disabled={
@@ -611,11 +550,7 @@ export function HitlPage({
                   }, COMPLETION_ACK_MS);
                 }}
               >
-                {nodeProfile
-                  ? '保存并关闭'
-                  : state?.canSaveAuth
-                    ? '处理完成，保存基准并继续'
-                    : '完成，继续任务'}
+                完成，继续任务
               </button>
               <button
                 className="button button-secondary"
@@ -626,26 +561,9 @@ export function HitlPage({
                   typingPending ||
                   expired
                 }
-                onClick={() => {
-                  if (!nodeProfile) {
-                    setUnable((value) => !value);
-                    return;
-                  }
-                  completing.current = true;
-                  setBusy(true);
-                  socket.current?.send(
-                    JSON.stringify({
-                      type: 'unable',
-                      reason: '不保存并关闭节点模板维护会话',
-                    }),
-                  );
-                  completionTimer.current = setTimeout(() => {
-                    setError('关闭结果未确认，请重新连接查看状态。');
-                    socket.current?.close();
-                  }, COMPLETION_ACK_MS);
-                }}
+                onClick={() => setUnable((value) => !value)}
               >
-                {nodeProfile ? '不保存并关闭' : '无法处理'}
+                无法处理
               </button>
               {unable && (
                 <div className="identity-field">
@@ -690,20 +608,12 @@ export function HitlPage({
                 </div>
               )}
               <p className="muted note">
-                {nodeProfile ? (
-                  '保存会更新该节点的默认模板，已有身份基准不受影响。直接离开只断开画面，可从节点管理继续；会话到期后自动关闭且不保存。'
-                ) : (
-                  <>
-                    {state?.canSaveAuth &&
-                      '处理成功后保存浏览器基准，浏览器可能短暂重启；无法处理时不保存。'}
-                    完成后自动关闭此页。直接离开只会断开画面，任务继续等待人工处理。链接过期后请从任务详情重新打开处理页。
-                  </>
-                )}
+                完成后自动关闭此页。直接离开只会断开画面，任务继续等待人工处理。链接过期后请从任务详情重新打开处理页。
               </p>
             </aside>
           </div>
         </div>
       )}
-    </Container>
+    </main>
   );
 }

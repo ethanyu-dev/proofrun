@@ -116,16 +116,8 @@ export async function buildApp(
     app.log,
   );
   coordinator.gateway = gateway;
-  const nodeProfiles = new NodeProfiles(db, config, coordinator);
-  const hitl = new HitlService(
-    db,
-    config,
-    control,
-    coordinator,
-    gateway,
-    library,
-    nodeProfiles,
-  );
+  const nodeProfiles = new NodeProfiles(db);
+  const hitl = new HitlService(db, config, control, coordinator, gateway);
   const live = new LiveService(db, gateway, config.adminToken);
   const notifications = new CaseNotifications(db, config, app.log);
   app.addHook('onReady', async () => notifications.start());
@@ -393,7 +385,7 @@ export async function buildApp(
     '/v1/node-profiles/:id/close',
     { preHandler: admin },
     async (request) => {
-      await nodeProfiles.finish(request.params.id, undefined, false);
+      await nodeProfiles.finish(request.params.id, false);
       return { closing: true };
     },
   );
@@ -896,7 +888,6 @@ export async function buildApp(
     if (stopped || ticking) return;
     ticking = coordinator
       .tick()
-      .then(() => nodeProfiles.tick())
       .catch((error) => {
         app.log.error({ err: error }, '调度扫描失败');
         if (!db.healthy) void app.close();

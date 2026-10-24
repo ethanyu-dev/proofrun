@@ -44,18 +44,6 @@ enum Action {
         #[arg(long)]
         apply: bool,
     },
-    /// 节点停止时导入已有浏览器存储状态，内容不会上传控制面。
-    AuthImport {
-        #[arg(long)]
-        state_id: String,
-        #[arg(long)]
-        file: PathBuf,
-    },
-    /// 节点停止时删除指定本地登录状态。
-    AuthForget {
-        #[arg(long)]
-        state_id: String,
-    },
     /// 内部单会话进程，不向不可信调用方开放其管道。
     #[command(hide = true)]
     SessionHost {
@@ -107,22 +95,6 @@ async fn main() -> Result<()> {
                 "{}",
                 proofrun_node::maintenance::retain(&config, *days, *apply).await?
             );
-            return Ok(());
-        }
-        Action::AuthImport { state_id, file } => {
-            std::fs::create_dir_all(&config.home)?;
-            let _lock = proofrun_node::artifacts::lock_home(&config.home)?;
-            proofrun_node::auth::import(&config.home, state_id, file)?;
-            println!("{}", json!({"imported":true,"stateId":state_id}));
-            return Ok(());
-        }
-        Action::AuthForget { state_id } => {
-            let _lock = proofrun_node::artifacts::lock_home(&config.home)?;
-            let path = proofrun_node::auth::state_path(&config.home, state_id)?;
-            if path.exists() {
-                std::fs::remove_file(path)?;
-            }
-            println!("{}", json!({"forgotten":true,"stateId":state_id}));
             return Ok(());
         }
         _ => {}

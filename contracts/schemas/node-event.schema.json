@@ -236,6 +236,10 @@
             "externalAccounts": {
               "type": "boolean",
               "description": "支持外部 Cookie 完整属性、临时隔离及不可续期账号硬期限。"
+            },
+            "ephemeralProfiles": {
+              "type": "boolean",
+              "description": "案例使用临时目录和输入身份材料，不恢复或保存本地身份基准。"
             }
           },
           "required": [

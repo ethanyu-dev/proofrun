@@ -150,8 +150,8 @@ for (const reasonCode of [
           };
         }
         assert.equal(control.resumed, true);
-        assert.equal(context.executionStep.stepId, 'step-1');
-        assert.match(context.observation.text, /已登录/);
+        assert.equal(context.task.stepId, 'step-1');
+        assert.match(context.page.text, /已登录/);
         return finish(context);
       },
     );

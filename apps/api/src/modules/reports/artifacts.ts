@@ -408,6 +408,7 @@ export class ArtifactStore {
             ...step.evidenceRefs,
             ...step.criteria.flatMap((c) => c.evidenceRefs),
             ...(step.readings ?? []).flatMap((item) => item.evidenceRefs),
+            ...(step.requirements ?? []).flatMap((item) => item.evidenceRefs),
           ].some(
             (id) =>
               evidence.get(id) !== 'TRACE' && scopes.get(id) !== expectedScope,
@@ -428,6 +429,16 @@ export class ArtifactStore {
       if (
         step.stepId !== definition.stepId ||
         (stopped && !['PENDING', 'SKIPPED'].includes(step.status))
+      )
+        throw invalid();
+      if (
+        new Set(step.requirements?.map((item) => item.id)).size !==
+          (step.requirements?.length ?? 0) ||
+        step.requirements?.some(
+          (item) =>
+            (item.status === 'recorded' && !item.evidenceRefs.length) ||
+            item.evidenceRefs.some((id) => !evidence.has(id)),
+        )
       )
         throw invalid();
       const old = previous?.[i];

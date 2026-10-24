@@ -1,159 +1,124 @@
+import { TOOL_DESCRIPTIONS } from '../prompts/tools.js';
 import type { DecisionContextData } from '../execution/context.js';
-import { OBSERVATION_REVIEW_ROUNDS } from '../evidence/changes.js';
 import type { AgentDecision } from '@proofrun/contracts';
 import { WORKFLOW_SCHEMA } from '../execution/workflow.js';
-import { EXHAUSTED_RECOVERY_TOOL } from '../prompts/recovery.js';
-import { constrainEvidenceRefs, visibleEvidenceIds } from './evidence-refs.js';
+import { constrainEvidenceRefs } from './evidence-refs.js';
+import { SCROLL_DIRECTIONS } from '../execution/scroll-distance.js';
 
-/** 供应商工具描述；动态约束只收紧平台已有协议，不增加执行权限。 */
+/** 供应商接口只表达本轮能力，不增加控制面权限。 */
 export interface DecisionTool {
-  /** 已注册的封闭决定类型。 */
   type: AgentDecision['type'];
-  /** 供应商工具名，将协议中的点转换为下划线。 */
   name: string;
-  /** 工具用途说明，不承载页面提供的指令。 */
   description: string;
-  /** 基础参数 schema 在当前步骤上进一步收紧。 */
   parameters: object;
 }
 
-/** 每轮只公布当前步骤可用的验收身份、清理能力与滚动容器。 */
+/** 所有工具共享进度入口，公开报告继续使用原有领域协议。 */
 export function decisionTools(
-  input: string | DecisionContextData,
+  context: DecisionContextData,
   tools: DecisionTool[],
 ): DecisionTool[] {
-  const context = typeof input === 'string' ? JSON.parse(input) : input;
-  const evidenceIds = visibleEvidenceIds(context);
-  const ids: string[] | undefined = context.task?.acceptanceCriteria?.map(
-    (c: { id: string }) => c.id,
+  const ids = context.task.criteria.map((item) => item.id);
+  const criteria = structuredClone(
+    (
+      tools.find((tool) => tool.type === 'verification.record')!.parameters as {
+        properties: {
+          criteria: { items: { properties: Record<string, unknown> } };
+        };
+      }
+    ).properties.criteria,
   );
+  criteria.items.properties.criterionId = ids.length
+    ? { type: 'string', enum: ids }
+    : { type: 'string' };
+  const requirements = structuredClone(WORKFLOW_SCHEMA.properties.assessments);
+  const {
+    stepId: _stepId,
+    outcome: _outcome,
+    ...fields
+  } = requirements.items.properties;
+  const progress = {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      requirements: {
+        ...requirements,
+        maxItems: context.task.requirements.length,
+        items: {
+          ...requirements.items,
+          properties: {
+            ...fields,
+            id: {
+              type: 'string',
+              ...(context.task.requirements.length
+                ? { enum: context.task.requirements.map((item) => item.id) }
+                : {}),
+            },
+            status: {
+              type: 'string',
+              enum: ['complete', 'incomplete', 'blocked'],
+            },
+          },
+          required: ['id', 'status', 'summary', 'evidenceRefs'],
+        },
+      },
+      criteria: { ...criteria, minItems: 0, maxItems: ids.length },
+      readings: structuredClone(WORKFLOW_SCHEMA.properties.readings),
+    },
+  };
   return tools
     .filter(
       (tool) =>
-        (!context.verificationReview?.final ||
-          (context.verificationReview?.reason === 'budget'
+        tool.type !== 'verification.environment' &&
+        (tool.type !== 'verification.record' ||
+          !['PREPARING', 'CHECKING'].includes(context.state.phase)) &&
+        (!context.state.settlement ||
+          (context.state.settlement === 'budget'
             ? [
                 'verification.record',
-                'verification.block',
                 'verification.finish',
+                'verification.block',
               ]
             : ['verification.record', 'verification.block']
           ).includes(tool.type)) &&
-        (context.environmentReview?.required
-          ? tool.type === 'verification.environment'
-          : tool.type !== 'verification.environment') &&
-        (tool.type !== 'browser.cookies.clear' || context.cleanup === true) &&
-        (tool.type !== 'browser.act' ||
-          context.budgetRemaining?.actions !== 0) &&
+        (tool.type !== 'verification.intervene' ||
+          context.task.permissions.allowIntervention) &&
+        (tool.type !== 'browser.cookies.clear' ||
+          context.state.phase === 'CLEANUP') &&
+        (tool.type !== 'browser.act' || context.budget.actions > 0) &&
         (tool.type !== 'browser.observe' ||
-          (context.changes?.unchangedRounds ?? 0) <
-            OBSERVATION_REVIEW_ROUNDS) &&
-        (tool.type !== 'verification.record' ||
-          (!!ids?.length &&
-            (!!context.executionStep ||
-              !!(context.executionGuidance || context.executionPolicy)) &&
-            (context.executionStep?.type !== 'setup' ||
-              context.cleanup === true))),
+          !context.feedback.some(
+            (item) => item.code === 'OBSERVATION_STALLED',
+          )),
     )
     .map((tool) => {
       const parameters = structuredClone(tool.parameters) as {
         properties: Record<string, unknown>;
-        allOf?: object[];
         required?: string[];
+        allOf?: object[];
       };
-      if (context.workflow)
-        parameters.properties.workflow = structuredClone(WORKFLOW_SCHEMA);
-      if (
-        ids &&
-        ['verification.finish', 'verification.record'].includes(tool.type)
-      ) {
-        const criteria = parameters.properties.criteria as {
-          items: { properties: object };
-        };
-        parameters.properties.criteria = {
-          ...criteria,
-          maxItems: ids.length,
-          ...(ids.length
-            ? {
-                items: {
-                  ...criteria.items,
-                  properties: {
-                    ...criteria.items.properties,
-                    criterionId: { type: 'string', enum: ids },
-                  },
-                },
-              }
-            : {}),
-        };
-      }
-      // 同轮结论复用现有验收 schema；先验收旧证据，再执行新动作，不要求额外调用。
-      if (
-        (context.executionGuidance || context.executionPolicy) &&
-        context.executionStep?.type !== 'setup' &&
-        !context.cleanup &&
-        ids?.length &&
-        ['browser.act', 'browser.observe', 'verification.block'].includes(
-          tool.type,
-        )
-      ) {
-        const record = tools.find(
-          (item) => item.type === 'verification.record',
-        )!;
-        const schema = structuredClone(
-          (
-            record.parameters as {
-              properties: { criteria: { items: { properties: object } } };
-            }
-          ).properties.criteria,
-        );
-        parameters.properties.conclusions = {
-          ...schema,
-          minItems: 0,
-          maxItems: ids.length,
-          items: {
-            ...schema.items,
-            properties: {
-              ...schema.items.properties,
-              criterionId: { type: 'string', enum: ids },
-            },
-          },
-        };
-      }
-      // setup 的空 criteria 不能让供应商省略准备声明；公共执行器仍独立校验完整性。
+      delete parameters.properties.criteria;
+      parameters.required = (parameters.required ?? []).filter(
+        (key) => key !== 'criteria',
+      );
+      parameters.properties.progress = structuredClone(progress);
       if (
         tool.type === 'verification.finish' &&
-        context.executionStep?.type === 'setup' &&
-        !context.cleanup
+        ['PREPARING', 'CHECKING'].includes(context.state.phase)
       )
-        parameters.required = [...(parameters.required ?? []), 'workflow'];
+        parameters.required = [...(parameters.required ?? []), 'progress'];
+      if (tool.type === 'verification.record')
+        parameters.required = [...(parameters.required ?? []), 'progress'];
       if (tool.type === 'browser.act') {
-        if (context.workflow) {
-          const workflow = parameters.properties
-            .workflow as typeof WORKFLOW_SCHEMA & {
-            required?: string[];
-          };
-          // 恢复耗尽时明确要求新策略，不能继续生成必定被执行器拒绝的孤立动作。
-          if (
-            context.workflow.recovery?.remaining === 0 ||
-            ((context.executionGuidance || context.executionPolicy) &&
-              !context.workflow.recovery)
-          ) {
-            parameters.required = [...(parameters.required ?? []), 'workflow'];
-            workflow.required = ['recovery'];
-          }
-          if (Number.isInteger(context.budgetRemaining?.actions))
-            workflow.properties.recovery.properties.maxActions.maximum =
-              Math.min(
-                workflow.properties.recovery.properties.maxActions.maximum,
-                context.budgetRemaining.actions,
-              );
-        }
-        const scrollTargets =
-          context.observation?.targets
-            ?.filter((t: { operations?: string[] }) =>
-              t.operations?.includes('scroll'),
-            )
-            .map((t: { target: string }) => t.target) ?? [];
+        parameters.properties.revisitReason = {
+          type: 'string',
+          minLength: 1,
+          maxLength: 600,
+        };
+        const targets = context.page.targets.map((item) => item.target);
+        const scrollTargets = context.page.targets
+          .filter((item) => item.operations?.includes('scroll'))
+          .map((item) => item.target);
         parameters.allOf = [
           {
             if: {
@@ -161,19 +126,9 @@ export function decisionTools(
               required: ['action'],
             },
             then:
-              (
-                context.observation?.viewport as
-                  { targetedPress?: boolean } | undefined
-              )?.targetedPress === true && context.observation.targets.length
-                ? {
-                    properties: {
-                      target: {
-                        enum: context.observation.targets.map(
-                          (t: { target: string }) => t.target,
-                        ),
-                      },
-                    },
-                  }
+              (context.page.viewport as { targetedPress?: boolean })
+                ?.targetedPress && targets.length
+                ? { properties: { target: { enum: targets } } }
                 : { not: { required: ['target'] } },
           },
           {
@@ -181,68 +136,49 @@ export function decisionTools(
               properties: { action: { const: 'scroll' } },
               required: ['action'],
             },
-            then: scrollTargets.length
-              ? { properties: { target: { enum: scrollTargets } } }
-              : { not: { required: ['target'] } },
+            then: {
+              required: ['value'],
+              properties: {
+                value: { type: 'string', enum: [...SCROLL_DIRECTIONS] },
+                ...(scrollTargets.length
+                  ? { target: { enum: scrollTargets } }
+                  : {}),
+              },
+              ...(scrollTargets.length
+                ? {}
+                : { not: { required: ['target'] } }),
+            },
+          },
+          {
+            if: {
+              properties: {
+                action: {
+                  enum: [
+                    'click',
+                    'fill',
+                    'type',
+                    'hover',
+                    'check',
+                    'uncheck',
+                    'select',
+                  ],
+                },
+              },
+              required: ['action'],
+            },
+            then: targets.length
+              ? { properties: { target: { enum: targets } } }
+              : { not: {} },
           },
         ];
       }
-      // 只读收尾不需要计划、阅读登记或重访字段；finish 仅保留原步骤完成声明。
-      if (context.verificationReview?.reason === 'budget') {
-        delete parameters.properties.workflow;
-        if (tool.type === 'verification.finish')
-          parameters.properties.workflow = {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-              assessments: structuredClone(
-                WORKFLOW_SCHEMA.properties.assessments,
-              ),
-            },
-          };
-      }
-      // 统一策略只发布一个计划入口，执行器仍复用已有工作流的证据与额度校验。
-      if (
-        context.executionPolicy?.version === 'planned-v1' &&
-        context.workflow &&
-        !context.verificationReview?.final
-      ) {
-        const workflow = parameters.properties
-          .workflow as typeof WORKFLOW_SCHEMA & { required?: string[] };
-        if (workflow) {
-          const plan = structuredClone(workflow.properties.recovery);
-          plan.required = [...plan.required, 'allowedActions'];
-          const properties = workflow.properties as Record<string, unknown>;
-          delete properties.recovery;
-          if (workflow.required)
-            workflow.required = workflow.required.filter(
-              (k) => k !== 'recovery',
-            );
-          if (parameters.required)
-            parameters.required = parameters.required.filter(
-              (k) => k !== 'workflow' || tool.type !== 'browser.act',
-            );
-          if (
-            ['browser.act', 'browser.observe', 'verification.record'].includes(
-              tool.type,
-            )
-          ) {
-            parameters.properties.plan = plan;
-            if (
-              tool.type === 'browser.act' &&
-              (!context.plan || context.plan.remaining === 0)
-            )
-              parameters.required = [...(parameters.required ?? []), 'plan'];
-          }
-        }
-      }
-      constrainEvidenceRefs(parameters, evidenceIds);
+      constrainEvidenceRefs(
+        parameters,
+        context.evidence.map((item) => item.id),
+      );
       return {
         ...tool,
-        ...(tool.type === 'browser.act' &&
-        context.workflow?.recovery?.remaining === 0
-          ? { description: `${tool.description}；${EXHAUSTED_RECOVERY_TOOL}` }
-          : {}),
+        description: TOOL_DESCRIPTIONS[tool.type] ?? tool.description,
         parameters,
       };
     });

@@ -226,7 +226,7 @@ impl Engine {
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         }
     }
-    /// 首先核验恢复状态，失败后最多执行一次登录；结果不明不能自动重放提交。
+    /// 首先核验当前会话状态，失败后最多执行一次登录；结果不明不能自动重放提交。
     pub(super) async fn prepare_identity(&mut self, raw: &Value, deadline: u64) -> Result<Value> {
         if self.config.external_account.is_some() {
             return Err(Fault::rejected(
@@ -234,7 +234,7 @@ impl Engine {
                 "外部账号不能切换登录配方",
             ));
         }
-        if self.config.full_profile {
+        if self.config.identity_seed_file.is_some() {
             return self.prepare_profile(raw, deadline).await;
         }
         if self.trace.is_some() {
@@ -266,11 +266,8 @@ impl Engine {
             .await?
         {
             return Ok(
-                json!({"status":if raw["saveSnapshot"]==true {"READY"} else {"NEEDS_HUMAN"},"source":"snapshot","reasonCode":if raw["saveSnapshot"]==true {"IDENTITY_VERIFIED"} else {"IDENTITY_MANUAL_CHECK_REQUIRED"},"saved":false}),
+                json!({"status":"READY","source":"current-session","reasonCode":"IDENTITY_VERIFIED","saved":false}),
             );
-        }
-        if let Some(path) = &self.config.auth_state {
-            auth::invalidate_if_current(path, &mut self.auth_version).map_err(|_| unavailable())?;
         }
         let Some(key) = raw["profileRef"].as_str() else {
             return Ok(
@@ -355,15 +352,8 @@ impl Engine {
         let ready = self
             .probe_identity(&origin, &raw["checks"], deadline)
             .await?;
-        let saved = if ready && raw["saveSnapshot"] == true && self.config.auth_state.is_some() {
-            self.save_auth(deadline.saturating_sub(process::boot_ms()))
-                .await?["saved"]
-                == true
-        } else {
-            false
-        };
         Ok(
-            json!({"status":if ready && raw["saveSnapshot"]==true {"READY"} else {"NEEDS_HUMAN"},"source":source,"reasonCode":if !ready {"IDENTITY_CHECK_UNMET"} else if raw["saveSnapshot"]==true {"IDENTITY_VERIFIED"} else {"IDENTITY_MANUAL_CHECK_REQUIRED"},"saved":saved}),
+            json!({"status":if ready {"READY"} else {"NEEDS_HUMAN"},"source":source,"reasonCode":if !ready {"IDENTITY_CHECK_UNMET"} else {"IDENTITY_VERIFIED"},"saved":false}),
         )
     }
 }

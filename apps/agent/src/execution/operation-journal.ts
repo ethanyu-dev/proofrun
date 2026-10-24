@@ -18,11 +18,12 @@ export class OperationJournal {
   /** 滚动和悬停不会挤掉已经发生的关键交互回执。 */
   private important(operation: RecentOperation) {
     return (
-      operation.operation === 'browser.act' &&
-      !['scroll', 'hover'].includes(operation.action ?? '')
+      operation.operation === 'browser.cookies.clear' ||
+      (operation.operation === 'browser.act' &&
+        !['scroll', 'hover'].includes(operation.action ?? ''))
     );
   }
-  /** 新步骤或控制权变化只使关键回执失效，近期历史仍可作背景。 */
+  /** 新步骤开始新的模型可见范围；控制权变化不能抹掉已发生的副作用。 */
   beginScope() {
     this.scopeStart = this.sequence;
     this.omitted = 0;
@@ -52,7 +53,11 @@ export class OperationJournal {
   /** 普通操作窗口包含观察回执，维持既有上下文语义。 */
   recent() {
     return this.entries
-      .filter((e) => e.sequence > this.sequence - RECENT_LIMIT)
+      .filter(
+        (e) =>
+          e.sequence > this.scopeStart &&
+          e.sequence > this.sequence - RECENT_LIMIT,
+      )
       .map((e) => e.operation);
   }
   /** 关键回执不含值和可重放 target，省略数明确说明覆盖缺口。 */
@@ -63,6 +68,7 @@ export class OperationJournal {
       )
       .map(({ operation: op }) => ({
         commandId: op.commandId,
+        operation: op.operation,
         ...(op.action === undefined ? {} : { action: op.action }),
         ...(op.targetName === undefined
           ? {}
@@ -73,6 +79,9 @@ export class OperationJournal {
               requestedTargetName: op.requestedTargetName.slice(0, NAME_LIMIT),
             }),
         ...(op.keyboard === undefined ? {} : { keyboard: { ...op.keyboard } }),
+        ...(op.cookieCleanup
+          ? { cookieCleanup: structuredClone(op.cookieCleanup) }
+          : {}),
         operationStatus: op.operationStatus,
         effect: op.effect,
       }));

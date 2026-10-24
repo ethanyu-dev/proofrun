@@ -60,10 +60,13 @@ test('重复登记保留已有结论并给出可恢复的收尾路径', async (t
       let calls = 0;
       const client = new FakeControl();
       const report = await run(execution(), client, (context) => {
-        if (context.executionStep.stepId !== 'step-1') return finish(context);
+        if (context.task.stepId !== 'step-1') return finish(context);
         calls++;
         if (calls >= 3)
-          assert.match(context.feedback, /CRITERIA_ALREADY_RECORDED/);
+          assert.match(
+            context.feedback.map((item) => item.message ?? item.code).join(' '),
+            /CRITERIA_ALREADY_RECORDED/,
+          );
         if (mode === 'recover' && calls === 3)
           return {
             type: 'verification.block',
@@ -94,12 +97,12 @@ test('停滞终止前保存独立验收，保持阻塞原因并继续后续步�
   let finalCalls = 0,
     actionsAtReview;
   const report = await run(execution(), client, (context, _turn, body) => {
-    if (context.executionStep.stepId !== 'step-1')
+    if (context.task.stepId !== 'step-1')
       return {
         ...finish(context),
-        evidenceRefs: context.observation.artifactRefs.map((a) => a.artifactId),
+        evidenceRefs: context.page.artifactRefs.map((a) => a.artifactId),
       };
-    if (context.verificationReview?.final) {
+    if (context.state.settlement) {
       finalCalls++;
       actionsAtReview = client.calls.filter(
         (c) => c.operation.type === 'browser.act',
@@ -139,14 +142,12 @@ test('停滞收尾拒绝动作与伪造引用，且不突破模型预算', async
       let finalCalls = 0,
         actionsAtReview;
       const report = await run(g, client, (context) => {
-        if (context.executionStep.stepId !== 'step-1')
+        if (context.task.stepId !== 'step-1')
           return {
             ...finish(context),
-            evidenceRefs: context.observation.artifactRefs.map(
-              (a) => a.artifactId,
-            ),
+            evidenceRefs: context.page.artifactRefs.map((a) => a.artifactId),
           };
-        if (context.verificationReview?.final) {
+        if (context.state.settlement) {
           finalCalls++;
           actionsAtReview = client.calls.filter(
             (c) => c.operation.type === 'browser.act',
@@ -154,12 +155,12 @@ test('停滞收尾拒绝动作与伪造引用，且不突破模型预算', async
           if (mode === 'action')
             return { type: 'browser.act', action: 'click', target: '@e2' };
           const output = record(context);
-          output.criteria[0].evidenceRefs = [context.observation.observationId];
+          output.criteria[0].evidenceRefs = [context.page.observationId];
           return output;
         }
         return { type: 'browser.act', action: 'scroll', value: 'down' };
       });
-      assert.equal(finalCalls, mode === 'noBudget' ? 0 : 1);
+      assert.equal(finalCalls, 1);
       assert(!client.calls.some((c) => c.operation.action === 'click'));
       if (mode !== 'noBudget')
         assert.equal(
@@ -172,7 +173,7 @@ test('停滞收尾拒绝动作与伪造引用，且不突破模型预算', async
       );
       assert.equal(
         report.steps[0].reasonCode,
-        mode === 'noBudget' ? 'STEP_MODEL_BUDGET_EXCEEDED' : 'NO_PROGRESS',
+        mode === 'noBudget' ? 'EVIDENCE_INCOMPLETE' : 'NO_PROGRESS',
       );
     });
 });
@@ -182,47 +183,57 @@ test('误用观察编号或抄错附件 ID 后可按精确反馈纠正', async (
   const client = new FakeControl();
   let attempts = 0;
   const report = await run(execution(), client, (context, _turn, body) => {
-    if (context.executionStep.stepId !== 'step-1')
+    if (context.task.stepId !== 'step-1')
       return {
         ...finish(context),
-        evidenceRefs: context.observation.artifactRefs.map((a) => a.artifactId),
+        evidenceRefs: context.page.artifactRefs.map((a) => a.artifactId),
       };
     const output = finish(context);
     const tool = body.tools.find(
       (t) => t.function.name === 'verification_finish',
     ).function.parameters;
     const ids =
-      tool.properties.criteria.items.properties.evidenceRefs.items.enum;
-    assert(ids.includes(context.observation.artifactRefs[0].artifactId));
-    assert(!ids.includes(context.observation.observationId));
+      tool.properties.progress.properties.criteria.items.properties.evidenceRefs
+        .items.enum;
+    assert(ids.includes(context.page.artifactRefs[0].artifactId));
+    assert(!ids.includes(context.page.observationId));
     assert.deepEqual(
-      tool.properties.workflow.properties.assessments.items.properties
+      tool.properties.progress.properties.requirements.items.properties
         .evidenceRefs.items.enum,
       ids,
     );
     attempts++;
-    if (attempts === 1)
+    if (attempts === 1) {
+      output.criteria = [];
       output.workflow = {
         assessments: [
           {
             stepId: 'step-1',
             outcome: 'complete',
             summary: '夹具文案',
-            evidenceRefs: [context.observation.observationId],
+            evidenceRefs: [context.page.observationId],
           },
         ],
       };
-    else if (attempts === 2) {
+    } else if (attempts === 2) {
       assert.match(
-        context.feedback,
-        /workflow.assessments\[step-1\].evidenceRefs/,
+        context.feedback.map((item) => item.message ?? item.code).join(' '),
+        /progress.requirements\[step-1\].evidenceRefs/,
       );
-      assert(context.feedback.includes(context.observation.observationId));
-      assert.deepEqual(context.recordedCriteria, []);
+      assert(
+        context.feedback
+          .map((item) => item.message ?? item.code)
+          .join(' ')
+          .includes(context.page.observationId),
+      );
+      assert.deepEqual(context.state.criteria, []);
       output.criteria[0].evidenceRefs = ['typo-artifact'];
     } else {
-      assert.match(context.feedback, /step-1-0.*typo-artifact/);
-      assert.deepEqual(context.recordedCriteria, []);
+      assert.match(
+        context.feedback.map((item) => item.message ?? item.code).join(' '),
+        /step-1-0.*typo-artifact/,
+      );
+      assert.deepEqual(context.state.criteria, []);
     }
     return output;
   });
@@ -230,53 +241,15 @@ test('误用观察编号或抄错附件 ID 后可按精确反馈纠正', async (
   assert.equal(report.verdict, 'PASSED', report.summary);
 });
 
-// 范围：上下文裁剪后的历史附件仍可选，空证据不允许任意字符串；不校验浏览器采集内容的业务语义。
-test('证据约束保留历史与已读来源且不污染共享 schema', async () => {
-  const { decisionTools } =
-    await import('../../apps/agent/dist/model/tools.js');
-  const schema = {
-    properties: { evidenceRefs: { type: 'array', items: { type: 'string' } } },
-  };
-  const tools = [
-    {
-      type: 'verification.block',
-      name: 'verification_block',
-      description: '',
-      parameters: schema,
-    },
-  ];
-  const context = {
-    evidence: [{ id: 'current' }],
-    previousObservations: [
-      {
-        observationId: 'observation-only',
-        artifactRefs: [{ artifactId: 'historical' }],
-      },
-    ],
-    interactionProgress: { items: [{ evidenceRefs: ['read-panel'] }] },
-    recordedCriteria: [{ evidenceRefs: ['saved'] }],
-  };
-  assert.deepEqual(
-    decisionTools(JSON.stringify(context), tools)[0].parameters.properties
-      .evidenceRefs.items.enum,
-    ['current', 'historical', 'saved', 'read-panel'],
-  );
-  assert.equal(
-    decisionTools('{}', tools)[0].parameters.properties.evidenceRefs.maxItems,
-    0,
-  );
-  assert.equal(schema.properties.evidenceRefs.items.enum, undefined);
-});
-
 // 范围：finish 内合法部分结论在工作流完整性失败前保存，不能让未完成步骤通过；模型和浏览器均为夹具。
 test('FAQ 未完成的 finish 仍先持久化独立文案结论', async () => {
   const client = new FakeControl();
   let attempted = false;
   const report = await run(execution(), client, (context) => {
-    if (context.executionStep.stepId !== 'step-1')
+    if (context.task.stepId !== 'step-1')
       return {
         ...finish(context),
-        evidenceRefs: context.observation.artifactRefs.map((a) => a.artifactId),
+        evidenceRefs: context.page.artifactRefs.map((a) => a.artifactId),
       };
     if (!attempted) {
       attempted = true;
@@ -295,8 +268,11 @@ test('FAQ 未完成的 finish 仍先持久化独立文案结论', async () => {
         },
       };
     }
-    assert.match(context.feedback, /WORKFLOW_INCOMPLETE/);
-    assert.equal(context.recordedCriteria[0].verdict, 'PASSED');
+    assert.match(
+      context.feedback.map((item) => item.message ?? item.code).join(' '),
+      /WORKFLOW_INCOMPLETE/,
+    );
+    assert.equal(context.state.criteria[0].verdict, 'PASSED');
     assert(
       client.stepSnapshots.some(
         (steps) =>
@@ -313,130 +289,6 @@ test('FAQ 未完成的 finish 仍先持久化独立文案结论', async () => {
   assert.equal(report.steps[0].status, 'BLOCKED');
 });
 
-// 范围：局部恢复耗尽后工具要求新计划，忽略约束的动作不派发，新策略仍占原步骤预算；不验证真实模型规划能力。
-test('恢复耗尽必须重新规划，剩余步骤预算不能给旧计划续费', async () => {
-  const client = new FakeControl();
-  const recovery = {
-    goal: '定位第一题',
-    scope: 'FAQ',
-    terms: ['第一题'],
-    successCondition: '第一题可见',
-    maxActions: 1,
-  };
-  let turn = 0;
-  const report = await run(execution(), client, (context, _turn, body) => {
-    if (context.executionStep.stepId !== 'step-1')
-      return {
-        ...finish(context),
-        evidenceRefs: context.observation.artifactRefs.map((a) => a.artifactId),
-      };
-    turn++;
-    if (turn === 1)
-      return {
-        type: 'browser.act',
-        action: 'fill',
-        target: '@e1',
-        value: '不同状态',
-        workflow: { recovery },
-      };
-    if (turn === 2 || turn === 3) {
-      const parameters = body.tools.find(
-        (t) => t.function.name === 'browser_act',
-      ).function.parameters;
-      assert(parameters.required.includes('workflow'));
-      assert.deepEqual(parameters.properties.workflow.required, ['recovery']);
-      assert.equal(context.workflow.recovery.remaining, 0);
-      if (turn === 2)
-        return { type: 'browser.act', action: 'click', target: '@e2' };
-      assert.match(context.feedback, /WORKFLOW_RECOVERY_EXHAUSTED/);
-      assert(!client.calls.some((call) => call.operation.action === 'click'));
-      return {
-        type: 'browser.act',
-        action: 'scroll',
-        value: 'down',
-        workflow: {
-          recovery: { ...recovery, goal: '定位未读第二题', terms: ['第二题'] },
-        },
-      };
-    }
-    return finish(context);
-  });
-  assert.equal(report.verdict, 'PASSED', report.summary);
-  assert.equal(
-    client.calls.filter((call) => call.operation.action === 'scroll').length,
-    1,
-  );
-});
-
-// 范围：连续动作产生有界保存提示，保存后不会每轮反复提示，后续阻塞不丢结论；不替模型判定业务语义。
-test('长步骤定期提示保存独立验收项', async () => {
-  const client = new FakeControl();
-  let actions = 0;
-  let reviewed = false;
-  const report = await run(execution(), client, (context) => {
-    if (context.executionStep.stepId !== 'step-1')
-      return {
-        ...finish(context),
-        evidenceRefs: context.observation.artifactRefs.map((a) => a.artifactId),
-      };
-    if (context.verificationReview) {
-      assert.deepEqual(context.verificationReview.pendingCriterionIds, [
-        'step-1-0',
-        'step-1-1',
-      ]);
-      assert.equal(reviewed, false);
-      reviewed = true;
-      return record(context);
-    }
-    if (reviewed)
-      return {
-        type: 'verification.block',
-        summary: '保留文案结论，FAQ 尚有缺口',
-      };
-    return {
-      type: 'browser.act',
-      action: 'fill',
-      target: '@e1',
-      value: `第${++actions}次新输入`,
-    };
-  });
-  assert.equal(reviewed, true);
-  assert.deepEqual(
-    report.criteria.map((c) => c.verdict),
-    ['PASSED', 'SKIPPED', 'PASSED'],
-  );
-  assert(actions <= 4);
-});
-
-// 范围：新计划不得超过步骤余额，非法更新保持原状态且重送旧计划不续费；不执行真实浏览器动作。
-test('恢复计划受剩余步骤额度限制且失败更新原子化', async () => {
-  const { Workflow } =
-    await import('../../apps/agent/dist/execution/workflow.js');
-  const workflow = new Workflow('读取剩余 FAQ');
-  const recovery = {
-    goal: '展开下一题',
-    scope: 'FAQ',
-    terms: [],
-    successCondition: '答案可见',
-    maxActions: 1,
-  };
-  workflow.apply({ recovery }, new Set(), 2);
-  workflow.acted();
-  const before = workflow.view();
-  assert.throws(
-    () =>
-      workflow.apply(
-        { recovery: { ...recovery, goal: '定位剩余题', maxActions: 4 } },
-        new Set(),
-        1,
-      ),
-    { code: 'INVALID_MODEL_DECISION' },
-  );
-  assert.deepEqual(workflow.view(), before);
-  workflow.apply({ recovery }, new Set(), 1);
-  assert.equal(workflow.view().recovery.remaining, 0);
-});
-
 // 范围：明确受阻、模型错误、动作/模型/时间预算耗尽均保留部分结论并继续后续步骤；浏览器和模型回复为夹具。
 test('部分验收持久化后发生单步故障，结果不丢且后续业务与清理继续', async (t) => {
   for (const reason of ['blocked', 'invalid', 'actions', 'modelCalls', 'time'])
@@ -448,18 +300,16 @@ test('部分验收持久化后发生单步故障，结果不丢且后续业务�
       if (reason === 'time') g.task.stepBudget.steps[0].timeoutMs = 120;
       let first = true;
       const report = await run(g, client, async (context) => {
-        if (context.executionStep.stepId !== 'step-1')
+        if (context.task.stepId !== 'step-1')
           return {
             ...finish(context),
-            evidenceRefs: context.observation.artifactRefs.map(
-              (a) => a.artifactId,
-            ),
+            evidenceRefs: context.page.artifactRefs.map((a) => a.artifactId),
           };
         if (first) {
           first = false;
           return record(context);
         }
-        assert.equal(context.recordedCriteria[0].verdict, 'PASSED');
+        assert.equal(context.state.criteria[0].verdict, 'PASSED');
         assert(
           client.stepSnapshots.some(
             (steps) =>
@@ -501,7 +351,7 @@ test('部分验收持久化后发生单步故障，结果不丢且后续业务�
       if (reason === 'actions')
         assert.equal(report.steps[0].reasonCode, 'STEP_ACTION_BUDGET_EXCEEDED');
       if (reason === 'modelCalls')
-        assert.equal(report.steps[0].reasonCode, 'STEP_MODEL_BUDGET_EXCEEDED');
+        assert.equal(report.steps[0].reasonCode, 'EVIDENCE_INCOMPLETE');
       if (reason === 'time')
         assert.equal(report.steps[0].reasonCode, 'STEP_TIME_BUDGET_EXCEEDED');
     });
@@ -522,21 +372,21 @@ test('完成声明合并已保存项目，setup 不接受伪造验收身份，�
     const tools = body.tools.map((t) => t.function);
     assert.equal(
       tools.some((t) => t.name === 'browser_cookies_clear'),
-      context.cleanup,
+      context.state.phase === 'CLEANUP',
     );
-    if (context.executionStep.stepId === 'step-1') {
-      if (!context.recordedCriteria.length) return record(context);
+    if (context.task.stepId === 'step-1') {
+      if (!context.state.criteria.length) return record(context);
       const decision = finish(context);
       decision.criteria.shift();
       return decision;
     }
-    if (context.cleanup) {
+    if (context.state.phase === 'CLEANUP') {
       assert.equal(
         tools.find((t) => t.name === 'verification_finish').parameters
-          .properties.criteria.maxItems,
+          .properties.progress.properties.criteria.maxItems,
         0,
       );
-      assert(!tools.some((t) => t.name === 'verification_record'));
+      assert(tools.some((t) => t.name === 'verification_record'));
       if (++cleanup === 1)
         return {
           type: 'verification.finish',
@@ -551,17 +401,25 @@ test('完成声明合并已保存项目，setup 不接受伪造验收身份，�
           ],
         };
       if (cleanup === 2) {
-        assert.match(context.feedback, /criteria 必须是 \[\]/);
+        assert.match(
+          context.feedback.map((item) => item.message ?? item.code).join(' '),
+          /progress.criteria 必须为空/,
+        );
         return { type: 'browser.cookies.clear', names: ['NEXT_LOCALE'] };
       }
       assert.equal(
-        context.recentOperations.at(-2).cookieCleanup.verified,
+        context.history.commands.find((item) => item.cookieCleanup)
+          ?.cookieCleanup.verified,
         true,
+        JSON.stringify({
+          history: context.history,
+          feedback: context.feedback,
+        }),
       );
     }
     return {
       ...finish(context),
-      evidenceRefs: context.observation.artifactRefs.map((a) => a.artifactId),
+      evidenceRefs: context.page.artifactRefs.map((a) => a.artifactId),
     };
   });
   assert.equal(report.verdict, 'PASSED');
@@ -671,10 +529,10 @@ test('补齐证据后的 finish 可升级暂存项并幂等合并已通过项', 
   let stage = 0;
   let initialEvidence;
   const report = await run(execution(), client, (context) => {
-    if (context.executionStep.stepId !== 'step-1')
+    if (context.task.stepId !== 'step-1')
       return {
         ...finish(context),
-        evidenceRefs: context.observation.artifactRefs.map((a) => a.artifactId),
+        evidenceRefs: context.page.artifactRefs.map((a) => a.artifactId),
       };
     const decision = finish(context);
     if (stage++ === 0) {
@@ -705,14 +563,14 @@ test('当前步骤逐项保存不能引用先前步骤的证据', async () => {
     client = new FakeControl();
   let previous;
   const report = await run(g, client, (context) => {
-    if (context.executionStep.stepId === 'step-1') {
-      previous = context.observation.artifactRefs[0].artifactId;
+    if (context.task.stepId === 'step-1') {
+      previous = context.page.artifactRefs[0].artifactId;
       return finish(context);
     }
-    if (context.executionStep.stepId === 'step-2') {
+    if (context.task.stepId === 'step-2') {
       assert(!context.evidence.some((artifact) => artifact.id === previous));
       assert(
-        !context.previousObservations.some((observation) =>
+        !context.history.excerpts.some((observation) =>
           observation.artifactRefs.some((ref) => ref.artifactId === previous),
         ),
       );
@@ -722,7 +580,7 @@ test('当前步骤逐项保存不能引用先前步骤的证据', async () => {
     }
     return {
       ...finish(context),
-      evidenceRefs: context.observation.artifactRefs.map((a) => a.artifactId),
+      evidenceRefs: context.page.artifactRefs.map((a) => a.artifactId),
     };
   });
   assert.deepEqual(
@@ -753,51 +611,11 @@ test('提供给模型的证据列表与当前步骤提交边界一致', async ()
 // 范围：缺少清理确认回执时不能把成功传输当作清理完成，业务结论保留；不覆盖真实节点删除逻辑。
 test('Cookie 清理缺少确认时单独报错，业务验收仍通过', async () => {
   const report = await run(execution(), new FakeControl(), (context) =>
-    context.cleanup
+    context.state.phase === 'CLEANUP'
       ? { type: 'browser.cookies.clear', names: ['NEXT_LOCALE'] }
       : finish(context),
   );
   assert.equal(report.verdict, 'PASSED');
   assert.equal(report.steps[2].reasonCode, 'COOKIE_CLEANUP_UNVERIFIED');
   assert.equal(report.steps[2].status, 'ERROR');
-});
-
-// 范围：JEV 在后续清理交接同一文本模型和上下文，不请求无关候选动作；不覆盖真实供应商推理质量。
-test('JEV 清理阶段直接核对恢复条件和 Cookie 回执', async () => {
-  const { JevModel } = await import('../../apps/agent/dist/model/jev.js');
-  const model = new JevModel(
-    config,
-    'fixture',
-    'jev-test',
-    async () => {
-      throw new Error('清理不应请求 JEV 候选');
-    },
-    {
-      decide: async (input) => {
-        assert.equal(JSON.parse(input.text).cleanup, true);
-        return {
-          decision: { type: 'browser.cookies.clear', names: ['NEXT_LOCALE'] },
-        };
-      },
-    },
-  );
-  const output = await model.decide(
-    {
-      text: JSON.stringify({
-        task: { taskId: 'fixture', objective: '清除 NEXT_LOCALE' },
-        cleanup: true,
-        budgetRemaining: { actions: 10 },
-        observation: {
-          observationId: 'o1',
-          url: 'https://fixture.test',
-          title: 'fixture',
-          text: 'fixture',
-          targets: [],
-        },
-        recentOperations: [],
-      }),
-    },
-    new AbortController().signal,
-  );
-  assert.equal(output.decision.type, 'browser.cookies.clear');
 });

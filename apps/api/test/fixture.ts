@@ -122,6 +122,7 @@ export class SimulatedNode {
   identityPreparation = false;
   /** 完整 profile 能力仅用于新版控制面协议测试，磁盘复制由真实浏览器用例覆盖。 */
   fullProfile = false;
+  ephemeralProfiles = true;
   /** 仅模拟外部材料与期限协议，真实注入由节点浏览器测试覆盖。 */
   externalAccounts = false;
   /** 用于验证控制面拒绝缺少外部注入证明的回执。 */
@@ -283,6 +284,7 @@ export class SimulatedNode {
         trace: this.trace,
         identityPreparation: this.identityPreparation,
         fullProfile: this.fullProfile,
+        ephemeralProfiles: this.ephemeralProfiles,
         externalAccounts: this.externalAccounts,
         nodeProfileManagement: this.nodeProfileManagement,
         cookieCleanup: this.cookieCleanup,

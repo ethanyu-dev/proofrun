@@ -29,7 +29,7 @@ pnpm --filter @proofrun/agent start once
 
 `PROOFRUN_MODEL_THINKING` 接受 `default`（默认）、`enabled`、`disabled`。`default` 不发送 `thinking`；显式模式发送 `thinking: {"type":"enabled"}` 或 `thinking: {"type":"disabled"}`。
 
-`PROOFRUN_MODEL_REASONING_EFFORT` 接受 `default`（默认）、`low`、`high`、`max`。显式档位发送 `reasoning_effort`；`thinking=disabled` 优先关闭思考，此时保留 `max` 不代表模型仍执行最高强度推理，工具选择与身份选择预算也按关闭模式处理。两项配置统一用于 LLM 决策、JEV 文本审查、字段填写与身份选择，不传给 TypeSafe 候选接口。非法值在启动时拒绝；供应商或代理必须支持所选参数。DeepSeek 官方默认推理强度对照可使用 `thinking=enabled`、`reasoning_effort=default`，确保工具选择兼容思考模式。
+`PROOFRUN_MODEL_REASONING_EFFORT` 接受 `default`（默认）、`low`、`high`、`max`。显式档位发送 `reasoning_effort`；`thinking=disabled` 优先关闭思考，此时保留 `max` 不代表模型仍执行最高强度推理，工具选择与身份选择预算也按关闭模式处理。两项配置统一用于 LLM 决策与身份选择。非法值在启动时拒绝；供应商或代理必须支持所选参数。DeepSeek 官方默认推理强度对照可使用 `thinking=enabled`、`reasoning_effort=default`，确保工具选择兼容思考模式。
 
 DeepSeek 思考模式不支持 `tool_choice: required`，因此显式开启思考或推理强度时改用 `auto`；Agent 仍要求完整的单个已声明工具调用，普通文字、多个工具、截断结果和无效参数仍会被拒绝。身份选择在此模式下沿用配置的模型输出额度，并将模型超时限制在 110 秒内，为 120 秒选择租约预留回写时间，避免推理 token 被原先短 JSON 的 2000 token 上限截断。参见 [DeepSeek Chat Completions 文档](https://api-docs.deepseek.com/api/create-chat-completion/)。直连官方接口采用默认强度 `high` 与 8192 token 的配置示例：
 
@@ -46,7 +46,7 @@ export PROOFRUN_AGENT_MODEL_MS=120000
 
 推理强度、输出上限与超时独立生效；输出上限需覆盖推理 token 和最终工具参数，8192 是成本与速度取舍，不保证复杂调用不会截断。`PROOFRUN_MODEL_MAX_TOKENS` 可显式设为 256–65536，`PROOFRUN_AGENT_MODEL_MS` 可设为 100–600000 毫秒，通用代码默认值仍为 4096 token 和 30 秒；提高这两项不会增加冻结的任务或步骤预算，身份选择也仍受 110 秒限制。采用代理时保留其实际模型名与输出预算参数。配置在 Agent 重启后生效，API 必须同时部署支持 `reasoning_effort` 的请求存档校验；最小模型调用成功不代表业务任务验收通过。
 
-`PROOFRUN_MODEL_VISION=true` 时，每次观察都采集并下载一张 PNG，核实归属和摘要后作为 LLM 输入。JEV 任务也可独立开启 `PROOFRUN_JEV_IMAGES`，仅向 JEV 提供图片；关闭 LLM 视觉时，文本审查不接收图片，也不能执行坐标点击。要求 SCREENSHOT 的任务在当前策略未启用任何图片输入时返回 BLOCKED，不静默替换证据。JEV 看图不等于文本审查已经看过图；仅有截图引用、缺少可核实内容时仍须保留验收缺口。
+`PROOFRUN_MODEL_VISION=true` 时，每次观察采集并下载一张 PNG，核实归属和摘要后作为 LLM 输入；未交付图片时不提供坐标点击。需要截图验收而模型未启用视觉时明确阻塞。仅有附件引用不能证明图像内容已经核实。
 
 ## 执行顺序
 
@@ -64,14 +64,14 @@ export PROOFRUN_AGENT_MODEL_MS=120000
 - `BLOCKED` 表示缺少前提或能力；`ERROR` 表示执行异常。两者 verdict 为 null，未完成标准全部列为 SKIPPED。
 - 模型格式错误和临时模型服务失败最多连续三次尝试，并计入模型轮数。浏览器未知效果立即停止，不创建新身份重放。
 - 节点明确声明目标输入未派发的 DOM 准备故障，Agent 会丢弃旧目标、重新观察并交给模型选择下一步；连续三次失败只阻塞当前步骤，后续业务与清理仍可执行。已派发输入的未知效果仍终止会话，原始故障不会被步骤保存时的撤权错误覆盖。
-- `observation.documents` 保留各 frame 的 HTML `lang` 声明；空字符串表示未声明，null 或旧节点缺少该字段表示未知。页面声明与正文语言分别验收，不以重复导航弥补缺失证据。
+- `page.documents` 保留各 frame 的 HTML `lang` 声明；空字符串表示未声明，null 或旧节点缺少该字段表示未知。页面声明与正文语言分别验收，不以重复导航弥补缺失证据。
 - 控制面请求只对读取、同 ID 命令、相同报告做最多三次重送。领取请求不内部重试；失去回执的执行等待租约回收。
 - SIGINT/SIGTERM、租约失效或任务截止会中断在途模型/浏览器请求。命令被中断后可在单次 HTTP 时限内最后读取一次已持久化结果，以保留未知写入原因，不重新提交命令。完成报告在独立短 HTTP 时限内提交；提交结果不确定时原样重送。API 不可用期间无法保证故障报告送达，但不会无限续权，资源仍由租约回收。
 - 任务生命周期由 API 决定，迟到的 ERROR 报告只附加元数据，不复活任务。执行器不会恢复失效任务或自动重新提交业务动作。
 - 页面文本是未受信任数据。系统提示明确页面不能改变标准；封闭工具、身份注入与证据校验提供结构约束，但不能证明模型的语义判断正确。
-- 上下文按字符数限制，原始标准不裁剪。最多保留最近 8 条操作、8 份历史页面正文（每份最多 20000 字符）、24 项证据摘要和一张当前图片；历史正文去掉元素编号，不能用来操作当前页面。上下文超限先丢弃最旧历史，再裁剪当前观察；页面裁剪会标记 truncated。超出上限的固定任务定义返回 ERROR，需要上层拆小任务或调整配置。字符限制不等于模型 token 的精确限制。
+- 上下文按字符数限制，原始标准不裁剪。保留最近 8 条操作和最多 24 条本步骤关键回执的有序并集、8 份历史页面正文（每份最多 20000 字符）、当前步骤全部可引用证据 ID 和类型和一张当前图片；历史正文去掉元素编号，不能用来操作当前页面。上下文超限先丢弃最旧历史，再裁剪当前观察；页面裁剪会标记 truncated。超出上限的固定任务定义返回 ERROR，需要上层拆小任务或调整配置。字符限制不等于模型 token 的精确限制。
 - API 与 worker 应保持时钟同步。领取的绝对截止时间转换为本地单调时钟，后续系统时间变化不会增加任务总预算。
-- 0.1 已支持人工交接、绑定节点的登录存储复用和网络元数据；具体协议和限制见 [部署与运行维护](../../deploy/README.md)。支持 Chromium TRACE，语义与限制见 [浏览器能力](../../docs/browser-capabilities-ha.md)；不包含真实模型质量评估或任意远程桌面。
+- 0.1 已支持人工交接、身份材料私密注入和网络元数据；具体协议和限制见 [部署与运行维护](../../deploy/README.md)。支持 Chromium TRACE，语义与限制见 [浏览器能力](../../docs/browser-capabilities-ha.md)；不包含真实模型质量评估或任意远程桌面。
 
 ## 参数与代码位置
 
@@ -95,101 +95,35 @@ export PROOFRUN_AGENT_MODEL_MS=120000
 
 验证范围与运行命令见 [测试入口与覆盖边界](../../tests/README.md)。
 
-## 策略与容器字体
+## 单一决策循环
 
-worker 根据 `task.executionMode` 选择纯 LLM（`llm`）或 LLM + JEV（`jev`）；旧任务回退到 `comparison.arm`，没有组标识时使用纯 LLM。`parallel` 仅供控制面接收并拆组，不允许 worker 将其作为单次执行。JEV 仍要求配置 `TYPESAFE_API_KEY`，两种单模式均使用相同的执行预算与证据校验流程。
+新任务仅支持 `llm`。JEV、双跑新建、`planned-v1`/`legacy` 路由、强制局部 plan、字段值缓存、候选排序和额外审查请求已移除。每一轮直接调用一个 LLM；原始要求、setup 门禁、验收账本与浏览器副作用检查继续由程序约束。
 
-Linux Chromium 在容器内渲染截图和实时画面，不能使用宿主机字体。`tests/agent/Dockerfile` 显式安装 `fonts-noto-cjk` 和 `fontconfig`；普通节点用户运行 `fc-match 'sans-serif:lang=zh-cn'` 应匹配中文字体。已有容器须补装字体或重建；已生成的截图不会改变，新的浏览器会话才可可靠使用更新后的字体缓存。
+`execution/context.ts` 生成唯一模型投影：
 
-## 统一计划执行策略
+| 模块     | 内容                                                       |
+| -------- | ---------------------------------------------------------- |
+| task     | 原任务背景、当前步骤、policy、原始要求、验收标准和人工权限 |
+| state    | 阶段、收尾状态、条件核验、已保存要求/验收/阅读进度         |
+| page     | 当前正文、目标、frame、tab、截图引用和覆盖缺口             |
+| history  | 当前步骤的有序命令回执、去重历史正文及省略数               |
+| evidence | 当前允许引用的附件目录                                     |
+| budget   | 剩余动作、模型调用和时间硬额度                             |
+| feedback | 本轮错误、无进展和前序步骤异常                             |
 
-`PROOFRUN_AGENT_EXECUTION_POLICY=planned-v1` 为新领取的执行启用统一计划策略，同时适用于 `llm` 和 `jev`。默认值为 `planned-v1`；显式设置 `legacy` 可回退原流程。策略在执行创建时冻结，修改环境变量并重启 worker 只影响后续执行。此开关自动启用共享计划约束、同轮结论保存和预算内收尾，不需要再设置 `PROOFRUN_AGENT_EXECUTION_GUIDANCE`。图片、扩展候选和 Box 仍独立配置。
+模型通过可选 `progress.requirements / criteria / readings` 提交已有事实；`revisitReason` 只解释重新访问已读面板。旧 `plan / workflow / conclusions` 参数拒绝解析。进度持久化成功后才派发动作；合法独立验收不会因下一动作失败丢失。要求身份或证据错误不能放行完成，格式错误消耗原模型预算。
 
-```bash
-export PROOFRUN_AGENT_EXECUTION_POLICY=planned-v1
-```
+工具按阶段、权限、当前目标和预算提供。`verification_environment` 不再开放：环境意图在 API 接收阶段冻结。PREPARING / CHECKING 仍分别完成准备和条件核验，READY 后才开始对应业务。预算尾部只允许整理已有结果，不重新开放浏览器动作或增加模型调用。
 
-登录仍先经过身份选择、节点 Profile/Cookie 恢复和前置条件检查。进入业务步骤后，首个动作由文本模型同时给出局部 `plan`；随后 JEV 在该计划范围内选择一个当前动作，到检查点再由文本模型核验证据、保存结论并推进。纯 LLM 模式复用相同计划、上下文和执行校验，仅不调用候选服务。
+`prompts/decision.ts` 维护核心规则及阶段提示，`prompts/recovery.ts` 和 `prompts/settlement.ts` 维护有界纠错反馈。工具用途提示在 `prompts/tools.ts`，工具结构由 `model/tools.ts` 生成；适配器只请求和解析，不能另建上下文。完整字段删除清单见[简化设计](../../docs/agent-loop-simplification-design.md)。
 
-- `plan` 包含 `goal/scope/terms/successCondition/allowedActions/maxActions`，可选 `criterionIds/phase/inputs/checkpoints/collectReadings`。模型通常选择四次动作，硬上限为六次且不超过步骤余额。计划 ID、剩余次数和防重额度由执行器管理；改名和重送不能恢复额度。内部复用原工作流校验，对新模型仅公布顶层 `plan`，不同时公布可修改的 `workflow.recovery`。
-- `inputs` 为 `{key,value}` 数组，键来自当前 `inputFields` 中唯一、可填写的非密码字段；动作执行时重新绑定当前观察。字段含义、页面或环境改变后不能复用旧绑定。信息不足进入正常文本复核，不发独立 `FIELD_VALUE` 请求；身份库秘密仍由节点处理。
-- `checkpoints` 支持 `after-fill/after-click/after-navigation`。普通填写和固定四次动作不再各自触发额外复核；计划耗尽、真实异常和预算收尾仍触发。JEV 的 VERIFY 只是请求复核，不能直接产生验收通过。
-- `collectReadings=true` 允许连续采集面板，跳过已取得完整正文的目标。`observed` 表示已采集但未核验，`recorded` 表示文本模型已登记原文；二者均不等于业务通过。最多四个待核对面板、正文截断或视图省略时进入批量复核；原始正文和引文来源由公共执行层保留。
-- 每轮共享类型化快照。当前计划、身份事实、原任务、证据、近期操作和预算来自执行器；LLM/JEV 只生成各自请求视图。复核新增诊断后再次执行相同裁剪预算，固定约束不裁剪；候选仍可从同轮原始观察独立构造并声明覆盖差异。
-- `executionPolicy` 保存版本、执行范围和唯一主要路由事件：`PLAN_REQUIRED/CHECKPOINT/DECISION_GAP/EXECUTION_EXCEPTION/ENVIRONMENT_CHANGED/SETTLEMENT`；`CONTINUE` 表示可继续候选选择。程序不解析中文反馈前缀。循环检测只使用公共 ObservationTracker，位置索引仅提供历史线索。
-- 候选请求与回退逐次经过原预算和审计。仅剩两次调用时直接交文本模型，避免额外选择挤掉收尾；Box 追加请求也预留复核空间。可恢复的候选供应商故障在接受文本回退后使本步骤转为文本执行；审计失败、预算拒绝、撤权和未知副作用不能被降级吞掉。
-- 控制权或身份代次改变使旧回复和旧计划失效，重新观察后复核。多 tab 的计划、进度和供应商诊断独立，原登录门禁、共享环境检查和结论保存规则继续生效。
+## 身份与临时 profile
 
-代码入口：`execution/model-router.ts` 负责统一路由，`model/jev-selector.ts` 只处理候选协议，`execution/plan-inputs.ts` 处理字段绑定，`execution/operation-journal.ts` 从同一回执集合派生近期与关键操作。`prompts/planned.ts` 独立维护新协议提示。旧 `JevModel` 与 `JevProgress` 仅服务 `legacy` 回滚路径，共用候选适配器，避免复制图片和 Box 实现。
+身份选择使用独立提示词 `prompts/identity-selector.ts`，只读取 Case 与同源候选摘要。每次任务创建全新浏览器 profile，消费身份库 Cookie 或 DevPass 材料；候选描述和注入成功均不是登录证明。HITL 只修改当前会话并交还控制，不保存登录基准、不重启浏览器、不自动生成新账号。
 
-回滚时停止分配新任务，等待执行与清理结束，设置 `PROOFRUN_AGENT_EXECUTION_POLICY=legacy` 后重启 worker；需要原先的实验 guidance 时仍沿用其独立配置。不能运行中热切策略。此实现提供可灰度的新执行链，不代表已经完成真实供应商配对评测或生产登录验收。
+profile 分组指同一临时浏览器下的独占 tab。组内串行、组间模型调用可并行，浏览器命令通过统一队列串行派发。`profile-runner.ts` 的 snapshots 队列保存步骤结果，不是浏览器 profile 快照。租约、账号容量和物理关闭确认仍保留。
 
-`pnpm test:agent` 覆盖计划、填写、批量取证、裁剪、预算和身份代次。设置 `PROOFRUN_AGENT_BROWSER_BIN` 与 `PROOFRUN_CHROME_BIN` 后运行 `pnpm test:agent:planned-browser`，通过真实 Node/Chrome 回环表单及独立服务写入计数验证链路；模型和控制面仍是夹具，不证明真实模型成功率。
-
-## Jev 版本与实验长上下文
-
-默认固定 `jev-1.14.0`；可用 `TYPESAFE_MODEL` 显式回退到 `jev-1.13.0`。已有环境若配置 `jev-latest`，需要主动改成版本号：截至 2026-10-15，[TypeSafe 官方模型说明](https://docs.typesafe.ai/models)仍将 `jev-latest` 指向 1.13、`jev-preview` 指向 1.14。模型调用回执保存供应商返回的 `model` 字段，便于核对别名实际解析版本。
-
-1.14 的普通文本 Choice 沿用原端点和协议，默认上限仍为每请求 64k、每问题 32k token。1.13 和 1.14 都支持通过 `TypeSafe-Danger-Zone-Long-Context: true` 把两项上限提升到 262k token；这是实验能力，官方说明其延迟和准确率可能劣于短上下文。
-
-`PROOFRUN_JEV_LONG_CONTEXT=true` 允许适配器保留更多当前正文：请求字符保护从 64000 提升到 256000，保守 token 预算从 28000 提升到 224000，当前页正文从 14000 提升到 64000 字符。只有最终请求估算超过普通 token 预算时才发送实验头；短请求、文本填写和验收请求不带该头。开关默认关闭，关闭即可恢复原 Jev 裁剪策略。默认候选仍最多 200 个动作加 5 个控制选项；扩展模式见下节。历史片段与执行预算不变；本地超限或服务端上下文拒绝仍交给文本模型审查。
-
-公共 `PROOFRUN_AGENT_CONTEXT_CHARS` 仍先裁剪输入，默认 64000 字符。若需要更大的整体输入，可在确认文本审查模型容量后将它设为 128000（最高 256000）；此值同时影响纯 LLM 和混合模式，不能仅凭 Jev 扩窗而直接调高。普通 LLM 继续使用共享裁剪视图；JEV 从执行器保留的原始观察独立构建有界视图，能够使用尚未进入 LLM 文本视图的候选，但无法补回 Browser Node 已省略或尚未加载的内容。
-
-## Jev 图片、扩展候选与 Box
-
-三个开关默认关闭，可以独立比较改造前后的效果：
-
-```sh
-# 向 JEV 发送当前截图；无需同时开启 PROOFRUN_MODEL_VISION。
-export PROOFRUN_JEV_IMAGES=true
-# 分组候选及更多受限动作；也可独立用于纯文本 JEV。
-export PROOFRUN_JEV_EXPANDED_ACTIONS=true
-# 单独试验视觉定位；要求图片开关、固定 jev-1.14.0 和新版节点。
-export PROOFRUN_JEV_BOX=false
-```
-
-图片使用 [TypeSafe Images](https://docs.typesafe.ai/images) 的 `assets` 协议和 `TypeSafe-Danger-Zone-Images: true`。每次只引用一张当前截图；`sharp` 完整解码后等比缩至最长边 1568，短边不足 280 时在右下补白，不裁剪内容。原始截图证据保持不变；调用记录保留原图/派生图摘要、尺寸和证据 ID，剔除 base64，实际发送正文另记 SHA-256。生产镜像在 Linux 内安装依赖；直接挂载 macOS 的 node_modules 不能代替 Linux 原生图片依赖。
-
-图片不参与文本字符估算。每张预留 8192 token、整个请求限制 24 MiB，均是本地保护，不代表官方精确图片 token 公式；实际用量来自供应商。带图请求遭遇 HTTP 400/413 参数拒绝时，本 tab 后续选择降级到文本并记录原因；上下文拒绝交给文本审查，认证失败保持失败。所有已派发的选择、定位、填写和审查调用都计入原预算。
-
-扩展候选最多保留 2000 个动作，然后按总上下文预算继续裁剪；按操作分组，每组最多 254 个动作加 NONE，根问题选择具体动作组或控制选项。所有问题独立求解，只使用被选中的组答案；不跨组比较局部概率。原生 select 的各选项仍映射为明确的 target/value。新增 check/uncheck、左右容器滚动、frame、hover，均依赖节点声明及当前状态；旧节点没有 hover 声明时不提供。任意按键、URL 和标签页生命周期仍由文本模型规划，不从截图猜测参数。
-
-Box 仅在固定 `jev-1.14.0` 且当前节点声明画面复核能力时提供 VISUAL_LOCATE 候选。选中后额外请求存在性、唯一性和边框；三个判断共享当前截图，所有门槛通过后才生成动作。存在概率、唯一目标概率/置信度和 Box 置信度使用本地实验门槛 0.9，尚未由真实站点校准，不能解释为 90% 正确率。框落入补白区、原图与视口比例异常、目标不唯一或坐标非法时交回文本审查。
-
-坐标以原始视口 CSS 单位派发。可唯一关联到主视口 DOM 控件时恢复 DOM 点击及重访检查；其他位置使用现有 visual.click。新版节点在输入前重新截图并要求完整 PNG 摘要一致，再核对视口及有效期；弹层、动画、光标闪烁或其他画面变化可能导致拒绝并重新观察。这是保守复核，不能证明截图与输入原子同步，也不能检测外观完全相同但语义改变的控件。持续动态页面应使用 DOM 或文本恢复路径。
-
-代码分别位于 `model/jev-image.ts`（图片与来源）、`model/jev-questions.ts`（分组协议）、`model/jev-box.ts`（定位校验），提示词仍集中在 `prompts/jev.ts`。执行器持有原始观察，适配器只裁剪自己的请求副本。业务验收与工作流推进仍经过公共执行器和文本审查，选择 VERIFY 或得到高置信度 Box 都不等于验收通过。
-
-## 提示词与上下文边界
-
-`src/prompts/planned.ts` 维护统一计划协议，`src/prompts/decision.ts` 独立维护执行系统提示，`src/prompts/jev.ts` 维护候选选择、字段填写与文本审查提示；适配器只负责组装请求与解析协议。
-
-`src/execution/context.ts` 负责历史正文去除旧元素编号、上下文预算裁剪和覆盖标记。`runner.ts` 负责租约安全点、当前步骤与执行状态，传入事实快照；裁剪不能修改原始观察、任务或报告证据。
-
-## 身份选择
-
-主循环先领取身份选择工作，再领取浏览器任务。身份选择 Agent 使用独立提示词 `src/prompts/identity-selector.ts`，单次工具调用根据 Case 与同源候选摘要选取账号；模型不接触 Cookie、profile 或内部凭据文件。选取失败或没有适用账号转人工。选取和状态加载不证明账号角色有效，执行器仍检查页面条件。新版身份库不自动保存认证状态，只有 HITL 成功后由控制面发布完整 profile 基准。详见[测试身份](../api/src/modules/identities/README.md)。
-
-## 兼容策略的通用子目标与执行进度
-
-`PROOFRUN_AGENT_EXECUTION_GUIDANCE=true` 在 `legacy` 下为本 worker 启用 `evidence-settlement-v2`，同时作用于 `llm` 和 `jev`。该独立开关默认关闭；默认的 `planned-v1` 已自动启用共享能力，无需额外设置。运行中的执行不热切策略。模型和任务预算保持原配置。
-
-- 文本动作和阻塞工具可携带 `conclusions`，复用原验收账本，先校验并保存动作前已有证据支持的结论，再执行新动作。保存失败不派发动作；后续动作失败保留独立结果。完整回复中的动作参数无效时，只保存通过独立校验的结论；截断回复仍整体拒绝，不猜测缺失内容。finish 的工作流元数据错误不抹掉合法独立结论。结构化任务同时写入步骤快照，旧非结构化任务保留在最终报告中。
-- 提示词与工具声明统一使用顶层 `conclusions`；解析层也接受明确的 `workflow.conclusions` 同名字段并执行相同校验，同时声明两份则拒绝，其他未知字段不放宽。
-- 原预算尾部进入一次只读整理阶段：根据近期文本请求耗时预留模型和保存时间，仅剩一次模型额度时直接整理。探索请求截止点不侵占预留；整理工具撤下浏览器操作，不增加总时长、模型次数或动作额度。估算不能保证供应商及时回复，失败仍保留真实未完成状态。完成工具的裸工作流数组只无损补为 assessments 容器，条目仍校验原步骤与附件；其他协议错误复用既有三次连续错误上限，在剩余时间和模型额度内纠正，始终不重新开放浏览器动作。
-- 阅读或验收记账、定位线索与普通低预算提示不再单独触发 JEV→文本复核；保留新增答案需登记、填写结果、计划耗尽、停滞和实际故障的复核。启用新策略时移除每四个动作一次的重复验收提示。
-- 文本上下文只合并 URL、标题、全文和截断状态完全相同的历史副本，保留所有来源附件与观察身份；不把历史正文变成差分节选；不裁掉原标准、约束或覆盖缺口。只读收尾使用专用简短提示词。
-- 动作工具通过 `workflow.recovery` 附带持续子目标，可与第一步动作在同一次调用提交。`criterionIds` 引用原标准，`phase` 为 locate/interact/collect/review，`allowedActions` 只收窄动作。成功条件由后续真实观察复核，不直接产生验收通过。
-- 公共执行层生成 `executionGuidance`：原始未完成标准、当前计划、循环事件、历史位置线索和不确定预算估算。JEV 根据当前子目标排序候选，遇到事件交回 LLM；正常动作不逐个追加 LLM 审批。
-- 同一真实页面状态、标准范围与阶段的局部额度不会因改写目标或人工交接重置；真实页面状态变化后可为不同子目标分配有界尝试；权威步骤、阅读或独立验收记录新增后可重新尝试旧策略。任务/步骤硬预算始终累计。不能借重规划重放结果未知的操作。
-- 位置记忆只包含观察过的名称、区域和位置；不包含旧 target、字段值和可执行选择器。换页或控制代次变化后失效；iframe 和嵌套容器不猜测主文档坐标。
-- 支持幅度的新节点在观察 `viewport.scrollDistance=true` 声明能力。执行器按当前视口/容器的 75% 计算 100..1200 CSS 像素滚动，旧节点继续使用方向及 400 像素。模型只选择方向，不能注入任意距离。
-- 控制台决策调用详情展示策略版本、计划身份、复核原因和成本估算；完整事件、证据和实际请求仍按现有归档机制保存。
-
-回退：停止给灰度 worker 分配新任务，等待当前任务及清理结束，再关闭开关并重启。证据、已执行动作、预算和旧报告不修改。浏览器新节点兼容旧方向命令，可以单独回滚 Agent 策略。
-
-验证分为合成状态/协议回归、真实 Chromium 本地夹具和外部业务回归，结果不可混称。`tests/agent/execution-guidance.test.mjs` 覆盖循环、预算、失效与模式交接；`tests/agent/guidance-browser-fixture.py` 提供长页表单、嵌套列表和分阶段配置三个真实页面。外部网站应固定模型、图片开关和预算，另外保留未参与调优的任务作为验证集；本地夹具通过不能证明跨网站成功率。
+升级时同时更新 API、Agent 和 Node；Node 必须声明 `ephemeralProfiles`。历史 JEV/双跑报告继续可读，旧任务不自动迁移；重跑创建 LLM 新运行，不重新执行旧引擎。移除旧策略和 TypeSafe 环境变量，节点移除 `base_profile_directory`。
 
 ## 报告复盘
 

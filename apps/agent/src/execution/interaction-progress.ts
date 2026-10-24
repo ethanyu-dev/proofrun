@@ -206,7 +206,7 @@ export class InteractionProgress {
   view(textLimit = 400) {
     return {
       revision: this.revision,
-      // 与 items 的裁剪独立，JEV 与文本模型均可识别当前控件对应的历史阅读状态。
+      // 与 items 的裁剪独立，模型仍可识别当前控件对应的历史阅读状态。
       currentTargets: [...this.currentTargets].map(([target, identity]) => ({
         target,
         itemId: this.items.get(identity)!.id,
