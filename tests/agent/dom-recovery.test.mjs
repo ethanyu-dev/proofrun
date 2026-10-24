@@ -92,15 +92,18 @@ test('有界等待未确认后重新观察，已经提交的表单不重放', as
     if (turn === 2)
       return { type: 'browser.act', action: 'click', target: '@e2' };
     if (turn === 3) {
-      before = context.observation.observationId;
+      before = context.page.observationId;
       return {
         type: 'browser.wait',
         selector: 'body',
         text: '不存在的完成文案',
       };
     }
-    assert.notEqual(context.observation.observationId, before);
-    assert.match(context.feedback, /BROWSER_WAIT_NOT_MET/);
+    assert.notEqual(context.page.observationId, before);
+    assert.match(
+      context.feedback.map((item) => item.message ?? item.code).join(' '),
+      /BROWSER_WAIT_NOT_MET/,
+    );
     assert.equal(client.submitted, true);
     return finish(context);
   });
@@ -169,12 +172,15 @@ test('点击准备故障后换用新观察，模型可以改选填写动作', as
   let firstObservation;
   const report = await run(grant(), client, (context, turn) => {
     if (turn === 1) {
-      firstObservation = context.observation.observationId;
+      firstObservation = context.page.observationId;
       return { type: 'browser.act', action: 'click', target: '@e2' };
     }
     if (turn === 2) {
-      assert.notEqual(context.observation.observationId, firstObservation);
-      assert.match(context.feedback, /BROWSER_ACTION_PRECONDITION_FAILED/);
+      assert.notEqual(context.page.observationId, firstObservation);
+      assert.match(
+        context.feedback.map((item) => item.message ?? item.code).join(' '),
+        /BROWSER_ACTION_PRECONDITION_FAILED/,
+      );
       assert.equal(client.submitted, false);
       return {
         type: 'browser.act',
@@ -198,13 +204,11 @@ test('准备恢复耗尽只阻塞当前步骤，后续步骤与清理仍执行',
   const client = new FakeControl();
   preparationFailures(client, 100);
   const report = await run(caseGrant(), client, (context) =>
-    context.executionStep.stepId === 'step-1'
+    context.task.stepId === 'step-1'
       ? { type: 'browser.act', action: 'click', target: '@e2' }
       : {
           ...finish(context),
-          evidenceRefs: context.observation.artifactRefs.map(
-            (a) => a.artifactId,
-          ),
+          evidenceRefs: context.page.artifactRefs.map((a) => a.artifactId),
         },
   );
   assert.deepEqual(
@@ -251,7 +255,7 @@ test('未知点击后的步骤保存拒绝保留原始故障', async () => {
     return recordSteps(...args);
   };
   const report = await run(caseGrant(), client, (context) =>
-    context.executionStep.stepId === 'step-2'
+    context.task.stepId === 'step-2'
       ? { type: 'browser.act', action: 'click', target: '@e2' }
       : finish(context),
   );
@@ -289,7 +293,7 @@ test('语言声明逐 frame 传给模型，兼容旧节点并拒绝错误类型'
     return result;
   };
   const report = await run(grant(), client, (context, _turn, body) => {
-    assert.deepEqual(context.observation.documents, documents);
+    assert.deepEqual(context.page.documents, documents);
     assert.match(body.messages[0].content, /不为确认同一事实反复 navigate/);
     return finish(context);
   });
@@ -308,5 +312,134 @@ test('语言声明逐 frame 传给模型，兼容旧节点并拒绝错误类型'
       () => observation(result),
       (e) => e.code === 'INVALID_OBSERVATION',
     );
+  }
+});
+
+// 范围：非法滚动值不派发，下一轮收到具体格式说明后可按方向重试；模型与浏览器均为夹具，不验证真实滚动效果。
+test('滚动参数错误返回方向格式，不能通过递增像素数反复猜测', async () => {
+  for (const value of [
+    'up:400',
+    'up:1400',
+    'up:2200',
+    'up:2600',
+    'top',
+    undefined,
+  ]) {
+    const client = new FakeControl();
+    const original = client.command.bind(client);
+    client.command = async (...args) => {
+      const result = await original(...args);
+      if (args[2].type === 'browser.observe')
+        result.data.viewport = {
+          width: 1000,
+          height: 800,
+          scrollDistance: true,
+        };
+      return result;
+    };
+    const report = await run(grant(), client, (context, turn, body) => {
+      const act = body.tools.find(
+        (tool) => tool.function.name === 'browser_act',
+      );
+      const scroll = act.function.parameters.allOf.find(
+        (rule) => rule.if.properties.action.const === 'scroll',
+      ).then;
+      assert.deepEqual(scroll.properties.value.enum, [
+        'up',
+        'down',
+        'left',
+        'right',
+      ]);
+      assert(scroll.required.includes('value'));
+      // 没有滚动容器时允许页面滚动，但禁止模型附上普通控件 target。
+      assert.deepEqual(scroll.not, { required: ['target'] });
+      if (turn === 1) return { type: 'browser.act', action: 'scroll', value };
+      if (turn === 2) {
+        assert.equal(
+          client.calls.filter((c) => c.operation.action === 'scroll').length,
+          0,
+        );
+        assert.match(
+          context.feedback.map((f) => f.message ?? '').join(' '),
+          /scroll.value 只能是 up、down、left、right/,
+        );
+        return { type: 'browser.act', action: 'scroll', value: 'up' };
+      }
+      return finish(context);
+    });
+    assert.equal(report.verdict, 'PASSED', report.summary);
+    assert.deepEqual(
+      client.calls
+        .filter((c) => c.operation.action === 'scroll')
+        .map((c) => c.operation.value),
+      ['up:600'],
+    );
+  }
+});
+
+// 范围：四个方向、容器限定、节点幅度上限及旧节点格式；只验证执行器派发参数，不证明页面已到达目标位置。
+test('滚动方向由模型选择，页面和容器的距离仍由执行器计算', async () => {
+  const samples = [
+    {
+      direction: 'up',
+      viewport: { width: 1000, height: 800, scrollDistance: true },
+      expected: 'up:600',
+    },
+    {
+      direction: 'down',
+      viewport: { width: 1000, height: 4000, scrollDistance: true },
+      expected: 'down:1200',
+    },
+    {
+      direction: 'left',
+      viewport: { scrollDistance: true },
+      container: true,
+      expected: 'left:450',
+    },
+    { direction: 'right', viewport: {}, expected: 'right' },
+  ];
+  for (const sample of samples) {
+    const client = new FakeControl();
+    const original = client.command.bind(client);
+    client.command = async (...args) => {
+      const result = await original(...args);
+      if (args[2].type === 'browser.observe') {
+        result.data.viewport = sample.viewport;
+        if (sample.container)
+          result.data.targets.push({
+            target: '@list',
+            role: 'region',
+            name: '可滚动列表',
+            operations: ['scroll'],
+            scroll: { width: 500, height: 400 },
+          });
+      }
+      return result;
+    };
+    const report = await run(grant(), client, (context, turn, body) => {
+      if (sample.container) {
+        const act = body.tools.find(
+          (tool) => tool.function.name === 'browser_act',
+        );
+        const scroll = act.function.parameters.allOf.find(
+          (rule) => rule.if.properties.action.const === 'scroll',
+        ).then;
+        assert.deepEqual(scroll.properties.target.enum, ['@list']);
+        assert(!scroll.required.includes('target'));
+      }
+      if (turn === 1)
+        return {
+          type: 'browser.act',
+          action: 'scroll',
+          value: sample.direction,
+          ...(sample.container ? { target: '@list' } : {}),
+        };
+      return finish(context);
+    });
+    assert.equal(report.verdict, 'PASSED', report.summary);
+    const scrolls = client.calls.filter((c) => c.operation.action === 'scroll');
+    assert.equal(scrolls.length, 1);
+    assert.equal(scrolls[0].operation.value, sample.expected);
+    if (sample.container) assert.equal(scrolls[0].operation.target, '@list');
   }
 });

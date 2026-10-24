@@ -31,19 +31,6 @@ export class ApiError extends Error {
 export class ApiClient {
   constructor(private readonly token: string) {}
 
-  /** 节点模板沿用 Console 凭据；首帧鉴权，不创建可分享的 HITL 令牌或 URL。 */
-  nodeProfile(id: string): WebSocket {
-    const url = new URL('/v1/node-profiles/connect', location.href);
-    url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const socket = new WebSocket(url);
-    socket.addEventListener('open', () =>
-      socket.send(
-        JSON.stringify({ type: 'authenticate', id, token: this.token }),
-      ),
-    );
-    return socket;
-  }
-
   /** HTTPS 页面使用 WSS，凭据只进入首条认证消息；画面连接没有输入能力。 */
   live(executionId: string): WebSocket {
     const url = new URL('/v1/live/connect', location.href);

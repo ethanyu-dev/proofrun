@@ -503,11 +503,9 @@ async function main() {
       Object.fromEntries(
         Object.entries(settings).filter(
           ([key]) =>
-            /^PROOFRUN_(MODEL|AGENT|JEV_|CONTROL_URL|WORKER_TOKEN|WORKER_ID)/.test(
+            /^PROOFRUN_(MODEL|AGENT|CONTROL_URL|WORKER_TOKEN|WORKER_ID)/.test(
               key,
-            ) ||
-            key.startsWith('TYPESAFE_') ||
-            AGENT_PROXY_KEYS.includes(key),
+            ) || AGENT_PROXY_KEYS.includes(key),
         ),
       ),
     );

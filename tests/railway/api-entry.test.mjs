@@ -20,7 +20,7 @@ const PROFILE = {
     allowIntervention: true,
   },
   budget: { maxActions: 30 },
-  executionMode: 'parallel',
+  executionMode: 'llm',
   evidenceKinds: ['DOM'],
 };
 /** 子进程只运行真实启动脚本和读配置的替身，不连接数据库、Railway 或业务站点。 */
@@ -76,31 +76,30 @@ async function boot(t, { source = 'json', profile = PROFILE, mode } = {}) {
   };
 }
 
-// 范围：真实启动入口将两种来源的遗留模式归一为 JEV，并保留其他配置；不启动真实 API 或迁移历史任务。
+// 范围：真实启动入口将两种来源的遗留模式归一为 LLM，并保留其他配置；不启动真实 API 或迁移历史任务。
 test('Railway 旧 profile 的 parallel 不再覆盖新 case 单组默认值', async (t) => {
   for (const source of ['json', 'file']) {
     const result = await boot(t, { source });
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(result.config.profile, {
       ...PROFILE,
-      executionMode: 'jev',
+      executionMode: 'llm',
     });
     assert.equal(result.config.permissions, 0o600);
     assert.equal(result.config.port, '4321');
     assert.equal(result.config.host, '::');
-    assert.match(result.stderr, /忽略旧 case profile.executionMode=parallel/);
-    assert.match(result.stdout, /新 case 执行模式：jev/);
+    assert.match(result.stdout, /新 case 执行模式：llm/);
   }
 });
 
 // 范围：独立变量允许三种显式模式，并覆盖 JSON/文件中的旧模式；不验证双组的真实调度。
 test('Railway 只有独立变量能显式选择纯 LLM 或双组对照', async (t) => {
   for (const source of ['json', 'file'])
-    for (const mode of ['llm', 'jev', 'parallel']) {
+    for (const mode of ['llm']) {
       const result = await boot(t, {
         source,
         mode,
-        profile: { ...PROFILE, executionMode: 'jev' },
+        profile: { ...PROFILE, executionMode: 'llm' },
       });
       assert.equal(result.status, 0, result.stderr);
       assert.equal(result.config.profile.executionMode, mode);
@@ -108,22 +107,22 @@ test('Railway 只有独立变量能显式选择纯 LLM 或双组对照', async (
 });
 
 // 范围：省略模式和省略整个 profile 的行为保持明确；不以缺配置虚构业务环境。
-test('省略旧模式使用 JEV，未配置 profile 时仍不启用 case 提交', async (t) => {
+test('省略旧模式使用 LLM，未配置 profile 时仍不启用 case 提交', async (t) => {
   const { executionMode: _, ...profile } = PROFILE;
   const defaults = await boot(t, { profile });
   assert.equal(defaults.status, 0, defaults.stderr);
   assert.deepEqual(defaults.config.profile, {
     ...profile,
-    executionMode: 'jev',
+    executionMode: 'llm',
   });
-  const absent = await boot(t, { source: 'none', mode: 'parallel' });
+  const absent = await boot(t, { source: 'none', mode: 'llm' });
   assert.equal(absent.status, 0, absent.stderr);
   assert.equal(absent.config.profile, null);
 });
 
 // 范围：配置冲突与非法模式在导入 API 前失败；这里只检查启动边界，完整 profile schema 仍由 API 校验。
 test('Railway 拒绝冲突来源、非法模式与非对象 profile', async (t) => {
-  for (const mode of ['', 'paralell', 'JEV']) {
+  for (const mode of ['', 'paralell', 'LLM']) {
     const result = await boot(t, { mode });
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /PROOFRUN_CASE_EXECUTION_MODE 只能是/);
@@ -141,4 +140,15 @@ test('Railway 拒绝冲突来源、非法模式与非对象 profile', async (t) 
   const conflict = await boot(t, { source: 'both' });
   assert.notEqual(conflict.status, 0);
   assert.match(conflict.stderr, /JSON 与文件配置只能选择一种/);
+});
+
+// 范围：旧执行模式在启动时明确拒绝，不默默切换或启动真实 API。
+test('Railway 拒绝已退役的显式模式与旧 profile 模式', async (t) => {
+  for (const mode of ['jev', 'parallel']) {
+    assert.notEqual((await boot(t, { mode })).status, 0);
+    assert.notEqual(
+      (await boot(t, { profile: { ...PROFILE, executionMode: mode } })).status,
+      0,
+    );
+  }
 });

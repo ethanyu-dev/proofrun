@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { NodeProfileStart } from '../components/node-profile-start';
 import { NodeEnrollment } from '../components/node-enrollment';
 import { NodeVersion } from '../components/node-version';
 import {
@@ -24,7 +23,7 @@ const CAPABILITIES = [
   ['screenshot', '截图'],
   ['conditionWait', '条件等待'],
   ['writeActions', '写操作'],
-  ['authState', '登录复用'],
+  ['ephemeralProfiles', '临时身份会话'],
   ['networkEvidence', '网络证据'],
 ] as const;
 
@@ -33,16 +32,6 @@ export function NodesPage({ api }: { api: ApiClient }) {
   const resource = useResource<
     Omit<NodeList, 'nodes'> & { nodes: ConsoleNode[] }
   >(api, '/v1/nodes');
-  const [profileNode, setProfileNode] =
-    useState<Pick<NodeSummary, 'id' | 'name'>>();
-  const profilePanel = useRef<HTMLElement>(null);
-  useEffect(() => {
-    // 入口位于长列表底部；打开和重复点击都将焦点与视口移到实际操作面板。
-    if (profileNode) {
-      profilePanel.current?.focus({ preventScroll: true });
-      profilePanel.current?.scrollIntoView({ block: 'start' });
-    }
-  }, [profileNode]);
   const [routingNode, setRoutingNode] = useState<NodeSummary>();
   const [savedRouting, setSavedRouting] = useState(false);
   const [rotation, setRotation] = useState<string>();
@@ -87,16 +76,6 @@ export function NodesPage({ api }: { api: ApiClient }) {
           注册节点
         </button>
       </PageHeader>
-      {profileNode && (
-        <NodeProfileStart
-          key={profileNode.id}
-          ref={profilePanel}
-          api={api}
-          nodeId={profileNode.id}
-          name={profileNode.name}
-          close={() => setProfileNode(undefined)}
-        />
-      )}
       {rotation && (
         <NodeEnrollment
           key={rotation}
@@ -268,14 +247,6 @@ export function NodesPage({ api }: { api: ApiClient }) {
                       role="group"
                       aria-label={`${node.name} 管理操作`}
                     >
-                      <button
-                        className="text-button"
-                        onClick={() =>
-                          setProfileNode({ id: node.id, name: node.name })
-                        }
-                      >
-                        默认 profile
-                      </button>
                       {node.occupied === 0 && (
                         <button
                           className="text-button"

@@ -55,9 +55,9 @@ PROOFRUN_EVAL_MAX_CALLS=1000 PROOFRUN_EVAL_SAMPLE_MS=300000 \
 pnpm test:e2e:linux
 ```
 
-工具不隐式加载 `.proofrun/local.env`。容器只继承模型配置白名单；服务地址必须从容器可达。`PROOFRUN_EVAL_MODE=jev` 另外需要 `TYPESAFE_API_KEY`，可选 `TYPESAFE_MODEL` 及产品现有 JEV 开关。每份结果记录真实/脚本模式、模型、执行策略、配置摘要、源码身份及节点运行时。源码身份不等于声明的远端部署版本。
+工具不隐式加载 `.proofrun/local.env`。容器只继承模型配置白名单，新执行只接受 llm。结果记录模型、视觉配置、源码和节点运行时；这些不代表远端已经部署。
 
-JEV 网络排查应在同一容器运行时对比默认出口与代理，不能用宿主机连通性代替容器结果。需要代理时显式设置 `PROOFRUN_EVAL_HTTPS_PROXY`（例如 Docker Desktop 可访问的 `http://host.docker.internal:8234`），驱动为 Agent 启用 Node 24 的环境代理，并让本地控制面、夹具及主模型域名走原路径。不会自动继承宿主机系统代理。结果记录 `jevNetwork`，配置摘要包含代理配置的哈希，不导出代理凭据。变更网络路径的批次应单独标注，不归因于模型或提示词改进。
+网络代理通过 `PROOFRUN_EVAL_HTTPS_PROXY` 显式传入，仅本机控制面和夹具直连；摘要记录代理哈希，不导出凭据。网络变更的批次应单独标注。
 
 请求诊断区分 `TRANSPORT_CONNECT_TIMEOUT`（建立连接超时）、`TRANSPORT_REQUEST_TIMEOUT`（配置的整体期限）、`TRANSPORT_RESPONSE_TIMEOUT`（运行时响应等待期限）、`TRANSPORT_DNS_ERROR` 与 `TRANSPORT_CONNECTION_RESET`；其他连接故障保留 `TRANSPORT_ERROR`。这些分类不包含原始异常或凭据，仍遵循原有回退和调用额度。连接超时能定位到连接阶段，不能单凭该码区分本地链路、代理出口或远端网络故障；历史通用错误码也不能事后认定成因。
 
@@ -80,7 +80,7 @@ pnpm eval:e2e --output /private/eval-run --environment /private/environment.json
 pnpm eval:e2e --output /private/eval-run --environment /private/environment.json --resume
 ```
 
-`environment.json` 至少包含 `{"mode":"llm","modelKind":"real","model":"your-model"}`，可选 `jevModel`、`executionPolicy`、`vision`、`agentCommit`、`apiCommit`、`configSha256`；不得放入密钥。该声明由调用者负责与实际部署一致；Linux 入口自动从自己启动的配置生成。API 的 Case profile 必须匹配单一执行模式、允许必要的人工介入、包含 DOM/SCREENSHOT，并使用专属节点池。
+`environment.json` 至少包含 `{"mode":"llm","modelKind":"real","model":"your-model"}`，可选 `vision`、`agentCommit`、`apiCommit`、`configSha256`；不得放入密钥。该声明由调用者负责与实际部署一致；Linux 入口自动从自己启动的配置生成。API 的 Case profile 必须匹配单一执行模式、允许必要的人工介入、包含 DOM/SCREENSHOT，并使用专属节点池。
 
 恢复先查原请求 ID，不生成新任务。取消请求丢回执时查询原任务再幂等重送取消；不会重放业务操作。场景版本、环境、页面 origin 变化将拒绝恢复。输出目录有排他锁；强制杀进程后，先确认原进程确已退出，再删除该目录的 `runner.lock`。清单保留中断时间，崩溃间隔保守计入总时间额度。
 

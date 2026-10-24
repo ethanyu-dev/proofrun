@@ -16,7 +16,6 @@ import {
 } from '../../apps/api/test/fixture.ts';
 import { ControlClient } from '../../apps/agent/dist/client.js';
 import { ChatModel } from '../../apps/agent/dist/model/chat.js';
-import { JevModel } from '../../apps/agent/dist/model/jev.js';
 import { execute } from '../../apps/agent/dist/execution/runner.js';
 import { compileStepBudget } from '../../contracts/dist/index.js';
 import { pause } from '../../apps/agent/dist/http.js';
@@ -34,7 +33,7 @@ const WORKER = 'proofrun-agent-worker-integration-only';
 // 范围：真实 Agent、模型 HTTP 适配、API 和 PostgreSQL；浏览器动作来自 WebSocket 夹具。
 test(
   '执行 Agent 与控制面的报告及撤权闭环',
-  { timeout: 60_000 },
+  { timeout: 90_000 },
   async (suite) => {
     assert.ok(process.env.PROOFRUN_TEST_DATABASE_URL, '需要独立测试数据库');
     const adminDb = new pg.Pool({
@@ -155,7 +154,6 @@ test(
       decide,
       {
         unknown = false,
-        executionGuidance = false,
         vision = false,
         thinking,
         reasoningEffort,
@@ -215,13 +213,7 @@ test(
         }
       } else await api('POST', '/v1/tasks', definition);
       const server = await modelServer((...args) =>
-        args[0].environmentReview?.required
-          ? {
-              type: 'verification.environment',
-              mode: 'configured',
-              summary: '夹具沿用已配置环境',
-            }
-          : decide(...args, { execution, client }),
+        decide(...args, { execution, client }),
       );
       const settings = {
         ...agentConfig,
@@ -232,7 +224,6 @@ test(
         thinking,
         reasoningEffort,
         modelMs: 5000,
-        executionGuidance,
       };
       const client = new ControlClient(settings);
       const execution = await until(() => client.claim(), Boolean);
@@ -334,16 +325,16 @@ test(
           });
           const { report, stored } = await run(definition, async (context) => {
             if (
-              context.executionStep.stepId === 'a-verify' ||
-              (context.executionStep.stepId === 'b-setup' &&
-                context.setupPhase === 'PREPARING')
+              context.task.stepId === 'a-verify' ||
+              (context.task.stepId === 'b-setup' &&
+                context.state.phase === 'PREPARING')
             ) {
               if (++arrivals === 2) release();
               await both;
             }
             if (
-              context.executionStep.stepId === 'b-setup' &&
-              context.setupPhase === 'CHECKING'
+              context.task.stepId === 'b-setup' &&
+              context.state.phase === 'CHECKING'
             )
               return {
                 type: 'verification.block',
@@ -351,9 +342,7 @@ test(
               };
             return {
               ...finish(context),
-              evidenceRefs: context.observation.artifactRefs.map(
-                (r) => r.artifactId,
-              ),
+              evidenceRefs: context.page.artifactRefs.map((r) => r.artifactId),
             };
           });
           assert.equal(arrivals, 2);
@@ -376,11 +365,11 @@ test(
         const { report, stored, node } = await run(
           structured('dom-preparation'),
           (context) =>
-            context.executionStep.stepId === 'step-1'
+            context.task.stepId === 'step-1'
               ? { type: 'browser.act', action: 'click', target: 'element-1' }
               : {
                   ...finish(context),
-                  evidenceRefs: context.observation.artifactRefs.map(
+                  evidenceRefs: context.page.artifactRefs.map(
                     (a) => a.artifactId,
                   ),
                 },
@@ -409,7 +398,7 @@ test(
           const { report, stored } = await run(
             structured('dom-unknown-step'),
             (context) =>
-              context.executionStep.stepId === 'step-2'
+              context.task.stepId === 'step-2'
                 ? { type: 'browser.act', action: 'click', target: 'element-1' }
                 : finish(context),
             { unknownClick: true },
@@ -493,15 +482,7 @@ test(
             },
           ]);
           const executeNext = async (decide) => {
-            const model = await modelServer((context, ...args) =>
-              context.environmentReview?.required
-                ? {
-                    type: 'verification.environment',
-                    mode: 'configured',
-                    summary: '夹具沿用已配置环境',
-                  }
-                : decide(context, ...args),
-            );
+            const model = await modelServer(decide);
             const settings = {
               ...agentConfig,
               apiUrl: base,
@@ -532,9 +513,7 @@ test(
           };
           const completed = (context) => ({
             ...finish(context),
-            evidenceRefs: context.observation.artifactRefs.map(
-              (a) => a.artifactId,
-            ),
+            evidenceRefs: context.page.artifactRefs.map((a) => a.artifactId),
           });
           const main = await executeNext(completed);
           assert.equal(main.report.verdict, 'PASSED');
@@ -562,7 +541,7 @@ test(
             },
           ]);
           const partial = await executeNext((context) =>
-            context.executionStep.stepId !== 'step-2'
+            context.task.stepId !== 'step-2'
               ? completed(context)
               : { type: 'verification.block', summary: '夹具缺少下一项数据' },
           );
@@ -609,8 +588,8 @@ test(
               },
             ]);
             const gated = await executeNext((context) =>
-              context.executionStep.stepId === 'step-1' &&
-              context.setupPhase === 'CHECKING'
+              context.task.stepId === 'step-1' &&
+              context.state.phase === 'CHECKING'
                 ? {
                     type: 'verification.block',
                     summary: '指定团队角色未确认',
@@ -659,7 +638,7 @@ test(
 
       // 范围：真实 Agent 请求经 HTTP 存档到 PostgreSQL；模型和浏览器是夹具，不证明供应商推理质量。
       await suite.test(
-        '思考参数贯通 Agent、存档校验和模型派发，非法扩展仍被拒绝',
+        '思考参数贯通模型派发，非法扩展及旧 JEV 写入被拒绝',
         async () => {
           for (const { thinking, reasoningEffort } of [
             {},
@@ -712,6 +691,11 @@ test(
                     ...[null, false, {}, [], 42, '', 'MAX', 'xhigh'].map(
                       (value) => ({ ...body, reasoning_effort: value }),
                     ),
+                    // 旧 JEV 请求只允许读取历史存档，不能再走新调用写入。
+                    ...['state', 'questions', 'assets'].map((key) => ({
+                      ...body,
+                      [key]: {},
+                    })),
                     { ...body, authorization: 'fixture-secret' },
                     { ...body, url: 'https://unexpected.invalid' },
                   ];
@@ -726,6 +710,19 @@ test(
                           callIndex: 200,
                           request: JSON.stringify(request),
                         },
+                      }),
+                      (error) =>
+                        error.code === 'INVALID_MODEL_CALL' &&
+                        error.status === 400,
+                    );
+                  }
+                  // 用途枚举保留历史解码，但新调用仅允许 DECISION。
+                  for (const purpose of ['JEV_SELECTION', 'FIELD_VALUE']) {
+                    const id = randomUUID();
+                    await assert.rejects(
+                      client.recordModelCall(execution, id, {
+                        phase: 'start',
+                        record: { ...call, id, callIndex: 200, purpose },
                       }),
                       (error) =>
                         error.code === 'INVALID_MODEL_CALL' &&
@@ -905,104 +902,6 @@ test(
           ),
         );
       });
-      // 范围：真实 JEV 序列化、脱敏、HTTP 存档与 PostgreSQL；图片和供应商回复为夹具，不证明视觉识别质量。
-      await suite.test('JEV 图片请求先存档再派发，拒绝未脱敏资源', async () => {
-        let sent = 0;
-        const { report, execution } = await run(
-          task('agent-jev-image-archive', true),
-          finish,
-          {
-            vision: true,
-            createModel: (settings, { execution, client }) =>
-              new JevModel(
-                { ...settings, jevImages: true, jevExpandedActions: true },
-                'fixture-key',
-                'jev-1.14.0',
-                async (_url, _key, _method, body) => {
-                  sent++;
-                  const path = `/v1/admin/executions/${execution.id}/model-calls`;
-                  const list = await api('GET', path);
-                  const call = await api(
-                    'GET',
-                    `${path}/${list.calls.at(-1).id}`,
-                  );
-                  assert.equal(call.status, 'PENDING');
-                  assert.equal(call.purpose, 'JEV_SELECTION');
-                  assert.equal(call.imagesOmitted, 1);
-                  assert.equal(
-                    call.requestSha256,
-                    createHash('sha256')
-                      .update(JSON.stringify(body))
-                      .digest('hex'),
-                  );
-                  const archived = JSON.parse(call.request);
-                  const asset = Object.values(body.assets)[0];
-                  assert.equal(typeof asset.data_base64, 'string');
-                  assert(!call.request.includes(asset.data_base64));
-                  assert.equal(
-                    typeof Object.values(archived.assets)[0].data_base64
-                      .omitted,
-                    'string',
-                  );
-                  assert(archived.state.screenshotSource.artifactId);
-                  // 未脱敏原图、数组和额外资源参数均不能突破既有存档边界。
-                  for (const assets of [
-                    body.assets,
-                    [],
-                    {
-                      image: {
-                        ...Object.values(archived.assets)[0],
-                        authorization: 'fixture-secret',
-                      },
-                    },
-                  ]) {
-                    const id = randomUUID();
-                    await assert.rejects(
-                      client.recordModelCall(execution, id, {
-                        phase: 'start',
-                        record: {
-                          ...call,
-                          id,
-                          callIndex: 200,
-                          request: JSON.stringify({ ...archived, assets }),
-                        },
-                      }),
-                      (error) =>
-                        error.code === 'INVALID_MODEL_CALL' &&
-                        error.status === 400,
-                    );
-                  }
-                  return {
-                    answers: {
-                      next: {
-                        choice: 'VERIFY',
-                        confidence: 1,
-                        probabilities: Object.fromEntries(
-                          Object.keys(body.questions.next.criteria).map(
-                            (key) => [key, Number(key === 'VERIFY')],
-                          ),
-                        ),
-                      },
-                    },
-                    usage: { input_tokens: 10, output_tokens: 1 },
-                  };
-                },
-              ),
-          },
-        );
-        assert.equal(sent, 1);
-        assert.equal(report.verdict, 'PASSED');
-        const list = await api(
-          'GET',
-          `/v1/admin/executions/${execution.id}/model-calls`,
-        );
-        assert(
-          list.calls.some(
-            (call) =>
-              call.purpose === 'JEV_SELECTION' && call.status === 'RECEIVED',
-          ),
-        );
-      });
       // 范围：能力不足的 BLOCKED 语义与报告幂等；不验证真实模型视觉能力探测。
       await suite.test('阻塞报告不会伪造业务失败', async () => {
         const { report, stored } = await run(task('agent-block', true), () => {
@@ -1020,15 +919,11 @@ test(
           id: 'unavailable',
           expectedResult: '缺失的后续状态',
         });
-        const { report, stored } = await run(
-          definition,
-          (context) => ({
-            type: 'verification.block',
-            summary: '已确认第一项，第二项缺少触发条件',
-            conclusions: finish(context).criteria.slice(0, 1),
-          }),
-          { executionGuidance: true },
-        );
+        const { report, stored } = await run(definition, (context) => ({
+          type: 'verification.block',
+          summary: '已确认第一项，第二项缺少触发条件',
+          conclusions: finish(context).criteria.slice(0, 1),
+        }));
         assert.equal(report.verdict, null);
         assert.deepEqual(
           stored.report.criteria.map((c) => c.verdict),
@@ -1098,10 +993,16 @@ test(
       await suite.test('模型请求人工、管理员操作后恢复并报告', async () => {
         const definition = task('human-agent');
         definition.environment.allowIntervention = true;
-        definition.budget.timeoutMs = 3000;
+        // 给首次取证留出余量，确保请求人工发生在探索阶段，而非预算只读收尾。
+        definition.budget.timeoutMs = 12000;
         let operator;
-        const outcome = await run(definition, (context, turn) => {
+        const outcome = await run(definition, (context, turn, body) => {
           if (turn === 1) {
+            assert(
+              body.tools.some(
+                (tool) => tool.function.name === 'verification_intervene',
+              ),
+            );
             operator = (async () => {
               const detail = await until(
                 () => api('GET', `/v1/tasks/${definition.taskId}`),
@@ -1142,9 +1043,16 @@ test(
               reason: '人工处理页面前提',
             };
           }
-          assert.ok(context.budgetRemaining.timeMs > 19 * 60000);
+          assert.ok(
+            context.budget.timeMs > 19 * 60000,
+            JSON.stringify({
+              budget: context.budget,
+              state: context.state.phase,
+              feedback: context.feedback,
+            }),
+          );
           assert.equal(
-            context.budgetRemaining.actions,
+            context.budget.actions,
             definition.budget.maxActions - 1,
           );
           return finish(context);

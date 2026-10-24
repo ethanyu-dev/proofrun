@@ -12,7 +12,7 @@ artifacts.ts 负责 DOM 归档、PNG 流式上传和存储确认、标准覆盖�
 
 模型请求正文采用顶层字段白名单；`thinking` 可省略，提供时仅接受 `{"type":"enabled"}` 或 `{"type":"disabled"}`，不允许额外字段。`reasoning_effort` 可省略，提供时只接受 `low`、`high`、`max` 字符串。新增模型参数时必须同步该校验，并运行 `pnpm test:agent:integration` 验证 Agent 真实序列化正文可以先存档、再派发；仅模型适配器夹具通过不能证明控制面兼容。
 
-JEV 的 `assets` 只接收已脱敏的 PNG 资源：`data_base64` 必须被替换为仅含 `omitted` 说明的对象，拒绝原始图片编码及额外资源字段。原图证据和派生图片摘要保留在 `state.screenshotSource`；`requestSha256` 仍对应实际发出的完整请求。
+新模型调用只接受 `DECISION`，请求不再接受 JEV 专用的 `state`、`questions`、`assets`。Chat Completions 图片在 Agent 侧替换为证据引用，`requestSha256` 对应实际发出的完整请求。历史 JEV/FIELD_VALUE 调用与用量仍可读取，不允许重新写入为新调用。
 
 执行受阻或出错时，结构化与非结构化任务均可保留已经校验证据的独立验收结论；整体 `verdict` 仍必须为 `null`。该兼容变更不放宽附件归属、标准身份或证据类型校验，也不把部分通过视为整体完成。
 

@@ -1,55 +1,14 @@
-//! 人工交还是唯一发布完整 profile 的入口；重启后清空旧观察并重建分组标签页。
-use super::{Engine, cookies, dom::Dom, socket_directory};
+//! 身份来源的 Cookie 种子只用于当前临时浏览器，不保存任何基准。
+use super::{Engine, cookies};
 use crate::{
     auth,
     error::{Fault, Result},
-    process, profile_snapshots,
+    process,
 };
 use serde_json::{Value, json};
 
-/// 关闭后的浏览器锁和后台通信文件应在短时间内消失，否则不发布或重启。
-const CLOSE_WAIT_MS: u64 = 5000;
-/// 固定版本 agent-browser 退出时清理的运行文件；config 会保留，不作为退出依据。
-const DAEMON_FILES: &[&str] = &[
-    "sock",
-    "port",
-    "pid",
-    "version",
-    "stream",
-    "engine",
-    "provider",
-    "extensions",
-];
-/// 多次人工交接的 trace 分段总量有界，合并不能吞掉前段业务证据。
-const TRACE_BYTES: u64 = 64 * 1024 * 1024;
-
-/// close 响应先于 daemon 退出；仅等待 Chromium 锁会让新命令误连仍在退出的旧进程。
-/// 不探测或删除 socket，以免触发旧进程工作或掩盖关闭失败；读取异常也按未关闭处理。
-async fn wait_profile_closed(
-    profile: &std::path::Path,
-    socket: &std::path::Path,
-    session: &str,
-    deadline: u64,
-) -> Result<()> {
-    loop {
-        let daemon_closed = DAEMON_FILES.iter().all(|extension| {
-            matches!(std::fs::symlink_metadata(socket.join(format!("{session}.{extension}"))), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
-        });
-        if daemon_closed && profile_snapshots::quiescent(profile) {
-            return Ok(());
-        }
-        if process::boot_ms() >= deadline {
-            return Err(Fault::unknown(
-                "PROFILE_CLOSE_UNVERIFIED",
-                "浏览器或引擎后台进程尚未确认关闭，未发布基准",
-            ));
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
-}
-
 impl Engine {
-    /// 初始种子只用于新身份；已恢复的人工基准永不被旧 Cookie 覆盖。
+    /// 注入前核对来源，注入后清理私有种子；业务资格由 setup 独立核验。
     pub(super) async fn prepare_profile(&mut self, raw: &Value, deadline: u64) -> Result<Value> {
         let url = raw["url"]
             .as_str()
@@ -59,17 +18,7 @@ impl Engine {
             deadline.saturating_sub(process::boot_ms()),
         )
         .await?;
-        if self.profile_restored {
-            return Ok(
-                json!({"status":"LOADED","source":"profile","reasonCode":"IDENTITY_PROFILE_LOADED","saved":false}),
-            );
-        }
         let Some(path) = &self.config.identity_seed_file else {
-            if self.template_restored {
-                return Ok(
-                    json!({"status":"LOADED","source":"profile","reasonCode":"NODE_TEMPLATE_LOADED","saved":false}),
-                );
-            }
             return Ok(
                 json!({"status":"NEEDS_HUMAN","source":"none","reasonCode":"LOGIN_RECIPE_MISSING","saved":false}),
             );
@@ -98,13 +47,8 @@ impl Engine {
         let values = seed["cookies"]
             .as_array()
             .ok_or_else(|| Fault::rejected("IDENTITY_SEED_UNAVAILABLE", "身份 Cookie 不可用"))?;
-        if values.is_empty() && self.template_restored {
-            return Ok(
-                json!({"status":"LOADED","source":"profile","reasonCode":"NODE_TEMPLATE_LOADED","saved":false}),
-            );
-        }
         let (mut dom, target) = self.identity_dom(deadline).await?;
-        // 显式 Cookie 种子覆盖目标源身份；没有种子时保留托管模板中的人工登录。
+        // 种子只注入本次临时会话，不回写身份来源。
         dom.identity_clear(&target, &origin).await?;
         for value in values {
             let mut params = value.clone();
@@ -117,6 +61,7 @@ impl Engine {
             deadline.saturating_sub(process::boot_ms()),
         )
         .await?;
+        let _ = std::fs::remove_file(path);
         self.observation = None;
         self.targets.clear();
         self.dom = None;
@@ -124,237 +69,5 @@ impl Engine {
         Ok(
             json!({"status":if values.is_empty() {"NEEDS_HUMAN"} else {"LOADED"},"source":if values.is_empty() {"none"} else {"cookies"},"reasonCode":if values.is_empty() {"LOGIN_RECIPE_MISSING"} else {"IDENTITY_COOKIES_LOADED"},"saved":false}),
         )
-    }
-
-    /// 关闭浏览器后发布不可变副本，再恢复任务自身的 profile；不加载刚发布的另一份目录。
-    pub(super) async fn save_profile(&mut self, timeout_ms: u64) -> Result<Value> {
-        let deadline = process::boot_ms() + timeout_ms;
-        let state = self
-            .config
-            .auth_state
-            .clone()
-            .ok_or_else(|| Fault::rejected("AUTH_STATE_MISSING", "身份基准未绑定"))?;
-        let listed = self
-            .cli(
-                vec!["tab".into(), "list".into()],
-                deadline.saturating_sub(process::boot_ms()),
-            )
-            .await?;
-        let tabs = listed["tabs"]
-            .as_array()
-            .ok_or_else(|| Fault::rejected("PROFILE_TABS_UNAVAILABLE", "无法记录人工处理页面"))?;
-        let active_url = tabs
-            .iter()
-            .find(|tab| tab["active"] == true)
-            .and_then(|tab| tab["url"].as_str())
-            .unwrap_or("about:blank")
-            .to_owned();
-        let scopes: Vec<(String, String)> = self
-            .scopes
-            .iter()
-            .map(|(name, state)| {
-                (
-                    name.clone(),
-                    tabs.iter()
-                        .find(|tab| tab["tabId"].as_str() == Some(&state.tab_id))
-                        .and_then(|tab| tab["url"].as_str())
-                        .unwrap_or("about:blank")
-                        .to_owned(),
-                )
-            })
-            .collect();
-        let active_scope = self.active_scope.clone();
-        let traced = self.trace.is_some();
-        if let Some(mut trace) = self.trace.take() {
-            let path = self
-                .config
-                .directory
-                .join("artifacts")
-                .join(format!("{}.trace.json", uuid::Uuid::new_v4()));
-            trace.trace_stop(&path).await?;
-            self.trace_segments.push(path);
-        }
-        // Chromium 正常退出可能清理会话 Cookie；将其随同完整目录保存为同版本补充状态。
-        let state_file = self
-            .config
-            .directory
-            .join("profile")
-            .join(".proofrun-session-state.json");
-        self.cli(
-            vec![
-                "state".into(),
-                "save".into(),
-                state_file.to_string_lossy().into_owned(),
-            ],
-            deadline.saturating_sub(process::boot_ms()),
-        )
-        .await?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&state_file, std::fs::Permissions::from_mode(0o600))
-                .map_err(|_| Fault::rejected("PROFILE_SAVE_FAILED", "会话状态权限设置失败"))?;
-        }
-        auth::check_state(&state_file)
-            .map_err(|_| Fault::rejected("PROFILE_SAVE_FAILED", "会话状态导出失败"))?;
-        self.cli(
-            vec!["close".into()],
-            deadline.saturating_sub(process::boot_ms()),
-        )
-        .await?;
-        let profile = self.config.directory.join("profile");
-        let until = deadline.min(process::boot_ms() + CLOSE_WAIT_MS);
-        wait_profile_closed(
-            &profile,
-            &socket_directory(&self.config.session),
-            &self.config.session,
-            until,
-        )
-        .await?;
-        let saved = profile_snapshots::publish(&state, &profile, &mut self.auth_version)
-            .map_err(|_| Fault::unknown("PROFILE_SAVE_FAILED", "完整浏览器基准保存结果未确认"))?;
-        if self.config.node_template {
-            return Ok(
-                json!({"saved":saved,"reason":if saved {"SAVED"} else {"NEWER_STATE_PRESERVED"},"profileRestarted":false}),
-            );
-        }
-        self.scopes.clear();
-        self.networks.clear();
-        self.active_scope = None;
-        self.observation = None;
-        self.targets.clear();
-        self.dom = None;
-        self.visual = None;
-        self.tabs.clear();
-        self.frame = None;
-        self.open(deadline.saturating_sub(process::boot_ms()))
-            .await?;
-        for (name, url) in scopes {
-            self.activate_scope(&name, deadline.saturating_sub(process::boot_ms()))
-                .await?;
-            self.cli(
-                vec!["open".into(), url],
-                deadline.saturating_sub(process::boot_ms()),
-            )
-            .await?;
-        }
-        if let Some(scope) = active_scope {
-            self.activate_scope(&scope, deadline.saturating_sub(process::boot_ms()))
-                .await?;
-        } else {
-            self.cli(
-                vec!["open".into(), active_url],
-                deadline.saturating_sub(process::boot_ms()),
-            )
-            .await?;
-        }
-        if traced {
-            let endpoint = self
-                .cli(
-                    vec!["get".into(), "cdp-url".into()],
-                    deadline.saturating_sub(process::boot_ms()),
-                )
-                .await?;
-            let mut trace = Dom::connect(
-                endpoint["cdpUrl"]
-                    .as_str()
-                    .ok_or_else(|| Fault::unknown("TRACE_UNAVAILABLE", "浏览器取证连接不可用"))?,
-            )
-            .await?;
-            trace.trace_start().await?;
-            self.trace = Some(trace);
-        }
-        Ok(
-            json!({"saved":saved,"reason":if saved {"SAVED"} else {"NEWER_STATE_PRESERVED"},"profileRestarted":true}),
-        )
-    }
-
-    /// 人工重启前后的 trace 保留分段边界；只合并事件，不宣称浏览器运行连续。
-    pub(super) fn merge_trace_segments(&mut self, final_path: &std::path::Path) -> Result<()> {
-        if self.trace_segments.is_empty() {
-            return Ok(());
-        }
-        let mut events = Vec::new();
-        let mut bytes = 0;
-        let paths = self
-            .trace_segments
-            .iter()
-            .map(|p| p.as_path())
-            .chain(std::iter::once(final_path));
-        for (index, path) in paths.enumerate() {
-            let data = std::fs::read(path)
-                .map_err(|_| Fault::rejected("TRACE_UNAVAILABLE", "取证分段不可读"))?;
-            bytes += data.len() as u64;
-            if bytes > TRACE_BYTES {
-                return Err(Fault::rejected("TRACE_TOO_LARGE", "取证分段超过上限"));
-            }
-            let value: Value = serde_json::from_slice(&data)
-                .map_err(|_| Fault::rejected("TRACE_UNAVAILABLE", "取证分段格式无效"))?;
-            let segment = value
-                .get("traceEvents")
-                .and_then(Value::as_array)
-                .or_else(|| value.as_array())
-                .ok_or_else(|| Fault::rejected("TRACE_UNAVAILABLE", "取证分段缺少事件"))?;
-            // 各浏览器重启后 PID 可能复用，增加分段元数据保留可识别边界。
-            events.push(json!({"name":"proofrun.profile.segment","ph":"M","pid":0,"tid":0,"args":{"segment":index}}));
-            events.extend(segment.iter().cloned());
-        }
-        std::fs::write(
-            final_path,
-            serde_json::to_vec(&json!({"traceEvents":events})).unwrap(),
-        )
-        .map_err(|_| Fault::unknown("TRACE_SAVE_FAILED", "取证分段写入失败"))?;
-        self.trace_segments.clear();
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// 范围：模拟 Chromium 已解锁但 daemon 延迟清理，确认等待后可继续；真实重启由浏览器回归覆盖。
-    #[tokio::test]
-    async fn waits_for_daemon_cleanup_after_profile_unlock() {
-        let root = tempfile::tempdir().unwrap();
-        let profile = root.path().join("profile");
-        let socket = root.path().join("socket");
-        std::fs::create_dir_all(&profile).unwrap();
-        std::fs::create_dir_all(&socket).unwrap();
-        let marker = socket.join("fixture.sock");
-        std::fs::write(&marker, []).unwrap();
-        std::fs::write(socket.join("fixture.config"), []).unwrap();
-        let waiting = wait_profile_closed(&profile, &socket, "fixture", process::boot_ms() + 5000);
-        tokio::pin!(waiting);
-        assert!(
-            tokio::time::timeout(std::time::Duration::from_millis(100), &mut waiting)
-                .await
-                .is_err()
-        );
-        std::fs::remove_file(marker).unwrap();
-        waiting.await.unwrap();
-    }
-
-    /// 范围：任一退出标记残留或浏览器仍持锁时必须超时失败，不删除文件；不模拟真实进程退出。
-    #[tokio::test]
-    async fn refuses_restart_while_close_is_unverified() {
-        let root = tempfile::tempdir().unwrap();
-        let profile = root.path().join("profile");
-        let socket = root.path().join("socket");
-        std::fs::create_dir_all(&profile).unwrap();
-        std::fs::create_dir_all(&socket).unwrap();
-        let markers = DAEMON_FILES
-            .iter()
-            .map(|extension| socket.join(format!("fixture.{extension}")))
-            .chain(std::iter::once(profile.join("SingletonLock")));
-        for marker in markers {
-            std::fs::write(&marker, []).unwrap();
-            let error = wait_profile_closed(&profile, &socket, "fixture", process::boot_ms())
-                .await
-                .unwrap_err();
-            assert_eq!(error.code, "PROFILE_CLOSE_UNVERIFIED");
-            assert!(marker.exists());
-            std::fs::remove_file(marker).unwrap();
-        }
     }
 }

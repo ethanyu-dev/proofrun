@@ -35,7 +35,7 @@ test('登录准备绑定已分配身份且独立于业务步骤', async () => {
     url: definition.target.url,
     profileRef: 'private',
     checks: identity.checks as [{ method: 'text'; value: string }],
-    saveSnapshot: true,
+    saveSnapshot: false,
   };
   assert.equal(await authorizePreparation(client, context, command), 120000);
   await assert.rejects(

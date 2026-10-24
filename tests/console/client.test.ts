@@ -179,12 +179,12 @@ test('证据超出读取上限会停止流', async (context) => {
   assert.equal(cancelled, true);
 });
 
-// 范围：新表单默认 JEV、导入导出的配置保真与协议校验；不代表浏览器交互或真实任务验收。
+// 范围：新表单默认 LLM、导入导出的配置保真与协议校验；不代表浏览器交互或真实任务验收。
 test('任务表单与 JSON 保留高级配置并拒绝无效定义', async () => {
   const { newTaskDefinition, parseTaskDefinition } =
     await import('../../apps/console/src/task-definition.ts');
   const task = newTaskDefinition();
-  assert.equal(task.executionMode, 'jev');
+  assert.equal(task.executionMode, 'llm');
   task.target.url = 'https://example.com';
   task.objective = '检查公开页面';
   task.acceptanceCriteria[0].description = '页面标题';
@@ -229,22 +229,21 @@ test('任务表单与 JSON 保留高级配置并拒绝无效定义', async () =>
 });
 
 // 范围：三种模式在共享协议与 JSON 中往返，旧定义保持单组语义；不验证真实模型或节点容量。
-test('执行模式支持并行与两种单组策略，允许从同一登录快照启动', async () => {
+test('执行模式只接受 LLM，拒绝退役 JEV 和 parallel', async () => {
   const { newTaskDefinition, parseTaskDefinition } =
     await import('../../apps/console/src/task-definition.ts');
   const task = newTaskDefinition();
-  assert.equal(task.executionMode, 'jev');
+  assert.equal(task.executionMode, 'llm');
   task.target.url = 'https://example.com';
   task.objective = '检查页面';
   task.acceptanceCriteria[0].description = '标题';
   task.acceptanceCriteria[0].expectedResult = '显示标题';
-  for (const executionMode of ['parallel', 'llm', 'jev']) {
-    assert.equal(
-      parseTaskDefinition(JSON.stringify({ ...task, executionMode }))
-        .executionMode,
-      executionMode,
+  assert.equal(parseTaskDefinition(JSON.stringify(task)).executionMode, 'llm');
+  for (const executionMode of ['parallel', 'jev'])
+    assert.throws(
+      () => parseTaskDefinition(JSON.stringify({ ...task, executionMode })),
+      /已停用/,
     );
-  }
   const { executionMode, ...legacy } = task;
   assert.equal(
     parseTaskDefinition(JSON.stringify(legacy)).executionMode,
@@ -266,7 +265,7 @@ test('执行模式支持并行与两种单组策略，允许从同一登录快�
           taskId: 'x'.repeat(101),
         }),
       ),
-    /100/,
+    /已停用/,
   );
   const shared = {
     ...task,

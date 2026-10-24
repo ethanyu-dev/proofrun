@@ -21,13 +21,17 @@ export type VerificationTask = {
      * 是否允许人工辅助；等待暂停执行时限，完成后重新计时二十分钟，人工不能修改验收标准。
      */
     allowIntervention?: boolean;
+    /**
+     * @deprecated
+     * 历史登录槽元数据；不恢复或保存状态，仅保留显式 nodeId 的路由约束。
+     */
     auth?: {
       /**
        * 节点私有登录状态名称，不是路径。
        */
       stateId: string;
       /**
-       * 是否要求载入已有状态；首次人工登录时设为 false。
+       * 已退役的恢复开关，仅用于读取历史定义，不触发登录恢复。
        */
       restore: boolean;
       /**
@@ -36,7 +40,8 @@ export type VerificationTask = {
       nodeId: string;
     };
     /**
-     * 是否按环境和目标站点自动复用节点登录快照；未指定时跟随 allowIntervention。显式 auth 配置优先。
+     * @deprecated
+     * 已退役的自动登录复用开关，仅为历史结构兼容，不触发恢复、保存或节点偏好。
      */
     reuseAuth?: boolean;
   };
@@ -1002,6 +1007,20 @@ export interface StepResult {
     controlRevision: number;
     authRevision: number;
     recordedAt: string;
+  }[];
+  /**
+   * 原始要求完成声明，只是带来源的执行记录，不替代业务验收。
+   *
+   * @maxItems 33
+   */
+  requirements?: {
+    id: string;
+    status: 'pending' | 'recorded' | 'incomplete' | 'blocked';
+    summary?: string;
+    /**
+     * @maxItems 24
+     */
+    evidenceRefs: string[];
   }[];
 }
 /**

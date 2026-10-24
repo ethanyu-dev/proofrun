@@ -1,3 +1,5 @@
+import { decisionContext } from '../../apps/agent/dist/execution/context.js';
+import { grant } from './fixture.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createServer } from 'node:http';
@@ -50,29 +52,6 @@ test('思考模式默认不覆盖供应商并拒绝非法配置', (t) => {
   for (const mode of ['', 'false', 'DISABLED', 'disable']) {
     process.env.PROOFRUN_MODEL_THINKING = mode;
     assert.throws(() => loadConfig(), /PROOFRUN_MODEL_THINKING/);
-  }
-});
-
-// 范围：实验能力显式开启、非法值及 Box 依赖；不验证服务账户是否支持这些能力。
-test('JEV 图片、Box 和候选扩展独立配置并校验依赖', (t) => {
-  configure(t);
-  assert.equal(loadConfig().jevImages, false);
-  assert.equal(loadConfig().jevBox, false);
-  assert.equal(loadConfig().jevExpandedActions, false);
-  process.env.PROOFRUN_JEV_BOX = 'true';
-  assert.throws(() => loadConfig(), /requires PROOFRUN_JEV_IMAGES/);
-  process.env.PROOFRUN_JEV_IMAGES = 'true';
-  assert.equal(loadConfig().jevBox, true);
-  for (const name of [
-    'PROOFRUN_JEV_IMAGES',
-    'PROOFRUN_JEV_BOX',
-    'PROOFRUN_JEV_EXPANDED_ACTIONS',
-  ]) {
-    const previous = process.env[name];
-    process.env[name] = 'enabled';
-    assert.throws(() => loadConfig(), new RegExp(name));
-    if (previous === undefined) delete process.env[name];
-    else process.env[name] = previous;
   }
 });
 
@@ -144,7 +123,7 @@ test('max 贯通请求与存档且不放宽回复的单工具约束', async () =
         reasoningEffort: 'max',
       }).decide(
         {
-          text: '{}',
+          ...modelInput(),
           traceRequest: async (record) => {
             recorded = JSON.parse(record.request);
             return async () => {};
@@ -186,7 +165,7 @@ test('Chat Completions 显式思考使用 auto，默认与关闭思考保留 req
       });
       const output = await model.decide(
         {
-          text: '{}',
+          ...modelInput(),
           traceRequest: async (record) => {
             recorded = JSON.parse(record.request);
             return async () => {};
@@ -251,7 +230,7 @@ test('关闭思考模式后通过默认思考服务的工具请求校验', async
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const modelUrl = `http://127.0.0.1:${server.address().port}/v1`;
   try {
-    const input = { text: '{}' };
+    const input = { ...modelInput() };
     const signal = new AbortController().signal;
     await assert.rejects(
       new ChatModel({ ...loadConfig(), modelUrl }).decide(input, signal),
@@ -291,47 +270,26 @@ test('证据预算独立于命令预算并拒绝非法时限', (t) => {
   }
 });
 
-// 范围：实验上下文必须显式开启且拒绝拼写错误；不证明供应商接受更大上下文。
-test('JEV 长上下文默认关闭并严格解析开关', (t) => {
-  configure(t);
-  assert.equal(loadConfig().jevLongContext, false);
-  for (const value of ['true', 'false']) {
-    process.env.PROOFRUN_JEV_LONG_CONTEXT = value;
-    assert.equal(loadConfig().jevLongContext, value === 'true');
-  }
-  for (const value of ['', '1', 'TRUE', 'enabled']) {
-    process.env.PROOFRUN_JEV_LONG_CONTEXT = value;
-    assert.throws(() => loadConfig(), /PROOFRUN_JEV_LONG_CONTEXT/);
-  }
-});
-
-// 范围：legacy 下通用执行策略独立开关及错误配置拒绝；不验证模型效果。
-test('通用执行策略独立开关不改变模型和预算配置', (t) => {
-  configure(t);
-  process.env.PROOFRUN_AGENT_EXECUTION_POLICY = 'legacy';
-  const before = loadConfig();
-  assert.equal(before.executionGuidance, false);
-  process.env.PROOFRUN_AGENT_EXECUTION_GUIDANCE = 'true';
-  const enabled = loadConfig();
-  assert.equal(enabled.executionGuidance, true);
-  assert.equal(enabled.model, before.model);
-  assert.equal(enabled.maxTurns, before.maxTurns);
-  process.env.PROOFRUN_AGENT_EXECUTION_GUIDANCE = 'enabled';
-  assert.throws(() => loadConfig(), /PROOFRUN_AGENT_EXECUTION_GUIDANCE/);
-});
-
-// 范围：策略仅在加载配置时冻结，非法值拒绝启动；不改变运行中任务或真实部署环境。
-test('统一策略默认启用共享计划及收尾能力，并支持显式回退', (t) => {
-  configure(t);
-  assert.equal(loadConfig().executionPolicy, 'planned-v1');
-  assert.equal(loadConfig().executionGuidance, true);
-  process.env.PROOFRUN_AGENT_EXECUTION_GUIDANCE = 'false';
-  assert.equal(loadConfig().executionGuidance, true);
-  process.env.PROOFRUN_AGENT_EXECUTION_POLICY = 'legacy';
-  assert.equal(loadConfig().executionPolicy, 'legacy');
-  assert.equal(loadConfig().executionGuidance, false);
-  process.env.PROOFRUN_AGENT_EXECUTION_POLICY = 'planned-v1';
-  assert.equal(loadConfig().executionGuidance, true);
-  process.env.PROOFRUN_AGENT_EXECUTION_POLICY = 'unknown';
-  assert.throws(() => loadConfig(), /PROOFRUN_AGENT_EXECUTION_POLICY/);
-});
+/** 范围：最小真实上下文用于供应商参数测试；页面与证据都是夹具。 */
+function modelInput() {
+  return decisionContext({
+    task: grant().task,
+    current: {
+      observationId: 'page',
+      url: 'http://intranet.test/',
+      title: 'fixture',
+      text: 'fixture',
+      targets: [],
+      artifactRefs: [],
+      atomic: false,
+    },
+    preconditions: [],
+    workflow: undefined,
+    budgetRemaining: { actions: 20, modelCalls: 10, timeMs: 10000 },
+    evidence: [],
+    history: [],
+    previousObservations: [],
+    feedback: null,
+    maxContextChars: 64000,
+  });
+}

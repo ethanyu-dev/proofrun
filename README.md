@@ -8,7 +8,7 @@
 
 **请求归属与汇总：** v2 支持 `{ requestId, title, cases }` 封装，同次提交在任务和报告中按请求展示；双跑按唯一验收项统计，支持部分报告、组间差异、JSON 导出和整请求原子重跑。旧数组提交保留在未归组任务中。见 [请求示例](contracts/examples/public-api/request-v2.json) 与 [设计](docs/verification-request-design.md)。
 
-**测试身份：[身份库配置与集成](apps/api/src/modules/identities/README.md)。Web 主导航「测试身份」只维护测试地址、Cookies、名称、可选类型、描述和并发数。薄身份 Agent 根据用例选取账号，任务复制完整 profile；只有 HITL 成功后发布新基准，无法处理时记录人工原因并结束 Case。**
+**测试身份：[身份库配置与集成](apps/api/src/modules/identities/README.md)。Web 主导航「测试身份」只维护测试地址、Cookies、名称、可选类型、描述和并发数。薄身份 Agent 根据用例选取账号，任务从空白 profile 注入身份材料；HITL 只恢复当前执行，无法处理时记录人工原因并结束 Case。**
 
 **原单 case 接入：[Case API](docs/public-api.md) · [OpenAPI](contracts/public-api.openapi.json) · [case 示例](contracts/examples/public-api/case.json)。** 调用方提交任务描述、待测 URL、可选步骤和验收项；环境、身份与预算由[平台配置](docs/case-platform-config.md)提供。
 
@@ -44,7 +44,7 @@ deploy/                部署模板、运行维护和环境验收
 | Contracts    | 任务、报告、节点、人工控制与活动记录协议；同源类型和校验               | 真实场景驱动的协议完善               |
 | API          | 队列、网关、配对/轮换、容量、租约、证据报告、人工控制和维护 CLI        | 实际内网部署、长期负载与磁盘故障演练 |
 | Agent        | 可配置模型、有界执行、人工交接后刷新观察、逐项报告                     | 真实模型质量与成本评估               |
-| Browser Node | Rust 会话监管、CLI、去重、登录存储复用、网络元数据、清理与重启恢复工具 | 实际 VM、引擎未知写入及运维演练      |
+| Browser Node | Rust 会话监管、CLI、去重、临时身份隔离、网络元数据、清理与重启恢复工具 | 实际 VM、引擎未知写入及运维演练      |
 | Console      | 任务、报告证据、节点注册/撤销/轮换、人工操作和活动记录                 | 真实业务操作体验验收                 |
 
 运行维护与真实环境验收要求见 [部署与运行维护](deploy/README.md)。访问继续使用单一管理员 token，不引入用户、SSO 或多租户。原生 DOM、closed Shadow DOM、跨域 iframe、TRACE 和 API 主备见 [浏览器能力与高可用](docs/browser-capabilities-ha.md)。
@@ -66,7 +66,7 @@ API、Agent、Console 直接运行在 Mac，默认不依赖 Docker。Console 地
 
 启动前准备 `.proofrun/local.env`，数据库连接改为实际本机账号，例如当前机器为 `PROOFRUN_DATABASE_URL=postgresql://mac@127.0.0.1:5432/proofrun`。若数据库要求密码，在连接串中填写经过 URL 编码的密码。还需配置两个不同且至少 32 字符的 `PROOFRUN_ADMIN_TOKEN` / `PROOFRUN_WORKER_TOKEN`，以及 `PROOFRUN_MODEL_BASE_URL`、`PROOFRUN_MODEL_API_KEY`、`PROOFRUN_MODEL`；其余可选项见 [.env.example](.env.example)。不要将本机密钥提交到 Git。
 
-模型、密钥和数据库配置读取 `.proofrun/local.env`；case v2 配置读取 `.proofrun/case-profile.json`，首次缺失时按 `internal` 节点池、双跑模式创建；新 v2 每步独立五分钟、10 次动作、LLM 20 / JEV 40 次模型请求，cleanup 独立三分钟。后续修改这两个文件后重新运行启动命令。启动器固定本地服务地址并注入配置路径，不再读取容器的 `/var/lib/proofrun/environment.json`。
+模型、密钥和数据库配置读取 `.proofrun/local.env`；case v2 配置读取 `.proofrun/case-profile.json`，首次缺失时按 `internal` 节点池、LLM 单组模式创建；新 v2 每步独立五分钟、10 次动作、LLM 20 次模型请求，cleanup 独立三分钟。后续修改这两个文件后重新运行启动命令。启动器固定本地服务地址并注入配置路径，不再读取容器的 `/var/lib/proofrun/environment.json`。
 
 启动器构建最新代码，在后台运行服务，日志为 `.proofrun/runtime/local-{api,agent,console}.log`，进程信息保存在 `.proofrun/runtime/mac-services.json`。重复运行会重启已确认属于本项目的进程；有运行中的任务时拒绝重启。`pnpm dev:local --no-agent` 可在未配置模型时只启动 API 和 Console。更换数据库不会自动迁移旧任务、报告或节点配对记录。
 
@@ -215,9 +215,9 @@ pnpm accept:task /absolute/path/to/verification-task.json
 
 `pnpm check` 与构建不要求 PostgreSQL 或模型密钥。集成测试独立运行 `pnpm test:api` / `pnpm test:agent:integration` / `pnpm test:agent:linux`，见 [API 运行说明](apps/api/README.md)。
 
-## JEV / LLM 并行对比
+## Agent 循环与身份简化
 
-任务详情点击「并行对比 JEV / LLM」，系统复制相同任务目标、验收标准与预算，创建两个独立会话。详情页并列展示两组实时画面、动作、模型请求与最终报告。需要 Node `capacity = 2`、Agent `PROOFRUN_AGENT_CONCURRENCY=2` 和 `TYPESAFE_API_KEY`。HTTPS Console 自动使用 WSS。启动配置、使用方式与实测边界见 [并行对比说明](docs/parallel-comparison.md)。
+新执行只使用 LLM，context 收敛为七个模块，进度经统一 `progress` 保存。案例不保存或恢复 profile 基准；身份材料注入临时会话，setup 门禁、租约、账号并发和物理关闭继续有效。历史双跑报告可读，新增双跑入口已退役。架构与删除清单见[简化设计](docs/agent-loop-simplification-design.md)。
 
 ## 协议修改
 

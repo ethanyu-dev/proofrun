@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""真实本地 Chromium 的身份配方、隔离、快照失效和密码登录测试。
+"""真实本地 Chromium 的身份配方、会话隔离、材料失效和密码登录测试。
 仅访问回环 HTTP 夹具；不证明生产域名、第三方 SSO、验证码或 systemd 部署可用。
 """
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -64,34 +64,34 @@ def run():
     library.chmod(0o600)
     state = root / 'auth' / 'member.json'
     def prepare(command, ref):
-        result=command(type='browser.identity.prepare',url=origin+'/',profileRef=ref,checks=[{'method':'text','value':'Fixture member'}],saveSnapshot=True)
+        result=command(type='browser.identity.prepare',url=origin+'/',profileRef=ref,checks=[{'method':'text','value':'Fixture member'}],saveSnapshot=False)
         assert 'secret' not in json.dumps(result), result
         return result
     try:
-        # 范围：新 profile 注入 Cookie 后核验并保存；输出不含秘密。
-        with host(root,state,False,library=library) as command:
+        # 范围：新 profile 注入 Cookie 后核验但不保存；输出不含秘密。
+        with host(root,library=library) as command:
             result=prepare(command,'cookie')
-            assert result['source']=='cookies' and result['status']=='READY' and result['saved'],result
-        # 范围：恢复先核验，不重复登录；独立访客 profile 没有共享 Cookie。
-        with host(root,state,True,library=library) as command:
-            assert prepare(command,'cookie')['source']=='snapshot'
-        with host(root,root/'auth'/'guest.json',False) as command:
+            assert result['source']=='cookies' and result['status']=='READY' and not result['saved'],result
+        # 范围：新会话重新注入材料；独立访客 profile 没有共享 Cookie。
+        with host(root,library=library) as command:
+            assert prepare(command,'cookie')['source']=='cookies'
+        with host(root) as command:
             command(type='browser.act',action='navigate',target=origin+'/')
             assert 'Login required' in command(type='browser.observe')['text']
-        # 范围：服务端使旧 Cookie 失效，失效快照删除且不给出 READY。
+        # 范围：服务端使输入 Cookie 失效，不发布快照且不给出 READY。
         Page.accepted='replacement-cookie-secret'
-        with host(root,state,True,library=library) as command:
+        with host(root,library=library) as command:
             result=prepare(command,'cookie')
             assert result['status']=='NEEDS_HUMAN' and not state.exists(),result
         # 范围：配置的原生表单登录只提交一次，成功标记出现后才返回目标页。
-        with host(root,state,False,library=library) as command:
+        with host(root,library=library) as command:
             result=prepare(command,'password')
-            assert result['status']=='READY' and result['saved'],result
+            assert result['status']=='READY' and not result['saved'],result
             assert Page.submissions==1,Page.submissions
         # 范围：错误密码保留人工处理页，不进行第二次提交，也不保存错误身份。
         profiles['password']['login']['password']='invalid-secret'
         library.write_text(json.dumps({'profiles':profiles}))
-        with host(root,root/'auth'/'bad.json',False,library=library) as command:
+        with host(root,library=library) as command:
             result=prepare(command,'password')
             assert result['reasonCode']=='LOGIN_CHALLENGE_OR_REJECTED',result
             assert Page.submissions==2,Page.submissions
@@ -102,7 +102,7 @@ def run():
         profiles['password']['login']['password']='fixture-password-secret'
         profiles['password']['login']['url']=origin+'/foreign-form'
         library.write_text(json.dumps({'profiles':profiles}))
-        with host(root,root/'auth'/'foreign.json',False,library=library) as command:
+        with host(root,library=library) as command:
             result=prepare(command,'password')
             assert result['reasonCode']=='LOGIN_FORM_MISMATCH',result
             assert Page.submissions==2
@@ -113,11 +113,11 @@ def run():
         token.write_text('fixture-provider-token')
         token.chmod(0o600)
         library.write_text(json.dumps({'provider':{'url':origin+'/identity-provider','tokenFile':str(token)}}))
-        with host(root,root/'auth'/'external.json',False,library=library) as command:
+        with host(root,library=library) as command:
             result=prepare(command,'external')
             assert result['status']=='READY' and result['source']=='cookies',result
             assert Page.provider_requests==1
-        print('identity smoke: cookie, snapshot, guest isolation, invalidation, password and HITL fallback passed')
+        print('identity smoke: cookie, ephemeral sessions, guest isolation, invalidation, password and HITL fallback passed')
     finally:
         server.shutdown()
         server.server_close()

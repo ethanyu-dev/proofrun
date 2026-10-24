@@ -99,12 +99,10 @@ export function parseTaskDefinition(text: string): VerificationTask {
     );
   if (task.comparison)
     throw new Error(
-      '对照任务的组信息由服务端生成，请移除 comparison 并通过执行模式选择并行对比。',
+      '历史对照任务只能查看；创建新任务请移除 comparison 并使用 LLM。',
     );
-  if (task.executionMode === 'parallel') {
-    if (task.taskId.length > 100)
-      throw new Error('并行任务 ID 最长为 100 个字符。');
-  }
+  if (task.executionMode && task.executionMode !== 'llm')
+    throw new Error('新任务只支持 LLM，JEV 与并行对比已停用。');
   if (
     new Set(task.acceptanceCriteria.map((c) => c.id)).size !==
     task.acceptanceCriteria.length
@@ -121,13 +119,12 @@ export function newTaskDefinition(): VerificationTask {
     protocolVersion: '0.1',
     taskId: `task-${crypto.randomUUID()}`,
     objective: '',
-    executionMode: 'jev',
+    executionMode: 'llm',
     target: { url: '' },
     environment: {
       id: 'default',
       nodePool: 'internal',
       allowIntervention: false,
-      reuseAuth: true,
     },
     acceptanceCriteria: [
       {

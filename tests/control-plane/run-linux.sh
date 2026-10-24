@@ -84,7 +84,7 @@ docker exec "$node_name" cargo ${toolchain[@]+"${toolchain[@]}"} build --locked 
 # 只传递评测所需白名单；不挂载开发凭据文件，也不将秘密展开到命令行。
 evaluation_env=()
 if [[ "$evaluation" == true ]]; then
-  for name in PROOFRUN_EVAL_HTTPS_PROXY PROOFRUN_EVAL_MODEL_KIND PROOFRUN_EVAL_MODE PROOFRUN_EVAL_SUITE PROOFRUN_EVAL_REPEAT PROOFRUN_EVAL_SAMPLE_MS PROOFRUN_EVAL_MAX_CALLS PROOFRUN_MODEL_BASE_URL PROOFRUN_MODEL_API_KEY PROOFRUN_MODEL PROOFRUN_MODEL_VISION PROOFRUN_MODEL_TOKEN_PARAMETER PROOFRUN_MODEL_THINKING PROOFRUN_MODEL_MAX_TOKENS PROOFRUN_MODEL_REASONING_EFFORT PROOFRUN_AGENT_EXECUTION_POLICY PROOFRUN_AGENT_EXECUTION_GUIDANCE TYPESAFE_API_KEY TYPESAFE_MODEL PROOFRUN_JEV_IMAGES PROOFRUN_JEV_BOX PROOFRUN_JEV_LONG_CONTEXT PROOFRUN_JEV_EXPANDED_ACTIONS; do
+  for name in PROOFRUN_EVAL_HTTPS_PROXY PROOFRUN_EVAL_MODEL_KIND PROOFRUN_EVAL_MODE PROOFRUN_EVAL_SUITE PROOFRUN_EVAL_REPEAT PROOFRUN_EVAL_SAMPLE_MS PROOFRUN_EVAL_MAX_CALLS PROOFRUN_MODEL_BASE_URL PROOFRUN_MODEL_API_KEY PROOFRUN_MODEL PROOFRUN_MODEL_VISION PROOFRUN_MODEL_TOKEN_PARAMETER PROOFRUN_MODEL_THINKING PROOFRUN_MODEL_MAX_TOKENS PROOFRUN_MODEL_REASONING_EFFORT; do
     evaluation_env+=(-e "$name")
   done
 fi
@@ -108,7 +108,7 @@ fi
 if [[ "${PROOFRUN_TEST_FULL_LINUX:-false}" == true ]]; then
   # 复用隔离容器与编译产物；各脚本自行创建会话、数据库或临时 profile。
   # systemd/gateway 使用故障引擎，能力和 HITL 使用真实 Chromium，均不访问业务账号。
-  for suite in tests/browser-node/input_network_smoke.py tests/browser-node/profile_tabs_smoke.py tests/browser-node/profile_identity_smoke.py tests/browser-node/systemd_integration.py tests/browser-node/gateway_integration.py tests/browser-node/capabilities_smoke.py tests/hitl/linux_real_browser.py; do
+  for suite in tests/browser-node/input_network_smoke.py tests/browser-node/profile_tabs_smoke.py tests/browser-node/identity_smoke.py tests/browser-node/systemd_integration.py tests/browser-node/gateway_integration.py tests/browser-node/capabilities_smoke.py tests/hitl/linux_real_browser.py; do
     suite_env=("${engine_env[@]}")
     if [[ "$suite" == tests/browser-node/systemd_integration.py || "$suite" == tests/browser-node/gateway_integration.py ]]; then
       # 配置文件指定故障引擎；真实引擎环境变量优先级更高，必须在此移除。

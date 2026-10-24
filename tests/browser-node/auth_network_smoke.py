@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""真实原生 CLI/Chrome 的登录存储复用与网络元数据验证。
+"""真实原生 CLI/Chrome 的临时身份隔离与网络元数据验证。
 不经过控制面、Linux systemd 或真实业务登录，不证明服务端写入 exactly-once。
 """
 from contextlib import contextmanager
@@ -33,8 +33,8 @@ class Page(BaseHTTPRequestHandler):
 
 
 @contextmanager
-def host(root, state, restore, snapshot_id=None, optional=False, library=None, full_profile=False, seed=None, base_profile=None, node_template=False, template_state=None, external_account=None):
-    """每次使用独立 profile 与 daemon，验证任务目录隔离及指定基准恢复。"""
+def host(root, library=None, seed=None, external_account=None):
+    """每次使用独立 profile 与 daemon，验证临时目录隔离，不接受历史基准。"""
     session = uuid.uuid4().hex
     directory = root / session
     directory.mkdir()
@@ -65,7 +65,7 @@ def host(root, state, restore, snapshot_id=None, optional=False, library=None, f
     try:
         assert receive()['type'] == 'host.ready'
         boot_ms = int(float(Path('/proc/uptime').read_text().split()[0]) * 1000) if Path('/proc/uptime').exists() else 0
-        send({'type': 'init', 'config': {'binary': os.environ['PROOFRUN_AGENT_BROWSER_BIN'], 'chrome': os.environ['PROOFRUN_CHROME_BIN'], 'session': session, 'directory': str(directory), 'allow_unverified_writes': True, 'auth_state': str(state) if state else None, 'external_account': external_account, 'restore_auth': restore, 'restore_auth_if_present': optional, 'auth_snapshot_id': snapshot_id, 'network_evidence': True, 'identity_library_file': str(library) if library else None, 'full_profile': full_profile, 'node_template': node_template, 'template_state': str(template_state) if template_state else None, 'identity_seed_file': str(seed) if seed else None, 'base_profile_directory': str(base_profile) if base_profile else None}, 'deadline_ms': boot_ms + 120000, 'startup_deadline_ms': boot_ms + 120000})
+        send({'type': 'init', 'config': {'binary': os.environ['PROOFRUN_AGENT_BROWSER_BIN'], 'chrome': os.environ['PROOFRUN_CHROME_BIN'], 'session': session, 'directory': str(directory), 'allow_unverified_writes': True, 'external_account': external_account, 'network_evidence': True, 'identity_library_file': str(library) if library else None, 'identity_seed_file': str(seed) if seed else None}, 'deadline_ms': boot_ms + 120000, 'startup_deadline_ms': boot_ms + 120000})
         message = receive()
         assert 'Ok' in message['result'], message
         command.opened = message['result']['Ok']
@@ -87,47 +87,23 @@ def run():
     threading.Thread(target=server.serve_forever, daemon=True).start()
     base = f'http://127.0.0.1:{server.server_port}'
     try:
-        # 范围：首次会话的 Cookie/localStorage 保存、网络记录脱敏；不是真实认证系统。
-        with host(root, state, False) as command:
+        # 范围：当前会话保留 Cookie/localStorage，网络元数据脱敏；不证明真实业务认证。
+        with host(root) as command:
             command(type='browser.act', action='navigate', target=base + '/login?token=fixture-secret')
             first = command(type='browser.observe')
             assert 'Authenticated' in first['text'], first
             network = first['network']
             assert any(row['url'] == base + '/login' and row['status'] == 200 for row in network['requests']), network
             assert 'fixture-secret' not in json.dumps(network)
-            assert command(type='browser.auth.save')['saved']
-            assert state.stat().st_mode & 0o077 == 0
-        # 范围：第二个独立 profile 载入状态后保留 Cookie 和 localStorage，不复用旧 daemon。
-        with host(root, state, True) as command:
+            assert command.raw(type='browser.auth.save')['Err']['code'] == 'AUTH_SAVE_RETIRED'
             command(type='browser.act', action='navigate', target=base + '/verify')
-            second = command(type='browser.observe')
-            assert 'Authenticated' in second['text'], second
-        # 范围：同轮两组从同一快照恢复到独立浏览器；后保存的旧版本不会覆盖先保存的新状态。
-        with host(root, state, True, 'pair') as first, host(root, state, True, 'pair') as second:
-            for command in [first, second]:
-                command(type='browser.act', action='navigate', target=base + '/verify')
-                assert 'Authenticated' in command(type='browser.observe')['text']
-            # 修改本地夹具的存储版本，不使用真实登录凭据。
-            first(type='browser.act', action='navigate', target=base + '/login?revision=updated')
-            assert first(type='browser.auth.save')['saved']
-            preserved = state.read_bytes()
-            result = second(type='browser.auth.save')
-            assert result == {'saved': False, 'reason': 'NEWER_STATE_PRESERVED'}, result
-            assert state.read_bytes() == preserved
-        # 范围：首次缺失快照时允许进入登录页，即使另一组已保存，同轮后启动组仍为空状态。
-        fresh = root / 'auth' / 'fresh.json'
-        with host(root, fresh, True, 'fresh-pair', True) as first:
-            first(type='browser.act', action='navigate', target=base + '/verify')
-            assert 'Login required' in first(type='browser.observe')['text']
-            first(type='browser.act', action='navigate', target=base + '/login')
-            assert first(type='browser.auth.save')['saved']
-        with host(root, fresh, True, 'fresh-pair', True) as second:
-            second(type='browser.act', action='navigate', target=base + '/verify')
-            assert 'Login required' in second(type='browser.observe')['text']
-        with host(root, fresh, True, 'next-pair', True) as next_run:
-            next_run(type='browser.act', action='navigate', target=base + '/verify')
-            assert 'Authenticated' in next_run(type='browser.observe')['text']
-        print(json.dumps({'passed': ['real cookie and localStorage save/restore', 'isolated browser profiles', 'real network status and URL redaction', 'private state permissions', 'parallel immutable snapshots and compare-before-save', 'first login and automatic next-run restore'], 'realModel': False, 'productionVM': False}, indent=2))
+            assert 'Authenticated' in command(type='browser.observe')['text']
+        # 范围：下一次独立会话无旧 Cookie/localStorage，不发布任何基准文件。
+        with host(root) as command:
+            command(type='browser.act', action='navigate', target=base + '/verify')
+            assert 'Login required' in command(type='browser.observe')['text']
+        assert not state.exists()
+        print('ephemeral identity: current-session state, no profile save, next-session isolation and network redaction passed')
     finally:
         server.shutdown()
         server.server_close()

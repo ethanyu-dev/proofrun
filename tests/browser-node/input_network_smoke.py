@@ -69,7 +69,7 @@ def run():
     background = f'http://127.0.0.1:{server.server_port}'
     try:
         # 范围：真实 Chromium 两个站点渲染进程、网络订阅与一次人工点击；不验证真实业务登录。
-        with host(root, root / 'auth.json', False) as command:
+        with host(root) as command:
             command(type='browser.act', action='navigate', target=background + '/background')
             command(type='browser.act', action='tab.new', target=foreground + '/foreground')
             ARM.set()

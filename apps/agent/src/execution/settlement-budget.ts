@@ -9,7 +9,7 @@ const SAMPLE_LIMIT = 6;
 export class SettlementBudget {
   private samples: number[] = [];
   constructor(private readonly totalMs: number) {}
-  /** 已完成及超时的文本请求均参与估计；JEV 的快速选择不稀释文本延迟。 */
+  /** 已完成及超时的模型请求均参与延迟估计。 */
   observe(elapsedMs: number) {
     if (!Number.isFinite(elapsedMs) || elapsedMs <= 0) return;
     this.samples.push(elapsedMs);

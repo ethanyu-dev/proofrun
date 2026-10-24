@@ -27,7 +27,7 @@ def run():
     threading.Thread(target=server.serve_forever, daemon=True).start()
     base = f'http://127.0.0.1:{server.server_port}'
     try:
-        with host(root, root/'state.json', False) as command:
+        with host(root) as command:
             # 范围：首组登录后另一个 tab 共享 Cookie/localStorage，各自只返回自己的 tab。
             command(type='browser.act', action='navigate', target=base+'/login', tabScope='a')
             a = command(type='browser.observe', tabScope='a')
@@ -44,8 +44,8 @@ def run():
             assert current_a['url'].endswith('/login') and current_b['url'].endswith('/verify')
             assert '仅甲组' in json.dumps(current_a, ensure_ascii=False)
             assert '仅甲组' not in json.dumps(current_b, ensure_ascii=False)
-        # 范围：全新 profile 不继承未显式保存的状态，运行态变更不会自动覆盖认证快照。
-        with host(root, root/'fresh.json', False) as command:
+        # 范围：全新临时 profile 不继承前一会话状态；不验证任何已退役的认证保存能力。
+        with host(root) as command:
             command(type='browser.act', action='navigate', target=base+'/verify', tabScope='a')
             assert '未登录' in command(type='browser.observe', tabScope='a')['text']
         print('通过：真实 tab 路由、元素引用隔离、同 profile 共享登录、跨 profile 隔离')

@@ -8,7 +8,7 @@ export function thinkingEnabled(config: AgentConfig): boolean {
   );
 }
 
-/** 三条 LLM 路径共用推理参数；不向 TypeSafe 请求混入 Chat Completions 扩展。 */
+/** 决策、身份选择和报告复盘共用供应商推理参数。 */
 export function reasoningParameters(config: AgentConfig) {
   return {
     ...(config.thinking ? { thinking: { type: config.thinking } } : {}),

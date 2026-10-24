@@ -157,7 +157,7 @@ export function IdentityCookieEditor({
           </div>
           {editing && (
             <p className="cookie-replacement-note">
-              保存新的 Cookies 会替换原有配置，并重新建立身份基准。
+              保存新的 Cookies 会替换身份来源配置，后续会话使用新配置准备身份。
             </p>
           )}
         </>

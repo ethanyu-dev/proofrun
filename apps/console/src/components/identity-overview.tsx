@@ -34,7 +34,7 @@ export function IdentityCatalogSummary({
                     </span>
                   </td>
                   <td>{identity.origins.join('、')}</td>
-                  <td>{identity.loginRef ?? '登录快照 / 人工登录'}</td>
+                  <td>{identity.loginRef ?? '人工登录当前会话'}</td>
                   <td>
                     {identity.checks.map((check) => (
                       <p key={check.id}>

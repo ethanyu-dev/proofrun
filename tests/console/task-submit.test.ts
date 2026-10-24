@@ -3,6 +3,8 @@ import test from 'node:test';
 import { createRequire } from 'node:module';
 import { ApiClient } from '../../apps/console/src/api.ts';
 import { TaskSubmitPage } from '../../apps/console/src/pages/task-submit.tsx';
+import { TaskFields } from '../../apps/console/src/components/task-fields.tsx';
+import { newTaskDefinition } from '../../apps/console/src/task-definition.ts';
 import { submitCaseBatch } from '../../apps/console/src/components/task-submit-request.ts';
 import type { VerificationCaseV2 } from '../../contracts/src/index.ts';
 
@@ -12,6 +14,22 @@ const require = createRequire(
 );
 const { createElement } = require('react');
 const { renderToStaticMarkup } = require('react-dom/server');
+
+// 范围：新建 v1 表单不暴露已退役的快照保存/恢复开关；不验证真实身份注入和人工交还。
+test('任务表单只提供临时会话和人工授权，不再配置登录快照', () => {
+  const task = newTaskDefinition();
+  const html = renderToStaticMarkup(
+    createElement(TaskFields, { task, change() {} }),
+  );
+  assert.match(html, /允许人工辅助/);
+  assert.match(html, /独立临时浏览器/);
+  assert.doesNotMatch(
+    html,
+    /自动复用本站登录状态|使用节点登录状态|恢复已有登录状态|登录状态名称/,
+  );
+  assert.equal(task.environment.reuseAuth, undefined);
+  assert.equal(task.environment.auth, undefined);
+});
 
 // 范围：受控响应验证提交正文、单 case 双跑/单组跳转和批量返回列表；不覆盖真实 API 或浏览器导航。
 test('单个 v2 case 提交后直达任务详情，批量保留列表入口', async (context) => {
@@ -78,9 +96,9 @@ test('提交页默认只要求粘贴 v2 JSON', () => {
   assert.equal((html.match(/<textarea/g) ?? []).length, 1);
   assert.doesNotMatch(html, /任务目标|验收项 ID|最大动作次数/);
   for (const label of [
-    '默认使用 LLM + JEV 单组执行',
-    '自动复用本站登录状态',
-    '允许人工辅助',
+    '使用 LLM 单组执行',
+    '按测试身份来源准备独立会话',
+    '人工辅助由平台配置授权',
   ])
     assert.ok(html.includes(label));
 });

@@ -1,6 +1,6 @@
 import type { VerificationTask } from './generated/verification-task.js';
 
-/** 步骤基础额度为五分钟、十次动作、二十次模型请求；验证收尾单独增加，混合模式请求数翻倍。 */
+/** 步骤基础额度为五分钟、十次动作、二十次模型请求；验证收尾单独增加。 */
 export const STEP_LIMIT = {
   timeoutMs: 300_000,
   maxActions: 10,
@@ -30,6 +30,7 @@ export type StepLimit = StepBudgetPlan['cleanup'];
 export function compileStepBudget(
   task: Pick<VerificationTask, 'steps' | 'cleanupStepIds' | 'executionMode'>,
 ): StepBudgetPlan {
+  // 仅供历史快照预算解释；新任务准入只接受 llm，不能用该兼容分支开启旧引擎。
   const factor = task.executionMode === 'jev' ? 2 : 1;
   return {
     version: 1,

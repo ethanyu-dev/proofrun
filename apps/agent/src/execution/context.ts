@@ -1,26 +1,19 @@
-import { planFields } from './plan-inputs.js';
-import type { GuidanceView } from './execution-guidance.js';
-import type { InteractionProgress } from './interaction-progress.js';
-import type { OperationJournal } from './operation-journal.js';
-import type { NavigationMemory } from './navigation-memory.js';
+import { evidenceExcerpt } from '../model/evidence-excerpt.js';
 import type { VerificationReport, VerificationTask } from '@proofrun/contracts';
 import type { BrowserOperation } from '../client.js';
 import type { Observation } from '../evidence/observation.js';
-import { OBSERVATION_REVIEW_ROUNDS } from '../evidence/changes.js';
 import type { ObservationChanges } from '../evidence/changes.js';
 import type { DecisionInput } from '../model/chat.js';
-import { evidenceExcerpt } from '../model/evidence-excerpt.js';
-import { AgentFault } from '../http.js';
 import type { WorkflowView } from './workflow.js';
 import type { CheckResult } from './identity.js';
-import { executionEvent, type PolicyContext } from './model-router.js';
+import type { PolicyResult } from './policy-checks.js';
+import type { InteractionProgress } from './interaction-progress.js';
+import type { OperationJournal } from './operation-journal.js';
+import { AgentFault } from '../http.js';
 
-/** 只发送近期证据摘要，完整证据仍由执行器和控制面保存。 */
-const EVIDENCE_LIMIT = 24;
-/** 跨栏目只保留最近页面的有界正文，不能复用历史元素身份。 */
-const OBSERVATION_HISTORY_LIMIT = 8;
-const OBSERVATION_HISTORY_CHARS = 20_000;
-/** 引擎元素编号可能复用；历史正文去除这些编号，防止误用于当前页面。 */
+/** 只保留有界历史正文；历史元素编号永远不作为当前操作身份。 */
+const HISTORY_LIMIT = 8;
+const HISTORY_CHARS = 20_000;
 const HISTORICAL_TARGET = /\s*\[target=[^\]]+\]|\bref=[^,\]\s]+/g;
 
 /** 已执行命令的模型可见摘要，不包含调用权限。 */
@@ -58,6 +51,8 @@ export interface PreviousObservation {
   url: string;
   /** 观察时的页面标题。 */
   title: string;
+  /** 观察时各文档的语言声明；与该次正文一起保存，不能推断当前语言。 */
+  documents?: Observation['documents'];
   /** 去除旧元素编号后的有界正文。 */
   text: string;
   /** 原观察的真实证据引用。 */
@@ -66,69 +61,34 @@ export interface PreviousObservation {
   truncated: boolean;
 }
 
-/** 执行器传入事实快照；上下文模块不改变执行状态或原始证据。 */
+/** 输入来自权威账本，投影和裁剪只修改副本。 */
 export interface ContextInput {
-  /** 单执行冻结的策略与本轮路由原因，不从反馈文案推断。 */
-  executionPolicy?: PolicyContext | undefined;
-  /** 执行器维护的位置索引只提供线索，不提供历史目标授权。 */
-  navigation?: ReturnType<NavigationMemory['hints']> | undefined;
-  /** 并发开始前单独分类原始环境要求，字段不能作为登录事实证明。 */
-  environmentReview?:
-    | {
-        required: boolean;
-        requestedMode: string;
-        mode: 'guest' | 'configured' | undefined;
-      }
-    | undefined;
-  /** 新 profile 模式强制将准备与 policy 核验分离。 */
-  setupPhase?: 'PREPARING' | 'CHECKING' | undefined;
-  /** 当前步骤可见的任务定义。 */
   task: VerificationTask;
-  /** 结构化任务中当前获准执行的步骤。 */
+  /** 原始任务背景，不拼接当前步骤或阶段提示。 */
+  background?: string;
   executionStep: NonNullable<VerificationTask['steps']>[number] | undefined;
-  /** 已持久化的逐项结论，后续失败不能覆盖。 */
-  recordedCriteria?: VerificationReport['criteria'];
-  /** 有界周期提示核对独立验收项，不将阅读进度自动判为通过。 */
-  verificationReview?:
-    | { pendingCriterionIds: string[]; final?: boolean; reason?: 'budget' }
-    | undefined;
-  /** 只在平台编排的后续清理步骤提供 Cookie 清理工具。 */
+  setupPhase?: 'PREPARING' | 'CHECKING' | undefined;
   cleanup?: boolean;
-  /** 当前观察和控制代次下的前置结果；只含业务条件与来源，不含身份配方或凭据。 */
+  verificationReview?: { final?: boolean; reason?: 'budget' } | undefined;
+  recordedCriteria?: VerificationReport['criteria'];
   preconditions: CheckResult[];
-  /** 同一执行中准备阶段确认且认证版本仍有效的人工事实；不替代当前步骤门禁或页面核实。 */
   sessionPreconditions?: CheckResult[];
-  /** 固定检查的结果及证据缺口，模型不能自行改变检查方法。 */
-  policyChecks?: import('./policy-checks.js').PolicyResult[];
-  /** 子项阅读来源与跨轮进度，不等同验收通过。 */
-  interactionProgress?: ReturnType<InteractionProgress['view']>;
-  /** 公共工作流的只读视图。 */
+  policyChecks?: PolicyResult[];
   workflow: WorkflowView | undefined;
-  /** 公共执行器生成的计划、导航与复核诊断。 */
-  executionGuidance?: GuidanceView | undefined;
-  /** 剩余原任务动作、模型请求与时间预算。 */
+  interactionProgress?: ReturnType<InteractionProgress['view']>;
   budgetRemaining: { actions: number; modelCalls: number; timeMs: number };
-  /** 当前已核实可用的观察。 */
   current: Observation;
-  /** 原始观察的跨轮变化，不包含推断的因果。 */
   changes: ObservationChanges | undefined;
-  /** 当前步骤及准备阶段允许引用的证据集合，与执行器提交校验一致。 */
   evidence: VerificationReport['artifacts'];
-  /** 已执行操作的近期摘要。 */
   history: RecentOperation[];
-  /** 本步骤关键动作回执，不受观察和滚动挤出近期窗口的影响。 */
   actionMemory?: ReturnType<OperationJournal['critical']>;
-  /** 有来源的历史页面正文。 */
   previousObservations: PreviousObservation[];
-  /** 上轮执行错误或恢复提示。 */
   feedback: string | null;
-  /** 与当前观察匹配、已核实的可选截图。 */
   image: string | undefined;
-  /** 序列化文本的字符上限，不是供应商 token 上限。 */
   maxContextChars: number;
 }
 
-/** 历史归档先清除可复用的元素编号，再按原正文长度标记裁剪。 */
+/** 归档剔除历史元素编号，不能借旧页面内容重放操作。 */
 export function rememberObservation(
   history: PreviousObservation[],
   previous: Observation,
@@ -137,228 +97,224 @@ export function rememberObservation(
     observationId: previous.observationId,
     url: previous.url,
     title: previous.title,
-    text: previous.text
-      .replace(HISTORICAL_TARGET, '')
-      .slice(0, OBSERVATION_HISTORY_CHARS),
+    documents: structuredClone(previous.documents),
+    text: previous.text.replace(HISTORICAL_TARGET, '').slice(0, HISTORY_CHARS),
     artifactRefs: previous.artifactRefs,
-    truncated: previous.text.length > OBSERVATION_HISTORY_CHARS,
+    truncated:
+      previous.truncated === true || previous.text.length > HISTORY_CHARS,
   });
-  if (history.length > OBSERVATION_HISTORY_LIMIT) history.shift();
+  if (history.length > HISTORY_LIMIT) history.shift();
 }
 
-/** 各模型共用同一类型化事实，适配器不得另建验收或预算账本。 */
+/** 白名单投影是唯一模型视图；没有身份配方、调度元数据或第二份局部计划。 */
 function contextData(input: ContextInput) {
-  const current = input.current;
-  const evidenceIds = new Set(input.evidence.map((artifact) => artifact.id));
-  const context = {
-    executionPolicy: input.executionPolicy
-      ? structuredClone(input.executionPolicy)
-      : undefined,
-    navigation: input.navigation,
-    plan: input.executionPolicy ? input.workflow?.recovery : undefined,
-    inputFields: input.executionPolicy ? planFields(current) : undefined,
-    // 模型只需业务定义；节点配方引用、账号池和登录槽不参与决策上下文。
-    task: (({
-      sessionPlan: _sessionPlan,
-      ...business
-    }): Omit<VerificationTask, 'sessionPlan'> => business)(input.task),
-    identity: input.task.sessionPlan?.library
-      ? {
-          name: input.task.sessionPlan.candidates[0]?.label ?? null,
-          description: input.task.sessionPlan.candidates[0]?.description ?? '',
-          selectionReason: input.task.sessionPlan.selectionReason,
-          instruction:
-            '这是候选账号描述，不是已验证事实。先依据当前页面确认登录和 Case 所需资格；不符合时请求人工处理。身份库不提供密码，不要自行注册或切换到其他账号。',
-        }
-      : undefined,
-    executionStep: input.executionStep as ContextInput['executionStep'],
-    policyChecks: input.policyChecks,
-    setupPhase: input.setupPhase,
-    environmentReview: input.environmentReview,
-    recordedCriteria: input.recordedCriteria ?? [],
-    verificationReview: input.verificationReview,
-    cleanup: input.cleanup === true,
-    preconditions: structuredClone(input.preconditions),
-    sessionPreconditions: structuredClone(input.sessionPreconditions ?? []),
-    workflow: input.workflow,
-    executionGuidance: input.executionGuidance,
-    interactionProgress: input.interactionProgress
-      ? structuredClone(input.interactionProgress)
-      : undefined,
-    budgetRemaining: {
-      actions: input.budgetRemaining.actions,
-      modelCalls: input.budgetRemaining.modelCalls,
-      timeMs: input.budgetRemaining.timeMs,
+  const { current, executionStep: step } = input;
+  const allowed = new Set(input.evidence.map((item) => item.id));
+  const refs = (values: string[]) => values.filter((id) => allowed.has(id));
+  const excerpts = new Map<string, PreviousObservation>();
+  for (const item of input.previousObservations) {
+    const key = JSON.stringify([
+      item.url,
+      item.title,
+      item.documents,
+      item.text,
+      item.truncated,
+    ]);
+    const old = excerpts.get(key);
+    excerpts.set(key, {
+      ...structuredClone(item),
+      artifactRefs: [
+        ...new Map(
+          [...(old?.artifactRefs ?? []), ...item.artifactRefs]
+            .filter((ref) => allowed.has(ref.artifactId))
+            .map((ref) => [ref.artifactId, ref]),
+        ).values(),
+      ],
+    });
+  }
+  const requirements = input.workflow?.steps ?? [];
+  return {
+    task: {
+      background: input.background,
+      stepId: step?.stepId,
+      description: step?.description ?? input.task.objective,
+      url: step?.url ?? input.task.target.url,
+      policy: step?.policy,
+      criteria: structuredClone(input.task.acceptanceCriteria),
+      permissions: {
+        allowIntervention: input.task.environment.allowIntervention,
+      },
+      // 原文出现一次，账本只引用稳定要求身份；结构化步骤不重复拆解描述。
+      requirements: requirements.map((item) => ({
+        id: item.id,
+        requirement: item.requirement,
+      })),
     },
-    changes: input.changes ? structuredClone(input.changes) : undefined,
-    coverage: {
-      capture: current.coverage ?? { status: 'unknown' },
-      text: { truncated: current.truncated === true },
-      controls: {
-        observed: current.targets.length,
-        returned: current.targets.length,
-        omitted: 0,
+    state: {
+      phase: input.cleanup
+        ? 'CLEANUP'
+        : (input.setupPhase ??
+          (step?.type === 'setup' ? 'PREPARING' : 'VERIFYING')),
+      settlement: input.verificationReview?.final
+        ? (input.verificationReview.reason ?? 'stalled')
+        : null,
+      criteria: structuredClone(input.recordedCriteria ?? []),
+      conditions: [
+        ...input.preconditions.map((item) => ({
+          ...structuredClone(item),
+          scope: 'current',
+        })),
+        ...(input.sessionPreconditions ?? []).map((item) => ({
+          ...structuredClone(item),
+          scope: 'preparation',
+        })),
+        ...(input.policyChecks ?? []).map((item) => ({
+          ...structuredClone(item),
+          scope: 'policy',
+        })),
+      ],
+      requirements: requirements.map(({ requirement: _text, ...item }) => ({
+        ...structuredClone(item),
+        evidenceRefs: refs(item.evidenceRefs),
+      })),
+      readings: input.interactionProgress
+        ? structuredClone(input.interactionProgress)
+        : undefined,
+    },
+    page: {
+      observationId: current.observationId,
+      url: current.url,
+      title: current.title,
+      text: current.text,
+      documents: structuredClone(current.documents),
+      targets: current.targets.map(({ comparisonKey: _key, ...target }) =>
+        structuredClone(target),
+      ),
+      tabs: structuredClone(current.tabs),
+      viewport: structuredClone(current.viewport),
+      atomic: current.atomic,
+      network: structuredClone(current.network),
+      artifactRefs: current.artifactRefs.filter((ref) =>
+        allowed.has(ref.artifactId),
+      ),
+      coverage: {
+        capture: structuredClone(current.coverage ?? { status: 'unknown' }),
+        text: { truncated: current.truncated === true },
+        controls: {
+          observed: current.targets.length,
+          returned: current.targets.length,
+          omitted: 0,
+        },
       },
     },
-    observation: {
-      ...structuredClone(current),
-      text: current.text,
-      targets: [...current.targets],
+    history: {
+      commands: [
+        ...new Map(
+          [
+            ...(input.actionMemory?.items ?? []).filter(
+              (item) =>
+                !input.history.some(
+                  (recent) => recent.commandId === item.commandId,
+                ),
+            ),
+            ...input.history,
+          ].map((item) => [item.commandId, structuredClone(item)]),
+        ).values(),
+      ],
+      omittedCommands: input.actionMemory?.omitted ?? 0,
+      excerpts: [...excerpts.values()],
+      omittedExcerpts: 0,
     },
-    evidence: input.evidence
-      .slice(-EVIDENCE_LIMIT)
-      .map(({ id, kind }) => ({ id, kind })),
-    recentOperations: [...input.history],
-    actionMemory: input.actionMemory
-      ? structuredClone(input.actionMemory)
-      : undefined,
-    // 历史正文可帮助保持页面连续性，但不能把已失效的引用重新提供给模型。
-    previousObservations: input.previousObservations.map((observation) => ({
-      ...observation,
-      artifactRefs: observation.artifactRefs.filter((ref) =>
-        evidenceIds.has(ref.artifactId),
-      ),
-    })),
-    feedback:
-      [
-        input.feedback,
-        (input.changes?.repeatedStateVisits ?? 0) >= 3
-          ? '反复返回同一状态且没有阶段完成证据；请避免开关弹窗或来回导航，制定有界恢复计划。'
-          : null,
-        (input.changes?.unchangedRounds ?? 0) >= OBSERVATION_REVIEW_ROUNDS
-          ? '连续操作后没有新增事实；请更换目标或策略，检查覆盖缺口，不要重复滚动或观察。'
-          : null,
-      ]
-        .filter(Boolean)
-        .join(' ') || null,
-    truncated: false,
+    evidence: input.evidence.map(({ id, kind }) => ({ id, kind })),
+    budget: { ...input.budgetRemaining },
+    feedback: [
+      ...(input.feedback
+        ? [{ code: 'EXECUTION_FEEDBACK', message: input.feedback }]
+        : []),
+      ...((input.changes?.unchangedRounds ?? 0) >= 2
+        ? [
+            {
+              code: 'OBSERVATION_STALLED',
+              count: input.changes!.unchangedRounds,
+            },
+          ]
+        : []),
+      ...((input.changes?.repeatedStateVisits ?? 0) >= 3
+        ? [
+            {
+              code: 'REPEATED_STATE',
+              count: input.changes!.repeatedStateVisits,
+            },
+          ]
+        : []),
+    ],
   };
-  if (context.executionPolicy)
-    context.executionPolicy.event = executionEvent(context);
-  return context;
 }
-/** 类型从唯一构造函数推导，防止模型适配器手写字段逐渐偏离执行器。 */
+
+/** 最终请求数据由唯一构造器推导，工具和模型不得另建视图。 */
 export type DecisionContextData = ReturnType<typeof contextData>;
 
-/** 标准保持完整；仅裁剪事实副本并声明缺口，无法容纳固定定义时明确失败。 */
-export function decisionContext(input: ContextInput): DecisionInput {
-  const current = input.current;
-  const { text, context } = boundContext(
-    contextData(input),
-    current,
-    input.maxContextChars,
-  );
-  return {
-    text,
-    context: structuredClone(context),
-    contextLimit: input.maxContextChars,
-    observation: structuredClone(current),
-    ...(input.image ? { image: input.image } : {}),
-  };
-}
-
-/** 初始上下文和复核补充共用同一裁剪器；固定约束始终完整，裁剪只修改请求副本。 */
+/** 优先裁剪重复历史和页面正文；固定约束与关键回执装不下时明确失败。 */
 export function boundContext(
   context: DecisionContextData,
-  current: Observation,
   maxContextChars: number,
 ) {
-  const serialize = () => {
-    if (context.executionPolicy?.event.code === 'CONTINUE')
-      context.executionPolicy.event = executionEvent(context);
-    return JSON.stringify(context);
-  };
-  let text = serialize();
+  let text = JSON.stringify(context);
   while (text.length > maxContextChars) {
-    context.truncated = true;
-    // 优先丢弃重复的历史正文，保留当前待登记面板原文与已登记身份。
-    if (context.previousObservations.length > 0)
-      context.previousObservations.shift();
-    else if (
-      context.interactionProgress?.items.some((item) => item.text.length > 80)
-    )
-      context.interactionProgress.items = context.interactionProgress.items.map(
+    if (context.history.excerpts.length) {
+      context.history.excerpts.shift();
+      context.history.omittedExcerpts++;
+    } else if (context.page.text.length > 256) {
+      context.page.text = evidenceExcerpt(
+        context.page.text,
+        [
+          context.task.background,
+          context.task.description,
+          ...context.task.criteria.map((item) => item.expectedResult),
+        ].join(' '),
+        Math.floor(context.page.text.length / 2),
+      );
+      context.page.coverage.text.truncated = true;
+    } else if (
+      context.state.readings?.items.some((item) => item.text.length > 80)
+    ) {
+      context.state.readings.items = context.state.readings.items.map(
         (item) => ({
           ...item,
           text: item.text.slice(0, 80),
           truncated: item.truncated || item.text.length > 80,
         }),
       );
-    else if ((context.interactionProgress?.items.length ?? 0) > 1) {
-      // 只裁剪模型视图，完整进度仍保留在执行器和报告；优先保留已展开的新子项。
-      const progress = context.interactionProgress!;
-      const count = Math.ceil(progress.items.length / 2);
-      progress.omittedItems += progress.items.length - count;
-      progress.items = progress.items.slice(0, count);
-    } else if (
-      context.observation.network &&
-      typeof context.observation.network === 'object' &&
-      Array.isArray(
-        (context.observation.network as { requests?: unknown[] }).requests,
-      ) &&
-      (context.observation.network as { requests: unknown[] }).requests.length >
-        0
-    ) {
-      const network = context.observation.network as {
-        requests: unknown[];
-        truncated?: boolean;
-      };
-      const retained = Math.floor(network.requests.length / 2);
-      network.requests = retained ? network.requests.slice(-retained) : [];
-      network.truncated = true;
-    } else if (context.observation.text.length > 256)
-      context.observation.text = evidenceExcerpt(
-        current.text,
-        context.task.objective,
-        Math.floor(context.observation.text.length / 2),
+    } else if ((context.state.readings?.items.length ?? 0) > 1) {
+      const readings = context.state.readings!;
+      const pending = readings.items.findLastIndex(
+        (item) => item.status !== 'recorded',
       );
-    else if (context.changes && context.changes.text.length > 1024) {
-      context.changes.text = context.changes.text.slice(
+      const index = pending < 0 ? readings.items.length - 1 : pending;
+      readings.items.splice(index, 1);
+      readings.omittedItems++;
+    } else if (context.page.targets.length) {
+      context.page.targets = context.page.targets.slice(
         0,
-        Math.floor(context.changes.text.length / 2),
+        Math.floor(context.page.targets.length / 2),
       );
-      context.changes.textTruncated = true;
-    } else if (context.observation.targets.length > 0)
-      context.observation.targets = context.observation.targets.slice(
-        0,
-        Math.floor(context.observation.targets.length / 2),
-      );
-    else if (context.changes && context.changes.text.length > 128) {
-      context.changes.text = context.changes.text.slice(
-        0,
-        Math.floor(context.changes.text.length / 2),
-      );
-      context.changes.textTruncated = true;
-    } else if (
-      context.changes &&
-      (context.changes.added.length || context.changes.updated.length)
-    ) {
-      context.changes.added = [];
-      context.changes.updated = [];
-      context.changes.refsTruncated = true;
-    } else if (context.recentOperations.length > 0)
-      context.recentOperations.shift();
-    else if ((context.actionMemory?.items.length ?? 0) > 0) {
-      context.actionMemory!.items.shift();
-      context.actionMemory!.omitted++;
-    } else if (context.evidence.length > 0) context.evidence.shift();
-    else
+      context.page.coverage.controls.returned = context.page.targets.length;
+      context.page.coverage.controls.omitted =
+        context.page.coverage.controls.observed - context.page.targets.length;
+    } else
       throw new AgentFault(
         'CONTEXT_BUDGET_EXCEEDED',
-        '固定任务定义超过模型上下文配置上限',
+        '固定要求、进度或关键回执超过模型上下文上限',
       );
-    context.coverage.text.truncated =
-      current.truncated === true || context.observation.text !== current.text;
-    if (context.inputFields) {
-      const targets = new Set(context.observation.targets.map((t) => t.target));
-      context.inputFields = context.inputFields.filter((f) =>
-        targets.has(f.target),
-      );
-    }
-    context.coverage.controls.returned = context.observation.targets.length;
-    context.coverage.controls.omitted =
-      current.targets.length - context.observation.targets.length;
-    text = serialize();
+    text = JSON.stringify(context);
   }
   return { text, context };
+}
+
+/** 返回同一裁剪快照；图片必须与当前观察匹配，完整观察留在执行器。 */
+export function decisionContext(input: ContextInput): DecisionInput {
+  return {
+    ...boundContext(contextData(input), input.maxContextChars),
+    ...(input.image ? { image: input.image } : {}),
+  };
 }

@@ -52,8 +52,8 @@ export function TaskRerun({
         onClick={rerun}
         title={
           caseId
-            ? '保留 caseId，沿用步骤和配置新增一次运行；对照 case 同时重跑两组，保留历史结果。'
-            : '沿用原配置创建新任务；对照任务同时重跑两组，保留历史结果。'
+            ? '保留 caseId，沿用步骤和配置新增一次运行；新运行使用 LLM 单组，保留历史结果。'
+            : '沿用原配置创建新任务；新运行使用 LLM 单组，保留历史结果。'
         }
       >
         {pending
@@ -61,7 +61,7 @@ export function TaskRerun({
           : caseId
             ? '重跑整个 case'
             : paired
-              ? '重跑两组'
+              ? '以 LLM 重跑'
               : '重跑'}
       </button>
       <ErrorNotice message={error} />
