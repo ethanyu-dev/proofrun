@@ -243,7 +243,9 @@ export class Coordinator {
             );
           if (
             canonical(existing.definition.caseV2Definition) !==
-            canonical(task.caseV2Definition)
+              canonical(task.caseV2Definition) ||
+            canonical(existing.definition.rerunSession ?? null) !==
+              canonical(task.rerunSession ?? null)
           )
             throw new ApiError(409, 'CASE_CONFLICT', 'caseId 已绑定另一份定义');
           continue;

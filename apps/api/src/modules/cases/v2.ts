@@ -1,8 +1,10 @@
+import { refreshExternalSessionBudget } from '../sessions/budget.js';
 import { projectCase } from './projection.js';
 import type { TaskReader } from '../tasks/reader.js';
 import { assertSupportedSession } from '../sessions/plan.js';
 import {
   validateVerificationCaseV2,
+  validateSessionRequest,
   type CaseResultV2,
   type VerificationTask,
 } from '@proofrun/contracts';
@@ -107,9 +109,17 @@ export class CaseV2Service {
     timeBudget?: unknown,
     // 请求内重跑沿用该请求当前运行，避免共享 case 被其他请求的新运行改变配置。
     sourceTaskId?: string,
+    session?: unknown,
   ): Promise<VerificationTask> {
     if (typeof runId !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(runId))
       throw new ApiError(400, 'INVALID_RERUN', '重跑需要一个有效 runId');
+    const replacement = validateSessionRequest(session) ? session : undefined;
+    if (session !== undefined && !replacement)
+      throw new ApiError(
+        400,
+        'INVALID_RERUN',
+        '会话配置无效，请选择访客、人工登录或 DevPass 并填写核验条件',
+      );
     const time = parseRerunTimeBudget(timeBudget);
     const taskId = `case-run-${runId}`;
     const previous = await this.tasks.task(taskId).catch((error: unknown) => {
@@ -121,10 +131,20 @@ export class CaseV2Service {
       assertSupportedSession(previous.definition.sessionPlan);
       if (previous.definition.caseV2Definition?.caseId !== id)
         throw new ApiError(409, 'CASE_CONFLICT', 'runId 已属于其他 case');
+      if (
+        canonical(previous.definition.rerunSession ?? null) !==
+        canonical(session ?? null)
+      )
+        throw new ApiError(
+          409,
+          'CASE_CONFLICT',
+          'runId 已绑定另一份会话配置，请使用新的 runId',
+        );
       return previous.definition;
     }
     const { definition } = await this.stored(id, sourceTaskId);
-    assertSupportedSession(definition.sessionPlan);
+    // 只有显式配置才替换退役身份；省略时不丢弃历史账号约束。
+    if (session === undefined) assertSupportedSession(definition.sessionPlan);
     if (
       budgetMode === 'original' &&
       (definition.comparison ||
@@ -136,7 +156,7 @@ export class CaseV2Service {
         '历史 JEV/双跑预算不能用于新执行，请选择当前预算',
       );
     const profile: CaseProfile = {
-      // 不扩张历史人工权限；旧登录元数据只保留原值，不再生成登录复用开关。
+      // 沿用时保留原人工权限；显式替换身份时再清理旧登录元数据。
       environment: {
         ...structuredClone(definition.environment),
         allowIntervention: definition.environment.allowIntervention ?? false,
@@ -145,9 +165,18 @@ export class CaseV2Service {
       executionMode: 'llm',
       evidenceKinds: [...definition.acceptanceCriteria[0]!.evidenceKinds],
     };
+    if (replacement) {
+      // 新身份不能继续绑定旧登录槽节点；显式人工登录授权当前新会话接受人工操作。
+      delete profile.environment.auth;
+      delete profile.environment.reuseAuth;
+      if (replacement.mode === 'manual')
+        profile.environment.allowIntervention = true;
+    }
     // 新运行独立编译配置，跳过同 case 的提交幂等分支，业务定义保持原身份。
     const input = structuredClone(definition.caseV2Definition!);
+    if (replacement) input.session = structuredClone(replacement);
     const result = compileCase(input, validateCaseProfile(profile));
+    if (replacement) result.rerunSession = structuredClone(replacement);
     result.taskId = taskId;
     if (budgetMode === 'original') {
       result.budget = structuredClone(definition.budget);
@@ -156,6 +185,7 @@ export class CaseV2Service {
       else delete result.stepBudget;
     }
     if (time) extendRerunTimeBudget(result, time);
+    refreshExternalSessionBudget(result);
     return result;
   }
 
@@ -165,12 +195,15 @@ export class CaseV2Service {
     runId: unknown,
     budgetMode: 'current' | 'original' = 'current',
     timeBudget?: unknown,
+    session?: unknown,
   ): Promise<CaseResultV2> {
     const definition = await this.prepareRerun(
       id,
       runId,
       budgetMode,
       timeBudget,
+      undefined,
+      session,
     );
     await this.tasks.submitCaseBatch([definition]);
     return this.get(id, definition.taskId);

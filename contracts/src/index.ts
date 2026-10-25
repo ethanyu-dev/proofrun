@@ -176,6 +176,10 @@ export type { IdentityCheck } from './generated/identity-check.js';
 export type { SessionRequest } from './generated/session-request.js';
 export type { SessionPlan } from './generated/session-plan.js';
 
+export const validateSessionRequest = ajv.compile<
+  import('./generated/session-request.js').SessionRequest
+>({ $ref: 'session-request.schema.json' });
+
 export const validateSessionPlan = ajv.getSchema<
   import('./generated/session-plan.js').SessionPlan
 >('session-plan.schema.json')!;

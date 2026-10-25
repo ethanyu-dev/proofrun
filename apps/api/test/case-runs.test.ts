@@ -327,6 +327,57 @@ test('稳定 case 运行历史与软删除集成', { timeout: 60_000 }, async (s
         );
       },
     );
+    // 范围：详情入口的请求删除原子排除全部当前 case、双跑和统计，重复调用幂等；报告为夹具，不清理真实证据文件。
+    await suite.test('删除已结束请求及下属执行后不再纳入统计', async () => {
+      await submit('detail-delete', ['detail-delete-a', 'detail-delete-b']);
+      await finish('case-v2-detail-delete-a');
+      const path = '/v2/requests/detail-delete/delete';
+      const blocked = await call(path, {});
+      assert.equal(blocked.statusCode, 409, blocked.body);
+      assert.equal(blocked.json().code, 'TASK_ACTIVE');
+      assert.equal((await read('/v2/requests/detail-delete')).caseCount, 2);
+      assert.equal(
+        (await call('/v1/tasks/case-v2-detail-delete-a')).statusCode,
+        200,
+      );
+      await finish('case-v2-detail-delete-b');
+      const before = await statistics();
+      const removed = await call(path, {});
+      assert.equal(removed.statusCode, 200, removed.body);
+      assert.deepEqual(removed.json().deletedRequestIds, ['detail-delete']);
+      assert.equal(removed.json().deletedTaskIds.length, 4);
+      for (const taskId of removed.json().deletedTaskIds)
+        assert.equal((await call(`/v1/tasks/${taskId}`)).statusCode, 404);
+      assert.equal((await call('/v2/requests/detail-delete')).statusCode, 404);
+      assert.equal(
+        (await call('/v2/requests/detail-delete/report')).statusCode,
+        404,
+      );
+      assert.ok(
+        !(await read('/v2/requests')).requests.some(
+          (item: { requestId: string }) => item.requestId === 'detail-delete',
+        ),
+      );
+      for (const id of ['detail-delete-a', 'detail-delete-b'])
+        assert.equal((await call(`/v2/cases/${id}`)).statusCode, 404);
+      const after = await statistics();
+      assert.equal(after.summary.cases.total, before.summary.cases.total - 2);
+      assert.equal(after.summary.cases.passed, before.summary.cases.passed - 2);
+      assert.equal(after.summary.runs, before.summary.runs - 2);
+      assert.equal(
+        after.summary.tokens.totalTokens,
+        before.summary.tokens.totalTokens - 240,
+      );
+      assert.equal((await call(path, {})).statusCode, 200);
+      assert.deepEqual((await statistics()).summary, after.summary);
+      const records = (
+        await sql.query(
+          'SELECT deleted_at,report FROM pr_tasks WHERE id=ANY($1)',
+          [removed.json().deletedTaskIds],
+        )
+      ).rows;
+      assert.ok(records.every((row) => row.deleted_at && row.report));
+    });
     // 范围：整请求重跑保持成员 caseId、旧请求保留旧运行快照；不验证真实任务执行。
     await suite.test('整个请求重跑只新增运行', async () => {
       await submit('original', ['request-case']);

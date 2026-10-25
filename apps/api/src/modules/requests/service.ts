@@ -101,18 +101,18 @@ export class RequestService {
       const replay = await this.replay(input.requestId, hash);
       if (replay) return replay;
     }
-    const mapping = new Map(
-      input.caseIds.map((c) => [c.sourceCaseId, c.runId ?? c.caseId]),
-    );
+    const mapping = new Map(input.caseIds.map((c) => [c.sourceCaseId, c]));
     const definitions = [];
     for (const member of source.cases.filter((c) => mapping.has(c.caseId)))
       definitions.push(
         await this.cases.prepareRerun(
           member.caseId,
-          mapping.get(member.caseId)!,
+          mapping.get(member.caseId)!.runId ??
+            mapping.get(member.caseId)!.caseId,
           parameters.budgetMode,
           input.timeBudget,
           member.arms[0]!.taskId,
+          mapping.get(member.caseId)!.session,
         ),
       );
     await this.tasks.submitCaseBatch(definitions, {

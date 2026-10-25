@@ -1,10 +1,6 @@
-import {
-  ACCOUNT_HUMAN_MARGIN_MS,
-  ACCOUNT_CLOSE_MARGIN_MS,
-  ACCOUNT_MAX_SECONDS,
-} from '../account-providers/policy.js';
+import { refreshExternalSessionBudget } from '../sessions/budget.js';
 import { resolveExecutionPlan } from './execution-plan.js';
-import { resolveSession, PREPARATION_MS } from '../sessions/plan.js';
+import { resolveSession } from '../sessions/plan.js';
 import {
   compileStepBudget,
   compileProfilePlan,
@@ -124,23 +120,6 @@ export function compileCase(
         'EXTERNAL_ACCOUNT_AUTH_CONFLICT',
         '外部账号不能同时恢复本地登录槽',
       );
-    // 五分钟人工余量及三十秒关闭余量不改变业务步骤额度；超过上限需拆分。
-    const duration = Math.ceil(
-      (budget.timeoutMs +
-        PREPARATION_MS +
-        stepBudget.settleMs * businessSteps.length +
-        (cleanupSteps.length ? stepBudget.cleanup.timeoutMs : 0) +
-        ACCOUNT_HUMAN_MARGIN_MS +
-        ACCOUNT_CLOSE_MARGIN_MS) /
-        1000,
-    );
-    if (duration > ACCOUNT_MAX_SECONDS)
-      throw new ApiError(
-        422,
-        'EXTERNAL_ACCOUNT_BUDGET',
-        '外部账号最长两小时，请拆分 Case',
-      );
-    sessionPlan.external.durationSeconds = Math.max(60, duration);
   }
   if (
     budget.timeoutMs +
@@ -158,7 +137,7 @@ export function compileCase(
       'CASE_BUDGET_EXCEEDED',
       '步骤所需预算超过平台上限，请拆分 case；不会削减后续步骤额度',
     );
-  return {
+  const task: VerificationTask = {
     protocolVersion: '0.1',
     taskId: `${V2_PREFIX}${input.caseId}`,
     objective:
@@ -188,6 +167,8 @@ export function compileCase(
     acceptanceCriteria: stepCriteria(steps, profile.evidenceKinds),
     caseV2Definition: structuredClone(input),
   };
+  refreshExternalSessionBudget(task);
+  return task;
 }
 
 /** 双跑保留旧主任务路径，另一组使用独立命名空间，避免与带后缀的 caseId 冲突。 */

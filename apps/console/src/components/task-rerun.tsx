@@ -1,6 +1,8 @@
+import type { SessionRequest } from '@proofrun/contracts';
+import { RerunDialog } from './rerun-dialog';
 import { Button } from './ui/button';
 import { useEffect, useRef, useState } from 'react';
-import { ApiClient, errorMessage } from '../api';
+import { ApiClient, ApiError, errorMessage } from '../api';
 import { ErrorNotice } from './ui';
 import { rerunTask } from './task-rerun-request';
 
@@ -17,12 +19,15 @@ export function TaskRerun({
   caseId?: string | null | undefined;
 }) {
   const runId = useRef(`rerun-${crypto.randomUUID()}`);
+  const draft = useRef<{ session?: SessionRequest } | null>(null);
+  const [open, setOpen] = useState(false);
   const active = useRef<AbortController | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
   useEffect(() => () => active.current?.abort(), []);
-  const rerun = async () => {
+  const rerun = async (session?: SessionRequest) => {
     if (active.current) return;
+    draft.current ??= session ? { session } : {};
     const controller = new AbortController();
     active.current = controller;
     setPending(true);
@@ -34,10 +39,18 @@ export function TaskRerun({
         runId.current,
         controller.signal,
         caseId,
+        draft.current.session,
       );
       if (!controller.signal.aborted)
         location.hash = `/tasks/${encodeURIComponent(taskId)}`;
     } catch (error) {
+      if (
+        error instanceof ApiError &&
+        [400, 401, 403, 404, 409, 410, 422].includes(error.status)
+      ) {
+        draft.current = null;
+        runId.current = `rerun-${crypto.randomUUID()}`;
+      }
       if (!controller.signal.aborted) setError(errorMessage(error));
     } finally {
       active.current = null;
@@ -51,7 +64,7 @@ export function TaskRerun({
         type="button"
         className="button button-secondary button-small"
         disabled={pending}
-        onClick={rerun}
+        onClick={() => (caseId ? setOpen(true) : void rerun())}
         title={
           caseId
             ? '保留 caseId，沿用步骤和配置新增一次运行；新运行使用 LLM 单组，保留历史结果。'
@@ -66,7 +79,19 @@ export function TaskRerun({
               ? '以 LLM 重跑'
               : '重跑'}
       </Button>
-      <ErrorNotice message={error} />
+      {caseId ? (
+        <RerunDialog
+          open={open}
+          items={[{ id: caseId, title: caseId }]}
+          pending={pending}
+          locked={!!draft.current}
+          error={error}
+          close={() => setOpen(false)}
+          submit={(sessions) => void rerun(sessions[caseId])}
+        />
+      ) : (
+        <ErrorNotice message={error} />
+      )}
     </div>
   );
 }

@@ -1,5 +1,48 @@
 /* 根据 contracts/schemas 自动生成，请勿手改；修改 Schema 后运行 pnpm contracts:generate。 */
 
+/**
+ * 仅为此 case 的新运行替换会话身份；省略时沿用来源，历史本地身份须显式重新选择。
+ */
+export type SessionRequest = {
+  mode: 'guest' | 'manual' | 'external';
+  /**
+   * @maxItems 32
+   */
+  requirements?: IdentityCheck[];
+  external?: ExternalAccountSelector;
+};
+/**
+ * 显式前置条件；文本检查使用完整观察，人工条件只能由当前会话的人工确认满足。
+ */
+export type IdentityCheck = {
+  id: string;
+  description: string;
+  method: 'text' | 'absent' | 'manual';
+  value?: string;
+};
+/**
+ * 外部账号的无秘密选择条件；地址和密钥仅由部署配置提供。
+ */
+export type ExternalAccountSelector = (
+  | {
+      poolId: string;
+      [k: string]: unknown;
+    }
+  | {
+      accountId: string;
+      [k: string]: unknown;
+    }
+) & {
+  provider: string;
+  platform: string;
+  poolId?: string;
+  accountId?: string;
+  /**
+   * @maxItems 32
+   */
+  roles?: string[];
+};
+
 export interface RequestRerun {
   /**
    * 可选的旧版新请求身份；省略时在原请求内新增运行，重试沿用 caseIds。
@@ -34,6 +77,7 @@ export interface RequestRerun {
        * 新运行幂等键；重试保持不变，caseId 不改变。
        */
       runId?: string;
+      session?: SessionRequest;
     } & (
         | {
             runId: unknown;
@@ -56,6 +100,7 @@ export interface RequestRerun {
          * 新运行幂等键；重试保持不变，caseId 不改变。
          */
         runId?: string;
+        session?: SessionRequest;
       },
     ...((
       | {
@@ -79,6 +124,7 @@ export interface RequestRerun {
        * 新运行幂等键；重试保持不变，caseId 不改变。
        */
       runId?: string;
+      session?: SessionRequest;
     } & (
         | {
             runId: unknown;
@@ -101,6 +147,7 @@ export interface RequestRerun {
          * 新运行幂等键；重试保持不变，caseId 不改变。
          */
         runId?: string;
+        session?: SessionRequest;
       })[],
   ];
   /**

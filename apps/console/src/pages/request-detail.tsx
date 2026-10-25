@@ -7,6 +7,7 @@ import { RequestCases } from '../components/request-cases';
 import { RequestTaskCases } from '../components/request-task-cases';
 import { RequestExport } from '../components/request-export';
 import { RequestRerun } from '../components/request-rerun';
+import { RequestDelete } from '../components/request-delete';
 
 /** 任务与报告共享身份和刷新机制，但分别展示执行目标与验收结果。 */
 export function RequestDetailPage({
@@ -38,6 +39,9 @@ export function RequestDetailPage({
                   查看重跑来源
                 </a>
               </span>
+            )}
+            {!reports && value && (
+              <RequestDelete key={id} api={api} value={value} />
             )}
           </div>
         </div>

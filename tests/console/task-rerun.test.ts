@@ -41,6 +41,7 @@ test('结构化重跑保持 case 身份并跳转到新的运行', async (context
         'new-case',
         new AbortController().signal,
         'old',
+        { mode: 'guest' },
       ),
       'case-run-new-case',
     );
@@ -48,7 +49,7 @@ test('结构化重跑保持 case 身份并跳转到新的运行', async (context
     calls,
     Array(2).fill({
       path: '/v2/cases/old/rerun',
-      body: { runId: 'new-case' },
+      body: { runId: 'new-case', session: { mode: 'guest' } },
     }),
   );
   const html = renderToStaticMarkup(
@@ -78,4 +79,38 @@ test('单组 case 与普通任务保留各自重跑路径', async (context) => {
     'ordinary-new',
   );
   assert.deepEqual(paths, ['/v2/cases/old/rerun', '/v1/tasks/ordinary/rerun']);
+});
+
+// 范围：DevPass 表单生成可验证身份条件，访客和人工配置不残留外部账号；不调用真实账号服务。
+test('重跑表单验证 DevPass 的平台、账号来源及核验文本', async () => {
+  const { rerunSession, EMPTY_RERUN_SESSION } =
+    await import('../../apps/console/src/components/rerun-session-fields.tsx');
+  assert.equal(rerunSession(EMPTY_RERUN_SESSION), undefined);
+  assert.throws(
+    () => rerunSession({ ...EMPTY_RERUN_SESSION, mode: 'external' }),
+    /DevPass/,
+  );
+  const input = {
+    ...EMPTY_RERUN_SESSION,
+    mode: 'external' as const,
+    platform: ' fixture ',
+    poolId: ' members ',
+    checks: ' 已登录\n\n会员 ',
+  };
+  const session = rerunSession(input)!;
+  assert.deepEqual(session.external, {
+    provider: 'devpass',
+    platform: 'fixture',
+    poolId: 'members',
+  });
+  assert.deepEqual(
+    session.requirements?.map((item) => item.value),
+    ['已登录', '会员'],
+  );
+  assert.deepEqual(rerunSession({ ...input, mode: 'guest' }), {
+    mode: 'guest',
+  });
+  assert.deepEqual(rerunSession({ ...input, mode: 'manual' }), {
+    mode: 'manual',
+  });
 });
