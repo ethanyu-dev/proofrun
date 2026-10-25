@@ -121,7 +121,11 @@ test('重查理由仍须经过工作流与浏览器前置校验', async () => {
     assert.throws(() => workflow.apply({ revisitReason }, new Set()), {
       code: 'INVALID_MODEL_DECISION',
     });
-  workflow.apply({ revisitReason: '原任务要求核对收起行为' }, new Set());
+  assert.throws(
+    () =>
+      workflow.apply({ revisitReason: '原任务要求核对收起行为' }, new Set()),
+    { code: 'INVALID_MODEL_DECISION' },
+  );
   const ledger = new InteractionProgress();
   const observation = page();
   ledger.observe(observation);
@@ -395,7 +399,14 @@ test('执行器阻止已读题重点击，滚动后用新目标继续读取', as
           decision = finish(context);
           workflow = { readings: [{ itemId: 'item-2', quote: '第二题答案' }] };
         }
-        return { decision, workflow, promptTokens: 0, completionTokens: 0 };
+        return {
+          decision: {
+            ...decision,
+            progress: { ...decision.progress, ...workflow },
+          },
+          promptTokens: 0,
+          completionTokens: 0,
+        };
       },
     },
     grant(),
@@ -472,15 +483,11 @@ test('同轮保存阅读进度时同步步骤证据，再派发动作', async ()
                   action: 'fill',
                   target: '@e1',
                   value: 'Alice',
+                  progress: {
+                    readings: [{ itemId: 'item-1', quote: '真实面板原文' }],
+                  },
                 }
               : finish(ctx),
-          ...(turn === 1
-            ? {
-                workflow: {
-                  readings: [{ itemId: 'item-1', quote: '真实面板原文' }],
-                },
-              }
-            : {}),
           promptTokens: 0,
           completionTokens: 0,
         };

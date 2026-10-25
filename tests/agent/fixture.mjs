@@ -143,7 +143,7 @@ export class FakeControl {
   }
 }
 /** 根据当前实际送给模型的证据生成协议回复，不能预先猜测证据 ID。 */
-export function finish(context) {
+function legacyFinish(context) {
   return {
     type: 'verification.finish',
     ...(['PREPARING', 'CHECKING'].includes(context.state.phase) &&
@@ -168,6 +168,11 @@ export function finish(context) {
       evidenceRefs: context.page.artifactRefs.map((a) => a.artifactId),
     })),
   };
+}
+/** 脚本直接调用与 HTTP 夹具共用正式 progress 协议，不模拟第二套模型出口。 */
+export function finish(context) {
+  const value = legacyFinish(context);
+  return { type: value.type, ...modelArguments(value) };
 }
 /** 本地 HTTP 模型协议夹具；决定来自脚本，不证明真实模型判断质量。 */
 export async function modelServer(decide) {
@@ -230,6 +235,7 @@ export async function modelServer(decide) {
 export function modelArguments(value) {
   const { type, criteria, conclusions, workflow, ...args } = value;
   const progress = {
+    ...args.progress,
     ...(workflow && !Array.isArray(workflow)
       ? Object.fromEntries(
           Object.entries(workflow).filter(

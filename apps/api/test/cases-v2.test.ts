@@ -1,3 +1,4 @@
+import { cleanupTask } from './legacy-cleanup.js';
 import { inlineCleanup } from '../src/modules/cases/inline-cleanup.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -10,8 +11,7 @@ import {
 } from '@proofrun/contracts';
 import {
   compileCase,
-  cleanupTask,
-  expandCaseTasks,
+  assertCaseExecution,
 } from '../src/modules/cases/structured.js';
 import { CaseV2Service } from '../src/modules/cases/v2.js';
 import type { CaseProfile } from '../src/modules/cases/profile.js';
@@ -68,7 +68,7 @@ const INPUT: VerificationCaseV2 = {
 test('v2 默认 LLM 单组、独立会话并允许人工辅助，保留平台显式配置', () => {
   const { executionMode: _, ...defaults } = PROFILE;
   const task = compileCase(INPUT, defaults);
-  const arms = expandCaseTasks(task);
+  const arms = currentTasks(task);
   assert.equal(task.executionMode, 'llm');
   assert.equal(arms.length, 1);
   assert.equal(task.stepBudget!.steps[0]!.maxModelCalls, 20);
@@ -93,7 +93,7 @@ test('v2 默认 LLM 单组、独立会话并允许人工辅助，保留平台显
   assert.equal(explicit.executionMode, 'llm');
   assert.equal(explicit.environment.reuseAuth, false);
   assert.equal(explicit.environment.allowIntervention, false);
-  assert.equal(expandCaseTasks(explicit).length, 1);
+  assert.equal(currentTasks(explicit).length, 1);
   const guest = compileCase({ ...INPUT, session: { mode: 'guest' } }, defaults);
   assert.equal(guest.sessionPlan!.mode, 'guest');
 });
@@ -117,7 +117,7 @@ function fixture(profile: CaseProfile = PROFILE) {
       batches++;
       for (const definition of definitions) {
         if (records.has(definition.taskId)) continue;
-        for (const d of expandCaseTasks(definition))
+        for (const d of currentTasks(definition))
           records.set(d.taskId, {
             definition: d,
             state: 'QUEUED',
@@ -177,18 +177,16 @@ test('v2 结构化编译保持步骤身份和标准归属', () => {
   assert.equal(cleanupTask(task), null);
   assert.deepEqual(task.cleanupStepIds, ['cleanup-1']);
   assert.equal(task.steps!.at(-1)!.type, 'setup');
-  assert.notEqual(
-    compileCase({ ...INPUT, entry: 'https://other.test' }, PROFILE).resourceKey,
-    task.resourceKey,
-  );
+  assert.equal(task.resourceKey, undefined);
 });
 
 // 范围：新 case 身份隔离、同身份编译稳定及同任务清理标记；不验证数据库调度或真实登录态。
-test('v2 互斥范围包含任务身份，新任务不继承历史清理阻塞', () => {
+test('v2 单运行不生成旧清理资源锁，新任务不继承历史清理阻塞', () => {
   const first = compileCase(INPUT, PROFILE);
   const second = compileCase({ ...INPUT, caseId: 'case-2' }, PROFILE);
   assert.equal(compileCase(INPUT, PROFILE).resourceKey, first.resourceKey);
-  assert.notEqual(second.resourceKey, first.resourceKey);
+  assert.equal(first.resourceKey, undefined);
+  assert.equal(second.resourceKey, undefined);
   assert.equal(cleanupTask(first), null);
   assert.equal(cleanupTask(second), null);
 });
@@ -477,10 +475,7 @@ test('v2 重跑保留原配置及整个 case，重试不重复创建', async () 
     });
     assert.deepEqual(fresh.definition.cleanupStepIds, ['cleanup-1']);
     assert.equal(fresh.definition.steps!.at(-1)!.stepId, 'cleanup-1');
-    assert.notEqual(
-      fresh.definition.resourceKey,
-      before[0]![1].definition.resourceKey,
-    );
+    assert.equal(fresh.definition.resourceKey, undefined);
     assert.equal(result.comparison, undefined);
     assert.equal(fresh.definition.executionMode, executionMode);
     const count = f.records.size;
@@ -526,7 +521,7 @@ test('v2 重跑校验身份并沿用提交的冲突语义', async () => {
 
 // 范围：模式倍率、等待后准备检查额度、平台硬上限及显式历史预算复现；不验证模型质量或节点能力。
 test('v2 新预算按步骤冻结，不再为混合组放大额度，超过上限直接拒绝', async () => {
-  const arms = expandCaseTasks(
+  const arms = currentTasks(
     compileCase(INPUT, { ...PROFILE, executionMode: 'llm' }),
   );
   assert.equal(arms[0]!.stepBudget!.steps[0]!.maxModelCalls, 20);
@@ -708,7 +703,7 @@ test('多组 v2 提交和重跑最多并发八组，保留历史任务的冻结�
       { ...INPUT.steps[1]!, stepId: `setup-${i}`, exec_order: i * 2 + 1 },
       { ...INPUT.steps[0]!, stepId: `verify-${i}`, exec_order: i * 2 + 2 },
     ]).flat() as VerificationCaseV2['steps'];
-    const arms = expandCaseTasks(
+    const arms = currentTasks(
       compileCase(input, { ...PROFILE, executionMode: 'llm' }),
     );
     assert.equal(arms.length, 1);
@@ -729,3 +724,9 @@ test('多组 v2 提交和重跑最多并发八组，保留历史任务的冻结�
     );
   }
 });
+
+/** 为旧批量夹具包装当前准入结果；不构造双跑或清理执行。 */
+function currentTasks(task: import('@proofrun/contracts').VerificationTask) {
+  assertCaseExecution(task);
+  return [task];
+}

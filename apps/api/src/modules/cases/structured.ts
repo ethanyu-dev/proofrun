@@ -13,7 +13,6 @@ import {
   CASE_MAX_ACTIONS,
   CASE_MAX_MODEL_CALLS,
 } from '@proofrun/contracts';
-import { createHash } from 'node:crypto';
 import type {
   CaseStep,
   VerificationCaseV2,
@@ -159,13 +158,6 @@ export function compileCase(
       'CASE_BUDGET_EXCEEDED',
       '步骤所需预算超过平台上限，请拆分 case；不会削减后续步骤额度',
     );
-  const scope = JSON.stringify([
-    `${V2_PREFIX}${input.caseId}`,
-    profile.environment.nodePool,
-    profile.environment.auth?.nodeId ?? '',
-    profile.environment.auth?.stateId ?? profile.environment.id,
-    new URL(input.entry).origin,
-  ]);
   return {
     protocolVersion: '0.1',
     taskId: `${V2_PREFIX}${input.caseId}`,
@@ -194,40 +186,7 @@ export function compileCase(
     purpose: 'verification',
     steps: steps as NonNullable<VerificationTask['steps']>,
     acceptanceCriteria: stepCriteria(steps, profile.evidenceKinds),
-    resourceKey: createHash('sha256').update(scope).digest('hex'),
     caseV2Definition: structuredClone(input),
-  };
-}
-
-/** 兼容历史冻结定义的独立清理；新 case 不再通过此处生成任务。 */
-export function cleanupTask(task: VerificationTask): VerificationTask | null {
-  // 仅兼容升级前冻结的定义；新任务在原会话内收尾。
-  if (task.cleanupStepIds !== undefined) return null;
-  const cleanup = task.caseV2Definition?.cleanup;
-  if (!cleanup?.length) return null;
-  const steps = normalizeSteps(
-    cleanup.map((step) => ({
-      ...step,
-      type: 'setup',
-      policy: step.policy ?? [],
-      expected: step.expected ?? [],
-    })),
-  );
-  const evidenceKinds = task.acceptanceCriteria[0]!.evidenceKinds;
-  return {
-    protocolVersion: task.protocolVersion,
-    taskId: `cleanup-${task.taskId}`,
-    objective:
-      '执行上游声明的业务清理操作；只清理指定对象，不能推测未提供的原值。',
-    environment: structuredClone(task.environment),
-    target: { url: steps[0]!.url },
-    budget: structuredClone(task.cleanupBudget ?? task.budget),
-    executionMode: task.executionMode ?? 'llm',
-    purpose: 'cleanup',
-    parentTaskId: task.taskId,
-    resourceKey: task.resourceKey!,
-    steps: steps as NonNullable<VerificationTask['steps']>,
-    acceptanceCriteria: stepCriteria(steps, evidenceKinds),
   };
 }
 
@@ -240,12 +199,11 @@ export function caseArmIds(task: VerificationTask): string[] {
 }
 
 /** 新提交只有 LLM 一组，历史双跑的读取仍由 caseArmIds 处理。 */
-export function expandCaseTasks(task: VerificationTask): VerificationTask[] {
+export function assertCaseExecution(task: VerificationTask): void {
   if (task.executionMode && task.executionMode !== 'llm')
     throw new ApiError(
       422,
       'EXECUTION_MODE_RETIRED',
       '新任务只支持 llm，jev 和 parallel 已退出执行',
     );
-  return [task];
 }

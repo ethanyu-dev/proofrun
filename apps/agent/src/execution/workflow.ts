@@ -11,24 +11,6 @@ const MAX_NOTE = 600;
 /** 每项声明引用的证据数量上限。 */
 const MAX_EVIDENCE_REFS = 24;
 
-/** 模型提交的是带证据的完成声明；执行器验证来源，不冒充业务语义判定器。 */
-export interface WorkflowUpdate {
-  /** 原任务要求重查或验证开关行为时解释原因，不清空读取证据或恢复额度。 */
-  revisitReason?: string;
-  /** 逐项阅读只能引用执行器已观察的关联面板，不增加原验收要求。 */
-  readings?: Array<{ itemId: string; quote: string }>;
-  /** 已观察事实的逐步骤声明，不能认领待执行动作。 */
-  assessments?: Array<{
-    /** 必须匹配原任务步骤身份。 */
-    stepId: string;
-    /** 明确区分完成、证据不全和受阻，不能把尝试当作完成。 */
-    outcome: 'complete' | 'incomplete' | 'blocked';
-    /** 控制面已登记的当前执行证据。 */
-    evidenceRefs: string[];
-    /** 解释所引用证据支持的已观察事实。 */
-    summary: string;
-  }>;
-}
 /** 原始要求的只读进度视图；只有原始要求可以成为必做步骤。 */
 export interface WorkflowView {
   /** 来自原始任务的要求和可审计完成证据。 */
@@ -47,51 +29,6 @@ export interface WorkflowView {
   /** 只有步骤首次提交完成证据才增长，用于区分任务进展与页面循环。 */
   revision: number;
 }
-
-/** 仅模型工具额外携带该元数据，不扩展浏览器命令协议或节点权限。 */
-export const WORKFLOW_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    revisitReason: { type: 'string', minLength: 1, maxLength: MAX_NOTE },
-    readings: {
-      type: 'array',
-      maxItems: 32,
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          itemId: { type: 'string' },
-          quote: { type: 'string', minLength: 1, maxLength: 600 },
-        },
-        required: ['itemId', 'quote'],
-      },
-    },
-    assessments: {
-      type: 'array',
-      maxItems: MAX_ASSESSMENTS,
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          stepId: { type: 'string' },
-          outcome: {
-            type: 'string',
-            enum: ['complete', 'incomplete', 'blocked'],
-          },
-          summary: { type: 'string', maxLength: MAX_NOTE },
-          evidenceRefs: {
-            type: 'array',
-            minItems: 0,
-            maxItems: MAX_EVIDENCE_REFS,
-            items: { type: 'string' },
-          },
-        },
-        required: ['stepId', 'outcome', 'summary', 'evidenceRefs'],
-      },
-    },
-  },
-};
 
 /** 校验全部元数据后再原子更新；非法证据或未知步骤不得留下半完成状态。 */
 export class Workflow {
@@ -149,7 +86,7 @@ export class Workflow {
     const bad = () =>
       new AgentFault(
         'INVALID_MODEL_DECISION',
-        'workflow 更新无效：只能引用原步骤和已登记证据，不接受局部计划或焦点切换',
+        'progress 更新无效：只能引用原步骤和已登记证据，不接受局部计划或焦点切换',
       );
     const object = (v: unknown): v is Record<string, unknown> =>
       !!v && typeof v === 'object' && !Array.isArray(v);
@@ -158,44 +95,41 @@ export class Workflow {
     if (!object(update))
       throw new AgentFault(
         'INVALID_MODEL_DECISION',
-        'workflow 必须是对象，完成声明放在 workflow.assessments 数组中',
+        'progress 必须是对象，完成声明放在 progress.requirements 数组中',
       );
     if (
       Object.keys(update).some(
-        (k) => !['assessments', 'readings', 'revisitReason'].includes(k),
+        (k) => !['requirements', 'readings', 'criteria'].includes(k),
       )
     )
       throw bad();
-    if (update.revisitReason !== undefined && !note(update.revisitReason))
-      throw bad();
     const next = this.view();
     const credited = new Set(this.credited);
-    if (update.assessments !== undefined) {
+    if (update.requirements !== undefined) {
       if (
-        !Array.isArray(update.assessments) ||
-        update.assessments.length > MAX_ASSESSMENTS
+        !Array.isArray(update.requirements) ||
+        update.requirements.length > MAX_ASSESSMENTS
       )
         throw bad();
       const seen = new Set<string>();
-      for (const item of update.assessments) {
+      for (const item of update.requirements) {
         if (
           !object(item) ||
           Object.keys(item).some(
-            (k) =>
-              !['stepId', 'outcome', 'summary', 'evidenceRefs'].includes(k),
+            (k) => !['id', 'status', 'summary', 'evidenceRefs'].includes(k),
           )
         )
           throw bad();
-        const step = next.steps.find((s) => s.id === item.stepId);
+        const step = next.steps.find((s) => s.id === item.id);
         if (
           !step ||
           seen.has(step.id) ||
           !note(item.summary) ||
           !Array.isArray(item.evidenceRefs) ||
           !['complete', 'incomplete', 'blocked'].includes(
-            String(item.outcome),
+            String(item.status),
           ) ||
-          (item.outcome === 'complete' && !item.evidenceRefs.length) ||
+          (item.status === 'complete' && !item.evidenceRefs.length) ||
           item.evidenceRefs.length > MAX_EVIDENCE_REFS ||
           item.evidenceRefs.some((r) => typeof r !== 'string')
         )
@@ -211,11 +145,11 @@ export class Workflow {
         seen.add(step.id);
 
         Object.assign(step, {
-          status: item.outcome === 'complete' ? 'recorded' : item.outcome,
+          status: item.status === 'complete' ? 'recorded' : item.status,
           summary: item.summary,
           evidenceRefs: [...new Set(item.evidenceRefs)],
         });
-        if (item.outcome === 'complete' && !credited.has(step.id)) {
+        if (item.status === 'complete' && !credited.has(step.id)) {
           credited.add(step.id);
           next.revision++;
         }

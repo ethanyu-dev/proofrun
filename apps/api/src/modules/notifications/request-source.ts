@@ -35,7 +35,7 @@ export async function readRequest(
     const members = (
       await client.query<{ case_id: string; task_ids: string[] }>(
         `SELECT c.case_id,array_agg(a.task_id ORDER BY a.task_id) AS task_ids
-       FROM pr_verification_request_cases c JOIN pr_verification_request_arms a USING(request_id,case_id)
+       FROM pr_verification_request_cases c JOIN pr_request_runs a USING(request_id,case_id)
        WHERE c.request_id=$1 GROUP BY c.case_id,c.position ORDER BY c.position`,
         [requestId],
       )

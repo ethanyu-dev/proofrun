@@ -5,7 +5,7 @@ import type { VerificationTask } from '@proofrun/contracts';
 import { task } from './fixture.js';
 import {
   compileCase,
-  expandCaseTasks,
+  assertCaseExecution,
 } from '../src/modules/cases/structured.js';
 import {
   validateCaseProfile,
@@ -59,11 +59,17 @@ test('默认 LLM 单组，明确拒绝 JEV 与 parallel 新任务', () => {
     profile,
   );
   assert.equal(compiled.executionMode, 'llm');
-  assert.equal(expandCaseTasks(compiled).length, 1);
+  assert.equal(currentTasks(compiled).length, 1);
   for (const executionMode of ['jev', 'parallel'] as const) {
     assert.throws(() => validateCaseProfile({ ...profile, executionMode }));
-    assert.throws(() => expandCaseTasks({ ...compiled, executionMode }), {
+    assert.throws(() => currentTasks({ ...compiled, executionMode }), {
       code: 'EXECUTION_MODE_RETIRED',
     });
   }
 });
+
+/** 为旧批量夹具包装当前准入结果；不构造双跑或清理执行。 */
+function currentTasks(task: import('@proofrun/contracts').VerificationTask) {
+  assertCaseExecution(task);
+  return [task];
+}

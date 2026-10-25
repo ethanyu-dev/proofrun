@@ -220,6 +220,7 @@ async fn empty_engine_binary_is_not_reported_as_success() {
         session: uuid::Uuid::new_v4().to_string(),
         directory: home.path().into(),
         allow_unverified_writes: false,
+        diagnostic_snapshots: false,
         auth_state: None,
         restore_auth: false,
         restore_auth_if_present: false,

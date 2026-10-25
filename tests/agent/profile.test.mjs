@@ -1023,3 +1023,35 @@ test('新计划普通准备阻塞不自动转成人工确认', async () => {
   assert.equal(report.steps[0].reasonCode, 'SETUP_BLOCKED');
   assert.equal(client.requests.length, 0);
 });
+
+// 范围：八个并发组共用一次续租和一次最终提交，组结束不撤销兄弟执行；模型、页面和租约回复均为夹具。
+test('profile 并发组只使用一个执行租约守卫', { timeout: 10_000 }, async () => {
+  const client = new FakeControl();
+  const entered = new Set();
+  let release;
+  const barrier = new Promise((resolve) => {
+    release = resolve;
+  });
+  const { report } = await run(
+    async (context) => {
+      if (
+        context.state.phase === 'PREPARING' &&
+        !entered.has(context.task.stepId)
+      ) {
+        entered.add(context.task.stepId);
+        if (entered.size === 8) setTimeout(release, 350);
+        await barrier;
+      }
+      return finish(context);
+    },
+    (execution) => {
+      execution.leaseExpiresAt = new Date(Date.now() + 600).toISOString();
+    },
+    client,
+    Array.from({ length: 8 }, (_, i) => `lease-${i}`),
+  );
+  assert.equal(report.verdict, 'PASSED');
+  assert.equal(entered.size, 8);
+  assert.equal(client.renewals, 1);
+  assert.equal(client.reports.length, 1);
+});

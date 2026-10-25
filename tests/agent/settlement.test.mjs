@@ -72,7 +72,7 @@ test('先保存旧证据结论，再派发下一动作；未知结果不丢已�
     type: 'browser.act',
     action: 'click',
     target: '@e2',
-    conclusions: finish(ctx).criteria.slice(0, 1),
+    conclusions: finish(ctx).progress.criteria.slice(0, 1),
     workflow: { recovery },
   }));
   assert.equal(
@@ -97,7 +97,10 @@ test('无效同轮证据阻止后续动作', async () => {
     action: 'click',
     target: '@e2',
     conclusions: [
-      { ...finish(ctx).criteria[0], evidenceRefs: ['not-an-artifact'] },
+      {
+        ...finish(ctx).progress.criteria[0],
+        evidenceRefs: ['not-an-artifact'],
+      },
     ],
     workflow: { recovery },
   }));
@@ -122,7 +125,7 @@ test('最后一次模型额度只读收尾，并随 block 保存独立结论', a
       return {
         type: 'verification.block',
         summary: '后续条件缺失',
-        conclusions: finish(ctx).criteria,
+        conclusions: finish(ctx).progress.criteria,
       };
     },
     g,
@@ -175,7 +178,7 @@ test('慢文本调用后提前只读整理并保留此前结论', async () => {
           target: '@e1',
           value: 'Alice',
           workflow: { recovery },
-          conclusions: finish(ctx).criteria.slice(0, 1),
+          conclusions: finish(ctx).progress.criteria.slice(0, 1),
         };
       }
       assert.equal(ctx.state.settlement, 'budget');
@@ -232,7 +235,7 @@ test('下一动作格式错误仅保存独立结论，不修补或执行动作',
       ? {
           type: 'browser.act',
           action: 'not-an-action',
-          conclusions: finish(ctx).criteria.slice(0, 1),
+          conclusions: finish(ctx).progress.criteria.slice(0, 1),
         }
       : { type: 'verification.block', summary: '保留已有结论，停止无效动作' },
   );
@@ -254,7 +257,7 @@ test('finish 的错误要求身份不丢合法验收项', async () => {
     turn === 1
       ? {
           ...finish(ctx),
-          criteria: finish(ctx).criteria.slice(0, 1),
+          criteria: finish(ctx).progress.criteria.slice(0, 1),
           workflow: {
             assessments: [
               {
@@ -287,7 +290,7 @@ test('结论持久化失败后不派发下一动作', async () => {
     type: 'browser.act',
     action: 'click',
     target: '@e2',
-    conclusions: finish(ctx).criteria.slice(0, 1),
+    conclusions: finish(ctx).progress.criteria.slice(0, 1),
     workflow: { recovery },
   }));
   assert.equal(
@@ -340,7 +343,7 @@ async function runSettlement(client, decide) {
         return {
           type: 'verification.record',
           summary: '夹具准备收尾',
-          criteria: finish(ctx).criteria,
+          criteria: finish(ctx).progress.criteria,
         };
       }
       assert.equal(ctx.state.settlement, 'budget');

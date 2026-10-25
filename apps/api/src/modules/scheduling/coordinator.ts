@@ -32,8 +32,7 @@ import {
   type StepResult,
 } from '@proofrun/contracts';
 import {
-  cleanupTask,
-  expandCaseTasks,
+  assertCaseExecution,
   caseArmIds,
   CASE_TASK_ID,
 } from '../cases/structured.js';
@@ -58,7 +57,6 @@ import {
   type Heartbeat,
 } from '../../domain.js';
 import { identityPlacement, recordQueueReason } from './placement.js';
-import { cleanupPlacement } from './cleanup-placement.js';
 import {
   routingSnapshot,
   resolveRoute,
@@ -102,6 +100,12 @@ export class Coordinator {
   /** 接收上层定义的任务快照；相同身份只允许相同定义。 */
   async submit(task: VerificationTask) {
     assertSupportedSession(task.sessionPlan);
+    if (task.resourceKey !== undefined)
+      throw new ApiError(
+        422,
+        'RESOURCE_LOCK_RETIRED',
+        '资源锁已停用，请移除 resourceKey 并明确安排业务依赖',
+      );
     if (task.executionMode && task.executionMode !== 'llm')
       throw new ApiError(422, 'EXECUTION_MODE_RETIRED', '新任务只支持 llm');
     if (
@@ -281,22 +285,12 @@ export class Coordinator {
         }
         this.externalAccounts.validate(task);
         created.add(task.taskId);
-        const source = task;
-        for (const task of expandCaseTasks(source)) {
-          if (!validateVerificationTask(task))
-            throw new ApiError(422, 'INVALID_CASE', '双跑任务定义无效');
-          await client.query(
-            `INSERT INTO pr_tasks(id,definition,definition_hash,state,deadline_at)
+        assertCaseExecution(task);
+        await client.query(
+          `INSERT INTO pr_tasks(id,definition,definition_hash,state,deadline_at)
           VALUES($1,$2,$3,'QUEUED',clock_timestamp()+$4*interval '1 millisecond')`,
-            [task.taskId, task, digest(canonical(task)), task.budget.timeoutMs],
-          );
-          const cleanup = cleanupTask(task);
-          if (cleanup)
-            await client.query(
-              'INSERT INTO pr_case_cleanups(parent_task_id,task_id,definition) VALUES($1,$2,$3)',
-              [task.taskId, cleanup.taskId, cleanup],
-            );
-        }
+          [task.taskId, task, digest(canonical(task)), task.budget.timeoutMs],
+        );
       }
       if (request) await registerMembers(client, request, tasks, created);
     });
@@ -344,59 +338,6 @@ export class Coordinator {
         )
       ).rows[0] ?? null
     );
-  }
-
-  /** 仅调度历史独立清理意图；新 case 的收尾由原任务执行器推进。 */
-  private async scheduleCaseCleanups() {
-    await this.db.transaction(async (client) => {
-      const jobs = await client.query(
-        `SELECT c.* FROM pr_case_cleanups c JOIN pr_tasks p ON p.id=c.parent_task_id
-        WHERE c.state='PENDING' AND p.state NOT IN ('QUEUED','RUNNING')
-        AND NOT EXISTS(SELECT 1 FROM pr_executions e JOIN pr_sessions s ON s.execution_id=e.id WHERE e.task_id=p.id AND NOT s.closure_verified)
-        ORDER BY p.created_at LIMIT $1 FOR UPDATE OF c SKIP LOCKED`,
-        [BATCH_SIZE],
-      );
-      for (const job of jobs.rows) {
-        const executed = await client.query(
-          'SELECT 1 FROM pr_executions WHERE task_id=$1',
-          [job.parent_task_id],
-        );
-        if (!executed.rowCount) {
-          await client.query(
-            "UPDATE pr_case_cleanups SET state='SKIPPED' WHERE parent_task_id=$1",
-            [job.parent_task_id],
-          );
-          continue;
-        }
-        const definition = job.definition as VerificationTask;
-        await client.query(
-          `INSERT INTO pr_tasks(id,definition,definition_hash,state,deadline_at)
-          VALUES($1,$2,$3,'QUEUED',clock_timestamp()+$4*interval '1 millisecond') ON CONFLICT(id) DO NOTHING`,
-          [
-            definition.taskId,
-            definition,
-            digest(canonical(definition)),
-            definition.budget.timeoutMs,
-          ],
-        );
-        const saved = (
-          await client.query(
-            'SELECT definition_hash,deleted_at FROM pr_tasks WHERE id=$1',
-            [definition.taskId],
-          )
-        ).rows[0];
-        if (saved.definition_hash !== digest(canonical(definition)))
-          throw new ApiError(
-            409,
-            'CLEANUP_CONFLICT',
-            '清理身份已绑定其他定义，停止自动调度',
-          );
-        await client.query(
-          "UPDATE pr_case_cleanups SET state='QUEUED' WHERE parent_task_id=$1",
-          [job.parent_task_id],
-        );
-      }
-    });
   }
 
   /** 步骤快照随执行令牌写入；只允许当前执行的证据和完整原步骤集合。 */
@@ -612,6 +553,7 @@ export class Coordinator {
           continue;
         }
         if (
+          task.purpose === 'cleanup' ||
           task.comparison ||
           (task.executionMode && task.executionMode !== 'llm')
         )
@@ -627,41 +569,12 @@ export class Coordinator {
         if (task.sessionPlan && identityVersion !== 1 && identityVersion !== 2)
           continue;
         if (task.profilePlan && profileTabsVersion !== 1) continue;
-        const cleanup = await cleanupPlacement(client, task, routedNode);
-        if (cleanup.blocked) {
-          await recordQueueReason(client, task.taskId, cleanup.blocked);
-          continue;
-        }
-        if (task.resourceKey) {
-          const lock = await client.query(
-            'SELECT pg_try_advisory_xact_lock(hashtextextended($1, 2)) AS locked',
-            [task.resourceKey],
-          );
-          if (!lock.rows[0].locked) continue;
-          const busy = await client.query(
-            `SELECT 1 FROM pr_tasks other WHERE other.definition->>'resourceKey'=$1 AND other.id<>$2 AND (
-            other.state='RUNNING'
-            OR EXISTS(SELECT 1 FROM pr_executions e JOIN pr_sessions s ON s.execution_id=e.id WHERE e.task_id=other.id AND NOT s.closure_verified)
-            OR ($3::text IS NULL AND other.state='QUEUED' AND (other.created_at,other.id)<(SELECT created_at,id FROM pr_tasks WHERE id=$2))
-            OR (other.id<>coalesce($3,'') AND EXISTS(SELECT 1 FROM pr_case_cleanups c LEFT JOIN pr_tasks cleanup ON cleanup.id=c.task_id
-              WHERE c.parent_task_id=other.id AND c.state<>'SKIPPED'
-              AND EXISTS(SELECT 1 FROM pr_executions e WHERE e.task_id=other.id)
-              AND (cleanup.id IS NULL OR cleanup.state IN ('QUEUED','RUNNING') OR cleanup.state<>'COMPLETED' OR (cleanup.report->>'executionDisposition') IS DISTINCT FROM 'EXECUTED' OR (cleanup.report->>'verdict') IS DISTINCT FROM 'PASSED')))
-          ) LIMIT 1`,
-            [task.resourceKey, task.taskId, task.parentTaskId ?? null],
-          );
-          if (busy.rowCount) {
-            await recordQueueReason(client, task.taskId, 'RESOURCE_BUSY');
-            continue;
-          }
-        }
         const placement = identityPlacement(task, routedNode);
         if (placement.conflict) {
           await recordQueueReason(client, task.taskId, placement.conflict);
           continue;
         }
-        // 清理归属来自主任务执行记录，不随容量或重新配置迁移。
-        const requiredNode = cleanup.requiredNode ?? placement.requiredNode;
+        const requiredNode = placement.requiredNode;
         // 路由和显式身份节点是硬约束，合格节点按当前占用排序。
         const candidates = live
           .filter(
@@ -1775,7 +1688,6 @@ export class Coordinator {
 
   /** 到期、清理和投递使用同一个有界循环；调用方保证不会重入。 */
   async tick(): Promise<void> {
-    await this.scheduleCaseCleanups();
     if (!this.db.healthy)
       throw new ApiError(
         503,

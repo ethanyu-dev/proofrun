@@ -43,6 +43,7 @@ const MIGRATIONS = [
   '030-request-summaries.sql',
   '031-external-accounts.sql',
   '032-case-runs.sql',
+  '033-current-execution.sql',
 ];
 
 /** 所有业务事务使用同一连接；独占连接单独维护控制面实例锁。 */

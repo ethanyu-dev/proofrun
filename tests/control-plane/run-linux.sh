@@ -80,7 +80,10 @@ if [[ -n "${PROOFRUN_TEST_RUST_TOOLCHAIN:-}" ]]; then
 fi
 # macOS 自带 Bash 3 在 nounset 下不能直接展开空数组；未配置覆盖时不传入占位空参数。
 docker exec "$node_name" cargo ${toolchain[@]+"${toolchain[@]}"} --version
-docker exec "$node_name" cargo ${toolchain[@]+"${toolchain[@]}"} build --locked ${offline[@]+"${offline[@]}"} --workspace
+# 真实浏览器必须使用发布默认路径；故障引擎仅在显式夹具构建中可用。
+fixture_features=()
+if [[ "$real_agent" != true ]]; then fixture_features=(--features protocol-fixtures); fi
+docker exec "$node_name" cargo ${toolchain[@]+"${toolchain[@]}"} build --locked ${offline[@]+"${offline[@]}"} --workspace ${fixture_features[@]+"${fixture_features[@]}"}
 # 只传递评测所需白名单；不挂载开发凭据文件，也不将秘密展开到命令行。
 evaluation_env=()
 if [[ "$evaluation" == true ]]; then
@@ -110,12 +113,18 @@ if [[ "${PROOFRUN_TEST_FULL_LINUX:-false}" == true ]]; then
   # systemd/gateway 使用故障引擎，能力和 HITL 使用真实 Chromium，均不访问业务账号。
   for suite in tests/browser-node/input_network_smoke.py tests/browser-node/profile_tabs_smoke.py tests/browser-node/external_account_smoke.py tests/browser-node/systemd_integration.py tests/browser-node/gateway_integration.py tests/browser-node/capabilities_smoke.py tests/hitl/linux_real_browser.py; do
     suite_env=("${engine_env[@]}")
+    suite_binary=/target/debug/proofrun-node
     if [[ "$suite" == tests/browser-node/systemd_integration.py || "$suite" == tests/browser-node/gateway_integration.py ]]; then
       # 配置文件指定故障引擎；真实引擎环境变量优先级更高，必须在此移除。
+      # 单独保存夹具二进制，后续真实浏览器仍运行默认构建。
+      if ! docker exec "$node_name" test -x /target/fixtures/debug/proofrun-node; then
+        docker exec "$node_name" env CARGO_TARGET_DIR=/target/fixtures cargo ${toolchain[@]+"${toolchain[@]}"} build --locked ${offline[@]+"${offline[@]}"} --workspace --features protocol-fixtures
+      fi
+      suite_binary=/target/fixtures/debug/proofrun-node
       suite_env=(XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus)
     fi
     docker exec "$node_name" runuser -u proofrun -- \
-      env -u PROOFRUN_AGENT_BROWSER_BIN -u PROOFRUN_CHROME_BIN "${suite_env[@]}" PROOFRUN_TEST_BINARY=/target/debug/proofrun-node \
+      env -u PROOFRUN_AGENT_BROWSER_BIN -u PROOFRUN_CHROME_BIN "${suite_env[@]}" PROOFRUN_TEST_BINARY="$suite_binary" \
       "PROOFRUN_DATABASE_URL=postgresql://postgres:proofrun-isolated-test@$postgres_name:5432/proofrun" \
       python3 "$suite"
   done

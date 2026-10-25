@@ -5,6 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[features]
+# 仅供 systemd/协议故障夹具，正式发布和普通构建不启用。
+protocol-fixtures = []
+
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["std", "serde"] }
 serde.workspace = true

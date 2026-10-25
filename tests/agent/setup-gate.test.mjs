@@ -127,8 +127,13 @@ for (const outcome of ['incomplete', 'blocked']) {
     const workflow = new Workflow('核实当前账号');
     workflow.apply(
       {
-        assessments: [
-          { stepId: 'step-1', outcome, summary: '尚未核实', evidenceRefs: [] },
+        requirements: [
+          {
+            id: 'step-1',
+            status: outcome,
+            summary: '尚未核实',
+            evidenceRefs: [],
+          },
         ],
       },
       new Set(),
@@ -150,8 +155,8 @@ for (const partial of [false, true]) {
           context.task.requirements.map((s) => s.requirement),
           ['准备指定的验证环境', '资格应符合输入中约定的甲类条件'],
         );
-        if (partial) value.workflow.assessments.pop();
-        else delete value.workflow;
+        if (partial) value.progress.requirements.pop();
+        else delete value.progress;
       }
       return value;
     });
@@ -222,8 +227,8 @@ test('人工交还后仍未就绪只交接一次并跳过后续业务', async ()
     (context) => {
       if (context.task.stepId !== 'prepare') return complete(context);
       const value = complete(context);
-      value.workflow.assessments[1].outcome = 'incomplete';
-      value.workflow.assessments[1].summary = '账号角色未确认';
+      value.progress.requirements[1].status = 'incomplete';
+      value.progress.requirements[1].summary = '账号角色未确认';
       return value;
     },
     (execution) => {
@@ -251,7 +256,7 @@ test('拒绝用人工交还前的证据证明环境就绪', async () => {
         };
       }
       const value = complete(context);
-      for (const assessment of value.workflow.assessments)
+      for (const assessment of value.progress.requirements)
         assessment.evidenceRefs = oldRefs;
       return value;
     },
@@ -289,7 +294,8 @@ test('已复用登录态也不能跳过显式账号前置条件', async () => {
 test('环境就绪后业务失败仍归产品验收结论', async () => {
   const { report } = await run((context) => {
     const value = complete(context);
-    if (context.task.stepId === 'verify') value.criteria[0].verdict = 'FAILED';
+    if (context.task.stepId === 'verify')
+      value.progress.criteria[0].verdict = 'FAILED';
     return value;
   });
   assert.equal(report.executionDisposition, 'EXECUTED');
@@ -307,12 +313,12 @@ test('最大数量的 setup 约束不能截断尾项', () => {
   assert.equal(workflow.view().steps.length, 33);
   workflow.apply(
     {
-      assessments: workflow
+      requirements: workflow
         .view()
         .steps.slice(0, 32)
         .map((s) => ({
-          stepId: s.id,
-          outcome: 'complete',
+          id: s.id,
+          status: 'complete',
           summary: '夹具确认',
           evidenceRefs: ['e'],
         })),
@@ -380,7 +386,7 @@ test('准备完成声明必须整批通过校验后才保存', async () => {
   const { report, client } = await run(
     (context, turn) => {
       const value = complete(context);
-      if (turn === 1) value.criteria.pop();
+      if (turn === 1) value.progress.criteria.pop();
       if (turn === 2) {
         assert.deepEqual(context.state.criteria, []);
         return {
@@ -428,13 +434,13 @@ test('人工登录成功后仍可针对未解决条件再次交接', async () =>
       if (turn === 2) {
         assert.equal(control.requests.length, 1);
         const value = complete(context);
-        value.workflow.assessments[1].outcome = 'incomplete';
-        value.workflow.assessments[1].summary = '已登录，但甲类资格尚未核实';
+        value.progress.requirements[1].status = 'incomplete';
+        value.progress.requirements[1].summary = '已登录，但甲类资格尚未核实';
         return {
           type: 'verification.block',
           reasonCode: 'IDENTITY_UNCONFIRMED',
           summary: '已登录，仍需确认甲类资格',
-          workflow: value.workflow,
+          workflow: value.progress,
         };
       }
       if (turn === 3) {
@@ -467,12 +473,12 @@ test('同一未解决条件不能通过改写原因反复请求人工', async ()
   const { report, client } = await run(
     (context, turn) => {
       const value = complete(context);
-      value.workflow.assessments[1].outcome = 'incomplete';
-      value.workflow.assessments[1].summary = `第 ${turn} 次仍未核实甲类资格`;
+      value.progress.requirements[1].status = 'incomplete';
+      value.progress.requirements[1].summary = `第 ${turn} 次仍未核实甲类资格`;
       return {
         type: 'verification.block',
         summary: `原因变化 ${turn}`,
-        workflow: value.workflow,
+        workflow: value.progress,
       };
     },
     (execution) => {
@@ -492,12 +498,12 @@ test('不同未解决条件也受整次执行三轮交接上限约束', async ()
   const { report, client } = await run(
     (context, turn) => {
       const value = complete(context);
-      value.workflow.assessments[turn].outcome = 'incomplete';
-      value.workflow.assessments[turn].summary = `未确认条件 ${turn}`;
+      value.progress.requirements[turn].status = 'incomplete';
+      value.progress.requirements[turn].summary = `未确认条件 ${turn}`;
       return {
         type: 'verification.block',
         summary: `缺少条件 ${turn}`,
-        workflow: value.workflow,
+        workflow: value.progress,
       };
     },
     (execution) => {
@@ -515,9 +521,9 @@ test('准备停滞保存具体条件与阻塞时截图', async () => {
   const { report, client } = await run(
     (context, turn) => {
       const value = complete(context);
-      const workflow = value.workflow;
-      workflow.assessments[1].outcome = 'incomplete';
-      workflow.assessments[1].summary =
+      const workflow = value.progress;
+      workflow.requirements[1].status = 'incomplete';
+      workflow.requirements[1].summary =
         '已登录，但未找到如何获得奖励页签，GitHub 绑定状态未确认';
       return turn === 1
         ? { type: 'browser.observe', workflow }

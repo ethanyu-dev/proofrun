@@ -11,7 +11,6 @@ import pg from 'pg';
 import { retain } from '../src/maintenance.js';
 import { Database } from '../src/db.js';
 import { canonical, digest } from '../src/domain.js';
-import { cleanupTask } from '../src/modules/cases/structured.js';
 import { buildApp } from '../src/app.js';
 import type { CaseProfile } from '../src/modules/cases/profile.js';
 import {
@@ -412,7 +411,8 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       assert.equal(first.task.taskId, 'case-v2-v2-first');
       assert.equal(second.task.taskId, 'case-v2-v2-second');
       assert.equal(independent.task.taskId, 'case-v2-v2-independent');
-      assert.notEqual(first.task.resourceKey, second.task.resourceKey);
+      assert.equal(first.task.resourceKey, undefined);
+      assert.equal(second.task.resourceKey, undefined);
       assert.equal(await claim(true), null);
       await ready(first);
       await ready(second);
@@ -1271,7 +1271,8 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       const execution = await claim(true);
       assert.ok(execution, '旧清理失败不能阻塞新的 caseId');
       assert.equal(execution.task.taskId, `case-v2-${next.caseId}`);
-      assert.notEqual(execution.task.resourceKey, first.task.resourceKey);
+      assert.equal(execution.task.resourceKey, undefined);
+      assert.equal(first.task.resourceKey, undefined);
       assert.equal(
         (await api('GET', `/v2/cases/${input.caseId}`)).data.cleanup.status,
         'SKIPPED',
@@ -1283,234 +1284,6 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
     });
 
     // 范围：历史独立清理的主任务终态、关闭回执、原节点归属及跨 case 独立；数据库构造旧版记录，节点不执行业务浏览器。
-    await suite.test('历史清理等待所属 case 关闭且始终沿用原节点', async () => {
-      const original = await addNode('case-fixture', 2);
-      const spare = await addNode('case-fixture', 2);
-      const host = 'cleanup-parent.example.test';
-      await api('POST', `/v1/nodes/${original.id}/routing`, {
-        domains: [host],
-        revision: 0,
-      });
-      await api('POST', `/v1/nodes/${spare.id}/routing`, {
-        domains: ['cleanup-other.example.test'],
-        revision: 0,
-      });
-      const input = {
-        caseId: 'cleanup-parent-affinity',
-        platform: '清理顺序夹具',
-        entry: `https://${host}`,
-        steps: [
-          {
-            type: 'verification',
-            url: `https://${host}`,
-            exec_order: 1,
-            description: '读取夹具页面',
-            policy: [],
-            expected: ['页面存在'],
-          },
-        ],
-        cleanup: [
-          {
-            url: `https://${host}`,
-            exec_order: 1,
-            description: '恢复已声明的夹具状态',
-          },
-        ],
-      };
-      const unrelated = {
-        ...input,
-        caseId: 'cleanup-other-active',
-        entry: 'https://cleanup-other.example.test',
-        cleanup: [],
-      };
-      await api('POST', '/v2/cases', [input, unrelated]);
-      // 新提交已使用同任务收尾；领取前构造升级前的冻结定义与清理意图，验证兼容调度而非旧创建行为。
-      const legacy = (
-        await sql.query('SELECT definition FROM pr_tasks WHERE id=$1', [
-          `case-v2-${input.caseId}`,
-        ])
-      ).rows[0].definition as VerificationTask;
-      const cleanupIds = new Set(legacy.cleanupStepIds);
-      const businessSteps = legacy.steps!.filter(
-        (step) => !cleanupIds.has(step.stepId!),
-      );
-      assert(businessSteps[0]);
-      legacy.steps = [businessSteps[0], ...businessSteps.slice(1)];
-      legacy.acceptanceCriteria = legacy.acceptanceCriteria.filter(
-        (criterion) => !cleanupIds.has(criterion.stepId!),
-      );
-      delete legacy.cleanupStepIds;
-      delete legacy.stepBudget;
-      const legacyCleanup = cleanupTask(legacy)!;
-      await sql.query(
-        'UPDATE pr_tasks SET definition=$2,definition_hash=$3 WHERE id=$1',
-        [legacy.taskId, legacy, digest(canonical(legacy))],
-      );
-      await sql.query(
-        'INSERT INTO pr_case_cleanups(parent_task_id,task_id,definition) VALUES($1,$2,$3)',
-        [legacy.taskId, legacyCleanup.taskId, legacyCleanup],
-      );
-      const parent = await claim(true);
-      const other = await claim(true);
-      assert.equal(parent.task.taskId, `case-v2-${input.caseId}`);
-      assert.equal(parent.nodeId, original.id);
-      assert.equal(other.nodeId, spare.id);
-      await ready(parent);
-      await ready(other);
-      const otherWorker = new SimulatedWorker(base, other);
-      const blockerDefinition = {
-        ...task(original.pool),
-        target: { url: `https://${host}` },
-      };
-      await submit(blockerDefinition);
-      const blocker = await claim();
-      assert.equal(blocker.nodeId, original.id);
-      await ready(blocker);
-      const blockerWorker = new SimulatedWorker(base, blocker);
-      try {
-        const cleanupId = `cleanup-${parent.task.taskId}`;
-        assert.equal((await api('GET', `/v1/tasks/${cleanupId}`)).status, 404);
-        // 模拟升级前已经排队的清理记录，领取仍必须复核主任务状态；不通过公开接口伪造内部任务。
-        const definition = (
-          await sql.query(
-            'SELECT definition FROM pr_case_cleanups WHERE parent_task_id=$1',
-            [parent.task.taskId],
-          )
-        ).rows[0].definition;
-        await sql.query(
-          "INSERT INTO pr_tasks(id,definition,definition_hash,state,deadline_at) VALUES($1,$2,$3,'QUEUED',clock_timestamp()+interval '60 seconds')",
-          [cleanupId, definition, digest(canonical(definition))],
-        );
-        assert.equal(await claim(true), null);
-        assert.equal(
-          (await api('GET', `/v1/tasks/${cleanupId}`)).data.queueReason.code,
-          'CLEANUP_PARENT_PENDING',
-        );
-        original.ignoreClose = true;
-        await api('POST', `/v1/tasks/${parent.task.taskId}/cancel`);
-        assert.equal(await claim(true), null);
-        const held = (await api('GET', `/v1/tasks/${cleanupId}`)).data;
-        assert.equal(held.queueReason.code, 'CLEANUP_PARENT_PENDING');
-        assert.deepEqual(held.executions, []);
-        original.ignoreClose = false;
-        original.closed(parent.sessionId);
-        await cleaned(parent.task.taskId);
-        await until(
-          async () =>
-            (
-              await sql.query(
-                'SELECT state FROM pr_case_cleanups WHERE parent_task_id=$1',
-                [parent.task.taskId],
-              )
-            ).rows[0].state,
-          (state) => state === 'QUEUED',
-        );
-        const listed = (await api('GET', '/v1/tasks?q=cleanup-parent-affinity'))
-          .data.tasks;
-        assert.equal(
-          listed.find((t: { id: string }) => t.id === cleanupId).parentTaskId,
-          parent.task.taskId,
-        );
-        // 重新配置路由不得将清理迁到新节点，即使新节点同属一个资源池。
-        await api('POST', `/v1/nodes/${original.id}/routing`, {
-          domains: [],
-          revision: 1,
-        });
-        await api('POST', `/v1/nodes/${spare.id}/routing`, {
-          domains: ['cleanup-other.example.test', host],
-          revision: 1,
-        });
-        assert.equal(await claim(true), null);
-        assert.equal(
-          (await api('GET', `/v1/tasks/${cleanupId}`)).data.queueReason.code,
-          'CLEANUP_NODE_CONFLICT',
-        );
-        await api('POST', `/v1/nodes/${spare.id}/routing`, {
-          domains: ['cleanup-other.example.test'],
-          revision: 2,
-        });
-        original.close();
-        await until(
-          async () =>
-            (await api('GET', '/v1/nodes')).data.nodes.find(
-              (n: { id: string }) => n.id === original.id,
-            ).online,
-          (online) => !online,
-        );
-        assert.equal(await claim(true), null);
-        assert.equal(
-          (await api('GET', `/v1/tasks/${cleanupId}`)).data.queueReason.code,
-          'NO_ELIGIBLE_NODE',
-        );
-        await original.connect();
-        await until(
-          async () =>
-            (await api('GET', '/v1/nodes')).data.nodes.find(
-              (n: { id: string }) => n.id === original.id,
-            ).online,
-          Boolean,
-        );
-        // 心跳将容量收紧到仍在运行的一个会话，验证无空闲容量时不会迁移。
-        original.capacityOverride = 1;
-        original.heartbeat();
-        await until(
-          async () =>
-            (await api('GET', '/v1/nodes')).data.nodes.find(
-              (n: { id: string }) => n.id === original.id,
-            ).capacity,
-          (capacity) => capacity === 1,
-        );
-        assert.equal(await claim(true), null);
-        assert.equal(
-          (await api('GET', `/v1/tasks/${cleanupId}`)).data.queueReason.code,
-          'NODE_CAPACITY',
-        );
-        await blockerWorker.close();
-        await api('POST', `/v1/tasks/${blocker.task.taskId}/cancel`);
-        await cleaned(blocker.task.taskId);
-        // 关联记录不一致时不能通过名称猜测节点，恢复精确关联后才允许领取。
-        await sql.query(
-          'UPDATE pr_case_cleanups SET task_id=$2 WHERE parent_task_id=$1',
-          [parent.task.taskId, `missing-${cleanupId}`],
-        );
-        assert.equal(await claim(true), null);
-        assert.equal(
-          (await api('GET', `/v1/tasks/${cleanupId}`)).data.queueReason.code,
-          'CLEANUP_PARENT_MISSING',
-        );
-        await sql.query(
-          'UPDATE pr_case_cleanups SET task_id=$2 WHERE parent_task_id=$1',
-          [parent.task.taskId, cleanupId],
-        );
-        const cleanup = await until(
-          () => claim(true),
-          (value) => value !== null,
-        );
-        assert.equal(cleanup.task.taskId, cleanupId);
-        assert.equal(cleanup.nodeId, parent.nodeId);
-        assert.equal(
-          (await api('GET', `/v1/tasks/${cleanupId}`)).data.queueReason,
-          null,
-        );
-        assert.equal(
-          (await api('GET', `/v1/tasks/${other.task.taskId}`)).data.state,
-          'RUNNING',
-        );
-        await api('POST', `/v1/tasks/${cleanupId}/cancel`);
-        await cleaned(cleanupId);
-      } finally {
-        await blockerWorker.close();
-        await api('POST', `/v1/tasks/${blocker.task.taskId}/cancel`);
-        await cleaned(blocker.task.taskId);
-        await otherWorker.close();
-        await api('POST', `/v1/tasks/${other.task.taskId}/cancel`);
-        await cleaned(other.task.taskId);
-        original.close();
-        spare.close();
-      }
-    });
-
-    // 范围：真实 HTTP 与数据库验证 case 权限、入口必填、描述映射、并发幂等和取消；不运行模型或浏览器。
     await suite.test('公开 case 入口只接收业务概念并隐藏平台配置', async () => {
       const input = {
         caseId: 'case-http-fixture',

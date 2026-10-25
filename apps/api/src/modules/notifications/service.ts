@@ -145,7 +145,7 @@ export class CaseNotifications {
       SELECT $1,COALESCE(t.definition#>>'{comparison,id}',t.id)
       FROM pr_tasks t JOIN pr_feishu_destinations d ON d.id=$1
       WHERE t.created_at>=d.started_at AND COALESCE(t.definition->>'purpose','verification')<>'cleanup'
-        AND NOT EXISTS(SELECT 1 FROM pr_verification_request_arms a WHERE a.task_id=t.id)
+        AND NOT EXISTS(SELECT 1 FROM pr_request_runs a WHERE a.task_id=t.id)
         AND NOT EXISTS(SELECT 1 FROM pr_node_profiles p WHERE p.task_id=t.id)
         AND NOT EXISTS(SELECT 1 FROM pr_feishu_runs r WHERE r.destination_id=$1 AND r.run_key=COALESCE(t.definition#>>'{comparison,id}',t.id))
       ORDER BY t.created_at,t.id LIMIT $2 ON CONFLICT DO NOTHING`,

@@ -49,7 +49,7 @@ function record(context) {
   return {
     type: 'verification.record',
     summary: '第一项有证据，先保存',
-    criteria: decision.criteria.slice(0, 1),
+    criteria: decision.progress.criteria.slice(0, 1),
   };
 }
 
@@ -76,7 +76,10 @@ test('重复登记保留已有结论并给出可恢复的收尾路径', async (t
           type: 'verification.record',
           summary: '第一项缺少提示证据',
           criteria: [
-            { ...finish(context).criteria[0], verdict: 'INCONCLUSIVE' },
+            {
+              ...finish(context).progress.criteria[0],
+              verdict: 'INCONCLUSIVE',
+            },
           ],
         };
       });
@@ -204,7 +207,7 @@ test('误用观察编号或抄错附件 ID 后可按精确反馈纠正', async (
     );
     attempts++;
     if (attempts === 1) {
-      output.criteria = [];
+      output.progress.criteria = [];
       output.workflow = {
         assessments: [
           {
@@ -227,7 +230,7 @@ test('误用观察编号或抄错附件 ID 后可按精确反馈纠正', async (
           .includes(context.page.observationId),
       );
       assert.deepEqual(context.state.criteria, []);
-      output.criteria[0].evidenceRefs = ['typo-artifact'];
+      output.progress.criteria[0].evidenceRefs = ['typo-artifact'];
     } else {
       assert.match(
         context.feedback.map((item) => item.message ?? item.code).join(' '),
@@ -377,7 +380,7 @@ test('完成声明合并已保存项目，setup 不接受伪造验收身份，�
     if (context.task.stepId === 'step-1') {
       if (!context.state.criteria.length) return record(context);
       const decision = finish(context);
-      decision.criteria.shift();
+      decision.progress.criteria.shift();
       return decision;
     }
     if (context.state.phase === 'CLEANUP') {
@@ -536,14 +539,17 @@ test('补齐证据后的 finish 可升级暂存项并幂等合并已通过项', 
       };
     const decision = finish(context);
     if (stage++ === 0) {
-      initialEvidence = decision.criteria[1].evidenceRefs[0];
+      initialEvidence = decision.progress.criteria[1].evidenceRefs[0];
       decision.type = 'verification.record';
-      decision.criteria[1].verdict = 'INCONCLUSIVE';
+      decision.progress.criteria[1].verdict = 'INCONCLUSIVE';
       return decision;
     }
     if (stage === 2)
       return { type: 'browser.act', action: 'scroll', value: 'down' };
-    assert.notEqual(decision.criteria[1].evidenceRefs[0], initialEvidence);
+    assert.notEqual(
+      decision.progress.criteria[1].evidenceRefs[0],
+      initialEvidence,
+    );
     return decision;
   });
   assert.equal(report.verdict, 'PASSED');
@@ -601,7 +607,8 @@ test('提供给模型的证据列表与当前步骤提交边界一致', async ()
     ids.forEach((id) => seen.add(id));
     const decision = finish(context);
     decision.evidenceRefs = ids;
-    for (const criterion of decision.criteria) criterion.evidenceRefs = ids;
+    for (const criterion of decision.progress.criteria)
+      criterion.evidenceRefs = ids;
     return decision;
   });
   assert.equal(report.verdict, 'PASSED');

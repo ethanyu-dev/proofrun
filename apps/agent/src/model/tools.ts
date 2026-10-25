@@ -1,7 +1,7 @@
 import { TOOL_DESCRIPTIONS } from '../prompts/tools.js';
 import type { DecisionContextData } from '../execution/context.js';
 import type { AgentDecision } from '@proofrun/contracts';
-import { WORKFLOW_SCHEMA } from '../execution/workflow.js';
+import { agentDecisionSchema } from '@proofrun/contracts';
 import { constrainEvidenceRefs } from './evidence-refs.js';
 import { SCROLL_DIRECTIONS } from '../execution/scroll-distance.js';
 
@@ -19,52 +19,20 @@ export function decisionTools(
   tools: DecisionTool[],
 ): DecisionTool[] {
   const ids = context.task.criteria.map((item) => item.id);
-  const criteria = structuredClone(
-    (
-      tools.find((tool) => tool.type === 'verification.record')!.parameters as {
-        properties: {
-          criteria: { items: { properties: Record<string, unknown> } };
-        };
-      }
-    ).properties.criteria,
-  );
+  const progress = structuredClone(agentDecisionSchema.definitions.progress);
+  const criteria = progress.properties.criteria;
   criteria.items.properties.criterionId = ids.length
     ? { type: 'string', enum: ids }
     : { type: 'string' };
-  const requirements = structuredClone(WORKFLOW_SCHEMA.properties.assessments);
-  const {
-    stepId: _stepId,
-    outcome: _outcome,
-    ...fields
-  } = requirements.items.properties;
-  const progress = {
-    type: 'object',
-    additionalProperties: false,
-    properties: {
-      requirements: {
-        ...requirements,
-        maxItems: context.task.requirements.length,
-        items: {
-          ...requirements.items,
-          properties: {
-            ...fields,
-            id: {
-              type: 'string',
-              ...(context.task.requirements.length
-                ? { enum: context.task.requirements.map((item) => item.id) }
-                : {}),
-            },
-            status: {
-              type: 'string',
-              enum: ['complete', 'incomplete', 'blocked'],
-            },
-          },
-          required: ['id', 'status', 'summary', 'evidenceRefs'],
-        },
-      },
-      criteria: { ...criteria, minItems: 0, maxItems: ids.length },
-      readings: structuredClone(WORKFLOW_SCHEMA.properties.readings),
-    },
+  criteria.minItems = 0;
+  criteria.maxItems = ids.length;
+  const requirements = progress.properties.requirements;
+  requirements.maxItems = context.task.requirements.length;
+  requirements.items.properties.id = {
+    type: 'string',
+    ...(context.task.requirements.length
+      ? { enum: context.task.requirements.map((item) => item.id) }
+      : {}),
   };
   return tools
     .filter(
@@ -97,17 +65,12 @@ export function decisionTools(
         required?: string[];
         allOf?: object[];
       };
-      delete parameters.properties.criteria;
-      parameters.required = (parameters.required ?? []).filter(
-        (key) => key !== 'criteria',
-      );
       parameters.properties.progress = structuredClone(progress);
+      // record 的必填 progress 已由 Contracts 定义；这里只补充 finish 的阶段约束。
       if (
         tool.type === 'verification.finish' &&
         ['PREPARING', 'CHECKING'].includes(context.state.phase)
       )
-        parameters.required = [...(parameters.required ?? []), 'progress'];
-      if (tool.type === 'verification.record')
         parameters.required = [...(parameters.required ?? []), 'progress'];
       if (tool.type === 'browser.act') {
         parameters.properties.revisitReason = {
