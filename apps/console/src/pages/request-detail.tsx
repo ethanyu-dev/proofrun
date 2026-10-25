@@ -53,7 +53,12 @@ export function RequestDetailPage({
           </a>
           {reports && value && <RequestExport value={value} />}
           {!reports && value && (
-            <RequestRerun key={id} api={api} value={value} />
+            <RequestRerun
+              key={id}
+              api={api}
+              value={value}
+              onComplete={resource.refresh}
+            />
           )}
         </div>
       </header>
@@ -76,7 +81,12 @@ export function RequestDetailPage({
           {reports ? (
             <RequestCases api={api} value={value} />
           ) : (
-            <RequestTaskCases value={value} />
+            <RequestTaskCases
+              key={id}
+              api={api}
+              value={value}
+              onRerun={resource.refresh}
+            />
           )}
         </>
       )}

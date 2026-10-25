@@ -1,3 +1,4 @@
+import { toast } from 'sonner';
 import { Button } from './ui/button';
 import { useEffect, useRef, useState } from 'react';
 import type {
@@ -11,9 +12,15 @@ import { ErrorNotice } from './ui';
 export function RequestRerun({
   api,
   value,
+  caseId,
+  onComplete,
 }: {
   api: ApiClient;
   value: RequestResultV2;
+  /** 省略时整体重跑，传入时仅重跑当前请求中的该成员。 */
+  caseId?: string;
+  /** 成功后刷新原请求，避免仍显示旧运行。 */
+  onComplete: () => void;
 }) {
   const draft = useRef<RerunInput | null>(null);
   const active = useRef<AbortController | null>(null);
@@ -23,24 +30,29 @@ export function RequestRerun({
   const rerun = async () => {
     if (active.current) return;
     draft.current ??= {
-      requestId: `request-${crypto.randomUUID()}`,
-      caseIds: value.cases.map((c) => ({
-        sourceCaseId: c.caseId,
-        runId: `run-${crypto.randomUUID()}`,
-      })) as RerunInput['caseIds'],
+      caseIds: value.cases
+        .filter((c) => !caseId || c.caseId === caseId)
+        .map((c) => ({
+          sourceCaseId: c.caseId,
+          runId: `run-${crypto.randomUUID()}`,
+        })) as RerunInput['caseIds'],
     };
     const controller = new AbortController();
     active.current = controller;
     setPending(true);
     setError(undefined);
     try {
-      const result = await api.json<RequestResultV2>(
+      await api.json<RequestResultV2>(
         `/v2/requests/${encodeURIComponent(value.requestId)}/rerun`,
         controller.signal,
         draft.current,
       );
-      if (!controller.signal.aborted)
-        location.hash = `/requests/${encodeURIComponent(result.requestId)}`;
+      if (!controller.signal.aborted) {
+        // 仅确认成功后更换身份；网络错误后的重试必须沿用原映射。
+        draft.current = null;
+        onComplete();
+        toast.success(caseId ? '已提交 case 重跑' : '已提交整体重跑');
+      }
     } catch (error) {
       if (!controller.signal.aborted) setError(errorMessage(error));
     } finally {
@@ -51,13 +63,14 @@ export function RequestRerun({
   return (
     <div>
       <Button
+        type="button"
         variant="outline"
         className="button button-secondary"
         disabled={pending || !value.cases.length}
         onClick={() => void rerun()}
-        title="沿用各 case 冻结环境与执行模式，创建新请求及运行记录；采用当前预算策略。"
+        title="在当前请求内新增 LLM 运行，保留 case 身份和历史记录；采用当前预算策略。"
       >
-        {pending ? '正在创建重跑请求…' : '重跑整个请求'}
+        {pending ? '正在提交重跑…' : caseId ? '重跑此 case' : '重跑整个请求'}
       </Button>
       <ErrorNotice message={error} />
     </div>

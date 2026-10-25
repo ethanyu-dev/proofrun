@@ -96,7 +96,13 @@ test('任务与报告分别承载目标进度和验收结果', () => {
       },
     ],
   } as unknown as RequestResultV2;
-  const task = renderToStaticMarkup(createElement(RequestTaskCases, { value }));
+  const task = renderToStaticMarkup(
+    createElement(RequestTaskCases, {
+      value,
+      api: new ApiClient('fixture'),
+      onRerun: () => {},
+    }),
+  );
   assert.match(task, /验证目标/);
   assert.match(task, /显示预期标题/);
   assert.match(task, /步骤完成 1 \/ 3/);
@@ -118,7 +124,11 @@ test('任务与报告分别承载目标进度和验收结果', () => {
   for (const status of ['RUNNING', 'QUEUED'] as const) {
     selectedArm.result.status = status;
     const active = renderToStaticMarkup(
-      createElement(RequestTaskCases, { value }),
+      createElement(RequestTaskCases, {
+        value,
+        api: new ApiClient('fixture'),
+        onRerun: () => {},
+      }),
     );
     assert.match(active, /split-jev\?request=split-request/);
     if (status === 'RUNNING') {
@@ -134,7 +144,11 @@ test('任务与报告分别承载目标进度和验收结果', () => {
   }
   value.cases[0]!.arms = [];
   const missing = renderToStaticMarkup(
-    createElement(RequestTaskCases, { value }),
+    createElement(RequestTaskCases, {
+      value,
+      api: new ApiClient('fixture'),
+      onRerun: () => {},
+    }),
   );
   assert.match(missing, /暂无执行记录/);
   assert.match(missing, /显示预期标题/);

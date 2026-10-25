@@ -1042,6 +1042,214 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
         }
       },
     );
+    // 范围：真实数据库中的整体原地重跑、并发幂等、历史保留与共享隔离；不运行浏览器或模型。
+    await suite.test('整体重跑保留请求并原子切换全部成员', async () => {
+      await submit('in-place', ['in-place-a', 'in-place-b']);
+      await submit('in-place-shared', ['in-place-a']);
+      const before = (await call('/v2/requests/in-place')).json();
+      const shared = (await call('/v2/requests/in-place-shared')).json();
+      const body = {
+        caseIds: ['in-place-a', 'in-place-b'].map((sourceCaseId) => ({
+          sourceCaseId,
+          runId: `first-${sourceCaseId}`,
+        })),
+      };
+      // 先建立派生摘要，再检查成员切换使它失效并重算。
+      await call('/v2/requests');
+      const responses = await Promise.all(
+        Array.from({ length: 3 }, () =>
+          call('/v2/requests/in-place/rerun', body),
+        ),
+      );
+      for (const response of responses) {
+        assert.equal(response.statusCode, 202, response.body);
+        const result = response.json<RequestResultV2>();
+        assert.ok(validateRequestResultV2(result));
+        assert.equal(result.requestId, before.requestId);
+        assert.equal(result.createdAt, before.createdAt);
+        assert.equal(result.title, before.title);
+        assert.equal(result.sourceRequestId, null);
+        assert.equal(result.executionCounts.total, 2);
+        assert.equal(result.executionStatus, 'QUEUED');
+        assert.deepEqual(
+          result.cases.map((c) => c.arms.map((a) => a.taskId)),
+          [['case-run-first-in-place-a'], ['case-run-first-in-place-b']],
+        );
+      }
+      assert.deepEqual(
+        (await call('/v2/requests/in-place-shared')).json().cases,
+        shared.cases,
+      );
+      assert.equal(
+        (
+          await sql.query(
+            "SELECT count(*)::int n FROM pr_verification_requests WHERE request_id LIKE 'in-place%'",
+          )
+        ).rows[0].n,
+        2,
+      );
+      assert.equal(
+        (
+          await sql.query(
+            "SELECT count(*)::int n FROM pr_tasks WHERE id LIKE 'case-run-first-in-place-%'",
+          )
+        ).rows[0].n,
+        2,
+      );
+      for (const member of before.cases)
+        for (const arm of member.arms)
+          assert.equal((await call(`/v1/tasks/${arm.taskId}`)).statusCode, 200);
+    });
+    // 范围：单成员切换、旧操作重试不倒退、冲突整批回滚与校验；不验证外部执行。
+    await suite.test(
+      '单 case 重跑不影响其他成员，失败不留下部分运行',
+      async () => {
+        const path = '/v2/requests/in-place/rerun';
+        const single = {
+          caseIds: [{ sourceCaseId: 'in-place-a', runId: 'second-in-place-a' }],
+        };
+        const response = await call(path, single);
+        assert.equal(response.statusCode, 202, response.body);
+        const current = response.json().cases;
+        assert.equal(current[0].arms[0].taskId, 'case-run-second-in-place-a');
+        assert.equal(current[1].arms[0].taskId, 'case-run-first-in-place-b');
+        const old = await call(path, {
+          caseIds: ['in-place-b', 'in-place-a'].map((sourceCaseId) => ({
+            sourceCaseId,
+            runId: `first-${sourceCaseId}`,
+          })),
+        });
+        assert.equal(old.statusCode, 202, old.body);
+        assert.deepEqual(old.json().cases, current);
+        assert.equal(
+          (
+            await call(path, {
+              ...single,
+              timeBudget: { stepTimeoutMs: 120000 },
+            })
+          ).statusCode,
+          409,
+        );
+        // 第一项先完成编译，第二项复用已有运行触发事务冲突，不能残留第一项。
+        const conflict = await call(path, {
+          caseIds: [
+            { sourceCaseId: 'in-place-a', runId: 'rollback-in-place-a' },
+            { sourceCaseId: 'in-place-b', runId: 'first-in-place-b' },
+          ],
+        });
+        assert.equal(conflict.statusCode, 409, conflict.body);
+        assert.equal(
+          (
+            await sql.query(
+              "SELECT count(*)::int n FROM pr_tasks WHERE id='case-run-rollback-in-place-a'",
+            )
+          ).rows[0].n,
+          0,
+        );
+        assert.deepEqual(
+          (await call('/v2/requests/in-place')).json().cases,
+          current,
+        );
+        for (const caseIds of [
+          [],
+          [single.caseIds[0], single.caseIds[0]],
+          [{ sourceCaseId: 'outsider', runId: 'unused' }],
+          [
+            { sourceCaseId: 'in-place-a', runId: 'duplicate' },
+            { sourceCaseId: 'in-place-b', runId: 'duplicate' },
+          ],
+        ])
+          assert.equal((await call(path, { caseIds })).statusCode, 400);
+        assert.equal(
+          (await app.inject({ method: 'POST', url: path, payload: single }))
+            .statusCode,
+          401,
+        );
+      },
+    );
+    // 范围：请求自己的冻结配置与旧分析失效、新代次生成；不代表分析质量或真实 worker 回执。
+    await suite.test('重跑使用请求当前配置并使旧分析失效', async () => {
+      await sql.query(
+        "UPDATE pr_tasks SET state='COMPLETED' WHERE id IN ('case-run-second-in-place-a','case-run-first-in-place-b')",
+      );
+      const analysisPath = '/v2/requests/in-place/analysis';
+      assert.equal((await call(analysisPath, {})).statusCode, 202);
+      const oldAnalysis = (await call(analysisPath)).json();
+      // 为同一逻辑 case 制造另一份独立运行，冻结环境不同；请求内重跑不得选取它。
+      assert.equal(
+        (
+          await call('/v2/cases/in-place-a/rerun', {
+            runId: 'foreign-in-place-a',
+          })
+        ).statusCode,
+        202,
+      );
+      await sql.query(
+        "UPDATE pr_tasks SET definition=jsonb_set(definition,'{environment,id}','\"foreign\"') WHERE id='case-run-foreign-in-place-a'",
+      );
+      const next = await call('/v2/requests/in-place/rerun', {
+        caseIds: [{ sourceCaseId: 'in-place-a', runId: 'third-in-place-a' }],
+      });
+      assert.equal(next.statusCode, 202, next.body);
+      assert.equal(
+        (
+          await sql.query(
+            "SELECT definition#>>'{environment,id}' id FROM pr_tasks WHERE id='case-run-third-in-place-a'",
+          )
+        ).rows[0].id,
+        'fixture',
+      );
+      assert.equal((await call(analysisPath)).json(), null);
+      const excluded = (
+        await sql.query(
+          "SELECT status,token_hash,excluded_at FROM pr_request_analyses WHERE request_id='in-place'",
+        )
+      ).rows[0];
+      assert.equal(excluded.status, 'FAILED');
+      assert.equal(excluded.token_hash, null);
+      assert.ok(excluded.excluded_at);
+      assert.equal((await call(analysisPath, {})).statusCode, 409);
+      await sql.query(
+        "UPDATE pr_tasks SET state='COMPLETED' WHERE id='case-run-third-in-place-a'",
+      );
+      const fresh = await call(analysisPath, {});
+      assert.equal(fresh.statusCode, 202, fresh.body);
+      assert.notEqual(fresh.json().revision, oldAnalysis.revision);
+    });
+    // 范围：报告只采用最新关联运行的结果，历史报告保持可查；报告注入不代表真实验收。
+    await suite.test('请求报告显示最新测试结果而非历史结果', async () => {
+      const template = (
+        await sql.query("SELECT report FROM pr_tasks WHERE id='case-v2-alpha'")
+      ).rows[0].report;
+      for (const [taskId, summary] of [
+        ['case-run-second-in-place-a', '上一轮结果'],
+        ['case-run-third-in-place-a', '最新一轮结果'],
+      ])
+        await sql.query('UPDATE pr_tasks SET report=$2 WHERE id=$1', [
+          taskId,
+          { ...template, taskId, summary },
+        ]);
+      const result = (
+        await call('/v2/requests/in-place/report')
+      ).json<RequestResultV2>();
+      assert.ok(validateRequestResultV2(result));
+      assert.equal(
+        result.cases[0]!.arms[0]!.result.result!.summary,
+        '最新一轮结果',
+      );
+      assert.equal(
+        result.cases[1]!.arms[0]!.taskId,
+        'case-run-first-in-place-b',
+      );
+      assert.equal(
+        (
+          await sql.query(
+            "SELECT report->>'summary' summary FROM pr_tasks WHERE id='case-run-second-in-place-a'",
+          )
+        ).rows[0].summary,
+        '上一轮结果',
+      );
+    });
     // 范围：真实 HTTP 创建、共享、原子重跑后的全部摘要字段与详情一致；不代表真实模型判定准确性。
     await suite.test(
       '所有已提交及重跑请求的列表摘要与详情逐字段一致',

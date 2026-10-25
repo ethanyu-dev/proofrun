@@ -105,6 +105,8 @@ export class CaseV2Service {
     runId: unknown,
     budgetMode: 'current' | 'original' = 'current',
     timeBudget?: unknown,
+    // 请求内重跑沿用该请求当前运行，避免共享 case 被其他请求的新运行改变配置。
+    sourceTaskId?: string,
   ): Promise<VerificationTask> {
     if (typeof runId !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(runId))
       throw new ApiError(400, 'INVALID_RERUN', '重跑需要一个有效 runId');
@@ -121,7 +123,7 @@ export class CaseV2Service {
         throw new ApiError(409, 'CASE_CONFLICT', 'runId 已属于其他 case');
       return previous.definition;
     }
-    const { definition } = await this.stored(id);
+    const { definition } = await this.stored(id, sourceTaskId);
     assertSupportedSession(definition.sessionPlan);
     if (
       budgetMode === 'original' &&

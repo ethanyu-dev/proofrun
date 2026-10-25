@@ -3333,7 +3333,7 @@
           "requestId": {
             "type": "string",
             "pattern": "^[A-Za-z0-9_-]{1,80}$",
-            "description": "逻辑提交的稳定身份；重试沿用，重跑使用新身份。"
+            "description": "可选的旧版新请求身份；省略时在原请求内新增运行，重试沿用 caseIds。"
           },
           "caseIds": {
             "type": "array",
@@ -3365,7 +3365,7 @@
             },
             "minItems": 1,
             "maxItems": 32,
-            "description": "完整 case 与新运行映射，由服务端原子提交。"
+            "description": "原请求内待重跑的 case 与新运行映射；可选一个或全部成员，服务端原子提交。指定新 requestId 时必须覆盖全部成员。"
           },
           "budgetMode": {
             "enum": ["current", "original"],
@@ -3393,7 +3393,7 @@
             "minProperties": 1
           }
         },
-        "required": ["requestId", "caseIds"]
+        "required": ["caseIds"]
       },
       "Error": {
         "type": "object",

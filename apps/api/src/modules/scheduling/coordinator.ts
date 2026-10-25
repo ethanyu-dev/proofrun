@@ -239,7 +239,7 @@ export class Coordinator {
             throw new ApiError(
               409,
               'CASE_CONFLICT',
-              '请求重跑的目标 caseId 已存在',
+              '请求重跑的目标 runId 已存在',
             );
           if (
             canonical(existing.definition.caseV2Definition) !==
