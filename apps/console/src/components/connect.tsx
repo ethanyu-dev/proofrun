@@ -1,3 +1,5 @@
+import { Button } from './ui/button';
+import { Input } from './ui/input';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { ApiClient, errorMessage } from '../api';
 import { ErrorNotice } from './ui';
@@ -75,7 +77,8 @@ export function Connect({
         <p className="muted" role="status">
           正在验证已保存的凭据，完成后返回当前页面。
         </p>
-        <button
+        <Button
+          variant="outline"
           className="button button-secondary"
           onClick={() => {
             active.current?.abort();
@@ -85,21 +88,16 @@ export function Connect({
           }}
         >
           取消自动连接
-        </button>
+        </Button>
       </section>
     );
   return (
     <section className="connect-page">
-      <p className="announcement">ProofRun · 浏览器验证执行平台</p>
-      <h1>
-        让每一次验证，
-        <br />
-        都有据可查。
-      </h1>
+      <h1>连接 ProofRun</h1>
       <p className="muted">连接控制面，查看任务、节点和验证报告。</p>
       <form className="panel connect-form" onSubmit={connect}>
         <label htmlFor="admin-token">访问凭据</label>
-        <input
+        <Input
           id="admin-token"
           type="password"
           autoComplete="off"
@@ -113,13 +111,15 @@ export function Connect({
           连接成功后，刷新或再次打开会自动恢复连接。主动断开后仅自动填入凭据。
         </p>
         <ErrorNotice message={error} />
-        <button
+        <Button
+          variant="default"
           className="button button-primary"
           disabled={pending || !token.trim()}
         >
           {pending ? '连接中…' : '连接控制面'} <span aria-hidden="true">↗</span>
-        </button>
-        <button
+        </Button>
+        <Button
+          variant="outline"
           type="button"
           className="button button-secondary"
           disabled={pending}
@@ -135,7 +135,7 @@ export function Connect({
           }}
         >
           清除已保存凭据
-        </button>
+        </Button>
       </form>
     </section>
   );

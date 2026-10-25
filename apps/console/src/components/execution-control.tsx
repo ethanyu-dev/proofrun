@@ -1,3 +1,4 @@
+import { Button } from './ui/button';
 import type { TaskDetail } from '@proofrun/contracts';
 import { ApiClient } from '../api';
 import { useResource } from '../use-resource';
@@ -55,7 +56,8 @@ export function ExecutionControl({
             {execution.control_reason}
           </p>
           {collapsible && (
-            <button
+            <Button
+              variant="ghost"
               type="button"
               className="text-button"
               aria-expanded={expanded}
@@ -63,7 +65,7 @@ export function ExecutionControl({
               onClick={() => setExpanded((value) => !value)}
             >
               {expanded ? '收起说明' : '展开完整说明'}
-            </button>
+            </Button>
           )}
         </div>
       )}
@@ -87,22 +89,25 @@ function InterventionLink({
     <div className="execution-intervention-link">
       <ErrorNotice message={link.error} />
       {link.data?.intervention ? (
-        <a
-          className="button button-primary button-small"
-          href={link.data.intervention.path}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          去处理 ↗
-        </a>
+        <Button asChild variant="default">
+          <a
+            className="button button-primary button-small"
+            href={link.data.intervention.path}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            去处理 ↗
+          </a>
+        </Button>
       ) : (
-        <button
+        <Button
+          variant="outline"
           className="button button-secondary button-small"
           disabled={link.loading}
           onClick={link.refresh}
         >
           {link.loading ? '正在获取处理入口…' : '重新获取处理入口'}
-        </button>
+        </Button>
       )}
     </div>
   );

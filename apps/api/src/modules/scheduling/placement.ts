@@ -16,7 +16,8 @@ const QUEUE_MESSAGES: Record<QueueReason['code'], string> = {
   COMPARISON_NODE_CONFLICT:
     '本轮对照已固定初始登录快照节点，与当前路由或登录节点冲突；请恢复配置或新建对照。',
   IDENTITY_BUSY: '符合条件的测试账号正在使用中，等待会话清理完成。',
-  IDENTITY_UNAVAILABLE: '没有满足当前路由和身份约束的测试账号。',
+  IDENTITY_UNAVAILABLE:
+    '本地测试身份已移除，请用 DevPass 或人工会话配置重新提交。',
   RESOURCE_BUSY: '关联任务或清理尚未完成，正在等待当前任务上下文释放。',
   NO_ELIGIBLE_NODE: '当前没有满足路由、指定身份节点及所需能力的在线节点。',
   SESSION_BUDGET_UNSUPPORTED:
@@ -48,10 +49,7 @@ export function identityPlacement(
   /** 路由冲突明确排队，不能换节点绕过指定身份。 */
   conflict?: QueueReason['code'];
 } {
-  const requiredNode =
-    task.sessionPlan && task.sessionPlan.mode !== 'manual'
-      ? task.sessionPlan.candidates[0]?.nodeId
-      : task.environment.auth?.nodeId;
+  const requiredNode = task.environment.auth?.nodeId;
   return {
     requiredNode,
     ...(routedNode && requiredNode && routedNode !== requiredNode

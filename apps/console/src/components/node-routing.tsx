@@ -1,3 +1,5 @@
+import { Button } from './ui/button';
+import { Textarea } from './ui/textarea';
 import { useEffect, useRef, useState } from 'react';
 import type { NodeSummary } from '@proofrun/contracts';
 import { ApiClient, errorMessage } from '../api';
@@ -48,7 +50,8 @@ export function NodeRoutingSummary({
           <p className="muted note">未绑定域名</p>
         )}
       </div>
-      <button
+      <Button
+        variant="outline"
         className="button button-secondary button-small"
         disabled={!available}
         onClick={() => {
@@ -56,7 +59,7 @@ export function NodeRoutingSummary({
         }}
       >
         配置域名
-      </button>
+      </Button>
     </section>
   );
 }
@@ -118,13 +121,14 @@ export function NodeRoutingEditor({
     <section className="panel" aria-label="配置域名分发">
       <div className="section-heading">
         <h2>域名分发 · {node.name}</h2>
-        <button
+        <Button
+          variant="outline"
           className="button button-secondary"
           disabled={busy}
           onClick={close}
         >
           关闭
-        </button>
+        </Button>
       </div>
       <p>
         节点池：{node.pool}。每行一个完整域名或通配符规则，例如
@@ -145,7 +149,7 @@ export function NodeRoutingEditor({
       >
         <label>
           绑定域名
-          <textarea
+          <Textarea
             rows={5}
             value={text}
             disabled={busy || Boolean(node.revoked_at)}
@@ -162,17 +166,22 @@ export function NodeRoutingEditor({
           </p>
         )}
         <div className="page-actions">
-          <button className="button button-primary" disabled={busy}>
+          <Button
+            variant="default"
+            className="button button-primary"
+            disabled={busy}
+          >
             {busy ? '保存中…' : '保存域名配置'}
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="outline"
             type="button"
             className="button button-secondary"
             disabled={busy}
             onClick={() => setText('')}
           >
             清空列表
-          </button>
+          </Button>
         </div>
       </form>
     </section>

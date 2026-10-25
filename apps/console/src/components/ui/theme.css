@@ -1,0 +1,120 @@
+/* 组件库只加载主题和工具类，保留现有业务文档、表格和证据的基础排版。 */
+@layer theme, base, components, utilities;
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' layer(utilities);
+@import 'tw-animate-css';
+@source '../../';
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+/* shadcn 与业务页面共用一份语义颜色，Portal 中的菜单和弹窗同样继承。 */
+:root {
+  --background: var(--color-background);
+  --foreground: var(--color-foreground);
+  --popover: var(--color-background);
+  --popover-foreground: var(--color-foreground);
+  --primary: var(--color-primary);
+  --primary-foreground: var(--color-on-primary);
+  --secondary: var(--color-secondary);
+  --secondary-foreground: var(--color-foreground);
+  --muted: var(--color-surface);
+  --muted-foreground: var(--color-muted);
+  --accent: var(--color-secondary);
+  --accent-foreground: var(--color-foreground);
+  --destructive: var(--color-danger);
+  --border: var(--color-border-strong);
+  --input: var(--color-border-strong);
+  --ring: var(--color-muted);
+  --radius: var(--radius-control);
+}
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+}
+
+/* 未启用全局 preflight，只在库组件上补齐边框、图标和占位颜色。 */
+[data-slot] {
+  border-color: var(--border);
+}
+[data-slot='select-trigger'],
+[data-slot='select-content'],
+[data-slot='dialog-content'] {
+  border-style: solid;
+  border-width: 1px;
+}
+[data-slot] svg {
+  display: inline-block;
+  vertical-align: middle;
+}
+/* 不使用全局重置时，仍需去除按钮和标签的浏览器默认斜面边框。 */
+[data-slot='button'],
+[data-slot='tabs-trigger'] {
+  appearance: none;
+  border-style: solid;
+  border-width: 0;
+  font-size: 14px;
+  line-height: 20px;
+}
+[data-slot='button'][data-variant='outline'] {
+  border-width: 1px;
+}
+[data-slot='tabs-trigger'] {
+  background: transparent;
+  color: var(--muted-foreground);
+}
+[data-slot='tabs-trigger'][data-state='active'] {
+  background: var(--background);
+  color: var(--foreground);
+}
+[data-slot='select-trigger'] {
+  background: var(--background);
+  min-width: 140px;
+  max-width: 100%;
+  text-align: left;
+  color: var(--foreground);
+}
+[data-slot='select-content'] {
+  max-width: calc(100vw - 24px);
+}
+[data-slot='select-item'] {
+  min-height: 36px;
+  overflow-wrap: anywhere;
+}
+[data-slot='dialog-content'] {
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+}
+[data-slot='dialog-close'] {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 4px;
+}
+[data-slot='input']:is([type='checkbox'], [type='radio']) {
+  width: 16px;
+  height: 16px;
+  min-height: 0;
+  padding: 0;
+  box-shadow: none;
+  flex-shrink: 0;
+}
+.select-field {
+  width: 100%;
+}
+.context-picker .select-field {
+  white-space: normal;
+  height: auto;
+}

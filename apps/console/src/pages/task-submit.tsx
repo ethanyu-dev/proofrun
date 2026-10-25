@@ -1,3 +1,11 @@
+import {
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  TabsContent,
+} from '../components/ui/tabs';
+import { Button } from '../components/ui/button';
+import { Textarea } from '../components/ui/textarea';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { TaskDetail } from '@proofrun/contracts';
 import { ApiClient, errorMessage } from '../api';
@@ -101,62 +109,54 @@ export function TaskSubmitPage({ api }: { api: ApiClient }) {
         title="提交验证任务"
         description="粘贴 v2 Schema 文件中的 JSON 内容，即可批量提交验证任务。"
       >
-        <a className="button button-secondary" href="#/tasks">
-          返回任务
-        </a>
+        <Button asChild variant="outline">
+          <a className="button button-secondary" href="#/tasks">
+            返回任务
+          </a>
+        </Button>
       </PageHeader>
       <form className="panel task-form" onSubmit={submit}>
-        <div className="mode-switch" role="group" aria-label="提交版本">
-          <button
-            type="button"
-            className={`button ${version === 'v2' ? 'button-primary' : 'button-secondary'}`}
-            aria-pressed={version === 'v2'}
-            disabled={pending}
-            onClick={() => {
-              setVersion('v2');
-              setError(undefined);
-            }}
-          >
-            v2 Schema 提交
-          </button>
-          <button
-            type="button"
-            className={`button ${version === 'v1' ? 'button-primary' : 'button-secondary'}`}
-            aria-pressed={version === 'v1'}
-            disabled={pending}
-            onClick={() => {
-              setVersion('v1');
-              setError(undefined);
-            }}
-          >
-            v1 兼容入口
-          </button>
-        </div>
-        {version === 'v1' && (
-          <div className="mode-switch" role="group" aria-label="任务编辑模式">
-            <button
-              type="button"
-              className={`button ${mode === 'form' ? 'button-primary' : 'button-secondary'}`}
-              aria-pressed={mode === 'form'}
-              disabled={pending}
-              onClick={() => switchMode('form')}
-            >
-              表单模式
-            </button>
-            <button
-              type="button"
-              className={`button ${mode === 'json' ? 'button-primary' : 'button-secondary'}`}
-              aria-pressed={mode === 'json'}
-              disabled={pending}
-              onClick={() => switchMode('json')}
-            >
-              JSON 模式
-            </button>
-          </div>
-        )}
-        <fieldset className="task-editor" disabled={pending}>
-          {version === 'v2' ? (
-            <>
+        <Tabs
+          value={version}
+          onValueChange={(value) => {
+            setVersion(value as 'v1' | 'v2');
+            setError(undefined);
+          }}
+        >
+          <TabsList aria-label="提交版本">
+            <TabsTrigger value="v2" disabled={pending}>
+              v2 Schema 提交
+            </TabsTrigger>
+            <TabsTrigger value="v1" disabled={pending}>
+              v1 兼容入口
+            </TabsTrigger>
+          </TabsList>
+          {version === 'v1' && (
+            <div className="mode-switch" role="group" aria-label="任务编辑模式">
+              <Button
+                variant={mode === 'form' ? 'default' : 'outline'}
+                type="button"
+                className={`button ${mode === 'form' ? 'button-primary' : 'button-secondary'}`}
+                aria-pressed={mode === 'form'}
+                disabled={pending}
+                onClick={() => switchMode('form')}
+              >
+                表单模式
+              </Button>
+              <Button
+                variant={mode === 'json' ? 'default' : 'outline'}
+                type="button"
+                className={`button ${mode === 'json' ? 'button-primary' : 'button-secondary'}`}
+                aria-pressed={mode === 'json'}
+                disabled={pending}
+                onClick={() => switchMode('json')}
+              >
+                JSON 模式
+              </Button>
+            </div>
+          )}
+          <fieldset className="task-editor" disabled={pending}>
+            <TabsContent value="v2">
               <label htmlFor="case-definition">v2 Schema JSON</label>
               <p className="muted" id="case-definition-help">
                 粘贴包含 platform、entry、steps、cleanup 的 case 数组，一次最多
@@ -167,7 +167,7 @@ export function TaskSubmitPage({ api }: { api: ApiClient }) {
                 使用 LLM
                 单组执行，按测试身份来源准备独立会话；人工辅助由平台配置授权。
               </p>
-              <textarea
+              <Textarea
                 id="case-definition"
                 aria-describedby="case-definition-help"
                 className="mono"
@@ -179,42 +179,49 @@ export function TaskSubmitPage({ api }: { api: ApiClient }) {
                 rows={22}
                 maxLength={1_500_000}
               />
-            </>
-          ) : mode === 'form' ? (
-            <TaskFields task={task} change={setTask} />
-          ) : (
-            <>
-              <label htmlFor="task-definition">任务定义 JSON</label>
-              <p className="muted">
-                支持完整内部任务对象，或 v2 case 数组。数组中每个对象需要
-                platform、entry、steps 和 cleanup；批量提交后进入任务列表。case
-                数组请保持 JSON 模式。
-              </p>
-              <textarea
-                id="task-definition"
-                className="mono"
-                value={definition}
-                onChange={(event) => setDefinition(event.target.value)}
-                required
-                spellCheck={false}
-                rows={22}
-                maxLength={1_500_000}
-              />
-            </>
-          )}
-        </fieldset>
-        <ErrorNotice message={error} />
-        <div className="form-footer">
-          <p className="muted">
-            {version === 'v2'
-              ? '提交后进入请求详情，按 case 查看两组执行和汇总报告。自动生成的 requestId、caseId 会保留在输入框中；网络失败后沿用原身份重试。'
-              : '同一任务 ID 只接受同一份定义。'}
-            提交后可能立即开始执行。
-          </p>
-          <button className="button button-primary" disabled={pending}>
-            {pending ? '提交中…' : '提交任务'}
-          </button>
-        </div>
+            </TabsContent>
+            <TabsContent value="v1">
+              {mode === 'form' ? (
+                <TaskFields task={task} change={setTask} />
+              ) : (
+                <>
+                  <label htmlFor="task-definition">任务定义 JSON</label>
+                  <p className="muted">
+                    支持完整内部任务对象，或 v2 case 数组。数组中每个对象需要
+                    platform、entry、steps 和
+                    cleanup；批量提交后进入任务列表。case 数组请保持 JSON 模式。
+                  </p>
+                  <Textarea
+                    id="task-definition"
+                    className="mono"
+                    value={definition}
+                    onChange={(event) => setDefinition(event.target.value)}
+                    required
+                    spellCheck={false}
+                    rows={22}
+                    maxLength={1_500_000}
+                  />
+                </>
+              )}
+            </TabsContent>
+          </fieldset>
+          <ErrorNotice message={error} />
+          <div className="form-footer">
+            <p className="muted">
+              {version === 'v2'
+                ? '提交后进入请求详情，按 case 查看两组执行和汇总报告。自动生成的 requestId、caseId 会保留在输入框中；网络失败后沿用原身份重试。'
+                : '同一任务 ID 只接受同一份定义。'}
+              提交后可能立即开始执行。
+            </p>
+            <Button
+              variant="default"
+              className="button button-primary"
+              disabled={pending}
+            >
+              {pending ? '提交中…' : '提交任务'}
+            </Button>
+          </div>
+        </Tabs>
       </form>
     </>
   );

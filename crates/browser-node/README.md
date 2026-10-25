@@ -37,7 +37,7 @@ target/release/proofrun-node --config deploy/node.example.toml serve
 
 ## 临时身份会话
 
-每个执行从空 profile 启动，能力标记为 `ephemeralProfiles`。身份库 Cookie 与 DevPass 材料只注入当前会话，种子文件用后删除；运行时仍核验页面身份与授权条件。HITL 完成后保持当前浏览器，不复制、发布、保存或恢复完整 profile。
+每个执行从空 profile 启动，能力标记为 `ephemeralProfiles`。仅 DevPass 材料可在启动时注入当前会话，种子文件用后删除；已移除本地 Cookie／密码配方及 `identity_library_file` 配置；运行时仍核验页面身份与授权条件。HITL 完成后保持当前浏览器，不复制、发布、保存或恢复完整 profile。
 
 `browser.auth.save`、`authState` 恢复、节点默认模板和 `auth-import/auth-forget` 已停用。部署时删除 `base_profile_directory`；旧本地基准文件不会由本次改造自动删除。完整目录仅作为当前执行的隔离资源，仍由物理关闭和保留策略回收。
 

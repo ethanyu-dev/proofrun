@@ -1,4 +1,6 @@
-import { CaseRunHistory } from '../components/case-run-history';
+import { toast } from 'sonner';
+import { Modal } from '../components/modal';
+import { Button } from '../components/ui/button';
 import { RequestMemberships } from '../components/request-memberships';
 import { useEffect, useRef, useState } from 'react';
 import type { TaskDetail } from '@proofrun/contracts';
@@ -41,6 +43,7 @@ export function TaskDetailPage({ api, id }: { api: ApiClient; id: string }) {
       );
       if (!controller.signal.aborted) {
         setConfirmCancel(false);
+        toast.success('取消请求已提交');
         resource.refresh();
       }
     } catch (error) {
@@ -57,16 +60,20 @@ export function TaskDetailPage({ api, id }: { api: ApiClient; id: string }) {
         title={paired ? '对照任务详情' : '任务详情'}
         description={task?.definition.comparison?.id ?? id}
       >
-        <a className="button button-secondary" href="#/tasks">
-          返回任务
-        </a>
-        {task?.report && (
-          <a
-            className="button button-primary"
-            href={`#/reports/${encodeURIComponent(id)}`}
-          >
-            查看验证报告
+        <Button asChild variant="outline">
+          <a className="button button-secondary" href="#/tasks">
+            返回任务
           </a>
+        </Button>
+        {task?.report && (
+          <Button asChild variant="default">
+            <a
+              className="button button-primary"
+              href={`#/reports/${encodeURIComponent(id)}`}
+            >
+              查看验证报告
+            </a>
+          </Button>
         )}
         {task &&
           (!task.definition.steps || task.definition.caseV2Definition) && (
@@ -79,48 +86,52 @@ export function TaskDetailPage({ api, id }: { api: ApiClient; id: string }) {
             />
           )}
         {task && !paired && ['QUEUED', 'RUNNING'].includes(task.state) && (
-          <button
+          <Button
+            variant="outline"
             className="button button-secondary"
-            onClick={() => setConfirmCancel(true)}
+            onClick={(event) => {
+              event.currentTarget.focus();
+              setConfirmCancel(true);
+            }}
           >
             取消任务
-          </button>
+          </Button>
         )}
       </PageHeader>
-      {task?.definition.caseV2Definition && (
-        <CaseRunHistory
-          key={id}
-          api={api}
-          caseId={task.definition.caseV2Definition.caseId}
-          taskId={task.definition.comparison?.sourceTaskId ?? id}
-        />
-      )}
       <RequestMemberships api={api} taskId={id} />
       {!paired && <RefreshBar {...resource} />}
       <ErrorNotice message={resource.error} />
       <ErrorNotice message={error} />
       {confirmCancel && (
-        <div className="confirm-panel" role="alert">
+        <Modal
+          title="取消任务"
+          close={() => setConfirmCancel(false)}
+          busy={pending}
+        >
+          <ErrorNotice message={error} />
           <p>
             取消后将停止后续操作并请求关闭浏览器。已经发生的业务操作不会被撤销。
           </p>
           <div className="page-actions">
-            <button
+            <Button
+              variant="default"
               className="button button-primary"
               disabled={pending}
               onClick={() => void cancel()}
             >
               {pending ? '取消中…' : '确认取消'}
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="outline"
               className="button button-secondary"
               disabled={pending}
+              data-dialog-cancel
               onClick={() => setConfirmCancel(false)}
             >
               继续执行
-            </button>
+            </Button>
           </div>
-        </div>
+        </Modal>
       )}
       {!task ? (
         <Empty title={resource.loading ? '正在读取任务…' : '无法读取任务'}>

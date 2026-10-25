@@ -58,3 +58,50 @@ test('请求期限与外部取消分别记录', async () => {
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+// 范围：真实 Worker 单轮启动只访问领取接口；HTTP 为空队列夹具，不执行真实任务、模型或 DevPass。
+test('Worker 直接领取任务，不依赖已移除的身份选择接口', async () => {
+  const { spawn } = await import('node:child_process');
+  const calls = [];
+  const server = createServer((request, response) => {
+    calls.push(request.url);
+    request.resume();
+    response.writeHead(request.url === '/v1/worker/claim' ? 200 : 404, {
+      'content-type': 'application/json',
+    });
+    response.end(JSON.stringify({ execution: null }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const endpoint = `http://127.0.0.1:${server.address().port}`;
+    const child = spawn(process.execPath, ['apps/agent/dist/main.js', 'once'], {
+      env: {
+        ...process.env,
+        PROOFRUN_CONTROL_URL: endpoint,
+        PROOFRUN_WORKER_TOKEN:
+          'worker-fixture-token-with-at-least-32-characters',
+        PROOFRUN_MODEL_BASE_URL: endpoint,
+        PROOFRUN_MODEL_API_KEY: 'fixture',
+        PROOFRUN_MODEL: 'fixture',
+        PROOFRUN_AGENT_CONCURRENCY: '1',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let output = '';
+    child.stdout.on('data', (chunk) => {
+      output += chunk;
+    });
+    child.stderr.on('data', (chunk) => {
+      output += chunk;
+    });
+    const code = await new Promise((resolve, reject) => {
+      child.once('exit', resolve);
+      child.once('error', reject);
+    });
+    assert.equal(code, 0, output);
+    assert.deepEqual(calls, ['/v1/worker/claim']);
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

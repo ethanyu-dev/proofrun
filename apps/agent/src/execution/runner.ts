@@ -127,12 +127,6 @@ class Execution {
   private readonly details: NonNullable<VerificationReport['executionDetails']>;
   /** 仅初次进入或步骤明确更换网址时安排导航；人工交还页面后取消待导航。 */
   private pendingNavigation: string | undefined;
-  /** 自动登录最多执行一次，外部重入不会重置已提交登录。 */
-  private identityPrepared = false;
-  /** 节点只返回固定诊断，供 HITL 分类使用，不记录原始凭据。 */
-  private preparationReason: string | undefined;
-  /** 仅接受本次身份待办的人工确认，普通恢复控制权不能越过登录门禁。 */
-  private libraryIdentityConfirmed = false;
   /** 环境意图不等同身份事实；访客证明由隔离配置或当前人工确认提供。 */
   private environmentMode: 'guest' | 'configured' | undefined;
   /** 每次导航只执行一次有界外壳等待，不在普通决策轮反复等待。 */
@@ -1333,7 +1327,6 @@ class Execution {
       this.confirmedChecks.set('profile-guest', this.controlRevision);
     const checks = mergeChecks(
       guest ? [GUEST_CHECK] : [],
-      original.sessionPlan?.candidates[0]?.checks ?? [],
       original.sessionPlan?.requirements ?? [],
       step?.preconditions ?? [],
       ...(this.recheck
@@ -1582,36 +1575,6 @@ class Execution {
             retries++;
           }
           // 被动重采不累计动作循环，也不能清除导航前已经存在的循环记录。
-        }
-        const sessionPlan = this.grant.task.sessionPlan;
-        if (
-          !this.isCleanup() &&
-          sessionPlan?.library &&
-          (sessionPlan.selection === 'human' ||
-            this.preparationReason === 'LOGIN_RECIPE_MISSING')
-        ) {
-          const summary = sessionPlan.selectionReason ?? '没有可用的登录状态';
-          const description = '准备符合 Case 要求的账号';
-          const view = await this.client.view(this.grant, this.guard.signal);
-          if (
-            view.humanConfirmation?.revision === this.controlRevision &&
-            view.humanConfirmation.items.includes(
-              `${description}：${summary}`.slice(0, 500),
-            )
-          )
-            this.libraryIdentityConfirmed = true;
-          if (!this.libraryIdentityConfirmed) {
-            const blocked = await this.environmentNotReady(summary, [
-              {
-                id: 'session:login',
-                description,
-                summary,
-                status: 'UNCONFIRMED',
-              },
-            ]);
-            if (blocked) return blocked;
-            continue;
-          }
         }
         // 登录前置条件需要人工时先交接，不能先进入模型重复观察或长时间等待挑战。
         if (
@@ -2686,60 +2649,7 @@ class Execution {
     | 'LOGIN_RECIPE_UNAVAILABLE'
     | 'LOGIN_FORM_MISMATCH'
     | 'LOGIN_CHALLENGE_OR_REJECTED' {
-    switch (this.preparationReason) {
-      case 'LOGIN_RECIPE_MISSING':
-      case 'LOGIN_RECIPE_UNAVAILABLE':
-      case 'LOGIN_FORM_MISMATCH':
-      case 'LOGIN_CHALLENGE_OR_REJECTED':
-        return this.preparationReason;
-      default:
-        return 'LOGIN_REQUIRED';
-    }
-  }
-
-  /** 身份准备占用独立额度，不扣业务动作或模型次数；失败仍由逐步门禁判断。 */
-  private async prepareIdentity(): Promise<void> {
-    const plan = this.grant.task.sessionPlan;
-    const identity = plan?.candidates[0];
-    if (!identity || this.identityPrepared) return;
-    for (;;) {
-      await this.checkpoint();
-      const view = await this.client.view(this.grant, this.guard.signal);
-      if (view.taskState !== 'RUNNING')
-        throw new AgentFault('EXECUTION_ENDED', '任务已结束');
-      if (view.state === 'RUNNING') break;
-      await pause(POLL_MS, this.guard.signal);
-    }
-    const checks = [...identity.checks, ...plan!.requirements];
-    const operation: BrowserOperation = {
-      type: 'browser.identity.prepare',
-      url: this.grant.task.target.url,
-      ...(identity.loginRef ? { profileRef: identity.loginRef } : {}),
-      checks: checks
-        .filter((c) => c.method !== 'manual')
-        .map((c) => ({
-          method: c.method as 'text' | 'absent',
-          value: c.value!,
-        })),
-      saveSnapshot: false,
-    };
-    // 发送前固定已尝试标记；即使回执不明，也不能换一个命令 ID 再次提交。
-    this.identityPrepared = true;
-    try {
-      const prepared = await this.command(operation, plan!.preparationMs);
-      this.preparationReason =
-        typeof prepared.data?.reasonCode === 'string'
-          ? prepared.data.reasonCode
-          : undefined;
-    } catch (error) {
-      if (
-        !(error instanceof AgentFault) ||
-        error.code !== 'BROWSER_COMMAND_FAILED'
-      )
-        throw error;
-      if (plan?.library) this.preparationReason = 'LOGIN_RECIPE_MISSING';
-      // 明确拒绝的配置故障可继续业务观察/人工处理，未知副作用仍遵循原有停止规则。
-    }
+    return 'LOGIN_REQUIRED';
   }
 
   /** 无论正常还是异常都提交一次不可变报告；提交失败交给调用者记录，租约负责最终回收。 */
@@ -2748,7 +2658,6 @@ class Execution {
       for (;;) {
         let report: VerificationReport;
         try {
-          await this.prepareIdentity();
           report = this.grant.task.steps
             ? await this.sequence()
             : await this.loop();

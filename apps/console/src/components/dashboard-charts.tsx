@@ -1,3 +1,4 @@
+import { Button } from './ui/button';
 import type { DashboardStatistics, DashboardUsage } from '@proofrun/contracts';
 
 /** 展示完整整数，图形只辅助趋势，精确值始终可以在明细表读取。 */
@@ -62,7 +63,9 @@ export function DashboardCharts({
           }}
         >
           {days.map((day, index) => (
-            <button
+            <Button
+              variant="ghost"
+              size="content"
               type="button"
               className="dashboard-bar-column"
               key={day.date}
@@ -94,7 +97,7 @@ export function DashboardCharts({
                   ? day.date.slice(5)
                   : '\u00a0'}
               </span>
-            </button>
+            </Button>
           ))}
         </div>
         <p className="muted">
@@ -132,7 +135,9 @@ export function DashboardCharts({
           }}
         >
           {days.map((day, index) => (
-            <button
+            <Button
+              variant="ghost"
+              size="content"
               type="button"
               className="dashboard-bar-column"
               key={day.date}
@@ -172,7 +177,7 @@ export function DashboardCharts({
                   ? day.date.slice(5)
                   : '\u00a0'}
               </span>
-            </button>
+            </Button>
           ))}
         </div>
         <p className="muted">

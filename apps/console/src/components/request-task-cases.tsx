@@ -2,6 +2,7 @@ import type { RequestResultV2 } from '@proofrun/contracts';
 import { displayedCaseArm } from '../request-presentation';
 import { OutcomeStatus } from './execution-outcome';
 import { RequestExecutionEntry } from './request-execution-entry';
+import { RequestCaseLive } from './request-case-live';
 import { Status } from './ui';
 
 /** 步骤类型只帮助理解执行顺序，不替代验收判定。 */
@@ -31,9 +32,9 @@ export function RequestTaskCases({ value }: { value: RequestResultV2 }) {
               </span>
               <div className="request-case-title">
                 <strong>{member.title}</strong>
-                <span className="mono muted request-id">{member.caseId}</span>
               </div>
               <div className="request-task-progress">
+                <RequestCaseLive member={member} requestId={value.requestId} />
                 {arm ? (
                   <Status value={arm.result.status} />
                 ) : (
@@ -51,7 +52,7 @@ export function RequestTaskCases({ value }: { value: RequestResultV2 }) {
                 {member.executionOrigin === 'reused'
                   ? '复用已有执行，本请求未重新执行此 case。'
                   : '由本请求创建执行。'}
-                {member.sourceCaseId && ` 重跑来源：${member.sourceCaseId}`}
+                {member.sourceCaseId && ' 本用例沿用重跑来源的验证定义。'}
               </p>
               {arm && (
                 <section className="request-record">

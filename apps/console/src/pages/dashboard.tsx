@@ -1,3 +1,5 @@
+import { Button } from '../components/ui/button';
+import { Input } from '../components/ui/input';
 import { useState } from 'react';
 import {
   dashboardRange,
@@ -49,38 +51,44 @@ export function DashboardPage({ api }: { api: ApiClient }) {
         title="验证看板"
         description="从验证规模、通过情况到模型用量，按天追踪项目运行。"
       >
-        <a className="button button-secondary" href="#/tasks">
-          查看验证任务
-        </a>
-        <a className="button button-primary" href="#/tasks/new">
-          提交任务
-        </a>
+        <Button asChild variant="outline">
+          <a className="button button-secondary" href="#/tasks">
+            查看验证任务
+          </a>
+        </Button>
+        <Button asChild variant="default">
+          <a className="button button-primary" href="#/tasks/new">
+            提交任务
+          </a>
+        </Button>
       </PageHeader>
       <div className="dashboard-toolbar">
         <div className="dashboard-period" role="group" aria-label="统计周期">
           {PERIODS.map(([value, label]) => (
-            <button
+            <Button
+              variant="ghost"
               key={value}
               type="button"
               aria-pressed={period === value}
               onClick={() => setPeriod(value)}
             >
               {label}
-            </button>
+            </Button>
           ))}
         </div>
         <div className="dashboard-date-navigation">
-          <button
+          <Button
+            variant="outline"
             className="button button-secondary button-small"
             aria-label="上一周期"
             disabled={range.startDate <= '2000-01-01'}
             onClick={() => setDate(shiftDashboardDate(period, date, -1))}
           >
             ←
-          </button>
+          </Button>
           <label>
             统计日期{' '}
-            <input
+            <Input
               type="date"
               value={date}
               min="2000-01-01"
@@ -94,17 +102,22 @@ export function DashboardPage({ api }: { api: ApiClient }) {
               }}
             />
           </label>
-          <button
+          <Button
+            variant="outline"
             className="button button-secondary button-small"
             aria-label="下一周期"
             disabled={next > today}
             onClick={() => setDate(next)}
           >
             →
-          </button>
-          <button className="text-button" onClick={() => setDate(today)}>
+          </Button>
+          <Button
+            variant="ghost"
+            className="text-button"
+            onClick={() => setDate(today)}
+          >
             {period === 'day' ? '今天' : period === 'week' ? '本周' : '本月'}
-          </button>
+          </Button>
         </div>
         <span className="dashboard-timezone">北京时间 · 周一开始</span>
       </div>
@@ -268,13 +281,14 @@ export function DashboardPage({ api }: { api: ApiClient }) {
                         {day.date > today ? (
                           <span>{day.date} · 未到</span>
                         ) : (
-                          <button
+                          <Button
+                            variant="ghost"
                             className="text-button"
                             onClick={() => showDay(day.date)}
                           >
                             {day.date}
                             {day.date === today ? ' · 今天' : ''}
-                          </button>
+                          </Button>
                         )}
                       </th>
                       {day.date > today ? (

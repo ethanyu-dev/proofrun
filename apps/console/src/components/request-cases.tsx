@@ -1,3 +1,4 @@
+import { Button } from './ui/button';
 import { useState } from 'react';
 import type { RequestResultV2, VerificationReport } from '@proofrun/contracts';
 import { requestCaseVerification } from '@proofrun/contracts/request-verification';
@@ -34,7 +35,6 @@ export function RequestCases({
               </span>
               <div className="request-case-title">
                 <strong>{member.title}</strong>
-                <span className="mono muted request-id">{member.caseId}</span>
               </div>
               <CaseVerificationProgress member={member} />
             </header>
@@ -44,7 +44,7 @@ export function RequestCases({
                   {member.executionOrigin === 'reused'
                     ? '复用已有执行，本请求未重新执行此 case。'
                     : '由本请求创建执行。'}
-                  {member.sourceCaseId && ` 重跑来源：${member.sourceCaseId}`}
+                  {member.sourceCaseId && ' 本用例沿用重跑来源的验证定义。'}
                 </p>
               )}
               {arm && (
@@ -106,7 +106,8 @@ export function RequestCases({
                           (item) => item.id === id,
                         );
                         return evidence ? (
-                          <button
+                          <Button
+                            variant="outline"
                             className="button button-secondary button-small"
                             key={id}
                             disabled={!!arm?.archivedAt}
@@ -114,14 +115,14 @@ export function RequestCases({
                               event.currentTarget.focus();
                               setSelected({
                                 artifact: { ...evidence, uri: evidence.url },
-                                context: `${member.caseId} · ${criterion.expectedResult}`,
+                                context: `${member.title} · ${criterion.expectedResult}`,
                               });
                             }}
                           >
                             {arm?.archivedAt
                               ? '证据已清理'
                               : `查看 ${evidence.kind} 证据`}
-                          </button>
+                          </Button>
                         ) : (
                           <span key={id}>证据引用不可用：{id}</span>
                         );

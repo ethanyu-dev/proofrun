@@ -33,7 +33,7 @@ class Page(BaseHTTPRequestHandler):
 
 
 @contextmanager
-def host(root, library=None, seed=None, external_account=None):
+def host(root, seed=None, external_account=None):
     """每次使用独立 profile 与 daemon，验证临时目录隔离，不接受历史基准。"""
     session = uuid.uuid4().hex
     directory = root / session
@@ -65,7 +65,7 @@ def host(root, library=None, seed=None, external_account=None):
     try:
         assert receive()['type'] == 'host.ready'
         boot_ms = int(float(Path('/proc/uptime').read_text().split()[0]) * 1000) if Path('/proc/uptime').exists() else 0
-        send({'type': 'init', 'config': {'binary': os.environ['PROOFRUN_AGENT_BROWSER_BIN'], 'chrome': os.environ['PROOFRUN_CHROME_BIN'], 'session': session, 'directory': str(directory), 'allow_unverified_writes': True, 'external_account': external_account, 'network_evidence': True, 'identity_library_file': str(library) if library else None, 'identity_seed_file': str(seed) if seed else None}, 'deadline_ms': boot_ms + 120000, 'startup_deadline_ms': boot_ms + 120000})
+        send({'type': 'init', 'config': {'binary': os.environ['PROOFRUN_AGENT_BROWSER_BIN'], 'chrome': os.environ['PROOFRUN_CHROME_BIN'], 'session': session, 'directory': str(directory), 'allow_unverified_writes': True, 'external_account': external_account, 'network_evidence': True, 'identity_seed_file': str(seed) if seed else None}, 'deadline_ms': boot_ms + 120000, 'startup_deadline_ms': boot_ms + 120000})
         message = receive()
         assert 'Ok' in message['result'], message
         command.opened = message['result']['Ok']

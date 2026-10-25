@@ -8,7 +8,7 @@
 
 **请求归属与汇总：** v2 支持 `{ requestId, title, cases }` 封装，同次提交在任务和报告中按请求展示；双跑按唯一验收项统计，支持部分报告、组间差异、JSON 导出和整请求原子重跑。旧数组提交保留在未归组任务中。见 [请求示例](contracts/examples/public-api/request-v2.json) 与 [设计](docs/verification-request-design.md)。
 
-**测试身份：[身份库配置与集成](apps/api/src/modules/identities/README.md)。Web 主导航「测试身份」只维护测试地址、Cookies、名称、可选类型、描述和并发数。薄身份 Agent 根据用例选取账号，任务从空白 profile 注入身份材料；HITL 只恢复当前执行，无法处理时记录人工原因并结束 Case。**
+**账号来源：仅支持 [DevPass 外部账号](apps/api/src/modules/account-providers/README.md)，以及访客和当前会话人工登录。不再维护本地账号库、自动选账号或节点登录配方。**
 
 **原单 case 接入：[Case API](docs/public-api.md) · [OpenAPI](contracts/public-api.openapi.json) · [case 示例](contracts/examples/public-api/case.json)。** 调用方提交任务描述、待测 URL、可选步骤和验收项；环境、身份与预算由[平台配置](docs/case-platform-config.md)提供。
 
@@ -231,7 +231,7 @@ pnpm accept:task /absolute/path/to/verification-task.json
 
 - [Agent 运行与模型配置](apps/agent/README.md)
 - [整体架构](docs/architecture.md)
-- [DevPass 外部账号配置与使用](apps/api/src/modules/identities/README.md#devpass-外部账号)
+- [DevPass 外部账号配置与使用](apps/api/src/modules/account-providers/README.md#devpass-外部账号)
 - [Console 运行与业务页面](apps/console/README.md)
 - [Console 视觉规范与 x.ai 样式研究](docs/console-design.md)
 - [控制面运行与协议](apps/api/README.md)

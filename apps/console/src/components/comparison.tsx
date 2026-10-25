@@ -1,3 +1,5 @@
+import { Modal } from './modal';
+import { Button } from './ui/button';
 import { verificationProgress } from '../report-presentation';
 import { useEffect, useRef, useState } from 'react';
 import type { TaskDetail, ExecutionActivity } from '@proofrun/contracts';
@@ -152,7 +154,8 @@ function Arm({
         </p>
       )}
       <div className="comparison-arm-actions">
-        <button
+        <Button
+          variant="outline"
           className="button button-secondary button-small"
           onClick={() =>
             document
@@ -163,7 +166,7 @@ function Arm({
           }
         >
           查看本组验收报告 ↓
-        </button>
+        </Button>
         <CancelArm api={api} task={task} refresh={refresh} />
       </div>
     </article>
@@ -189,15 +192,21 @@ function CancelArm({
   return (
     <div>
       <ErrorNotice message={error} />
-      {!confirm ? (
-        <button
+      <>
+        <Button
+          variant="outline"
           className="button button-secondary button-small"
-          onClick={() => setConfirm(true)}
+          onClick={(event) => {
+            event.currentTarget.focus();
+            setConfirm(true);
+          }}
         >
           取消本组
-        </button>
-      ) : (
-        <div className="confirm-panel" role="alert">
+        </Button>
+      </>
+      {confirm && (
+        <Modal title="取消本组" close={() => setConfirm(false)} busy={pending}>
+          <ErrorNotice message={error} />
           <p>
             将停止
             {task.definition.comparison?.arm === 'jev'
@@ -206,14 +215,17 @@ function CancelArm({
             并请求关闭本组浏览器。
           </p>
           <div className="page-actions">
-            <button
+            <Button
+              variant="outline"
               className="button button-secondary button-small"
               disabled={pending}
+              data-dialog-cancel
               onClick={() => setConfirm(false)}
             >
               继续执行
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="default"
               className="button button-primary button-small"
               disabled={pending}
               onClick={async () => {
@@ -241,9 +253,9 @@ function CancelArm({
               }}
             >
               {pending ? '取消中…' : '确认取消本组'}
-            </button>
+            </Button>
           </div>
-        </div>
+        </Modal>
       )}
     </div>
   );
@@ -261,7 +273,8 @@ export function ComparisonDetails({
     <div className="comparison-details">
       <nav className="comparison-detail-nav" aria-label="对照详情模块">
         {DETAIL_SECTIONS.map((section) => (
-          <button
+          <Button
+            variant="outline"
             key={section.id}
             className="button button-secondary button-small"
             onClick={() =>
@@ -271,7 +284,7 @@ export function ComparisonDetails({
             }
           >
             {section.title}
-          </button>
+          </Button>
         ))}
       </nav>
       {DETAIL_SECTIONS.map((section) => (

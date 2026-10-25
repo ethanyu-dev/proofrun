@@ -49,7 +49,7 @@ def run():
             command(type='browser.act', action='navigate', target=origin + '/outside')
             assert 'Guest' in command(type='browser.observe')['text']
             assert command.raw(type='browser.auth.save')['Err']['code'] == 'AUTH_SAVE_RETIRED'
-            assert command.raw(type='browser.identity.prepare', url=origin, checks=[], saveSnapshot=False)['Err']['code'] == 'EXTERNAL_ACCOUNT_PREPARATION_FORBIDDEN'
+            assert command.raw(type='browser.identity.prepare', url=origin, checks=[], saveSnapshot=False)['Err']['code'] == 'LOCAL_IDENTITY_REMOVED'
         # 范围：下一个独立浏览器不继承外部 Cookie；不证明部署节点的 cgroup 关闭。
         with host(root) as command:
             command(type='browser.act', action='navigate', target=origin + '/admin/check')

@@ -1,3 +1,5 @@
+import { SelectField, SelectItem } from './select-field';
+import { Button } from './ui/button';
 import { ExecutionGuidanceSummary } from './execution-guidance';
 import { useState } from 'react';
 import type { ModelCall } from '@proofrun/contracts';
@@ -103,7 +105,8 @@ function CallDetails({
                 aria-label="上下文查看方式"
               >
                 {(['modules', 'request', 'response'] as const).map((mode) => (
-                  <button
+                  <Button
+                    variant="ghost"
                     key={mode}
                     className="context-view-button"
                     aria-pressed={view === mode}
@@ -116,7 +119,7 @@ function CallDetails({
                         response: '模型回复',
                       }[mode]
                     }
-                  </button>
+                  </Button>
                 ))}
               </div>
               {view === 'modules' && request && (
@@ -187,13 +190,14 @@ export function DecisionContext({
     <section className="panel decision-context" aria-label="决策上下文">
       <div className="section-heading">
         <h2>决策上下文</h2>
-        <button
+        <Button
+          variant="outline"
           className="button button-secondary button-small"
           disabled={resource.loading}
           onClick={resource.refresh}
         >
           刷新调用记录
-        </button>
+        </Button>
       </div>
       <ErrorNotice message={resource.error} />
       {!resource.data ? (
@@ -210,18 +214,19 @@ export function DecisionContext({
         <>
           <label className="context-picker">
             选择决策轮次与模型调用
-            <select
+            <SelectField
+              label="选择决策轮次与模型调用"
               value={current?.id}
-              onChange={(event) => setSelected(event.target.value)}
+              onValueChange={(value) => setSelected(value)}
             >
               {calls.map((call) => (
-                <option key={call.id} value={call.id}>
+                <SelectItem key={call.id} value={call.id}>
                   第 {call.decisionIndex} 轮 · 调用 #{call.callIndex} ·{' '}
                   {call.model} · {PURPOSE[call.purpose]} ·{' '}
                   {CALL_STATUS[call.status]}
-                </option>
+                </SelectItem>
               ))}
-            </select>
+            </SelectField>
           </label>
           {current && (
             <CallDetails

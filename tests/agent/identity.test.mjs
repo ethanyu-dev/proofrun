@@ -138,3 +138,28 @@ test('人工确认不能跨控制代次复用，缺失观察不证明不存在',
     /冲突/,
   );
 });
+
+// 范围：版本混用时拒绝旧本地身份计划，避免丢失账号约束后继续执行；不启动浏览器或调用真实账号来源。
+test('旧本地身份计划不能在新 Agent 上降级执行', async () => {
+  const { executionStrategy } =
+    await import('../../apps/agent/dist/model/strategy.js');
+  const base = {
+    version: 1,
+    mode: 'manual',
+    candidates: [],
+    requirements: [],
+    preparationMs: 120000,
+  };
+  for (const patch of [
+    { mode: 'identity' },
+    { mode: 'pool' },
+    { library: true },
+    { selection: 'pending' },
+    { candidates: [{}] },
+  ])
+    assert.throws(
+      () => executionStrategy({ sessionPlan: { ...base, ...patch } }),
+      { code: 'LOCAL_IDENTITY_REMOVED' },
+    );
+  assert.equal(executionStrategy({ sessionPlan: base }), 'llm');
+});

@@ -1,4 +1,3 @@
-import { CaseRunHistory } from '../components/case-run-history';
 import { RequestReportContent } from '../components/request-report-content';
 import type { RequestResultV2 } from '@proofrun/contracts';
 import type { ApiClient } from '../api';
@@ -30,26 +29,21 @@ export function RequestDetailPage({
         <div className="request-detail-title">
           <h1>{value?.title ?? (reports ? '测试报告' : '验证请求')}</h1>
           <div className="request-detail-meta">
-            <span className="mono">{id}</span>
             {value && <span>创建于 {time(value.createdAt)}</span>}
             {value?.sourceRequestId && (
               <span>
-                重跑来源：
                 <a
                   href={`#/requests/${encodeURIComponent(value.sourceRequestId)}`}
                 >
-                  {value.sourceRequestId}
+                  查看重跑来源
                 </a>
               </span>
             )}
           </div>
         </div>
         <div className="request-detail-actions">
-          <a
-            className="request-detail-link"
-            href={reports ? '#/reports' : '#/tasks'}
-          >
-            返回{reports ? '报告' : '任务'}
+          <a className="request-detail-link" href="#/tasks">
+            返回任务
           </a>
           <a
             className="request-detail-link"
@@ -75,13 +69,6 @@ export function RequestDetailPage({
       ) : (
         <>
           {reports && <RequestReportContent key={id} api={api} value={value} />}
-          {value.cases.map((member) => (
-            <CaseRunHistory
-              key={member.caseId}
-              api={api}
-              caseId={member.caseId}
-            />
-          ))}
           <h2 className="request-section-heading">
             {reports ? 'case 验证结果' : 'case 目标与执行进度'}
             <span>{value.caseCount} 个 case</span>

@@ -1,7 +1,7 @@
 /* 根据 contracts/schemas 自动生成，请勿手改；修改 Schema 后运行 pnpm contracts:generate。 */
 
 /**
- * 平台冻结的非敏感身份候选；分配在领取事务内完成，凭据只在节点解析。
+ * 执行会话快照。新任务仅生成 guest/manual/external；旧本地身份字段仅用于读取历史快照，提交与执行入口拒绝使用。
  */
 export type SessionPlan = {
   version: 1;
@@ -86,7 +86,7 @@ export type SessionPlan = {
   requirements: IdentityCheck[];
   preparationMs: number;
   /**
-   * 使用页面身份库和完整 profile；选择由独立身份 Agent 完成。
+   * 仅兼容历史本地身份快照，新执行不允许启用。
    */
   library?: boolean;
   selection?: 'pending' | 'selected' | 'human';

@@ -275,6 +275,12 @@ impl Sessions {
                 "外部 Cookie 缺少租约绑定",
             ));
         }
+        if raw.get("identitySeed").is_some() {
+            return Err(Fault::rejected(
+                "LOCAL_IDENTITY_REMOVED",
+                "本地身份种子已移除",
+            ));
+        }
         if raw.get("authState").is_some() {
             return Err(Fault::rejected(
                 "AUTH_RESTORE_RETIRED",
@@ -289,7 +295,7 @@ impl Sessions {
             identity_seed: if external_account.is_some() {
                 Some(json!({"cookies":raw["externalCookies"]}))
             } else {
-                raw.get("identitySeed").cloned()
+                None
             },
             external_account,
             network_evidence,
@@ -441,11 +447,6 @@ async fn start(
         config: EngineConfig {
             binary: config.agent_browser_bin.clone(),
             chrome: config.chrome_bin.clone(),
-            identity_library_file: if session.external_account.is_some() {
-                None
-            } else {
-                config.identity_library_file.clone()
-            },
             external_account: session.external_account.clone(),
             identity_seed_file: seed_path,
             full_profile: false,

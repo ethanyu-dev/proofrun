@@ -108,7 +108,7 @@ fi
 if [[ "${PROOFRUN_TEST_FULL_LINUX:-false}" == true ]]; then
   # 复用隔离容器与编译产物；各脚本自行创建会话、数据库或临时 profile。
   # systemd/gateway 使用故障引擎，能力和 HITL 使用真实 Chromium，均不访问业务账号。
-  for suite in tests/browser-node/input_network_smoke.py tests/browser-node/profile_tabs_smoke.py tests/browser-node/identity_smoke.py tests/browser-node/systemd_integration.py tests/browser-node/gateway_integration.py tests/browser-node/capabilities_smoke.py tests/hitl/linux_real_browser.py; do
+  for suite in tests/browser-node/input_network_smoke.py tests/browser-node/profile_tabs_smoke.py tests/browser-node/external_account_smoke.py tests/browser-node/systemd_integration.py tests/browser-node/gateway_integration.py tests/browser-node/capabilities_smoke.py tests/hitl/linux_real_browser.py; do
     suite_env=("${engine_env[@]}")
     if [[ "$suite" == tests/browser-node/systemd_integration.py || "$suite" == tests/browser-node/gateway_integration.py ]]; then
       # 配置文件指定故障引擎；真实引擎环境变量优先级更高，必须在此移除。

@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { Modal } from './modal';
+import { Button } from './ui/button';
+import { useEffect, useState } from 'react';
 import type { VerificationReport } from '@proofrun/contracts';
 import { ApiClient } from '../api';
 import { Evidence } from './evidence';
@@ -48,7 +50,9 @@ export function ReportEvidenceButton({
     };
   }, [api, artifact.id, artifact.kind, artifact.sha256, archived]);
   return (
-    <button
+    <Button
+      variant="ghost"
+      size="content"
       className="report-evidence-button"
       disabled={archived}
       onClick={(event) => {
@@ -64,11 +68,11 @@ export function ReportEvidenceButton({
       <small className="mono wrap">{artifact.id}</small>
       {archived && <small>证据已清理</small>}
       {failed && <small>缩略图读取失败，点击重试预览</small>}
-    </button>
+    </Button>
   );
 }
 
-/** 原生模态框提供焦点隔离、Escape 关闭与焦点归还；标题保留当前验收项归属。 */
+/** 证据抽屉复用组件库弹窗的焦点隔离与键盘关闭，标题保留验收项归属。 */
 export function ReportEvidenceDrawer({
   api,
   artifact,
@@ -80,40 +84,18 @@ export function ReportEvidenceDrawer({
   context: string;
   close: () => void;
 }) {
-  const dialog = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    const element = dialog.current!;
-    element.showModal();
-    return () => element.close();
-  }, []);
-  // 在 React 卸载前关闭原生模态框，使浏览器仍能恢复到已记录的触发按钮。
-  const dismiss = () => {
-    dialog.current?.close();
-    close();
-  };
   return (
-    <dialog
-      ref={dialog}
-      className="report-evidence-drawer"
-      aria-label={`证据核对：${context}`}
-      onCancel={(event) => {
-        event.preventDefault();
-        dismiss();
-      }}
-      onClick={(event) => {
-        if (event.target === event.currentTarget) dismiss();
-      }}
+    <Modal
+      title={`证据核对：${context}`}
+      close={close}
+      className="evidence-dialog"
     >
-      <div className="report-evidence-content">
-        <p className="eyebrow">证据核对</p>
-        <h2>{context}</h2>
-        <Evidence
-          api={api}
-          artifact={artifact}
-          close={dismiss}
-          focusOnMount={false}
-        />
-      </div>
-    </dialog>
+      <Evidence
+        api={api}
+        artifact={artifact}
+        close={close}
+        focusOnMount={false}
+      />
+    </Modal>
   );
 }

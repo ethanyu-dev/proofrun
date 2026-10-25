@@ -4,11 +4,7 @@ import {
   ACCOUNT_MAX_SECONDS,
 } from '../account-providers/policy.js';
 import { resolveExecutionPlan } from './execution-plan.js';
-import {
-  resolveSession,
-  PREPARATION_MS,
-  type IdentityCatalog,
-} from '../identities/catalog.js';
+import { resolveSession, PREPARATION_MS } from '../sessions/plan.js';
 import {
   compileStepBudget,
   compileProfilePlan,
@@ -69,7 +65,6 @@ export function stepCriteria(
 export function compileCase(
   input: VerificationCaseV2,
   profile: CaseProfile,
-  identities: IdentityCatalog = { identities: [], pools: [], sites: [] },
 ): VerificationTask {
   const businessSteps = normalizeSteps(input.steps);
   const cleanupSteps = normalizeSteps(
@@ -91,50 +86,36 @@ export function compileCase(
     executionMode: profile.executionMode ?? DEFAULT_CASE_EXECUTION_MODE,
   });
   const resolved = resolveExecutionPlan(input, profile.evidenceKinds);
-  const sessionPlan = resolveSession(
-    identities,
-    identities.selectionEnabled &&
-      !input.session &&
-      resolved.session.mode !== 'guest'
-      ? undefined
-      : resolved.session,
-    input.entry,
-    profile.environment,
-  );
+  const sessionPlan = resolveSession(resolved.session, input.entry);
   // 人工处理页最多呈现十项；在提交时拒绝溢出或冲突，不能事后漏确认某些角色条件。
-  for (const candidate of sessionPlan.candidates.length
-    ? sessionPlan.candidates
-    : [null]) {
-    for (const step of businessSteps) {
-      const checks = new Map<string, unknown>();
-      for (const check of [
-        ...(candidate?.checks ?? []),
-        ...sessionPlan.requirements,
-        ...(step.preconditions ?? []),
-      ]) {
-        if (
-          checks.has(check.id) &&
-          canonical(checks.get(check.id)) !== canonical(check)
-        )
-          throw new ApiError(
-            422,
-            'IDENTITY_CHECK_CONFLICT',
-            '步骤前提与身份条件使用相同 ID 但内容不同',
-          );
-        checks.set(check.id, check);
-      }
+  for (const step of businessSteps) {
+    const checks = new Map<string, unknown>();
+    for (const check of [
+      ...sessionPlan.requirements,
+      ...(step.preconditions ?? []),
+    ]) {
       if (
-        checks.size > 10 ||
-        [...checks.values()].filter(
-          (check) => (check as { method: string }).method === 'manual',
-        ).length > (resolved.plan.environment.mode === 'guest' ? 8 : 9)
+        checks.has(check.id) &&
+        canonical(checks.get(check.id)) !== canonical(check)
       )
         throw new ApiError(
           422,
-          'IDENTITY_CHECK_LIMIT',
-          '身份条件必须为环境交接保留至少一项位置；访客还需保留一项访客复核',
+          'IDENTITY_CHECK_CONFLICT',
+          '步骤前提与身份条件使用相同 ID 但内容不同',
         );
+      checks.set(check.id, check);
     }
+    if (
+      checks.size > 10 ||
+      [...checks.values()].filter(
+        (check) => (check as { method: string }).method === 'manual',
+      ).length > (resolved.plan.environment.mode === 'guest' ? 8 : 9)
+    )
+      throw new ApiError(
+        422,
+        'IDENTITY_CHECK_LIMIT',
+        '身份条件必须为环境交接保留至少一项位置；访客还需保留一项访客复核',
+      );
   }
   const budget = businessBudget(stepBudget);
   if (sessionPlan.external) {
@@ -164,11 +145,7 @@ export function compileCase(
   }
   if (
     budget.timeoutMs +
-      (sessionPlan.candidates.length ||
-      sessionPlan.library ||
-      sessionPlan.external
-        ? sessionPlan.preparationMs
-        : 0) +
+      (sessionPlan.external ? sessionPlan.preparationMs : 0) +
       stepBudget.settleMs * businessSteps.length +
       (cleanupSteps.length ? stepBudget.cleanup.timeoutMs : 0) >
       CASE_MAX_MS ||

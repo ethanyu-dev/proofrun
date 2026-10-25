@@ -1,8 +1,10 @@
 import type { RequestResultV2 } from '@proofrun/contracts';
+import type { ReactNode } from 'react';
 import type { ApiClient } from '../api';
 import { useResource } from '../use-resource';
 import { ErrorNotice } from './ui';
 import { CaseVerificationProgress } from './case-verification-progress';
+import { RequestCaseLive } from './request-case-live';
 
 /** 列表直接读取并展示全部 case，翻页时跟随父列表暂停自动刷新。 */
 export function RequestPreview({
@@ -10,11 +12,14 @@ export function RequestPreview({
   id,
   poll = true,
   reports = false,
+  renderHeader,
 }: {
   api: ApiClient;
   id: string;
   poll?: boolean;
   reports?: boolean;
+  /** 标题区与 case 行共享同一次读取，避免移动状态后出现两份数据快照。 */
+  renderHeader?: (value: RequestResultV2 | undefined) => ReactNode;
 }) {
   const resource = useResource<RequestResultV2>(
     api,
@@ -22,13 +27,16 @@ export function RequestPreview({
     poll,
   );
   return (
-    <div className="request-preview-members">
-      <ErrorNotice message={resource.error} />
-      {!resource.data && resource.loading && <p>正在读取 case…</p>}
-      {resource.data && (
-        <RequestCasePreview value={resource.data} reports={reports} />
-      )}
-    </div>
+    <>
+      {renderHeader?.(resource.data)}
+      <div className="request-preview-members">
+        <ErrorNotice message={resource.error} />
+        {!resource.data && resource.loading && <p>正在读取 case…</p>}
+        {resource.data && (
+          <RequestCasePreview value={resource.data} reports={reports} />
+        )}
+      </div>
+    </>
   );
 }
 
@@ -48,13 +56,14 @@ export function RequestCasePreview({
             <span className="request-index">
               {String(index + 1).padStart(2, '0')}
             </span>
-            <div>
+            <div className="request-member-title">
               <a
                 href={`#/${reports ? 'request-reports' : 'requests'}/${encodeURIComponent(value.requestId)}`}
                 title={member.title}
               >
                 {member.title}
               </a>
+              <RequestCaseLive member={member} requestId={value.requestId} />
             </div>
           </div>
           <CaseVerificationProgress member={member} />

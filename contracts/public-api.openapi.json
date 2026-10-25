@@ -813,14 +813,7 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "mode": {
-            "enum": ["guest", "manual", "identity", "pool", "auto", "external"]
-          },
-          "identityRef": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{1,80}$"
-          },
-          "poolRef": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,80}$" },
+          "mode": { "enum": ["guest", "manual", "external"] },
           "requirements": {
             "type": "array",
             "items": { "$ref": "#/components/schemas/IdentityCheck" },
@@ -830,30 +823,6 @@
         },
         "required": ["mode"],
         "allOf": [
-          {
-            "if": { "properties": { "mode": { "const": "identity" } } },
-            "then": {
-              "required": ["identityRef"],
-              "properties": {
-                "identityRef": {
-                  "type": "string",
-                  "pattern": "^[A-Za-z0-9_-]{1,80}$"
-                }
-              }
-            }
-          },
-          {
-            "if": { "properties": { "mode": { "const": "pool" } } },
-            "then": {
-              "required": ["poolRef"],
-              "properties": {
-                "poolRef": {
-                  "type": "string",
-                  "pattern": "^[A-Za-z0-9_-]{1,80}$"
-                }
-              }
-            }
-          },
           {
             "if": { "properties": { "mode": { "const": "external" } } },
             "then": {
@@ -865,8 +834,6 @@
                   "maxItems": 32,
                   "minItems": 1
                 },
-                "identityRef": false,
-                "poolRef": false,
                 "external": {
                   "$ref": "#/components/schemas/ExternalAccountSelector"
                 }
@@ -876,7 +843,7 @@
           }
         ],
         "title": "SessionRequest",
-        "description": "只声明身份引用与条件，禁止携带密码或 Cookie；guest 不恢复认证。"
+        "description": "只支持访客、当前会话人工登录和 DevPass 外部账号；禁止携带密码或 Cookie。"
       },
       "QueueReason": {
         "title": "QueueReason",

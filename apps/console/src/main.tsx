@@ -1,38 +1,73 @@
-import { RequestListPage } from './pages/request-list';
-import { DashboardPage } from './pages/dashboard';
-import { RequestDetailPage } from './pages/request-detail';
-import { StrictMode, useCallback, useEffect, useState } from 'react';
+import {
+  StrictMode,
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useState,
+} from 'react';
 import { createRoot } from 'react-dom/client';
 import { ApiClient } from './api';
-import { Empty, ThemeToggle } from './components/ui';
+import { Empty } from './components/ui';
+import { AppShell } from './components/app-shell';
+import { Toaster } from './components/ui/sonner';
+import './components/ui/theme.css';
 import { Connect } from './components/connect';
-import { TaskListPage } from './pages/task-list';
-import { ReportDetailPage } from './pages/report-detail';
-import { TaskDetailPage } from './pages/task-detail';
-import { TaskSubmitPage } from './pages/task-submit';
-import { NodeProfilePage } from './pages/node-profile';
-import { NodesPage } from './pages/nodes';
-import { IdentitiesPage } from './pages/identities';
-import { HitlPage } from './pages/hitl';
 import { suspendCredentialRestore } from './credential-storage';
 import './tokens.css';
 import './style.css';
 import './requests.css';
-import './identity-library.css';
 import './dashboard.css';
 
-/** 路由只接受协议允许的任务身份，未知路径显示明确的缺失页面。 */
-const TASK_ROUTE = /^\/tasks\/([A-Za-z0-9_-]{1,128})$/;
-/** 报告路由绑定单次任务身份，与任务详情保持独立导航。 */
-const REPORT_ROUTE = /^\/reports\/([A-Za-z0-9_-]{1,128})$/;
-const NAVIGATION = [
-  ['/dashboard', '验证看板'],
-  ['/tasks', '验证任务'],
-  ['/nodes', '执行节点'],
-  ['/identities', '测试身份'],
-  ['/reports', '验证报告'],
-];
+/** 按路由加载页面，避免连接页下载报告解析、图表和所有管理表单。 */
+const RequestListPage = lazy(() =>
+  import('./pages/request-list').then((module) => ({
+    default: module.RequestListPage,
+  })),
+);
+const DashboardPage = lazy(() =>
+  import('./pages/dashboard').then((module) => ({
+    default: module.DashboardPage,
+  })),
+);
+const RequestDetailPage = lazy(() =>
+  import('./pages/request-detail').then((module) => ({
+    default: module.RequestDetailPage,
+  })),
+);
+const ReportDetailPage = lazy(() =>
+  import('./pages/report-detail').then((module) => ({
+    default: module.ReportDetailPage,
+  })),
+);
+const TaskDetailPage = lazy(() =>
+  import('./pages/task-detail').then((module) => ({
+    default: module.TaskDetailPage,
+  })),
+);
+const TaskSubmitPage = lazy(() =>
+  import('./pages/task-submit').then((module) => ({
+    default: module.TaskSubmitPage,
+  })),
+);
+const NodeProfilePage = lazy(() =>
+  import('./pages/node-profile').then((module) => ({
+    default: module.NodeProfilePage,
+  })),
+);
+const NodesPage = lazy(() =>
+  import('./pages/nodes').then((module) => ({ default: module.NodesPage })),
+);
+const HitlPage = lazy(() =>
+  import('./pages/hitl').then((module) => ({ default: module.HitlPage })),
+);
 
+/** 路由只接受协议允许的任务身份，已移除的索引路径不作为任务 ID 读取。 */
+const TASK_ROUTE =
+  /^\/tasks\/((?!(?:executions|ungrouped)$)[A-Za-z0-9_-]{1,128})$/;
+/** 报告详情保留单次任务入口，同样排除已移除的索引路径。 */
+const REPORT_ROUTE =
+  /^\/reports\/((?!(?:executions|ungrouped)$)[A-Za-z0-9_-]{1,128})$/;
 /** 仅使用页内路由与页面级读取，不引入第二份任务状态或调度器。 */
 function App() {
   const [api, setApi] = useState<ApiClient | null>(null);
@@ -81,18 +116,8 @@ function App() {
   if (!api) page = <Connect onConnect={connected} autoRestore={autoRestore} />;
   else if (path === '/dashboard') page = <DashboardPage api={api} />;
   else if (path === '/tasks' || path === '/reports')
-    page = (
-      <RequestListPage key={path} api={api} reports={path === '/reports'} />
-    );
-  else if (/^\/(tasks|reports)\/(ungrouped|executions)$/.test(path))
-    page = (
-      <TaskListPage
-        key={path}
-        api={api}
-        reports={path.startsWith('/reports/')}
-        ungrouped={path.endsWith('/ungrouped')}
-      />
-    );
+    // 旧报告列表地址继续可访问，统一展示任务列表和逐请求报告入口。
+    page = <RequestListPage api={api} />;
   else if (requestRoute)
     page = (
       <RequestDetailPage
@@ -109,7 +134,6 @@ function App() {
   else if (nodeProfileId)
     page = <NodeProfilePage key={nodeProfileId} api={api} id={nodeProfileId} />;
   else if (path === '/nodes') page = <NodesPage api={api} />;
-  else if (path === '/identities') page = <IdentitiesPage api={api} />;
   else
     page = (
       <Empty title="页面不存在">
@@ -117,80 +141,47 @@ function App() {
       </Empty>
     );
   return (
-    <>
-      <a
-        className="skip-link"
-        href="#main"
-        onClick={(event) => {
-          event.preventDefault();
-          document.getElementById('main')?.focus();
-        }}
-      >
-        跳到主要内容
-      </a>
-      <header className="site-header">
-        <nav className="site-nav" aria-label="主导航">
-          <a className="brand" href="#/tasks">
-            ProofRun.
-          </a>
-          <div className="nav-links">
-            {NAVIGATION.map(([href, label]) => (
-              <a
-                href={`#${href}`}
-                key={href}
-                aria-current={
-                  path === href ||
-                  (href === '/tasks' && requestRoute?.[1] === 'requests') ||
-                  (href === '/reports' &&
-                    requestRoute?.[1] === 'request-reports') ||
-                  (href === '/nodes' && !!nodeProfileId) ||
-                  ((href === '/tasks' || href === '/reports') &&
-                    path.startsWith(`${href}/`))
-                    ? 'page'
-                    : undefined
-                }
-              >
-                {label}
-              </a>
-            ))}
-          </div>
-          <div className="nav-actions">
-            <ThemeToggle />
-            {api && (
-              <button
-                className="button button-secondary button-small"
-                onClick={() => {
-                  const saved = suspendCredentialRestore();
-                  setAutoRestore(false);
-                  setApi(null);
-                  setStorageNotice(
-                    saved
-                      ? undefined
-                      : '已断开，但浏览器无法保存断开状态；请在站点设置中清除本地数据。',
-                  );
-                }}
-              >
-                断开连接
-              </button>
-            )}
-          </div>
-        </nav>
-      </header>
-      <main id="main" className="page-container" tabIndex={-1}>
-        {storageNotice && <p role="status">{storageNotice}</p>}
-        {page}
-      </main>
-      <footer className="site-footer page-container">
-        <span>ProofRun</span>
-        <span>浏览器验证执行平台</span>
-      </footer>
-    </>
+    <AppShell
+      path={path}
+      connected={!!api}
+      disconnect={() => {
+        const saved = suspendCredentialRestore();
+        setAutoRestore(false);
+        setApi(null);
+        setStorageNotice(
+          saved
+            ? undefined
+            : '已断开，但浏览器无法保存断开状态；请在站点设置中清除本地数据。',
+        );
+      }}
+    >
+      {storageNotice && (
+        <p className="report-notice" role="status">
+          {storageNotice}
+        </p>
+      )}
+      {page}
+    </AppShell>
   );
 }
+
 const root = document.getElementById('root');
 if (!root) throw new Error('Missing root element');
 createRoot(root).render(
   <StrictMode>
-    <App />
+    <Suspense
+      fallback={
+        <div className="page-container" role="status">
+          <Empty title="正在加载页面…" />
+        </div>
+      }
+    >
+      <App />
+    </Suspense>
+    <Toaster
+      position="bottom-right"
+      closeButton
+      toastOptions={{ duration: 4000, closeButtonAriaLabel: '关闭通知' }}
+    />
   </StrictMode>,
 );

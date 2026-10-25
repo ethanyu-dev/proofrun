@@ -1,3 +1,4 @@
+import { Button } from '../components/ui/button';
 import { useEffect, useState } from 'react';
 import { ApiClient, errorMessage } from '../api';
 import { ErrorNotice } from '../components/ui';
@@ -55,15 +56,17 @@ export function NodeProfilePage({ api, id }: { api: ApiClient; id: string }) {
       <ErrorNotice message={error} />
       <div className="page-actions">
         {(error || status?.failure) && (
-          <button
+          <Button
+            variant="outline"
             className="button button-secondary"
             onClick={() => setAttempt((n) => n + 1)}
           >
             重新读取状态
-          </button>
+          </Button>
         )}
         {!status?.closed && (
-          <button
+          <Button
+            variant="outline"
             className="button button-secondary"
             disabled={closing}
             onClick={async () => {
@@ -82,11 +85,13 @@ export function NodeProfilePage({ api, id }: { api: ApiClient; id: string }) {
             }}
           >
             关闭遗留会话
-          </button>
+          </Button>
         )}
-        <a className="button button-secondary" href="#/nodes">
-          返回节点管理
-        </a>
+        <Button asChild variant="outline">
+          <a className="button button-secondary" href="#/nodes">
+            返回节点管理
+          </a>
+        </Button>
       </div>
     </section>
   );

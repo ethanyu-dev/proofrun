@@ -1,3 +1,4 @@
+import { Button } from './ui/button';
 import { useEffect, useRef, useState } from 'react';
 import type { TaskDetail } from '@proofrun/contracts';
 import { ApiClient } from '../api';
@@ -149,12 +150,13 @@ export function LivePage({
           {capturedAt ? ` · ${new Date(capturedAt).toLocaleTimeString()}` : ''}
         </span>
         {active && execution.control_mode === 'AUTO' && (
-          <button
+          <Button
+            variant="outline"
             className="button button-secondary button-small"
             onClick={() => setVersion((v) => v + 1)}
           >
             重新连接画面
-          </button>
+          </Button>
         )}
       </div>
     </>

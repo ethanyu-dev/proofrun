@@ -79,11 +79,11 @@ node tests/browser-node/validate-events.mjs /absolute/path/to/events.jsonl
 
 真实模型回放工具见 [脚本说明](../scripts/README.md)，实际业务验收与 VM 故障演练见 [部署说明](../deploy/README.md#业务验收)。模型输出 PASSED、任务 COMPLETED、证据摘要正确分别代表不同事实，不能互相替代。
 
-## 薄身份库与临时 profile
+## 会话与 DevPass
 
-- `pnpm test:api`：六字段私密存储、版本冻结、选择租约；HTTP/WebSocket 贯通默认身份选择、HITL 交还当前会话与“无法处理”整例终态。浏览器结果使用协议夹具。
-- `pnpm test:agent`：单次身份选择工具调用、无凭据模型输入、无效引用与人工分支。
-- `pnpm test:identity:ephemeral`：设置 `PROOFRUN_AGENT_BROWSER_BIN` 和 `PROOFRUN_CHROME_BIN`，用真实 Chrome 回环夹具验证当前会话状态、禁止保存、下次会话隔离和网络脱敏；不覆盖生产登录或 Linux 监管。
+- `pnpm test:api`：验证旧身份接口移除、默认会话无需选账号、旧引用拒绝，以及 DevPass 租约和关闭交还；外部服务与浏览器由协议夹具模拟。
+- `pnpm test:agent`：验证当前会话身份条件与人工代次、步骤门禁，不调用本地选账号 Agent。
+- `pnpm test:identity:external`：真实 Chrome 回环夹具验证 DevPass Cookie 属性、会话隔离与禁止本地登录配方，不代表真实 DevPass 或生产账号验收。
 
 ### 通用执行策略回归
 

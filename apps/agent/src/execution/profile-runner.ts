@@ -107,7 +107,6 @@ export async function executeProfile(
       ? { mode: grant.task.executionPlan.environment.mode }
       : undefined;
   if (!gateId) releaseEnvironment(true);
-  let preparation: ReturnType<ExecutionClient['command']> | undefined;
   const allSteps = () =>
     steps.map((step) => structuredClone(results.get(step.stepId!)!));
 
@@ -197,20 +196,6 @@ export async function executeProfile(
         abortSignal,
         revision,
       ) => {
-        if (operation.type === 'browser.identity.prepare') {
-          preparation ??= browser.run(() =>
-            client.command(
-              grant,
-              commandId,
-              { ...operation, url: grant.task.target.url },
-              timeout,
-              abortSignal,
-              revision,
-            ),
-          );
-          // 所有组引用同一条真实准备命令；不伪造不存在的命令身份。
-          return await preparation;
-        }
         return browser.run(() =>
           client.command(
             grant,

@@ -1,8 +1,9 @@
 //! 外部材料在空白会话中通过私有 CDP 注入；原始值不进入 CLI、脚本或证据回执。
-use super::Engine;
+use super::{Engine, dom::Dom};
 use crate::{
     auth,
     error::{Fault, Result},
+    process,
 };
 use serde_json::{Value, json};
 use std::{
@@ -68,6 +69,37 @@ fn parameters(origin: &str, cookie: &Value, now: f64) -> Result<Value> {
 }
 
 impl Engine {
+    /// 获取当前页的私有连接；任何导航后都重新取 active target，避免旧 target 写入。
+    pub(super) async fn external_account_dom(&self, deadline: u64) -> Result<(Dom, String)> {
+        let endpoint = self
+            .cli(
+                vec!["get".into(), "cdp-url".into()],
+                deadline.saturating_sub(process::boot_ms()),
+            )
+            .await?;
+        let listed = self
+            .cli(
+                vec!["tab".into(), "list".into()],
+                deadline.saturating_sub(process::boot_ms()),
+            )
+            .await?;
+        let target = listed["tabs"]
+            .as_array()
+            .and_then(|tabs| tabs.iter().find(|v| v["active"] == true))
+            .and_then(|v| v["targetId"].as_str())
+            .ok_or_else(|| {
+                Fault::rejected("EXTERNAL_ACCOUNT_CDP_UNAVAILABLE", "外部账号注入连接不可用")
+            })?
+            .to_owned();
+        Ok((
+            Dom::connect(endpoint["cdpUrl"].as_str().ok_or_else(|| {
+                Fault::rejected("EXTERNAL_ACCOUNT_CDP_UNAVAILABLE", "外部账号注入连接不可用")
+            })?)
+            .await?,
+            target,
+        ))
+    }
+
     /// 只在会话初始空白页注入一次，实际登录条件仍由执行 Agent 观察核实。
     pub(super) async fn prepare_external_account(&mut self, deadline: u64) -> Result<()> {
         let account = self.config.external_account.as_ref().unwrap();
@@ -102,7 +134,7 @@ impl Engine {
                 return Err(invalid());
             }
         }
-        let (mut dom, target) = self.identity_dom(deadline).await?;
+        let (mut dom, target) = self.external_account_dom(deadline).await?;
         for p in params {
             dom.set_cookie(&target, p).await?;
         }

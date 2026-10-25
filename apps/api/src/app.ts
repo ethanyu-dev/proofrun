@@ -4,10 +4,6 @@ import { analysisRoutes } from './modules/reports/analysis-routes.js';
 import { dashboardStatistics } from './modules/reports/dashboard.js';
 import { RequestReader } from './modules/requests/reader.js';
 import { RequestService } from './modules/requests/service.js';
-import { IdentityLibrary } from './modules/identities/library.js';
-import { IdentitySelection } from './modules/identities/selection.js';
-import { identityMetrics } from './modules/identities/metrics.js';
-import { IdentitySettings } from './modules/identities/settings.js';
 import Fastify, { type FastifyRequest } from 'fastify';
 import websocket from '@fastify/websocket';
 import type { Readable } from 'node:stream';
@@ -87,18 +83,10 @@ export async function buildApp(
     config.caseProfile,
     config.publicUrl,
   );
-  const identities = new IdentitySettings(db, config);
-  const library = new IdentityLibrary(db, config);
-  const selection = new IdentitySelection(db);
-  coordinator.identityLibrary = library;
   const casesV2 = new CaseV2Service(
     coordinator,
     config.caseProfile,
     config.publicUrl,
-    async (request) =>
-      request && ['identity', 'pool', 'auto'].includes(request.mode)
-        ? identities.catalog()
-        : library.catalog(),
   );
   const requestReader = new RequestReader(db, config.publicUrl);
   const verificationRequests = new RequestService(
@@ -134,55 +122,13 @@ export async function buildApp(
     reply.header('Cache-Control', 'no-store');
     reply.header('X-Content-Type-Options', 'nosniff');
   };
-  app.get('/v1/admin/identities/metrics', { preHandler: admin }, () =>
-    identityMetrics(db),
-  );
   app.get<{ Querystring: Record<string, unknown> }>(
     '/v1/admin/statistics',
     { preHandler: admin },
     (request) => dashboardStatistics(db, request.query),
   );
-  app.get('/v1/admin/identities/settings', { preHandler: admin }, () =>
-    identities.view(),
-  );
-  app.post('/v1/admin/identities/settings', { preHandler: admin }, (request) =>
-    identities.save(request.body),
-  );
-  app.post('/v1/admin/identities/test', { preHandler: admin }, (request) =>
-    identities.test(request.body),
-  );
-  app.get('/v1/admin/identities', { preHandler: admin }, () =>
-    identities.snapshot(),
-  );
-  app.post('/v1/admin/identities/refresh', { preHandler: admin }, async () => {
-    const catalog = await identities.catalog(true);
-    return {
-      identities: catalog.identities.length,
-      pools: catalog.pools.length,
-      sites: catalog.sites.length,
-    };
-  });
-  app.get('/v1/admin/identity-library', { preHandler: admin }, () =>
-    library.list(),
-  );
-  app.post('/v1/admin/identity-library', { preHandler: admin }, (request) =>
-    library.save(request.body),
-  );
-  app.post(
-    '/v1/admin/identity-library/remove',
-    { preHandler: admin },
-    (request) => library.remove(request.body),
-  );
   const worker = async (request: FastifyRequest) =>
     requireToken(request.headers.authorization, config.workerToken);
-  app.post('/v1/worker/identity-selection/claim', { preHandler: worker }, () =>
-    selection.claim(),
-  );
-  app.post(
-    '/v1/worker/identity-selection/finish',
-    { preHandler: worker },
-    (request) => selection.finish(request.body),
-  );
   const node = async (request: FastifyRequest) => {
     authenticatedNodes.set(
       request,

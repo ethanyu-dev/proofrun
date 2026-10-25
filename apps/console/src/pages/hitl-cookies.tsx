@@ -1,3 +1,5 @@
+import { Button } from '../components/ui/button';
+import { Input } from '../components/ui/input';
 import { useState } from 'react';
 import type { NodeCommand } from '@proofrun/contracts';
 import type { BatchResult } from './hitl-input';
@@ -80,7 +82,7 @@ export function HitlCookies({
             <div className="hitl-cookie-row" key={index}>
               <label>
                 名称（key）
-                <input
+                <Input
                   aria-label={`Cookie ${index + 1} 名称`}
                   required
                   autoComplete="off"
@@ -93,7 +95,7 @@ export function HitlCookies({
               </label>
               <label>
                 值（value）
-                <input
+                <Input
                   aria-label={`Cookie ${index + 1} 值`}
                   required
                   type="password"
@@ -105,7 +107,7 @@ export function HitlCookies({
                 />
               </label>
               <label className="hitl-cookie-option">
-                <input
+                <Input
                   type="checkbox"
                   checked={entry.httpOnly}
                   onChange={(e) =>
@@ -115,7 +117,8 @@ export function HitlCookies({
                 />
                 HttpOnly
               </label>
-              <button
+              <Button
+                variant="outline"
                 type="button"
                 className="button button-small button-secondary"
                 aria-label={`移除 Cookie ${index + 1}`}
@@ -126,12 +129,13 @@ export function HitlCookies({
                 }}
               >
                 移除
-              </button>
+              </Button>
             </div>
           ))}
         </div>
         <div className="hitl-cookie-options">
-          <button
+          <Button
+            variant="outline"
             type="button"
             className="button button-small button-secondary"
             disabled={locked || entries.length >= COOKIE_LIMIT}
@@ -144,9 +148,9 @@ export function HitlCookies({
             }}
           >
             ＋ 添加一项
-          </button>
+          </Button>
           <label className="hitl-cookie-option">
-            <input
+            <Input
               type="checkbox"
               checked={refresh}
               onChange={(e) => setRefresh(e.target.checked)}
@@ -154,13 +158,17 @@ export function HitlCookies({
             />
             全部写入后刷新
           </label>
-          <button className="button button-primary" disabled={locked}>
+          <Button
+            variant="default"
+            className="button button-primary"
+            disabled={locked}
+          >
             {pending
               ? '正在写入…'
               : refresh
                 ? '写入 Cookie 并刷新'
                 : '写入 Cookie'}
-          </button>
+          </Button>
         </div>
         {result && (
           <p role="status" className="hitl-cookie-result">

@@ -3,8 +3,6 @@
 mod cookies;
 mod dom;
 mod external_account;
-mod identity;
-mod profile;
 mod scroll;
 mod visual;
 
@@ -51,9 +49,6 @@ pub struct EngineConfig {
     pub binary: PathBuf,
     /// 可选的 Chrome 绝对路径。
     pub chrome: Option<PathBuf>,
-    /// 私有登录配置路径；会话命令仅可引用其中的封闭标识。
-    #[serde(default)]
-    pub identity_library_file: Option<PathBuf>,
     /// 秘密种子只存会话私有文件，注入后删除。
     #[serde(default)]
     pub identity_seed_file: Option<PathBuf>,
@@ -321,9 +316,10 @@ impl Engine {
             }
         }
         match operation {
-            BrowserCommand::BrowserIdentityPrepare { .. } => {
-                self.prepare_identity(&raw, deadline).await
-            }
+            BrowserCommand::BrowserIdentityPrepare { .. } => Err(Fault::rejected(
+                "LOCAL_IDENTITY_REMOVED",
+                "本地登录配方已移除，请使用 DevPass 或当前会话人工登录",
+            )),
             BrowserCommand::BrowserInput { .. } => {
                 self.observation = None;
                 self.targets.clear();
@@ -935,12 +931,10 @@ fn navigation_ready(expected: &str, probe: &Value) -> bool {
 pub fn validate(command: &BrowserCommand, writes: bool) -> Result<()> {
     match command {
         BrowserCommand::BrowserIdentityPrepare { .. } => {
-            if !writes {
-                return Err(Fault::rejected(
-                    "ENGINE_WRITES_UNVERIFIED",
-                    "identity preparation requires write opt-in",
-                ));
-            }
+            return Err(Fault::rejected(
+                "LOCAL_IDENTITY_REMOVED",
+                "本地登录配方已移除",
+            ));
         }
         BrowserCommand::BrowserCookiesSet { .. } | BrowserCommand::BrowserCookiesClear { .. } => {
             if !writes {
@@ -1168,6 +1162,18 @@ pub fn socket_directory(session: &str) -> PathBuf {
 #[cfg(test)]
 mod recovery_tests {
     use super::*;
+
+    /// 旧配方命令无论写权限均被拒绝；只验证派发门禁，不进行真实浏览器登录。
+    #[test]
+    fn local_identity_preparation_is_retired() {
+        let command: BrowserCommand = serde_json::from_value(json!({"type":"browser.identity.prepare","url":"https://example.test","checks":[],"saveSnapshot":false})).unwrap();
+        for writes in [false, true] {
+            assert_eq!(
+                validate(&command, writes).unwrap_err().code,
+                "LOCAL_IDENTITY_REMOVED"
+            );
+        }
+    }
 
     /// 验证固定引擎的派发前遮挡分类；不模拟真实浏览器点击或覆盖其他错误文案。
     #[test]
