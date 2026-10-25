@@ -33,6 +33,7 @@ const fields = [
   'modelKind',
   'model',
   'vision',
+  'network',
   'agentCommit',
   'apiCommit',
   'configSha256',
@@ -42,6 +43,8 @@ if (
   Object.keys(environment).some((key) => !fields.includes(key)) ||
   environment.mode !== 'llm' ||
   !['real', 'scripted'].includes(environment.modelKind) ||
+  (environment.network !== undefined &&
+    !['runtime-default', 'explicit-env-proxy'].includes(environment.network)) ||
   !environment.model
 )
   throw new Error('环境声明无效；只接受非秘密白名单字段与单执行模式');

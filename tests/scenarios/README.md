@@ -80,7 +80,7 @@ pnpm eval:e2e --output /private/eval-run --environment /private/environment.json
 pnpm eval:e2e --output /private/eval-run --environment /private/environment.json --resume
 ```
 
-`environment.json` 至少包含 `{"mode":"llm","modelKind":"real","model":"your-model"}`，可选 `vision`、`agentCommit`、`apiCommit`、`configSha256`；不得放入密钥。该声明由调用者负责与实际部署一致；Linux 入口自动从自己启动的配置生成。API 的 Case profile 必须匹配单一执行模式、允许必要的人工介入、包含 DOM/SCREENSHOT，并使用专属节点池。
+`environment.json` 至少包含 `{"mode":"llm","modelKind":"real","model":"your-model"}`，可选 `vision`、`network`、`agentCommit`、`apiCommit`、`configSha256`；`network` 仅接受 `runtime-default` 或 `explicit-env-proxy`，记录出口选择，不放代理地址或密钥。该声明由调用者负责与实际部署一致；Linux 入口自动从自己启动的配置生成。API 的 Case profile 必须匹配单一执行模式、允许必要的人工介入、包含 DOM/SCREENSHOT，并使用专属节点池。
 
 恢复先查原请求 ID，不生成新任务。取消请求丢回执时查询原任务再幂等重送取消；不会重放业务操作。场景版本、环境、页面 origin 变化将拒绝恢复。输出目录有排他锁；强制杀进程后，先确认原进程确已退出，再删除该目录的 `runner.lock`。清单保留中断时间，崩溃间隔保守计入总时间额度。
 
