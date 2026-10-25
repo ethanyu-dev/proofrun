@@ -186,37 +186,45 @@ export function NodesPage({ api }: { api: ApiClient }) {
                     <NodeVersion runtime={node.runtime} />
                   </dd>
                 </dl>
-                <section className="node-capacity" aria-label="浏览器容量">
+                <section className="node-capacity" aria-label="节点资源准入">
                   <dl className="node-capacity-facts">
                     <div>
-                      <dt>占用 / 总容量</dt>
-                      <dd className="capacity-number">
-                        {node.occupied}
-                        <span> / {node.capacity}</span>
+                      <dt>活动会话</dt>
+                      <dd>{node.occupied}</dd>
+                    </div>
+                    <div>
+                      <dt>接收新任务</dt>
+                      <dd>
+                        {node.online &&
+                        !node.revoked_at &&
+                        node.admission?.accepting
+                          ? '允许'
+                          : '暂停'}
                       </dd>
                     </div>
                     <div>
-                      <dt>空闲槽位</dt>
-                      <dd className="node-availability">
-                        {node.online && !node.revoked_at ? (
-                          <>
-                            {Math.max(0, node.capacity - node.occupied)}
-                            <span> 个</span>
-                          </>
-                        ) : (
-                          '不可分配'
-                        )}
+                      <dt>资源状态</dt>
+                      <dd>{admissionReason(node.admission?.reason)}</dd>
+                    </div>
+                    <div>
+                      <dt>CPU 利用率</dt>
+                      <dd>{node.admission?.cpuPercent?.toFixed(1) ?? '—'}%</dd>
+                    </div>
+                    <div>
+                      <dt>可用内存</dt>
+                      <dd>
+                        {node.admission?.availableBytes == null
+                          ? '—'
+                          : `${(node.admission.availableBytes / 1024 ** 3).toFixed(2)} GiB`}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>客户端直连地址</dt>
+                      <dd className="wrap">
+                        {node.public_url ?? '未配置 public_url'}
                       </dd>
                     </div>
                   </dl>
-                  {/* 进度仅表达占用比例；容量为零或占用超额时仍保留上方真实数字。 */}
-                  <div className="node-capacity-track" aria-hidden="true">
-                    <span
-                      style={{
-                        width: `${node.capacity > 0 ? Math.min(100, Math.max(0, (node.occupied / node.capacity) * 100)) : 0}%`,
-                      }}
-                    />
-                  </div>
                 </section>
                 <section className="node-capabilities" aria-label="节点能力">
                   <h3>节点能力</h3>
@@ -292,5 +300,22 @@ export function NodesPage({ api }: { api: ApiClient }) {
         </>
       )}
     </div>
+  );
+}
+
+/** 把节点资源诊断映射成操作者可理解的状态。 */
+function admissionReason(reason?: string) {
+  return (
+    (
+      {
+        READY: '资源充足',
+        CPU_SAMPLE_PENDING: '正在采样',
+        METRICS_UNAVAILABLE: '无法读取资源指标',
+        RECOVERY_REQUIRED: '等待异常会话清理',
+        STARTUP_SETTLING: '等待新会话稳定',
+        MEMORY_PRESSURE: '内存余量不足',
+        CPU_OR_MEMORY_PRESSURE: 'CPU 或内存压力较高',
+      } as Record<string, string>
+    )[reason ?? ''] ?? '等待节点上报'
   );
 }

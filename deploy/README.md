@@ -11,7 +11,7 @@
 - 控制面：API、数据库、队列协调、证据对象存储。
 - 验证执行 Agent：独立 worker，由模型配置和吞吐需求决定副本。
 - Console：静态资源。
-- Browser Node：部署在可访问业务环境的 VM，主动连接控制面，运行 Chrome 和 agent-browser。
+- Browser Node：部署在可访问业务环境的 VM，主动连接控制面，并通过独立 HTTPS 域名向客户端提供画面与人工操作，运行 Chrome 和 agent-browser。
 
 已完成 systemd 容器内的控制面与节点闭环，真实 Linux 内网 VM 仍需验收，再固化生产镜像与运维流程。不从旧项目直接复制带历史假设的部署脚本。
 
@@ -34,6 +34,28 @@ apps/api 已提供 `/v1/nodes/connect` 网关与 `/v1/artifacts` 上传服务，
 复制相应 service 到运行用户的 `~/.config/systemd/user/`，执行 `systemctl --user daemon-reload` 和 `systemctl --user enable --now proofrun-api.service proofrun-agent.service`。生产环境按实际 Node.js 24 安装位置调整 ExecStart。Caddyfile 中的 PROOFRUN_DOMAIN 由服务环境提供；静态 Console 与 `/v1/*`、`/v2/*` 在同一个 HTTPS origin，节点使用同源 WSS，无需反向访问内网。
 
 备份范围为 PostgreSQL、API 证据目录、节点 home（含身份、SQLite、凭据与登录状态）；数据库和证据应在停止写入后一起备份，恢复到同一版本。维护默认只预览；配对回执恢复、轮换、清理和重启处理见 [部署与运行维护](README.md)。不要用测试容器的 privileged 配置作为生产部署方式。
+
+## 节点直连域名与升级
+
+每台 Browser Node 配置一个客户端可访问的 HTTPS origin，例如 `https://browser-node-01.example.com`。这个地址与待测站点的域名路由不同：前者用于看画面和人工操作，后者决定在哪个节点执行任务。
+
+| 配置                                                | 所在位置                                                                                     | 用途                                              |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| `public_url`                                        | 节点 TOML；安装器默认 `~/.config/proofrun/node.toml`，手动服务模板 `/etc/proofrun/node.toml` | 对客户端公布的 HTTPS origin，不带路径、参数、凭据 |
+| `listen`                                            | 同一个 TOML，默认 `127.0.0.1:9310`                                                           | Node 明文回环入口，仅供本机反向代理               |
+| `PROOFRUN_NODE_PUBLIC_URL` / `PROOFRUN_NODE_LISTEN` | Node 服务环境，可选覆盖                                                                      | 容器或受管理部署的同一配置入口                    |
+| `PROOFRUN_NODE_DOMAIN`                              | 节点本机 Caddy 服务环境                                                                      | 证书和域名，例如 `browser-node-01.example.com`    |
+| `PROOFRUN_CONSOLE_URL`                              | API 服务环境；省略则使用 `PROOFRUN_PUBLIC_URL`                                               | 处理页地址及直连授权的精确 Origin                 |
+
+Node 经机器认证的心跳登记 `public_url`，API 保存并在授权时返回当前节点地址，Console 无需维护节点域名列表。不要在 Console 填写节点凭据。TLS 由节点本机 [node.Caddyfile](node.Caddyfile) 终止，它只代理三个直连 WebSocket 路径到 `listen`；如果修改端口，同时修改该代理目标。外部反代机器不能直接使用回环监听，需把 TLS 入口部署在节点本机。
+
+部署时把域名解析到节点入口，确保客户端能访问 443，并让 Caddy 能完成证书签发/续期（按所选验证方式开放 80 或配置 DNS 验证）。配置 Node 的 `public_url` 和 Caddy 域名一致，重启 Node 后从 Console 节点页检查上报地址。客户端直接使用 WSS，无需 WebRTC、STUN 或 TURN。仅本地开发允许 `http://localhost` / 回环 IP；HTTPS Console 不能连接明文 WS。
+
+资源准入参数都在节点 TOML：`memory_reserve_bytes` 默认保留 1 GiB，`session_reserve_bytes` 默认每会话至少预算 512 MiB；CPU 默认 80% 停止新接收、低于 60% 恢复，CPU PSI 阈值 20%。按机器和任务负载调参，不能把这些默认值当作实测容量。Node 读取宿主与 cgroup 实际余量，扣除尚未体现为实际占用的会话预算，并在启动后等待五秒稳定。指标缺失、隔离会话或资源压力均暂停新任务；已运行任务继续受租约管理。没有固定 `capacity`，也没有 Node 本地任务排队。
+
+升级必须先停止新任务、等待现有会话关闭，然后备份并升级 API（迁移 034）、Console 和节点。旧 TOML 的 `capacity` 必须删除，加入 `public_url` 与 `listen`；安装器遇到旧字段会明确拒绝并提示迁移，不擅自覆盖已有配置。旧节点不再满足资源准入协议，旧直连前的网页须刷新。新安装器支持 `--public-url https://browser-node-01.example.com`；它不代办 DNS、证书或 Caddy 的系统安装。
+
+资源拒绝只有在 `session.open` 明确 `NOT_STARTED / RESOURCE_UNAVAILABLE` 时才安全重排；API 归档拒绝尝试并撤销旧执行身份，保持原排队期限。未知结果不重排、不自动重放。回滚应恢复成套数据库与组件版本，不能只切换旧 Node 程序。
 
 ## 节点轮换与停机维护
 
@@ -108,3 +130,47 @@ pnpm accept:task /private/verification-task.json
 6. 升级前备份并留存原版本。数据库升级后不能仅切换旧二进制作为回滚；按已验证方案恢复同版本数据库、证据和节点状态。
 
 这些项目需要指定 VM、业务环境和维护窗口。容器回归与模板文件不能把它们自动标为完成。
+
+## 一个节点授权多套控制面
+
+一个 Node 进程可以同时连接生产 API 和开发 API，统一判断 CPU、内存和所有会话的预留。每套控制面保留自己的任务队列；Node 不维护任务队列、不承诺固定并发，也不保证不同控制面之间的公平份额或生产优先级。
+
+`node.toml` 继续保存机器级配置：`home`、`public_url`、`listen`、浏览器路径和资源阈值。启用显式绑定后，控制面端点、资源池、凭据和批准的 Console Origin 以绑定为单位保存在私有 `home/node.db`，不再读取 TOML 的旧控制面字段。`public_url` 仍只需一个，Caddy 模板和三个直连路径不变。
+
+已有单控制面节点先停止派发、等待会话结束并停止服务，然后导入原身份。导入不改变已有 nodeId、账本或待确认结果，也不重新申请配对码：
+
+```sh
+systemctl --user stop proofrun-node.service
+proofrun-node --config ~/.config/proofrun/node.toml bindings import-legacy \
+  --name production --console-origin https://proofrun.example.com
+systemctl --user start proofrun-node.service
+```
+
+在开发服务中取得新的配对码并保存为仅当前用户可读的文件，再在远端 Node 上执行。新增绑定支持热加载，不停止其他绑定的任务：
+
+```sh
+proofrun-node --config ~/.config/proofrun/node.toml bindings add \
+  --name development --api https://dev-api.example.com --pool development \
+  --console-origin http://localhost:5173 \
+  --pairing-token-file /private/path/development-pairing
+proofrun-node --config ~/.config/proofrun/node.toml bindings list
+```
+
+API 地址必须从 Node 所在机器可达。开发机的 `localhost` 不能直接作为远端 Node 的控制面地址；可以提供 HTTPS/WSS 隧道入口，或将开发 API 经安全隧道转发到远端回环地址。`--console-origin` 则是处理者浏览器中实际打开 Console 的精确来源；允许回环 HTTP，生产应使用 HTTPS。API 的 `PROOFRUN_CONSOLE_URL` 必须与批准值一致。可重复传入 `--console-origin` 批准多个来源；API 自行请求未批准来源会被 Node 拒绝。
+
+每个绑定获得独立随机 nodeId 和机器凭据。客户端从对应 API 取得 nodeId 与短期凭据后，直连同一 Node 域名；nodeId 只用于路由，不授予权限。生产 API 看不到开发会话，不能控制、续租或确认开发事件，证据也只上传到所属 API。节点管理员仍拥有本机全部数据；这不是不互信租户之间的系统级沙箱。
+
+```sh
+# 排空只停止接收新会话；现有任务、人工处理和证据交付继续。
+proofrun-node --config ~/.config/proofrun/node.toml bindings drain development
+proofrun-node --config ~/.config/proofrun/node.toml bindings resume development
+# 撤销立即禁止后续授权，并请求关闭该绑定的已有会话；不影响其他绑定。
+proofrun-node --config ~/.config/proofrun/node.toml bindings revoke development
+proofrun-node --config ~/.config/proofrun/node.toml bindings list
+```
+
+状态修改先持久化。`revoke` 命令返回不等于浏览器进程已全部退出，以 `remainingSessions` 为零确认回收；运行服务轮询注册表并取消对应网关，已有直连最多按 250ms 检查周期撤权。已经派发的浏览器操作可能产生效果，不能将撤销解释为业务回滚。节点停止时提交撤销，下一次启动先恢复和清理旧会话，绝不重连已撤销服务。
+
+撤销保留身份墓碑、账本和未确认事件，不能恢复为 ACTIVE、复用名称或把旧数据交给新服务。需要重新授权时使用新名称和新配对码。普通断线不撤销绑定，现有会话受原租约约束，结果只向原控制面重送。配对响应丢失时，在配对码有效期内以完全相同的命令重试；节点保存未完成配对身份，避免响应丢失后生成另一身份。
+
+多绑定升级需排空所有绑定，备份整个节点 home 和各控制面的数据。安装器会检查所有绑定的未关闭会话并识别注册表中的授权，不依赖旧 `credential.json` 启动服务。旧二进制不能直接读取迁移后的 SQLite 主键结构，回滚必须恢复升级前的程序、配置和完整数据备份。

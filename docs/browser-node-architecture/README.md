@@ -29,6 +29,7 @@ flowchart LR
   A -.->|逐项验收结果与证据引用| API
   N -->|主动建立 WSS、心跳与结果| G
   G -->|通过已有连接下发命令| N
+  UI <-->|直连 WSS：实时画面、人工输入| N
   N -->|有限浏览器操作| E
   E -->|页面访问| B
   API -.->|汇总验收结论| UI
@@ -41,6 +42,10 @@ flowchart LR
 
 Browser Node 只返回浏览器操作事实与证据，不定义验收标准，也不把操作成功判定为业务验收通过。控制面拥有全局任务状态和最终报告；执行 Agent 负责页面决策与逐项验收。
 
+## 多控制面绑定
+
+同一 Node 可以连接生产和开发控制面，每条连接使用独立授权。`runtime` 共享机器资源准入和直连监听；每个绑定的执行上下文隔离会话、心跳清单、租约、回执和上传。唯一 SQLite 以绑定范围划分账本。各控制面仍维护自己的队列，Node 不引入跨控制面的任务队列。管理入口和域名配置见[部署说明](../../deploy/README.md#一个节点授权多套控制面)。
+
 ## Browser Node 内部结构
 
 ```mermaid
@@ -50,6 +55,8 @@ flowchart TB
 
   subgraph NODE[proofrun-node · 一个可部署的 Rust 二进制]
     GW[gateway/mod.rs<br/>主动连接、心跳、ACK、重连]
+    DIRECT[direct.rs / control.rs<br/>独立控制与媒体连接、代次授权]
+    ADMISSION[admission.rs<br/>CPU、内存和压力裁决]
     ENTRY[node.rs<br/>Schema、身份与租约校验<br/>先登记、再派发、后提交]
     STORE[(store.rs · SQLite<br/>会话意图、命令去重、结果 outbox)]
     SESS[sessions/mod.rs<br/>本机容量、租约、取消与串行准入]
@@ -67,6 +74,9 @@ flowchart TB
     GW -->|下发命令| ENTRY
     ENTRY -->|派发前登记、提交终态| STORE
     STORE -->|未确认结果重送| GW
+    CLIENT[客户端] <-->|节点 HTTPS 域名| DIRECT
+    DIRECT -->|共用执行入口| ENTRY
+    SESS --> ADMISSION
     ENTRY -->|会话准入| SESS
     SESS -->|启动与关闭| PROC
     PROC -->|监管进程范围| HOST

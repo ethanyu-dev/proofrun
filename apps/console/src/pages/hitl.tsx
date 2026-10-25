@@ -1,3 +1,4 @@
+import { HitlConnection } from './hitl-connection';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Textarea } from '../components/ui/textarea';
@@ -72,7 +73,7 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
   const [busy, setBusy] = useState(false);
   const [checked, setChecked] = useState<number[]>([]);
   const [text, setText] = useState('');
-  const socket = useRef<WebSocket | null>(null);
+  const socket = useRef<HitlConnection | null>(null);
   const completionTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   );
@@ -152,85 +153,83 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
     setBusy(false);
     setError('');
     setFrame(undefined);
-    const url = new URL('/v1/hitl/connect', location.href);
-    url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(url);
-    socket.current = ws;
-    ws.onopen = () =>
-      ws.send(JSON.stringify({ type: 'authenticate', id, token }));
-    ws.onmessage = (event) => {
-      const message = JSON.parse(event.data) as HitlServer;
-      if (message.type === 'state') {
-        setState(message);
-        setConnected(true);
-      } else if (message.type === 'frame')
-        setFrame({
-          data: message.data,
-          width: message.width,
-          height: message.height,
-        });
-      else if (message.type === 'error') {
-        setError(message.message);
+    const ws = new HitlConnection({
+      id: id ?? '',
+      token: token ?? '',
+      message: (message) => {
+        if (message.type === 'state') {
+          setState(message);
+          setConnected(true);
+          if (message.finalizing) {
+            completing.current = true;
+            setBusy(true);
+          }
+        } else if (message.type === 'frame')
+          setFrame({
+            data: message.data,
+            width: message.width,
+            height: message.height,
+          });
+        else if (message.type === 'error') {
+          setError(message.message);
+          input.current!.reset();
+          clearTimeout(completionTimer.current);
+          setBusy(false);
+          completing.current = false;
+        } else if (message.type === 'result') {
+          if (input.current!.acknowledge(message)) setError('');
+        } else if (message.type === 'unable') {
+          completed.current = true;
+          completing.current = false;
+          setUnableResult(message.reason);
+          setDone(true);
+          setConnected(false);
+          setFrame(undefined);
+          setText('');
+          setError('');
+          input.current!.reset();
+          clearTimeout(completionTimer.current);
+          ws.close();
+        } else if (message.type === 'completed') {
+          completed.current = true;
+          setDone(true);
+          setConnected(false);
+          setFrame(undefined);
+          setText('');
+          setError('');
+          input.current!.reset();
+          clearTimeout(completionTimer.current);
+          ws.close();
+          // 脚本打开的处理 tab 可自动关闭；浏览器禁止关闭时保留明确的完成页。
+          window.close();
+        }
+      },
+      closed: () => {
+        const hadPendingInput = input.current!.busy;
+        setConnected(false);
+        setFrame(undefined);
+        setRemoteFocused(false);
+        setText('');
+        clearTimeout(typingTimer.current);
+        typing.current = '';
+        setTypingPending(false);
+        if (!completed.current)
+          setError(
+            (previous) =>
+              previous ||
+              (hadPendingInput
+                ? '连接中断，操作结果未确认；重新连接后先检查页面。'
+                : '连接已断开。关闭此页不会自动恢复 Agent。'),
+          );
         input.current!.reset();
         clearTimeout(completionTimer.current);
         setBusy(false);
         completing.current = false;
-      } else if (message.type === 'result') {
-        if (input.current!.acknowledge(message)) setError('');
-      } else if (message.type === 'unable') {
-        completed.current = true;
-        completing.current = false;
-        setUnableResult(message.reason);
-        setDone(true);
-        setConnected(false);
-        setFrame(undefined);
-        setText('');
-        setError('');
-        input.current!.reset();
-        clearTimeout(completionTimer.current);
-        ws.close();
-      } else if (message.type === 'completed') {
-        completed.current = true;
-        setDone(true);
-        setConnected(false);
-        setFrame(undefined);
-        setText('');
-        setError('');
-        input.current!.reset();
-        clearTimeout(completionTimer.current);
-        ws.close();
-        // 脚本打开的处理 tab 可自动关闭；浏览器禁止关闭时保留明确的完成页。
-        window.close();
-      }
-    };
-    ws.onclose = () => {
-      const hadPendingInput = input.current!.busy;
-      setConnected(false);
-      setFrame(undefined);
-      setRemoteFocused(false);
-      setText('');
-      clearTimeout(typingTimer.current);
-      typing.current = '';
-      setTypingPending(false);
-      if (!completed.current)
-        setError(
-          (previous) =>
-            previous ||
-            (hadPendingInput
-              ? '连接中断，操作结果未确认；重新连接后先检查页面。'
-              : '连接已断开。关闭此页不会自动恢复 Agent。'),
-        );
-      input.current!.reset();
-      clearTimeout(completionTimer.current);
-      setBusy(false);
-      completing.current = false;
-    };
-    ws.onerror = () => setError('无法连接处理服务，请检查网络后重新连接');
+      },
+      error: setError,
+    });
+    socket.current = ws;
     return () => {
-      ws.onopen = null;
-      ws.onerror = null;
-      ws.onclose = null;
-      ws.onmessage = null;
       ws.close();
       input.current!.reset();
       clearTimeout(completionTimer.current);

@@ -6,8 +6,6 @@ use std::path::{Path, PathBuf};
 const DEFAULT_HOME: &str = ".proofrun";
 /// 默认连接本机控制面；非回环地址仍由网关入口强制使用 TLS。
 const DEFAULT_GATEWAY_URL: &str = "wss://localhost/v1/nodes/connect";
-/// 单个节点默认允许同时运行的浏览器会话数。
-const DEFAULT_CAPACITY: usize = 2;
 /// 默认租约上限为 60 秒，避免断连后会话长期失去控制。
 const DEFAULT_MAX_LEASE_MS: u64 = 60_000;
 /// 默认单会话硬期限为一小时，续租不得越过该期限。
@@ -21,14 +19,26 @@ const DEFAULT_ARTIFACT_LIMIT_BYTES: u64 = 256 * 1024 * 1024;
 pub struct NodeConfig {
     /// SQLite、会话 profile 和截图等私有数据的根目录。
     pub home: PathBuf,
-    /// 节点主动连接控制面的 WebSocket 地址。
+    /// 单控制面兼容入口；显式 bindings 使用注册表内各自的网关地址。
     pub gateway_url: String,
-    /// 控制面签发的机器凭据文件；相对路径以 home 为基准。
+    /// 旧单控制面机器凭据文件；导入 bindings 后凭据保存在私有注册表。
     pub credential_file: PathBuf,
     /// 控制面选择节点时使用的资源池标识。
     pub pool: String,
-    /// 同时占用的会话上限；关闭中和隔离会话也计入。
-    pub capacity: usize,
+    /// 客户端可访问的 HTTPS origin；TLS 由本机反向代理终止。
+    pub public_url: Option<String>,
+    /// 直连监听仅允许回环地址，避免绕过反向代理暴露明文控制入口。
+    pub listen: String,
+    /// 宿主保留内存与每个会话的最低预算，单位字节。
+    pub memory_reserve_bytes: u64,
+    /// 单个会话尚未产生实际占用时预留的内存预算。
+    pub session_reserve_bytes: u64,
+    /// CPU 利用率停止/恢复阈值及压力阈值，单位百分比。
+    pub cpu_stop_percent: f64,
+    /// 停止接收后恢复所需的低利用率阈值。
+    pub cpu_resume_percent: f64,
+    /// cgroup CPU 等待压力的十秒均值上限。
+    pub cpu_pressure_percent: f64,
     /// 固定版本 agent-browser 的原生可执行文件。
     pub agent_browser_bin: PathBuf,
     /// 可选的 Chrome 可执行文件；未指定时由引擎选择。
@@ -53,7 +63,13 @@ impl Default for NodeConfig {
             gateway_url: DEFAULT_GATEWAY_URL.into(),
             credential_file: PathBuf::from("credential.json"),
             pool: "default".into(),
-            capacity: DEFAULT_CAPACITY,
+            public_url: None,
+            listen: "127.0.0.1:9310".into(),
+            memory_reserve_bytes: 1024 * 1024 * 1024,
+            session_reserve_bytes: 512 * 1024 * 1024,
+            cpu_stop_percent: 80.0,
+            cpu_resume_percent: 60.0,
+            cpu_pressure_percent: 20.0,
             agent_browser_bin: PathBuf::from("agent-browser"),
             chrome_bin: None,
             max_lease_ms: DEFAULT_MAX_LEASE_MS,
@@ -87,9 +103,45 @@ impl NodeConfig {
             std::env::var_os("PROOFRUN_IDENTITY_LIBRARY_FILE").is_none(),
             "本地身份库已移除，请移除 PROOFRUN_IDENTITY_LIBRARY_FILE 并使用 DevPass"
         );
+        if let Ok(url) = std::env::var("PROOFRUN_NODE_PUBLIC_URL") {
+            config.public_url = Some(url);
+        }
+        if let Ok(listen) = std::env::var("PROOFRUN_NODE_LISTEN") {
+            config.listen = listen;
+        }
+        let address: std::net::SocketAddr =
+            config.listen.parse().context("listen 必须是回环 IP:端口")?;
         ensure!(
-            (1..=32).contains(&config.capacity),
-            "capacity must be between 1 and 32"
+            address.ip().is_loopback(),
+            "listen 必须绑定回环地址，由本机反向代理提供 TLS"
+        );
+        if let Some(value) = &config.public_url {
+            let url = reqwest::Url::parse(value)?;
+            let local = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
+            ensure!(
+                (url.scheme() == "https" || (local && url.scheme() == "http"))
+                    && url.host_str().is_some()
+                    && url.username().is_empty()
+                    && url.password().is_none()
+                    && url.path() == "/"
+                    && url.query().is_none()
+                    && url.fragment().is_none(),
+                "public_url 必须是客户端可访问的 HTTPS origin，不能带路径、参数或凭据"
+            );
+            config.public_url = Some(url.origin().ascii_serialization());
+        }
+        ensure!(
+            config.cpu_resume_percent > 0.0
+                && config.cpu_resume_percent < config.cpu_stop_percent
+                && config.cpu_stop_percent <= 100.0
+                && config.cpu_pressure_percent > 0.0
+                && config.cpu_pressure_percent <= 100.0,
+            "CPU 阈值必须满足 0 < resume < stop <= 100"
+        );
+        ensure!(
+            config.memory_reserve_bytes >= 64 * 1024 * 1024
+                && config.session_reserve_bytes >= 64 * 1024 * 1024,
+            "内存余量不能低于 64 MiB"
         );
         ensure!(
             (1_000..=120_000).contains(&config.max_lease_ms),

@@ -21,7 +21,7 @@ pub struct Artifacts {
     /// 截图与可用事件的持久记录。
     store: Store,
     /// 串行执行额度检查和文件登记，避免并发截图突破配额。
-    lock: Arc<Mutex<()>>,
+    pub(crate) lock: Arc<Mutex<()>>,
 }
 impl Artifacts {
     /// 绑定节点配置与持久记录，上传可在网关断线时独立重试。
@@ -101,10 +101,10 @@ impl Artifacts {
             target.to_string_lossy().into_owned(),
         );
         self.store
-            .call(move |db| {
+            .call(move |db, scope| {
                 db.execute(
-                    "INSERT INTO artifacts(id,session_id,command_id,hash,path,kind) VALUES(?,?,?,?,?,?)",
-                    rusqlite::params![row.0, row.1, row.2, row.3, row.4, kind],
+                    "INSERT INTO artifacts(id,session_id,command_id,hash,path,kind,binding) VALUES(?,?,?,?,?,?,?)",
+                    rusqlite::params![row.0, row.1, row.2, row.3, row.4, kind, scope],
                 )?;
                 Ok(())
             })
@@ -121,16 +121,20 @@ impl Artifacts {
         };
         let rows: Vec<(String, String, String, String)> = self
             .store
-            .call(|db| {
+            .call(|db, scope| {
                 let mut q = db
-                    .prepare("SELECT id,hash,path,kind FROM artifacts WHERE available=0 LIMIT 8")?;
+                    .prepare("SELECT id,hash,path,kind FROM artifacts WHERE available=0 AND binding=? LIMIT 8")?;
                 Ok(
-                    q.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+                    q.query_map([scope], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
                         .collect::<rusqlite::Result<_>>()?,
                 )
             })
             .await?;
         for (id, hash, path, kind) in rows {
+            ensure!(
+                self.store.binding_state().await? != "REVOKED",
+                "绑定已撤销，停止上传"
+            );
             let file = tokio::fs::File::open(&path).await?;
             let length = file.metadata().await?.len();
             let body = reqwest::Body::wrap_stream(tokio_util::io::ReaderStream::new(file));
@@ -169,16 +173,19 @@ impl Artifacts {
                 "invalid storage receipt"
             );
             self.store
-                .call(move |db| {
+                .call(move |db, scope| {
                     let tx = db.transaction()?;
-                    tx.execute("UPDATE artifacts SET available=1 WHERE id=?", [&id])?;
+                    tx.execute(
+                        "UPDATE artifacts SET available=1 WHERE id=? AND binding=?",
+                        [id.as_str(), scope],
+                    )?;
                     let event = json!({
                         "type": "artifact.available", "messageId": format!("artifact:{id}"),
                         "artifactId": id, "sha256": hash
                     });
                     tx.execute(
-                        "INSERT OR IGNORE INTO outbox VALUES(?,?)",
-                        rusqlite::params![format!("artifact:{id}"), event.to_string()],
+                        "INSERT OR IGNORE INTO outbox(id,payload,binding) VALUES(?,?,?)",
+                        rusqlite::params![format!("artifact:{id}"), event.to_string(), scope],
                     )?;
                     tx.commit()?;
                     Ok(())
@@ -289,7 +296,7 @@ mod trace_tests {
         );
         assert_eq!(data["artifactRefs"][0]["status"], "PENDING");
         let kind: String = store
-            .call(|db| Ok(db.query_row("SELECT kind FROM artifacts", [], |row| row.get(0))?))
+            .call(|db, _| Ok(db.query_row("SELECT kind FROM artifacts", [], |row| row.get(0))?))
             .await
             .unwrap();
         assert_eq!(kind, "TRACE");

@@ -20,8 +20,14 @@ pub async fn recover_reboot(config: &NodeConfig) -> Result<Value> {
     let _lock = artifacts::lock_home(&config.home)?;
     let store = Store::open(&config.home.join("node.db"))?;
     let boot = process::boot_id()?;
-    let records = store.sessions().await?;
-    for record in &records {
+    let scopes = store.scopes().await?;
+    let mut records = Vec::new();
+    for scope in &scopes {
+        for record in store.scoped(scope).sessions().await? {
+            records.push((scope.clone(), record));
+        }
+    }
+    for (_, record) in &records {
         ensure!(
             record.boot_id != boot,
             "same-boot session requires cgroup cleanup, not reboot recovery"
@@ -37,15 +43,17 @@ pub async fn recover_reboot(config: &NodeConfig) -> Result<Value> {
         );
     }
     let count = records.len();
-    for mut record in records {
+    for (scope, mut record) in records {
         record.state = "CLOSED".into();
         record
             .close_reason
             .get_or_insert_with(|| "NODE_RESTART_RECOVERY".into());
         crate::sessions::cleanup_private_session(config, &record)?;
-        store.save_session(record).await?;
+        store.scoped(&scope).save_session(record).await?;
     }
-    store.recover_commands().await?;
+    for scope in scopes {
+        store.scoped(&scope).recover_commands().await?;
+    }
     Ok(json!({"recovered":count,"replayed":false,"bootId":boot}))
 }
 
@@ -54,48 +62,52 @@ pub async fn retain(config: &NodeConfig, days: u64, apply: bool) -> Result<Value
     ensure!((1..=3650).contains(&days), "retention days out of range");
     let _lock = artifacts::lock_home(&config.home)?;
     let store = Store::open(&config.home.join("node.db"))?;
-    let records: Vec<SessionRecord> = store.call(|db| {
-        let mut statement = db.prepare("SELECT record FROM sessions s WHERE state='CLOSED' AND NOT EXISTS(SELECT 1 FROM outbox WHERE json_extract(payload,'$.sessionId')=s.id) AND NOT EXISTS(SELECT 1 FROM artifacts WHERE session_id=s.id AND available=0)")?;
-        statement.query_map([], |row| row.get::<_,String>(0))?.map(|row| Ok(serde_json::from_str(&row?)?)).collect()
-    }).await?;
     let mut cleaned = Vec::new();
-    for record in records {
-        // launch_id 必须是本机生成的 UUID，不能将损坏账本中的任意路径交给递归删除。
-        ensure!(
-            record.launch_id.len() == 32 && record.launch_id.bytes().all(|b| b.is_ascii_hexdigit()),
-            "invalid launch identity"
-        );
-        let path = config.home.join("sessions").join(&record.launch_id);
-        let info = match fs::symlink_metadata(&path) {
-            Ok(info) => info,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(error.into()),
-        };
-        ensure!(
-            info.is_dir() && !info.file_type().is_symlink(),
-            "session directory is not a plain directory"
-        );
-        if SystemTime::now()
-            .duration_since(info.modified()?)
-            .unwrap_or_default()
-            < Duration::from_secs(days * DAY_SECONDS)
-        {
-            continue;
-        }
-        if apply {
-            fs::remove_dir_all(path)?;
-            let socket = engine::socket_directory(&record.launch_id);
-            if socket.exists() {
-                fs::remove_dir_all(socket)?;
+    for scope in store.scopes().await? {
+        let store = store.scoped(&scope);
+        let records: Vec<SessionRecord> = store.call(|db, scope| {
+        let mut statement = db.prepare("SELECT record FROM sessions s WHERE s.binding=? AND state='CLOSED' AND NOT EXISTS(SELECT 1 FROM outbox WHERE binding=s.binding AND json_extract(payload,'$.sessionId')=s.id) AND NOT EXISTS(SELECT 1 FROM artifacts WHERE binding=s.binding AND session_id=s.id AND available=0)")?;
+        statement.query_map([scope], |row| row.get::<_,String>(0))?.map(|row| Ok(serde_json::from_str(&row?)?)).collect()
+    }).await?;
+        for record in records {
+            // launch_id 必须是本机生成的 UUID，不能将损坏账本中的任意路径交给递归删除。
+            ensure!(
+                record.launch_id.len() == 32
+                    && record.launch_id.bytes().all(|b| b.is_ascii_hexdigit()),
+                "invalid launch identity"
+            );
+            let path = config.home.join("sessions").join(&record.launch_id);
+            let info = match fs::symlink_metadata(&path) {
+                Ok(info) => info,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error.into()),
+            };
+            ensure!(
+                info.is_dir() && !info.file_type().is_symlink(),
+                "session directory is not a plain directory"
+            );
+            if SystemTime::now()
+                .duration_since(info.modified()?)
+                .unwrap_or_default()
+                < Duration::from_secs(days * DAY_SECONDS)
+            {
+                continue;
             }
-            let id = record.session_id.clone();
-            store.call(move |db| {
-                db.execute("UPDATE commands SET result=json_remove(result,'$.data') WHERE json_extract(meta,'$.sessionId')=?", [&id])?;
-                db.execute("DELETE FROM artifacts WHERE session_id=? AND available=1", [&id])?;
+            if apply {
+                fs::remove_dir_all(path)?;
+                let socket = engine::socket_directory(&record.launch_id);
+                if socket.exists() {
+                    fs::remove_dir_all(socket)?;
+                }
+                let id = record.session_id.clone();
+                store.call(move |db, scope| {
+                db.execute("UPDATE commands SET result=json_remove(result,'$.data') WHERE json_extract(meta,'$.sessionId')=? AND binding=?", [id.as_str(), scope])?;
+                db.execute("DELETE FROM artifacts WHERE session_id=? AND available=1 AND binding=?", [id.as_str(), scope])?;
                 Ok(())
             }).await?;
+            }
+            cleaned.push(record.session_id);
         }
-        cleaned.push(record.session_id);
     }
     Ok(
         json!({"applied":apply,"sessions":cleaned,"retained":"identities, deduplication results and authentication states"}),
@@ -127,7 +139,7 @@ mod tests {
             fence: 1,
             node_epoch: "fixture-epoch".into(),
         };
-        store.reserve(record.clone(), 1).await.unwrap();
+        store.reserve(record.clone()).await.unwrap();
         let path = root.path().join("sessions").join(&record.launch_id);
         fs::create_dir_all(&path).unwrap();
         fs::write(path.join("profile-data"), "private").unwrap();
@@ -159,6 +171,6 @@ mod tests {
         assert!(path.exists());
         retain(&config, 1, true).await.unwrap();
         assert!(!path.exists());
-        assert!(store.reserve(record, 1).await.is_err());
+        assert!(store.reserve(record).await.is_err());
     }
 }

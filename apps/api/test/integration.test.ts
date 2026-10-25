@@ -30,6 +30,7 @@ import {
   TRACE,
   TRACE_HASH,
   SimulatedNode,
+  connectHitl,
   SimulatedWorker,
   task,
   until,
@@ -406,7 +407,9 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       assert.equal((await api('GET', '/v2/cases/v2-atomic-new')).status, 404);
       assert.equal(await claim(), null);
       const first = await claim(true);
+      await ready(first);
       const second = await claim(true);
+      await ready(second);
       const independent = await claim(true);
       assert.equal(first.task.taskId, 'case-v2-v2-first');
       assert.equal(second.task.taskId, 'case-v2-v2-second');
@@ -2167,6 +2170,53 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
     });
 
     // 范围：命令幂等、证据归属、文件摘要及报告聚合；不证明页面业务符合标准。
+    // 范围：节点明确未启动时安全重排、旧令牌撤销与迟到结果去重；资源指标由夹具模拟。
+    await suite.test('节点资源拒绝重排且旧执行不能复活', async () => {
+      const node = await addNode('resource-reject');
+      node.rejectOpen = true;
+      const definition = task(node.pool);
+      await submit(definition);
+      const first = await claim();
+      assert.ok(first);
+      await until(
+        async () => (await api('GET', `/v1/tasks/${definition.taskId}`)).data,
+        (value) => value.state === 'QUEUED',
+      );
+      assert.equal(node.sessions.size, 0);
+      assert.equal(
+        (
+          await api(
+            'GET',
+            `/v1/executions/${first.id}`,
+            undefined,
+            first.leaseToken,
+          )
+        ).status,
+        404,
+      );
+      const archived = (
+        await sql.query(
+          'SELECT commands FROM pr_admission_rejections WHERE execution_id=$1',
+          [first.id],
+        )
+      ).rows[0];
+      assert.ok(archived);
+      const result = node.results.get(
+        archived.commands.find((c: any) => c.kind === 'session.open').id,
+      );
+      node.send(result);
+      await sql.query(
+        'UPDATE pr_nodes SET admission_retry_at=clock_timestamp() WHERE id=$1',
+        [node.id],
+      );
+      const second = await until<any>(claim, Boolean);
+      assert.notEqual(second.id, first.id);
+      assert.notEqual(second.sessionId, first.sessionId);
+      await ready(second);
+      await api('POST', `/v1/tasks/${definition.taskId}/cancel`);
+      await cleaned(definition.taskId);
+    });
+
     await suite.test('命令结果、证据与报告闭环', async () => {
       const node = await addNode('report');
       const definition = task('report', true);
@@ -2589,6 +2639,7 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         const definitions = [task('read-snapshot'), task('read-snapshot')];
         for (const definition of definitions) await submit(definition);
         const first = await claim();
+        await ready(first);
         const second = await claim();
         await ready(first);
         await ready(second);
@@ -3015,21 +3066,12 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
           (await api('GET', `${adminPath}/intervention`)).data.intervention.id,
           renewed.id,
         );
-        const stale = new WebSocket(
-          `${base.replace(/^http/, 'ws')}/v1/hitl/connect`,
-          { origin: base },
+        const { ws: stale, messages } = await connectHitl(
+          base,
+          link.id,
+          link.path.split('/').at(-1),
         );
-        t.after(() => stale.close());
-        const messages: any[] = [];
-        stale.on('message', (d) => messages.push(JSON.parse(d.toString())));
-        await new Promise<void>((resolve) => stale.once('open', resolve));
-        stale.send(
-          JSON.stringify({
-            type: 'authenticate',
-            id: link.id,
-            token: link.path.split('/').at(-1),
-          }),
-        );
+        t.after(() => stale.terminate());
         await until(
           async () => messages,
           (rows) => rows.some((m) => m.type === 'error'),
@@ -3422,25 +3464,11 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         (await api('GET', `${adminPath}/activity`, undefined, token)).status,
         401,
       );
-      const sockets: WebSocket[] = [];
+      const sockets: Awaited<ReturnType<typeof connectHitl>>['ws'][] = [];
       const connect = async (credential = token) => {
-        const ws = new WebSocket(
-          `${base.replace(/^http/, 'ws')}/v1/hitl/connect`,
-          { origin: base },
-        );
-        sockets.push(ws);
-        const messages: any[] = [];
-        ws.on('message', (data) => messages.push(JSON.parse(data.toString())));
-        ws.on('error', () => {});
-        await new Promise<void>((resolve) => ws.once('open', resolve));
-        ws.send(
-          JSON.stringify({
-            type: 'authenticate',
-            id: link.id,
-            token: credential,
-          }),
-        );
-        return { ws, messages };
+        const connection = await connectHitl(base, link.id, credential);
+        sockets.push(connection.ws);
+        return connection;
       };
       try {
         const invalid = await connect('x'.repeat(43));
@@ -3453,11 +3481,6 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
           async () => first.messages,
           (rows) =>
             rows.some((m) => m.type === 'state' && m.mode === 'REQUESTED'),
-        );
-        const duplicate = await connect();
-        await until(
-          async () => duplicate.messages,
-          (rows) => rows.some((m) => m.code === 'HITL_OCCUPIED'),
         );
         assert.ok(
           !JSON.stringify(first.messages).includes(execution.leaseToken),
@@ -3475,6 +3498,11 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         await until(
           async () => first.messages,
           (rows) => rows.some((m) => m.type === 'frame'),
+        );
+        const duplicate = await connect();
+        await until(
+          async () => duplicate.messages,
+          (rows) => rows.some((m) => m.code === 'HITL_OCCUPIED'),
         );
         // 人工已接管后跨过首次授权期限，再断开和重连，验证 worker 在等待用户时仍续租。
         await delay(
@@ -3530,6 +3558,21 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
               .length === 2,
         );
         assert.equal(node.calls.get(commandId), 1);
+        // 直连输入也进入统一时间线，但不能泄露输入值；这里仅验证协议事件的数据库投影。
+        const timeline = await until(
+          async () => (await api('GET', `${adminPath}/timeline`)).data,
+          (value) => value.commands.some((c: any) => c.id === commandId),
+        );
+        assert.equal(
+          timeline.commands.find((c: any) => c.id === commandId).actor,
+          'HUMAN',
+        );
+        assert.ok(!JSON.stringify(timeline).includes('fixture-only'));
+        assert.equal(
+          (await api('GET', `${adminPath}/timeline?after=${commandId}`)).status,
+          200,
+        );
+
         assert.equal(
           (await api('GET', `/v1/tasks/${definition.taskId}`)).data
             .executions[0].action_count,
@@ -3695,7 +3738,9 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         );
         // 范围：旧保存故障不再参与交还，完成后恢复控制且不派发 auth.save；不验证真实浏览器。
         node.authSaveFailure = true;
-        resumed.ws.send(JSON.stringify({ type: 'complete' }));
+        resumed.ws.send(
+          JSON.stringify({ type: 'complete', confirmedItems: [0, 1] }),
+        );
         await until(
           async () => resumed.messages,
           (rows) => rows.some((m) => m.type === 'completed'),
@@ -3739,22 +3784,8 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
           .intervention;
         assert.notEqual(next.id, link.id);
         const nextToken = next.path.split('/').at(-1);
-        const ws = new WebSocket(
-          `${base.replace(/^http/, 'ws')}/v1/hitl/connect`,
-          { origin: base },
-        );
+        const { ws, messages } = await connectHitl(base, next.id, nextToken);
         sockets.push(ws);
-        const messages: any[] = [];
-        ws.on('message', (data) => messages.push(JSON.parse(data.toString())));
-        ws.on('error', () => {});
-        await new Promise<void>((resolve) => ws.once('open', resolve));
-        ws.send(
-          JSON.stringify({
-            type: 'authenticate',
-            id: next.id,
-            token: nextToken,
-          }),
-        );
         await until(
           async () => messages,
           (rows) => rows.some((m) => m.type === 'state'),
@@ -3908,19 +3939,10 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         );
         const link = (await api('GET', `${adminPath}/intervention`)).data
           .intervention;
-        const messages: any[] = [];
-        const ws = new WebSocket(
-          `${base.replace(/^http/, 'ws')}/v1/hitl/connect`,
-          { origin: base },
-        );
-        ws.on('message', (data) => messages.push(JSON.parse(data.toString())));
-        await new Promise<void>((resolve) => ws.once('open', resolve));
-        ws.send(
-          JSON.stringify({
-            type: 'authenticate',
-            id: link.id,
-            token: link.path.split('/').at(-1),
-          }),
+        const { ws, messages } = await connectHitl(
+          base,
+          link.id,
+          link.path.split('/').at(-1),
         );
         try {
           await until(
@@ -3993,6 +4015,7 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         ).rows[0].count,
         '0',
       );
+      await worker.close();
       await api('POST', `/v1/tasks/${definition.taskId}/cancel`);
       await cleaned(definition.taskId);
     });

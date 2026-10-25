@@ -113,7 +113,7 @@ Agent 是后台 worker，启动命令包含 `serve`，不提供 HTTP 健康端�
 1. 挂载 API Volume 并配置数据库、密钥和公开 origin，再部署 API。数据库迁移由 API 启动执行，不要额外配置并发迁移任务。
 2. 部署 Web，检查公开 `/health/ready` 返回就绪 JSON、Console 可打开、未授权的 `/v2/cases/...` 返回 401 JSON。
 3. 配置并部署 Agent，从 Console 注册节点池和一次性配对码，再在 Linux 机器安装 Browser Node。
-4. 运行真实测试任务，确认节点在线、报告、证据下载及人工介入均使用 Web 的同一 HTTPS origin。
+4. 运行真实测试任务，确认节点在线，报告与证据通过 Web 访问，人工操作与实时画面直连 Node 的 HTTPS 域名。显式多控制面绑定还需在 Node 本机批准此环境的 Console Origin。
 
 后续通过 GitHub 分支更新触发 Railway 部署，不在 Railway 容器运行节点安装脚本。启用 Railway 的 Wait for CI，避免 CI 未通过的提交直接部署。升级前等待活动任务结束并备份 PostgreSQL 和 `/data`；有数据库迁移时不能仅切回旧镜像来代替数据恢复。Browser Node 登录态和本地 SQLite 需在节点机另行备份。
 

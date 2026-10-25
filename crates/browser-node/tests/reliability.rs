@@ -96,22 +96,23 @@ async fn interrupted_dispatch_recovers_as_unknown_without_payload_replay() {
         Begin::Finished(_)
     ));
 }
-/// 验证范围：CLOSING 和 QUARANTINED 在 SQLite 容量计算中继续占位。
+/// 验证范围：CLOSING 和 QUARANTINED 保留在资源采样清单，sessionId 不可复用。
 /// CLOSED 状态由夹具写入，不证明 systemd/cgroup 已实际关闭。
 #[tokio::test]
-async fn closing_and_quarantined_sessions_keep_capacity_until_verified_closed() {
+async fn closing_and_quarantined_sessions_remain_in_resource_inventory() {
     let home = tempfile::tempdir().unwrap();
     let store = Store::open(&home.path().join("db")).unwrap();
     let mut first = record("first");
-    store.reserve(first.clone(), 1).await.unwrap();
+    store.reserve(first.clone()).await.unwrap();
     for state in ["CLOSING", "QUARANTINED"] {
         first.state = state.into();
         store.save_session(first.clone()).await.unwrap();
-        assert!(store.reserve(record("second"), 1).await.is_err());
+        assert_eq!(store.sessions().await.unwrap()[0].state, state);
+        assert!(store.reserve(record("first")).await.is_err());
     }
     first.state = "CLOSED".into();
     store.save_session(first).await.unwrap();
-    store.reserve(record("second"), 1).await.unwrap();
+    store.reserve(record("second")).await.unwrap();
     assert!(
         store
             .pending()

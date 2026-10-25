@@ -78,6 +78,12 @@ const MAX_TASK_MS = 86_400_000;
 export class Coordinator {
   /** 在应用装配时注入唯一网关，避免建立第二套路由状态。 */
   gateway!: NodeGateway;
+  /** 人工直连事件与节点 inbox 在同一事务处理。 */
+  humanEvent!: (
+    client: PoolClient,
+    nodeId: string,
+    event: Extract<NodeEvent, { type: 'hitl.result' | 'hitl.finished' }>,
+  ) => Promise<void>;
   /** 外部申请异步执行，不阻塞节点租约投递。 */
   readonly externalAccounts: ExternalAccounts;
   constructor(
@@ -299,7 +305,7 @@ export class Coordinator {
         stepBudget: context.budget_state,
         stepBudgets: context.budget_state?.steps,
         leaseExpiresAt: context.lease_expires_at,
-        controlMode: context.control_mode,
+        controlMode: await confirmedControlMode(client, context),
         controlRevision: context.control_revision,
       };
     });
@@ -435,6 +441,11 @@ export class Coordinator {
           )
         )
           queueCode = 'SESSION_BUDGET_UNSUPPORTED';
+        if (
+          !candidates.length &&
+          routed.some((c) => c.heartbeat?.admission?.accepting === false)
+        )
+          queueCode = 'NODE_CAPACITY';
         for (const connection of candidates) {
           const heartbeat = connection.heartbeat!;
           const node = (
@@ -446,6 +457,7 @@ export class Coordinator {
           if (
             !node ||
             node.revoked_at ||
+            (node.admission_retry_at && node.admission_retry_at > new Date()) ||
             node.node_epoch !== heartbeat.nodeEpoch ||
             !this.gateway.current(connection)
           )
@@ -458,24 +470,19 @@ export class Coordinator {
               )
             ).rowCount
           ) {
-            if (queueCode !== 'NODE_CAPACITY') queueCode = 'NODE_ROTATING';
+            queueCode = 'NODE_ROTATING';
             continue;
           }
-          const reserved = await client.query(
-            `SELECT id FROM pr_sessions WHERE node_id=$1 AND NOT closure_verified UNION ALL SELECT 'reservation-'||task_id AS id FROM pr_external_accounts WHERE node_id=$1 AND task_id<>$2 AND session_id IS NULL AND state IN ('REQUESTED','ALLOCATED') AND reserved_until>clock_timestamp()`,
-            [node.id, task.taskId],
-          );
-          const occupied = new Set([
-            ...reserved.rows.map((r) => r.id as string),
-            ...heartbeat.occupied.map((s) => s.sessionId),
-          ]);
+          // 心跳只是候选提示；同一节点启动握手串行，最终准入由节点资源快照决定。
           if (
-            occupied.size >=
-            Math.min(node.capacity as number, heartbeat.capacity)
-          ) {
-            queueCode = 'NODE_CAPACITY';
+            (
+              await client.query(
+                "SELECT 1 FROM pr_sessions WHERE node_id=$1 AND state='OPENING'",
+                [node.id],
+              )
+            ).rowCount
+          )
             continue;
-          }
           const external = task.sessionPlan?.external
             ? await this.externalAccounts.reserve(
                 client,
@@ -494,6 +501,10 @@ export class Coordinator {
               'FENCE_EXHAUSTED',
               'Node fence counter exhausted',
             );
+          await client.query(
+            'UPDATE pr_tasks SET queue_deadline_at=COALESCE(queue_deadline_at,deadline_at) WHERE id=$1',
+            [task.taskId],
+          );
           const executionId = randomUUID();
           const token = newToken();
           // 排队时间不侵占新版逐步额度；领取后才启用自动执行的总安全期限。
@@ -587,7 +598,7 @@ export class Coordinator {
                 ...(task.environment.allowIntervention
                   ? { renewable: true }
                   : {}),
-                liveView: task.environment.allowIntervention === true,
+                liveView: heartbeat.capabilities.directHitl === true,
                 networkEvidence: taskEvidenceKinds(task).includes('NETWORK'),
                 leaseRequestId: heartbeat.leaseRequestId,
                 leaseTtlMs: this.leaseTtl(context, heartbeat),
@@ -623,6 +634,7 @@ export class Coordinator {
   private eligible(heartbeat: Heartbeat, task: VerificationTask): boolean {
     return (
       heartbeat.pool === task.environment.nodePool &&
+      heartbeat.admission?.accepting === true &&
       (!task.sessionPlan?.external ||
         heartbeat.capabilities.externalAccounts === true) &&
       heartbeat.capabilities.ephemeralProfiles === true &&
@@ -633,7 +645,9 @@ export class Coordinator {
       (!task.environment.allowIntervention ||
         heartbeat.capabilities.liveView === true) &&
       (!task.environment.allowIntervention ||
-        heartbeat.capabilities.renewableSessions === true) &&
+        (heartbeat.capabilities.renewableSessions === true &&
+          heartbeat.capabilities.directHitl === true &&
+          !!heartbeat.publicUrl)) &&
       (!taskEvidenceKinds(task).includes('NETWORK') ||
         heartbeat.capabilities.networkEvidence === true) &&
       (!taskEvidenceKinds(task).includes('TRACE') ||
@@ -702,7 +716,7 @@ export class Coordinator {
         cleanupDeadlineAt: context.cleanup_deadline_at,
         stepBudget: context.budget_state,
         stepBudgets: context.budget_state?.steps,
-        controlMode: context.control_mode,
+        controlMode: await confirmedControlMode(client, context),
         controlRevision: context.control_revision,
       };
     });
@@ -766,7 +780,7 @@ export class Coordinator {
         taskId: context.task_id,
         state: context.execution_state,
         taskState: context.task_state,
-        controlMode: context.control_mode,
+        controlMode: await confirmedControlMode(client, context),
         controlRevision: context.control_revision,
         controlReason: context.control_reason,
         actionCount: context.action_count,
@@ -792,7 +806,6 @@ export class Coordinator {
     operation: NodeCommand['command'],
     controlRevision = 0,
     stepId?: string,
-    hitlCompletion = false,
   ) {
     if (!operation.type.startsWith('browser.'))
       throw new ApiError(
@@ -920,6 +933,15 @@ export class Coordinator {
       }
       if (operation.type === 'browser.cookies.clear')
         await authorizeCookieCleanup(client, context, operation, actor);
+      if (
+        (
+          await client.query(
+            "SELECT 1 FROM pr_commands WHERE execution_id=$1 AND kind='session.control' AND result IS NULL",
+            [id],
+          )
+        ).rowCount
+      )
+        throw new ApiError(409, 'SESSION_BUSY', '正在等待节点确认控制权');
       if (context.session_state !== 'ACTIVE')
         throw new ApiError(
           409,
@@ -986,11 +1008,13 @@ export class Coordinator {
           ((operation.type === 'browser.input' &&
             operation.action !== 'scroll') ||
             operation.type === 'browser.act'));
-      if (context.definition.executionPlan && authChanged)
+      if (context.definition.executionPlan && authChanged) {
+        context.auth_revision++;
         await client.query(
           'UPDATE pr_executions SET auth_revision=auth_revision+1 WHERE id=$1',
           [id],
         );
+      }
       await insertCommand(
         client,
         id,
@@ -1241,6 +1265,8 @@ export class Coordinator {
           event.artifactId,
           event.sha256,
         );
+      else if (event.type === 'hitl.result' || event.type === 'hitl.finished')
+        await this.humanEvent(client, connection.nodeId, event);
       else await this.closureEvent(client, connection.nodeId, event);
       await client.query(
         'INSERT INTO pr_node_inbox(node_id,message_id,payload_hash,payload) VALUES($1,$2,$3,$4)',
@@ -1257,12 +1283,7 @@ export class Coordinator {
     oldEpoch: string | null,
     pool: string,
   ): Promise<void> {
-    if (
-      heartbeat.nodeId !== connection.nodeId ||
-      heartbeat.pool !== pool ||
-      heartbeat.capacity < 1 ||
-      heartbeat.capacity > 32
-    )
+    if (heartbeat.nodeId !== connection.nodeId || heartbeat.pool !== pool)
       throw new ApiError(
         400,
         'NODE_IDENTITY_MISMATCH',
@@ -1282,15 +1303,17 @@ export class Coordinator {
         );
     }
     await client.query(
-      'UPDATE pr_nodes SET node_epoch=$2,capacity=$3,capabilities=$4,inventory=$5,runtime=$6,last_seen_at=clock_timestamp() WHERE id=$1',
+      'UPDATE pr_nodes SET node_epoch=$2,capacity=$3,capabilities=$4,inventory=$5,runtime=$6,public_url=$7,admission=$8,last_seen_at=clock_timestamp() WHERE id=$1',
       [
         connection.nodeId,
         heartbeat.nodeEpoch,
-        heartbeat.capacity,
+        heartbeat.capacity ?? 0,
         heartbeat.capabilities,
         JSON.stringify(heartbeat.occupied),
         // 旧版进程不报版本时清空，避免降级后沿用上个进程的版本号。
         heartbeat.runtime ?? null,
+        heartbeat.publicUrl ? directOrigin(heartbeat.publicUrl) : null,
+        heartbeat.admission ?? null,
       ],
     );
     const sessions = await client.query(
@@ -1355,12 +1378,31 @@ export class Coordinator {
         [event.commandId, nodeId],
       )
     ).rows[0];
-    if (!row)
+    if (!row) {
+      const archived = (
+        await client.query(
+          'SELECT commands FROM pr_admission_rejections WHERE node_id=$1 AND session_id=$2',
+          [nodeId, event.sessionId],
+        )
+      ).rows[0];
+      const request = archived?.commands.find(
+        (c: { id: string }) => c.id === event.commandId,
+      )?.envelope as NodeCommand | undefined;
+      if (
+        request &&
+        request.nodeEpoch === event.nodeEpoch &&
+        request.leaseId === event.leaseId &&
+        request.fence === event.fence &&
+        event.nodeId === nodeId &&
+        event.messageId === event.commandId
+      )
+        return;
       throw new ApiError(
         409,
         'COMMAND_MISSING',
         'Result has no durable command',
       );
+    }
     const request = row.envelope as NodeCommand;
     if (
       event.messageId !== event.commandId ||
@@ -1386,6 +1428,82 @@ export class Coordinator {
       'UPDATE pr_commands SET result=$2,completed_at=clock_timestamp() WHERE id=$1 AND result IS NULL',
       [event.commandId, result],
     );
+    if (
+      row.kind === 'session.open' &&
+      event.operationStatus === 'FAILED' &&
+      event.effect === 'NOT_STARTED' &&
+      event.error?.code === 'RESOURCE_UNAVAILABLE' &&
+      context.execution_state === 'STARTING' &&
+      context.task_state === 'RUNNING'
+    ) {
+      // 只对节点证明尚未启动的资源拒绝重排；丢失响应和未知效果仍走关闭核实。
+      const used = await client.query(
+        "SELECT 1 FROM pr_commands WHERE execution_id=$1 AND kind LIKE 'browser.%' UNION ALL SELECT 1 FROM pr_model_calls WHERE execution_id=$1",
+        [context.id],
+      );
+      if (used.rowCount)
+        throw new ApiError(
+          409,
+          'ADMISSION_ALREADY_USED',
+          '执行已经开始，不能重新调度',
+        );
+      await client.query(
+        'INSERT INTO pr_admission_rejections(execution_id,task_id,node_id,session_id,commands,reason) SELECT $1,$2,$3,$4,jsonb_agg(to_jsonb(c)),$5 FROM pr_commands c WHERE execution_id=$1',
+        [
+          context.id,
+          context.task_id,
+          nodeId,
+          context.session_id,
+          event.error.message,
+        ],
+      );
+      await client.query(
+        "UPDATE pr_external_accounts SET state='ALLOCATED',session_id=NULL WHERE session_id=$1 AND state='IN_USE'",
+        [context.session_id],
+      );
+      await client.query('DELETE FROM pr_commands WHERE execution_id=$1', [
+        context.id,
+      ]);
+      await client.query('DELETE FROM pr_sessions WHERE execution_id=$1', [
+        context.id,
+      ]);
+      await client.query(
+        'DELETE FROM pr_control_events WHERE execution_id=$1',
+        [context.id],
+      );
+      await client.query('DELETE FROM pr_executions WHERE id=$1', [context.id]);
+      await client.query(
+        "UPDATE pr_tasks SET state='QUEUED',deadline_at=COALESCE(queue_deadline_at,deadline_at),queue_reason=$2 WHERE id=$1",
+        [
+          context.task_id,
+          {
+            code: 'NODE_CAPACITY',
+            message: '节点当前资源不足，等待资源恢复或其他节点接收。',
+          },
+        ],
+      );
+      await client.query(
+        "UPDATE pr_nodes SET admission_retry_at=clock_timestamp()+interval '5 seconds' WHERE id=$1",
+        [nodeId],
+      );
+      return;
+    }
+    if (row.kind === 'session.control') {
+      if (
+        event.operationStatus === 'SUCCEEDED' &&
+        typeof event.data?.authRevision === 'number'
+      )
+        await client.query(
+          'UPDATE pr_executions SET auth_revision=GREATEST(auth_revision,$2) WHERE id=$1',
+          [context.id, event.data.authRevision],
+        );
+      if (
+        event.operationStatus !== 'SUCCEEDED' &&
+        !('grant' in request.command) &&
+        context.task_state === 'RUNNING'
+      )
+        await stopExecution(client, context, 'ERROR', 'CONTROL_HANDOFF_FAILED');
+    }
     if (
       row.kind === 'session.open' &&
       event.operationStatus !== 'SUCCEEDED' &&
@@ -1620,7 +1738,7 @@ export class Coordinator {
       `SELECT c.id,c.execution_id FROM pr_commands c JOIN pr_nodes n ON n.id=c.node_id
       WHERE c.result IS NULL AND c.deadline_at>clock_timestamp() AND c.next_delivery_at<=clock_timestamp()
         AND c.node_id=ANY($1::text[]) AND c.envelope->>'nodeEpoch'=n.node_epoch
-      ORDER BY CASE c.kind WHEN 'session.close' THEN 0 WHEN 'session.renew' THEN 1 ELSE 2 END,c.created_at LIMIT $2`,
+      ORDER BY CASE c.kind WHEN 'session.close' THEN 0 WHEN 'session.renew' THEN 1 WHEN 'session.control' THEN 2 ELSE 3 END,c.created_at LIMIT $2`,
       [liveIds, BATCH_SIZE],
     );
     for (const row of rows.rows) {
@@ -1643,6 +1761,16 @@ export class Coordinator {
         )
           return null;
         const envelope = current.envelope as NodeCommand;
+        if (
+          envelope.command.type === 'session.control' ||
+          envelope.command.type.startsWith('browser.')
+        ) {
+          const pending = await client.query(
+            "SELECT 1 FROM pr_commands WHERE session_id=$1 AND kind='session.control' AND result IS NULL AND id<>$2 AND (created_at,id)<(SELECT created_at,id FROM pr_commands WHERE id=$2)",
+            [context.session_id, row.id],
+          );
+          if (pending.rowCount) return null;
+        }
         if (
           envelope.command.type !== 'session.close' &&
           (context.task_state !== 'RUNNING' ||
@@ -1685,4 +1813,37 @@ export class Coordinator {
       }
     }
   }
+}
+
+/** 心跳公开地址必须是 HTTPS origin，防止将令牌发送给路径、明文公网或含凭据地址。 */
+function directOrigin(value: string): string {
+  const url = new URL(value);
+  const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+  if (
+    (url.protocol !== 'https:' && !(local && url.protocol === 'http:')) ||
+    url.username ||
+    url.password ||
+    url.pathname !== '/' ||
+    url.search ||
+    url.hash
+  )
+    throw new ApiError(
+      400,
+      'NODE_PUBLIC_URL',
+      '节点直连地址必须是 HTTPS origin',
+    );
+  return url.origin;
+}
+
+/** AUTO 决定已提交但节点尚未确认时，worker 继续等待，不能使用旧观察派发动作。 */
+async function confirmedControlMode(
+  client: PoolClient,
+  context: ExecutionContext,
+): Promise<'AUTO' | 'REQUESTED' | 'HUMAN'> {
+  if (context.control_mode !== 'AUTO') return context.control_mode;
+  const pending = await client.query(
+    "SELECT 1 FROM pr_commands WHERE execution_id=$1 AND kind='session.control' AND envelope#>>'{command,mode}'='AUTO' AND result IS NULL",
+    [context.id],
+  );
+  return pending.rowCount ? 'HUMAN' : 'AUTO';
 }

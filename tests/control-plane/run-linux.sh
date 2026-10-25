@@ -111,10 +111,10 @@ fi
 if [[ "${PROOFRUN_TEST_FULL_LINUX:-false}" == true ]]; then
   # 复用隔离容器与编译产物；各脚本自行创建会话、数据库或临时 profile。
   # systemd/gateway 使用故障引擎，能力和 HITL 使用真实 Chromium，均不访问业务账号。
-  for suite in tests/browser-node/input_network_smoke.py tests/browser-node/profile_tabs_smoke.py tests/browser-node/external_account_smoke.py tests/browser-node/systemd_integration.py tests/browser-node/gateway_integration.py tests/browser-node/capabilities_smoke.py tests/hitl/linux_real_browser.py; do
+  for suite in tests/browser-node/input_network_smoke.py tests/browser-node/profile_tabs_smoke.py tests/browser-node/external_account_smoke.py tests/browser-node/systemd_integration.py tests/browser-node/gateway_integration.py tests/browser-node/multi_binding_integration.py tests/browser-node/capabilities_smoke.py tests/hitl/linux_real_browser.py; do
     suite_env=("${engine_env[@]}")
     suite_binary=/target/debug/proofrun-node
-    if [[ "$suite" == tests/browser-node/systemd_integration.py || "$suite" == tests/browser-node/gateway_integration.py ]]; then
+    if [[ "$suite" == tests/browser-node/systemd_integration.py || "$suite" == tests/browser-node/gateway_integration.py || "$suite" == tests/browser-node/multi_binding_integration.py ]]; then
       # 配置文件指定故障引擎；真实引擎环境变量优先级更高，必须在此移除。
       # 单独保存夹具二进制，后续真实浏览器仍运行默认构建。
       if ! docker exec "$node_name" test -x /target/fixtures/debug/proofrun-node; then

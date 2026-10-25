@@ -11,6 +11,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -23,6 +24,24 @@ SPEC.loader.exec_module(installer)
 
 class InstallTests(unittest.TestCase):
     """使用临时 home 和假进程入口，检查升级边界而不操作开发机用户服务。"""
+
+    def test_binding_registry_controls_upgrade_restart(self):
+        """范围：SQLite 授权与全绑定活动检查；不启动真实用户服务。"""
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            credential = home / "credential.json"
+            credential.write_text("legacy")
+            with sqlite3.connect(home / "node.db") as db:
+                db.executescript("CREATE TABLE bindings(state TEXT); CREATE TABLE sessions(binding TEXT,id TEXT,state TEXT);")
+                db.execute("INSERT INTO bindings VALUES('REVOKED')")
+            self.assertFalse(installer.authorized(home, credential))
+            with sqlite3.connect(home / "node.db") as db:
+                db.execute("INSERT INTO bindings VALUES('DRAINING')")
+                db.execute("INSERT INTO sessions VALUES('dev','same','ACTIVE')")
+            credential.unlink()
+            self.assertTrue(installer.authorized(home, credential))
+            with self.assertRaises(RuntimeError):
+                installer.idle(home)
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -109,6 +128,23 @@ class InstallTests(unittest.TestCase):
             patch.object(sys, "argv", args),
         ):
             installer.main()
+
+    def test_direct_url_and_legacy_capacity_migration(self):
+        # 范围：公开域名落盘、无固定槽位及旧配置拒绝；不配置真实 DNS、TLS 或 systemd。
+        config=self.root / "node.toml"
+        args=SimpleNamespace(api="https://api.example.test",pool="test",chrome=str(self.chrome),public_url="https://node.example.test")
+        installer.configure(config,self.root / "current",self.home,args)
+        saved=installer.tomllib.loads(config.read_text())
+        self.assertEqual(saved["public_url"],args.public_url)
+        self.assertEqual(saved["listen"],"127.0.0.1:9310")
+        self.assertNotIn("capacity",saved)
+        config.write_text(config.read_text()+"capacity = 8\n")
+        with self.assertRaisesRegex(ValueError,"capacity"):
+            installer.configure(config,self.root / "current",self.home,args)
+        config.unlink()
+        args.public_url="https://node.example.test/private"
+        with self.assertRaisesRegex(ValueError,"HTTPS origin"):
+            installer.configure(config,self.root / "current",self.home,args)
 
     def test_reject_checksum_and_traversal(self):
         # 范围：校验失败或越界归档不产生目录外文件；不覆盖网络下载或签名信任。

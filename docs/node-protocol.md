@@ -4,9 +4,9 @@
 
 ## 连接与租约
 
-Node 主动连接配置中的 gateway_url，使用 `Authorization: Bearer <token>`。非 loopback 地址强制 WSS；不开放业务监听端口。连接成功即发送 node.heartbeat，之后每 5 秒发送。网关须回应 ACK、Ping 或业务消息；30 秒没有收到任何消息则重连，退避 1–15 秒。
+Node 为每个获准绑定主动连接其 gateway_url，使用 `Authorization: Bearer <token>`。非 loopback 地址强制 WSS；另在回环地址监听客户端直连，由节点本机 HTTPS 代理提供入口。连接成功即发送 node.heartbeat，之后每 5 秒发送。网关须回应 ACK、Ping 或业务消息；30 秒没有收到任何消息则重连，退避 1–15 秒。
 
-心跳包含 nodeId、每次启动变化的 nodeEpoch、pool、capacity、occupied、能力声明、limits（maxLeaseMs / maxSessionMs）和 leaseRequestId。关闭中的会话与 QUARANTINED 会话仍计入占用。控制面拥有全局队列和节点注册表，心跳只是节点事实。
+心跳包含 nodeId、每次启动变化的 nodeEpoch、pool、publicUrl、admission、occupied、能力声明、limits（maxLeaseMs / maxSessionMs）和 leaseRequestId。关闭中的会话与 QUARANTINED 会话仍计入占用。控制面拥有全局队列和节点注册表，心跳只是节点事实。
 
 session.open / session.renew 必须回传最近心跳的 leaseRequestId 和 leaseTtlMs。期限从**节点发出该心跳的 CLOCK_BOOTTIME** 起算，网络延迟消耗 TTL；晚到的授权不能获得新的完整期限。续期可与浏览器操作并行，但不能复活已过期会话，也不能超过会话硬期限。
 
@@ -87,3 +87,17 @@ Node 在派发前记录 commandId 与规范化 payload hash。相同请求重复
 节点心跳能力 `profileTabs: true` 表示支持浏览器命令上的可选 `tabScope`。同一 session 的每个 scope 首次使用时创建 tab，后续每条命令先切回该 tab；观察、元素映射、frame 和视觉引用按 scope 隔离，观察只展示所属 tab。分组自动动作不能创建、切换或关闭其他 tab。没有 scope 的历史命令继续使用原会话行为，人工操作使用已定位的求助 tab。
 
 控制面要求新任务命令携带对应 RUNNING 步骤的 `stepId`，并核对冻结计划中的 tabScope。模型调用也携带 stepId，动作和模型预算按步骤独立累计；整段 cleanup 共享自己的预算。报告证据通过已持久化命令核对分组归属。网络/TRACE 仍属于整个 profile，需要这类证据时 Agent 串行执行分组。
+
+## 资源准入与客户端连接
+
+`admission` 包含 accepting、reason、cpuPercent、availableBytes、reserveBytes；旧 capacity 字段仅为历史兼容，不参与调度。缺少准入声明的旧节点不能接收新任务。`publicUrl` 是节点上报的客户端 HTTPS origin，`capabilities.directHitl` 表示节点直连能力。创建时节点仍原子复核资源，`RESOURCE_UNAVAILABLE` 且 `NOT_STARTED` 的创建拒绝可以安全重排。
+
+浏览器命令携带 actor、controlRevision 与 authRevision。`session.control` 切换 AUTO/HUMAN 或安装短期人工能力，`session.watch` 安装只读画面能力。能力绑定会话信封身份、精确 Origin、有效期和令牌摘要；不会返回节点凭据。
+
+直连输入沿用 commandId 去重，但生成 `hitl.result` 可靠事件而非假冒 API 命令结果。事件只带操作类型/动作摘要和认证版本，不带输入值。`hitl.finished` 保存完整待办确认或无法处理原因。它们与其他节点事件一样等待 API inbox 提交后的 ACK，断线重送不会重复业务操作。
+
+## 多控制面连接范围
+
+每个绑定以独立 nodeId 和 Bearer 凭据连接所属 API；Node 在已认证连接上下文确定归属，不接受消息选择其他绑定。`pool` 和 `occupied` 是绑定内视图，`admission` 来自整台节点的资源裁决。命令、租约、ACK 和事件去重均按绑定隔离，外部相同 ID 不冲突。
+
+HITL / Live bootstrap 返回绑定的 `nodeId`。客户端首条 `authenticate` 带 `nodeId`、`id`、`token`，Node 只在该绑定内查找授权，再核对 Origin、短期令牌、代次及租约。显式绑定必须携带 nodeId；省略字段仅兼容尚未导入的旧单控制面入口。控制面安装的 grant.origin 必须在节点拥有者批准的来源列表中。原有命令信封和 API 数据库不新增 bindingId 字段，归属由独立连接及 nodeId 固定。

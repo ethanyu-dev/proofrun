@@ -241,3 +241,9 @@ Console 与 API 通过同源部署或开发代理通信，本批不开放跨源�
 迁移 `033-current-execution.sql` 为请求提供统一读取视图；新单 LLM 请求只写一次 cases 关联，旧双跑数据保留。当前任务的业务清理在 profile 内执行，不再生成独立清理或使用 resourceKey 调度锁；原始任务提交携带 resourceKey 时明确返回 422 RESOURCE_LOCK_RETIRED。历史排队原因及清理记录仅用于读取旧报告。
 
 若存在尚未处理的独立清理意图、排队/执行中的旧清理任务或未确认关闭的清理浏览器，迁移会以 `LEGACY_CLEANUP_PENDING` 阻止启动并回滚。须先在旧版本完成清理，或经业务判断明确处理遗留意图并核实关闭，再升级；新版本不会自动将这些记录标为跳过。带显式资源锁的原始任务若仍在排队或执行，会以 `LEGACY_RESOURCE_LOCK_PENDING` 阻止升级，须由旧版本排空。旧模板入口返回 410，历史 ID 仍可读取任务链接、通过通用取消流程关闭会话。Agent 内部 progress 决策协议须与 Contracts 同步部署。
+
+## 节点直连
+
+API 不再代理实时画面或 HITL 输入。`POST /v1/hitl/bootstrap` 用处理链接换取会话限定的节点地址和一次性凭据；`POST /v1/admin/executions/:id/live` 为管理员签发只读画面凭据。Node 经主 WSS 连接接收能力摘要，客户端再连接节点 `/hitl/control`、`/hitl/frames` 或 `/live/frames`。人工结果和完成事件经可靠节点通道持久化，操作摘要同时进入活动记录与时间线。
+
+调度只读取节点的 `admission` 作为候选提示，并串行同节点创建握手；最终准入由 Node 检查 CPU/内存。固定 capacity 不再参与派发。域名唯一配置来源是节点 `public_url`，具体迁移见[部署说明](../../deploy/README.md#节点直连域名与升级)。

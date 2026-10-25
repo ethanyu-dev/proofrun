@@ -1,6 +1,6 @@
 # proofrun-node
 
-远端浏览器节点的首版实现：一个 Rust 二进制，主动连接控制面，每个会话通过 systemd 用户服务监管独立的 agent-browser daemon 和浏览器。节点不运行模型，也不分析 Spec。
+远端浏览器节点的首版实现：一个 Rust 二进制，可授权连接多套控制面，共享 CPU/内存准入，每个会话通过 systemd 用户服务监管独立的 agent-browser daemon 和浏览器。节点不运行模型，也不分析 Spec。
 
 ## 当前能力
 
@@ -71,3 +71,13 @@ target/release/proofrun-node --config deploy/node.example.toml serve
 协议详见 [node-protocol](../../docs/node-protocol.md)，测试命令和范围见 [测试入口与覆盖边界](../../tests/README.md)。
 
 独立免登录 HITL 处理页、实时浏览器画面、受限输入和完成交接现已接入，使用与验证边界见 [HITL 说明](../../docs/hitl.md)。
+
+## 客户端直连与资源准入
+
+节点本身不设置固定会话数。`admission.rs` 根据 Linux CPU 差值、有效 cgroup 配额、可用内存与 PSI 决定是否接收下一次 `session.open`，启动期间保留内存预算并等待稳定；资源不足直接拒绝，不建立本地任务队列。
+
+`direct.rs` 提供 `/hitl/control`、`/hitl/frames`、`/live/frames`，默认只监听 `127.0.0.1:9310`。配置 `public_url` 后由本机 Caddy 提供 HTTPS；地址通过心跳登记给 API，客户端在 API 授权后直连。媒体与操作不经过 API。配置位置、域名与升级步骤见[部署说明](../../deploy/README.md#节点直连域名与升级)，交接流程见[HITL](../../docs/hitl.md)。
+
+## 多套服务共用一个执行节点
+
+使用 `bindings import-legacy` 导入原服务，或 `bindings add` 配对新服务；`bindings list/drain/resume/revoke` 管理独立授权。一个进程、一个 SQLite、一个客户端 HTTPS 域名，资源准入统一，任务队列仍归各 API。端点、机器凭据与批准来源保存在私有注册表，不能从远端 API 新增绑定。具体命令、升级和本地联调网络要求见[多控制面部署](../../deploy/README.md#一个节点授权多套控制面)。

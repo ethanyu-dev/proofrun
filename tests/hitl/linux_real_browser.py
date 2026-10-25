@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""真实 Linux 节点、Chromium、画面中转和受限输入；执行者为夹具，不使用真实模型。"""
+"""真实 Linux 节点、Chromium、客户端直连画面和受限输入；执行者为夹具，不使用真实模型。"""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
@@ -10,7 +10,7 @@ import threading
 import uuid
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'tests/control-plane'))
-from linux_integration import Harness,api,until,BASE,task
+from linux_integration import Harness,api,until,BASE,task,ADMIN
 
 class Page(BaseHTTPRequestHandler):
     def log_message(self,*_): pass
@@ -25,7 +25,7 @@ def run():
     harness=Harness();page=ThreadingHTTPServer(('127.0.0.1',0),Page);page.writes=[]
     threading.Thread(target=page.serve_forever,daemon=True).start()
     try:
-        harness.start_api();harness.add_node()
+        harness.start_api();harness.add_node(managed=True)
         definition=task();definition['environment']['allowIntervention']=True
         # 首次 Agent 导航耗尽预算后，人工点击、输入及按键仍须完成；仅验证本地夹具，不代表真实账号登录验收。
         definition['budget']['maxActions']=1
@@ -36,7 +36,7 @@ def run():
         api('POST',f'/v1/executions/{execution["id"]}/intervene',{'type':'execution.intervene','reason':'请完成测试页面登录','items':['填写账号并登录'],'controlRevision':0},execution['leaseToken'])
         api('POST',f'/v1/executions/{execution["id"]}/control',{'type':'execution.control','action':'acknowledge','controlRevision':1},execution['leaseToken'])
         link=api('GET',f'/v1/admin/executions/{execution["id"]}/intervention')['intervention']
-        driver=subprocess.run(['node',str(ROOT/'tests/hitl/drive.mjs')],env=dict(os.environ,PROOFRUN_HITL_BASE=BASE,PROOFRUN_HITL_LINK=json.dumps(link)),capture_output=True,text=True,timeout=60)
+        driver=subprocess.run(['node',str(ROOT/'tests/hitl/drive.mjs')],env=dict(os.environ,PROOFRUN_HITL_BASE=BASE,PROOFRUN_HITL_LINK=json.dumps(link),PROOFRUN_HITL_EXECUTION=execution["id"],PROOFRUN_HITL_ADMIN=ADMIN),capture_output=True,text=True,timeout=60)
         assert driver.returncode==0,(driver.stdout,driver.stderr)
         assert page.writes==['--cdp HITL中文'],page.writes
         # 人工操作不计入 Agent 预算；恢复自动执行后仍保留已消耗的一次导航。
@@ -48,7 +48,7 @@ def run():
         # 人工处理结束仍使用原 session；最终任务取消才回收，避免将处理页关闭当成浏览器关闭。
         assert harness.execution(execution)['state']=='RUNNING'
         api('POST',f'/v1/tasks/{definition["taskId"]}/cancel');harness.cleaned(execution,[])
-        print(json.dumps({'passed':['真实 JPEG WebSocket 画面中转','坐标点击、中文与前导短横线输入、按键','独立业务提交一次','完成撤权且原会话继续可观察','最终 systemd 关闭确认'],'driver':json.loads(driver.stdout),'realModel':False,'tls':False},ensure_ascii=False,indent=2))
+        print(json.dumps({'passed':['真实 JPEG HITL 与只读 Live 直连画面、错误 Origin 拒绝','坐标点击、中文与前导短横线输入、按键','独立业务提交一次','完成撤权且原会话继续可观察','最终 systemd 关闭确认'],'driver':json.loads(driver.stdout),'realModel':False,'tls':False},ensure_ascii=False,indent=2))
     except BaseException:
         for log in harness.root.rglob('*.log'): print(log,log.read_text(errors='replace')[-12000:])
         raise

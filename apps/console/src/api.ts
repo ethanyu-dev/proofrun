@@ -31,17 +31,28 @@ export class ApiError extends Error {
 export class ApiClient {
   constructor(private readonly token: string) {}
 
-  /** HTTPS 页面使用 WSS，凭据只进入首条认证消息；画面连接没有输入能力。 */
-  live(executionId: string): WebSocket {
-    const url = new URL('/v1/live/connect', location.href);
-    url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const socket = new WebSocket(url);
+  /** 平台凭据只到同源 API；节点仅收到一次性、只读的连接凭证。 */
+  async live(
+    executionId: string,
+    signal: AbortSignal,
+  ): Promise<WebSocket | null> {
+    const ticket = await this.json<{
+      waiting: boolean;
+      url?: string;
+      nodeId?: string;
+      id?: string;
+      token?: string;
+    }>(`/v1/admin/executions/${executionId}/live`, signal, {});
+    if (ticket.waiting) return null;
+    signal.throwIfAborted();
+    const socket = new WebSocket(ticket.url!);
     socket.addEventListener('open', () =>
       socket.send(
         JSON.stringify({
           type: 'authenticate',
-          token: this.token,
-          executionId,
+          nodeId: ticket.nodeId,
+          id: ticket.id,
+          token: ticket.token,
         }),
       ),
     );

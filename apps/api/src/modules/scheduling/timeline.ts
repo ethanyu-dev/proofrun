@@ -20,21 +20,25 @@ export async function executionTimeline(
     if (!ID_PATTERN.test(after))
       throw new ApiError(400, 'INVALID_CURSOR', '无效的操作游标');
     const cursor = await db.query(
-      'SELECT id FROM pr_commands WHERE execution_id=$1 AND id=$2',
+      'SELECT id FROM pr_commands WHERE execution_id=$1 AND id=$2 UNION ALL SELECT id FROM pr_human_commands WHERE execution_id=$1 AND id=$2',
       [executionId, after],
     );
     if (!cursor.rowCount)
       throw new ApiError(400, 'INVALID_CURSOR', '操作游标不属于当前执行');
   }
   const result = await db.query<ExecutionTimeline['commands'][number]>(
-    `SELECT c.id,c.kind,c.actor,c.envelope#>>'{command,action}' AS action,c.envelope#>>'{command,tabScope}' AS "tabScope",
+    `WITH command_rows AS (
+      SELECT id,execution_id,kind,actor,envelope,result,created_at FROM pr_commands WHERE execution_id=$1 AND kind LIKE 'browser.%'
+      UNION ALL
+      SELECT id,execution_id,result#>>'{operation,type}' AS kind,'HUMAN' AS actor,jsonb_build_object('command',result->'operation') AS envelope,result,created_at FROM pr_human_commands WHERE execution_id=$1
+    ) SELECT c.id,c.kind,c.actor,c.envelope#>>'{command,action}' AS action,c.envelope#>>'{command,tabScope}' AS "tabScope",
       c.result->>'operationStatus' AS status,c.result->>'effect' AS effect,
       c.result#>>'{error,code}' AS error,c.created_at,
       COALESCE((SELECT jsonb_agg(jsonb_build_object('id',a.id,'sha256',a.hash,'state',a.state) ORDER BY a.created_at,a.id)
         FROM pr_artifacts a WHERE a.command_id=c.id AND a.execution_id=c.execution_id AND a.kind='SCREENSHOT'), '[]'::jsonb) AS screenshots
-    FROM pr_commands c WHERE c.execution_id=$1 AND c.kind LIKE 'browser.%'
+    FROM command_rows c WHERE c.execution_id=$1
       AND ($2::text IS NULL OR (c.created_at,c.id) >
-        (SELECT created_at,id FROM pr_commands WHERE execution_id=$1 AND id=$2))
+        (SELECT created_at,id FROM command_rows WHERE execution_id=$1 AND id=$2))
     ORDER BY c.created_at,c.id LIMIT $3`,
     [executionId, after ?? null, PAGE_SIZE + 1],
   );

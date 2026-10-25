@@ -1,0 +1,12 @@
+# 部署在 Browser Node 所在机器。该域名须与 node.toml 的 public_url 一致。
+# 示例：PROOFRUN_NODE_DOMAIN=browser-node-01.example.com
+{$PROOFRUN_NODE_DOMAIN} {
+    @direct path /hitl/control /hitl/frames /live/frames
+    handle @direct {
+        reverse_proxy 127.0.0.1:9310
+    }
+    handle {
+        respond "Not found" 404
+    }
+    header X-Content-Type-Options nosniff
+}

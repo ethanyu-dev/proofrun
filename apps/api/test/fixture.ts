@@ -1,6 +1,7 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import WebSocket from 'ws';
+import WebSocket, { WebSocketServer } from 'ws';
+import { once, EventEmitter } from 'node:events';
 import type { NodeCommand, NodeRuntime } from '@proofrun/contracts';
 
 /** 故障测试的轮询间隔；不代表生产调度周期。 */
@@ -141,6 +142,8 @@ export class SimulatedNode {
   results = new Map<string, Record<string, unknown>>();
   calls = new Map<string, number>();
   ignoreClose = false;
+  /** 单次资源拒绝仅用于验证安全重排；没有启动浏览器。 */
+  rejectOpen = false;
   /** 注入单条续期拒绝或暂扣回执；只模拟协议故障，不模拟节点的本地时钟。 */
   renewalErrors: string[] = [];
   holdRenewals = false;
@@ -168,6 +171,21 @@ export class SimulatedNode {
   trace = false;
   /** 只用于验证画面协议和通道清理，不代表真实浏览器画面。 */
   readonly relays = new Set<WebSocket>();
+  /** 独立回环入口模拟节点直连，只覆盖协议，不能代替 Rust/systemd 验收。 */
+  private direct?: WebSocketServer;
+  private publicUrl = '';
+  private controls = new Map<
+    string,
+    {
+      revision: number;
+      human: boolean;
+      auth: number;
+      grant?: any;
+      owner?: WebSocket;
+      consumed?: boolean;
+      finalizing?: boolean;
+    }
+  >();
 
   constructor(
     readonly base: string,
@@ -201,6 +219,12 @@ export class SimulatedNode {
     }).then((r) => r.json());
     if (!pairing.token) throw new Error(JSON.stringify(pairing));
     this.token = pairing.token;
+    this.direct = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(this.direct, 'listening');
+    this.publicUrl = `http://127.0.0.1:${(this.direct.address() as { port: number }).port}`;
+    this.direct.on('connection', (socket, request) =>
+      this.acceptDirect(socket, request.url!, request.headers.origin ?? ''),
+    );
     await this.connect();
   }
 
@@ -213,32 +237,6 @@ export class SimulatedNode {
     this.socket.on('message', (raw) => {
       const command = JSON.parse(raw.toString());
       if (command.type === 'ack') return;
-      if (command.type === 'hitl.attach' || command.type === 'live.attach') {
-        const relay = new WebSocket(
-          `${this.base.replace(/^http/, 'ws')}/v1/${command.type === 'live.attach' ? 'live' : 'hitl'}/relay`,
-          { headers: { authorization: `Bearer ${this.token}` } },
-        );
-        this.relays.add(relay);
-        relay.on('error', () => relay.terminate());
-        relay.on('close', () => this.relays.delete(relay));
-        relay.on('open', () => {
-          relay.send(
-            JSON.stringify({
-              type: 'attach',
-              streamId: command.streamId,
-              nodeEpoch: this.epoch,
-            }),
-          );
-          relay.send(
-            JSON.stringify({
-              type: 'frame',
-              data: PNG.toString('base64'),
-              metadata: { deviceWidth: 640, deviceHeight: 480 },
-            }),
-          );
-        });
-        return;
-      }
       this.execute(command);
     });
     await new Promise<void>((resolve, reject) => {
@@ -262,6 +260,15 @@ export class SimulatedNode {
       ...(this.runtime ? { runtime: this.runtime } : {}),
       leaseRequestId: randomUUID(),
       capacity: this.capacityOverride ?? this.capacity,
+      publicUrl: this.publicUrl,
+      admission: {
+        accepting:
+          this.sessions.size < (this.capacityOverride ?? this.capacity),
+        reason: 'FIXTURE',
+        cpuPercent: 10,
+        availableBytes: 8 * 1024 ** 3,
+        reserveBytes: 1024 ** 3,
+      },
       limits: { maxLeaseMs: 60_000, maxSessionMs: 3_600_000 },
       occupied: [...this.sessions.values()].map((c) => ({
         sessionId: c.sessionId,
@@ -280,6 +287,7 @@ export class SimulatedNode {
         networkEvidence: this.networkEvidence,
         authState: this.authState,
         liveView: true,
+        directHitl: true,
         renewableSessions: this.renewableSessions,
         trace: this.trace,
         identityPreparation: this.identityPreparation,
@@ -307,7 +315,14 @@ export class SimulatedNode {
       if (this.holdRenewals) return;
       const code = this.renewalErrors.shift();
       if (code) {
-        const { command: _, timeoutMs: __, ...identity } = command;
+        const {
+          command: _,
+          timeoutMs: __,
+          actor: _actor,
+          controlRevision: _revision,
+          authRevision: _auth,
+          ...identity
+        } = command;
         const result = {
           ...identity,
           type: 'command.result',
@@ -321,7 +336,87 @@ export class SimulatedNode {
         return;
       }
     }
-    if (kind === 'session.open') this.sessions.set(command.sessionId, command);
+    if (kind === 'session.open' && this.rejectOpen) {
+      this.rejectOpen = false;
+      const {
+        command: _,
+        timeoutMs: __,
+        actor: _actor,
+        controlRevision: _revision,
+        authRevision: _auth,
+        ...identity
+      } = command;
+      const result = {
+        ...identity,
+        type: 'command.result',
+        messageId: command.commandId,
+        operationStatus: 'FAILED',
+        effect: 'NOT_STARTED',
+        error: {
+          code: 'RESOURCE_UNAVAILABLE',
+          message: 'fixture memory pressure',
+        },
+      };
+      this.results.set(command.commandId, result);
+      this.send(result);
+      return;
+    }
+    if (kind === 'session.open') {
+      this.sessions.set(command.sessionId, command);
+      this.controls.set(command.sessionId, {
+        revision: 0,
+        human: false,
+        auth: 0,
+      });
+      this.heartbeat();
+    }
+    const control = this.controls.get(command.sessionId);
+    if (control)
+      control.auth = Math.max(control.auth, command.authRevision ?? 0);
+    if (operationControl(command)) {
+      const change = command.command as any;
+      if (
+        control &&
+        change.grant &&
+        control.owner?.readyState === WebSocket.OPEN
+      ) {
+        this.send({
+          type: 'command.result',
+          protocolVersion: '0.1',
+          messageId: command.commandId,
+          commandId: command.commandId,
+          nodeId: this.id,
+          nodeEpoch: this.epoch,
+          sessionId: command.sessionId,
+          leaseId: command.leaseId,
+          fence: command.fence,
+          operationStatus: 'FAILED',
+          effect: 'NOT_STARTED',
+          error: { code: 'HITL_OCCUPIED', message: 'fixture occupied' },
+        });
+        return;
+      }
+      if (control) {
+        if (change.revision > control.revision) {
+          control.finalizing = false;
+          control.consumed = false;
+          control.grant = undefined;
+        }
+        control.revision = change.revision;
+        control.human = change.mode === 'HUMAN';
+        if (change.grant) {
+          control.grant = change.grant;
+          control.consumed = false;
+          control.auth = Math.max(control.auth, change.grant.authRevision);
+        }
+        if (!control.human && control.owner) {
+          control.owner.send(
+            JSON.stringify({ type: 'completed', authStatus: 'disabled' }),
+          );
+          control.owner.close();
+        }
+      }
+    }
     if (kind === 'browser.auth.save' && this.restartOnAuthSave)
       for (const relay of this.relays) relay.close();
     if (kind === 'browser.wait') return;
@@ -329,7 +424,14 @@ export class SimulatedNode {
       if (this.ignoreClose) return;
       if (!this.holdClosedEvent) this.closed(command.sessionId);
     }
-    const { command: operation, timeoutMs: _, ...identity } = command;
+    const {
+      command: operation,
+      timeoutMs: _,
+      actor: _actor,
+      controlRevision: _revision,
+      authRevision: _auth,
+      ...identity
+    } = command;
     const data: Record<string, unknown> =
       kind === 'session.close' ? { state: 'CLOSED' } : {};
     // 空白证明为协议夹具，实际隔离由节点的 Chromium 测试覆盖。
@@ -347,6 +449,7 @@ export class SimulatedNode {
           : {}),
         authRestored: false,
       };
+    if (kind === 'session.control') data.authRevision = control?.auth ?? 0;
     if (kind === 'browser.identity.prepare')
       Object.assign(data, {
         status: 'READY',
@@ -441,6 +544,18 @@ export class SimulatedNode {
     const session = this.sessions.get(sessionId);
     if (!session) return;
     this.sessions.delete(sessionId);
+    this.heartbeat();
+    const owner = this.controls.get(sessionId)?.owner;
+    if (owner?.readyState === WebSocket.OPEN) {
+      owner.send(
+        JSON.stringify({
+          type: 'error',
+          code: 'HITL_ENDED',
+          message: 'fixture ended',
+        }),
+      );
+      owner.close();
+    }
     this.send({
       type: 'session.closed',
       ...(closeReason ? { closeReason } : {}),
@@ -454,6 +569,137 @@ export class SimulatedNode {
     });
   }
 
+  /** 模拟一次性连接、回执与交接事件；实际能力校验由 Rust 测试覆盖。 */
+  private acceptDirect(socket: WebSocket, path: string, origin: string) {
+    let sessionId = '';
+    let control: ReturnType<typeof this.controls.get>;
+    let grant: any;
+    const reply = (value: unknown) => socket.send(JSON.stringify(value));
+    socket.on('close', () => {
+      if (control?.owner === socket) delete control.owner;
+    });
+    socket.on('message', (raw) => {
+      const value = JSON.parse(raw.toString());
+      if (!sessionId) {
+        const entry = [...this.controls.entries()].find(
+          ([, c]) => c.grant?.id === value.id,
+        );
+        if (!entry) {
+          reply({ type: 'error', code: 'HITL_INVALID' });
+          socket.close();
+          return;
+        }
+        [sessionId, control] = entry;
+        grant = control.grant;
+        const media = path === '/hitl/frames';
+        if (
+          value.type !== 'authenticate' ||
+          !control.human ||
+          origin !== grant.origin ||
+          createHash('sha256').update(value.token).digest('hex') !==
+            grant.tokenHash ||
+          (media ? !control.owner : control.consumed)
+        ) {
+          reply({ type: 'error', code: 'HITL_INVALID' });
+          socket.close();
+          return;
+        }
+        if (media) {
+          this.relays.add(socket);
+          socket.once('close', () => this.relays.delete(socket));
+          reply({
+            type: 'frame',
+            data: PNG.toString('base64'),
+            width: 640,
+            height: 480,
+          });
+          return;
+        }
+        control.owner = socket;
+        control.consumed = true;
+        reply({ ...grant.state, finalizing: control.finalizing ?? false });
+        return;
+      }
+      if (path !== '/hitl/control' || !control?.human || control.finalizing) {
+        socket.close();
+        return;
+      }
+      const session = this.sessions.get(sessionId)!;
+      const identity = {
+        nodeId: this.id,
+        nodeEpoch: this.epoch,
+        sessionId,
+        leaseId: session.leaseId,
+        fence: session.fence,
+        interventionId: grant.id,
+        controlRevision: control.revision,
+      };
+      if (value.type === 'command') {
+        const operation = value.command;
+        if (
+          !['browser.input', 'browser.cookies.set', 'browser.act'].includes(
+            operation.type,
+          )
+        ) {
+          reply({ type: 'error', code: 'HITL_COMMAND' });
+          socket.close();
+          return;
+        }
+        if (
+          operation.type === 'browser.act' &&
+          operation.action === 'navigate' &&
+          !/^https?:/.test(operation.target)
+        ) {
+          reply({ type: 'error', code: 'HITL_NAVIGATION' });
+          return;
+        }
+        let result = this.results.get(value.commandId);
+        if (!result) {
+          this.calls.set(value.commandId, 1);
+          if (operation.action !== 'scroll') control.auth++;
+          result = {
+            ...identity,
+            type: 'hitl.result',
+            messageId: `hitl:${value.commandId}`,
+            commandId: value.commandId,
+            authRevision: control.auth,
+            operation: {
+              type: operation.type,
+              ...(operation.action ? { action: operation.action } : {}),
+            },
+            operationStatus: 'SUCCEEDED',
+            effect: 'COMPLETED',
+          };
+          this.results.set(value.commandId, result);
+          this.send(result);
+        }
+        reply({
+          type: 'result',
+          commandId: value.commandId,
+          status: result.operationStatus,
+          effect: result.effect,
+        });
+      } else if (value.type === 'complete' || value.type === 'unable') {
+        if (
+          value.type === 'complete' &&
+          (!value.confirmedItems ||
+            value.confirmedItems.length !== grant.state.items.length)
+        ) {
+          reply({ type: 'error', code: 'HITL_CONFIRMATION_REQUIRED' });
+          return;
+        }
+        control.finalizing = true;
+        this.send({
+          ...identity,
+          type: 'hitl.finished',
+          messageId: `hitl-finish:${grant.id}:${control.revision}`,
+          authRevision: control.auth,
+          completion: value,
+        });
+      }
+    });
+  }
+
   send(value: unknown): void {
     if (this.socket.readyState === WebSocket.OPEN)
       this.socket.send(JSON.stringify(value));
@@ -462,5 +708,109 @@ export class SimulatedNode {
     clearInterval(this.heartbeatTimer);
     for (const relay of this.relays) relay.terminate();
     this.socket?.terminate();
+    for (const socket of this.direct?.clients ?? []) socket.terminate();
+    this.direct?.close();
   }
+}
+
+/** 类型收窄保留夹具的协议分支可读性。 */
+function operationControl(command: NodeCommand) {
+  return command.command.type === 'session.control';
+}
+
+/** 测试客户端先通过 API 换取短期凭证，再分别连接节点控制与画面。 */
+export async function connectHitl(base: string, id: string, token: string) {
+  const messages: any[] = [];
+  const stop = new AbortController();
+  const sockets: WebSocket[] = [];
+  const ws = Object.assign(new EventEmitter(), {
+    readyState: WebSocket.CONNECTING as number,
+    send(value: string) {
+      sockets[0]?.send(value);
+    },
+    close() {
+      stop.abort();
+      for (const s of sockets) s.close();
+      if (!sockets.length) {
+        ws.readyState = WebSocket.CLOSED;
+        ws.emit('close');
+      }
+    },
+    terminate() {
+      stop.abort();
+      for (const s of sockets) s.terminate();
+    },
+  });
+  void (async () => {
+    while (!stop.signal.aborted) {
+      const response = await fetch(`${base}/v1/hitl/bootstrap`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', origin: base },
+        body: JSON.stringify({ id, token }),
+        signal: stop.signal,
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        messages.push({
+          type: 'error',
+          code: result.code,
+          message: result.message,
+        });
+        ws.close();
+        return;
+      }
+      messages.push(result.state);
+      if (!result.direct) {
+        if (result.state.type !== 'state') {
+          ws.close();
+          return;
+        }
+        await delay(50, undefined, { signal: stop.signal });
+        continue;
+      }
+      const auth = JSON.stringify({
+        type: 'authenticate',
+        nodeId: result.direct.nodeId,
+        id: result.direct.id,
+        token: result.direct.token,
+      });
+      const control = new WebSocket(result.direct.controlUrl, { origin: base });
+      sockets.push(control);
+      control.on('error', () => {});
+      control.on('close', () => {
+        ws.readyState = WebSocket.CLOSED;
+        for (const s of sockets.slice(1)) s.close();
+        ws.emit('close');
+      });
+      control.on('message', (raw) => {
+        const message = JSON.parse(raw.toString());
+        messages.push(message);
+        if (message.type === 'state' && sockets.length === 1) {
+          const frames = new WebSocket(result.direct.frameUrl, {
+            origin: base,
+          });
+          sockets.push(frames);
+          frames.on('error', () => {});
+          frames.on('open', () => frames.send(auth));
+          frames.on('message', (raw) =>
+            messages.push(JSON.parse(raw.toString())),
+          );
+        }
+      });
+      await once(control, 'open');
+      ws.readyState = WebSocket.OPEN;
+      control.send(auth);
+      return;
+    }
+  })().catch((error) => {
+    if (!stop.signal.aborted) {
+      messages.push({
+        type: 'error',
+        code: 'TEST_CONNECT_FAILED',
+        message: String(error),
+      });
+      ws.close();
+    }
+  });
+  return { ws, messages };
 }

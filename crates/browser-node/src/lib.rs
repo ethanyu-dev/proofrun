@@ -13,5 +13,11 @@ pub mod sessions;
 pub mod store;
 pub mod version;
 
-pub mod live;
 pub mod maintenance;
+
+pub mod admission;
+pub mod control;
+pub mod direct;
+
+pub mod bindings;
+pub mod runtime;

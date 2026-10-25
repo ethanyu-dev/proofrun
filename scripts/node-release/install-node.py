@@ -94,6 +94,17 @@ def idle(home):
                 )
 
 
+def authorized(home, credential):
+    """显式注册表优先于旧凭据文件；撤销全部绑定后不能被安装器重新配对。"""
+    path = home / "node.db"
+    if path.exists():
+        with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True) as db:
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='bindings'").fetchone():
+                if db.execute("SELECT count(*) FROM bindings").fetchone()[0]:
+                    return bool(db.execute("SELECT 1 FROM bindings WHERE state!='REVOKED' LIMIT 1").fetchone())
+    return credential.exists()
+
+
 def unit_quote(path):
     """systemd 参数使用独立引号，并转义 %，不能让路径成为 unit 指令。"""
     return (
@@ -113,6 +124,7 @@ def configure(path, current, home, args):
                 existing.get("artifact_upload_url"),
             ),
             (args.pool, existing.get("pool")),
+            (getattr(args, "public_url", None), existing.get("public_url")),
             (
                 str(Path(args.chrome).resolve()) if args.chrome else None,
                 existing.get("chrome_bin"),
@@ -120,6 +132,8 @@ def configure(path, current, home, args):
         ]
         if any(value is not None and value != saved for value, saved in checks):
             raise ValueError("已有配置不能通过安装参数覆盖，请直接编辑 node.toml")
+        if "capacity" in existing:
+            raise ValueError("固定 capacity 配置已移除；请先排空节点、备份并编辑 node.toml，配置资源阈值及 public_url 后升级")
         return
     parsed = urlsplit(args.api or "")
     if (
@@ -134,6 +148,11 @@ def configure(path, current, home, args):
         raise ValueError(
             "首次安装需要 --api HTTPS_ORIGIN，例如 https://proofrun.example.com"
         )
+    public_url = getattr(args, "public_url", None)
+    if public_url:
+        endpoint = urlsplit(public_url)
+        if endpoint.scheme != "https" or not endpoint.hostname or endpoint.username or endpoint.password or endpoint.path not in ("", "/") or endpoint.query or endpoint.fragment:
+            raise ValueError("--public-url 必须是客户端可访问的 HTTPS origin")
     chrome = Path(
         args.chrome or shutil.which("chromium") or shutil.which("google-chrome") or ""
     )
@@ -153,7 +172,10 @@ def configure(path, current, home, args):
             f"gateway_url = {quote('wss://' + parsed.netloc + '/v1/nodes/connect')}",
             f"artifact_upload_url = {quote(origin + '/v1/artifacts')}",
             f"pool = {quote(args.pool or 'internal')}",
-            "capacity = 2",
+            *([f"public_url = {quote(public_url.rstrip('/'))}"] if public_url else []),
+            'listen = "127.0.0.1:9310"',
+            "memory_reserve_bytes = 1073741824",
+            "session_reserve_bytes = 536870912",
             'credential_file = "credential.json"',
             f"agent_browser_bin = {quote(current / 'bin/agent-browser')}",
             f"chrome_bin = {quote(chrome.resolve())}",
@@ -174,6 +196,7 @@ def main():
     parser.add_argument("--version", required=True)
     parser.add_argument("--api")
     parser.add_argument("--pool")
+    parser.add_argument("--public-url", help="客户端直连节点 HTTPS origin；写入节点 node.toml")
     parser.add_argument("--chrome")
     parser.add_argument("--pairing-token-file", type=Path)
     args = parser.parse_args()
@@ -288,7 +311,7 @@ def main():
                             )
                         },
                     )
-                if credential.exists():
+                if authorized(home, credential):
                     started = True
                     run("systemctl", "--user", "enable", "--now", SERVICE)
                     time.sleep(3)

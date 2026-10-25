@@ -44,6 +44,10 @@
             "type": "string",
             "pattern": "^[a-f0-9]{64}$"
           }
+        },
+        "finalizing": {
+          "type": "boolean",
+          "description": "节点已冻结输入，等待控制面确认完成。"
         }
       },
       "required": [
@@ -76,6 +80,10 @@
           "type": "number",
           "exclusiveMinimum": 0,
           "maximum": 16384
+        },
+        "capturedAt": {
+          "type": "integer",
+          "minimum": 0
         }
       },
       "required": ["type", "data", "width", "height"]

@@ -100,6 +100,9 @@ export function envelope(
     leaseId: context.lease_id,
     fence: Number(context.fence),
     timeoutMs,
+    controlRevision: context.control_revision,
+    authRevision: context.auth_revision,
+    actor: context.control_mode === 'HUMAN' ? 'HUMAN' : 'AGENT',
     command,
   };
 }
@@ -133,7 +136,14 @@ export function syntheticResult(
   sent: boolean,
   code: string,
 ): CommandResult {
-  const { command: _, timeoutMs: __, ...identity } = command;
+  const {
+    command: _,
+    timeoutMs: __,
+    actor: _actor,
+    controlRevision: _revision,
+    authRevision: _auth,
+    ...identity
+  } = command;
   return {
     ...identity,
     type: 'command.result',

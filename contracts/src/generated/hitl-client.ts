@@ -5,9 +5,13 @@ export type HitlClient =
       type: 'authenticate';
       id: string;
       /**
-       * 任务入口使用专属令牌；节点模板入口接受 Console 管理员凭据。
+       * 控制面返回且已在节点安装摘要的短期直连凭据；不得传入管理员、机器或长期处理链接令牌。
        */
       token: string;
+      /**
+       * API 返回的绑定节点身份；显式多控制面绑定必须提供，仅用于路由，不代替凭证。
+       */
+      nodeId?: string;
     }
   | {
       type: 'command';
@@ -245,6 +249,37 @@ export type BrowserCommand =
        * 平台分配的标签页分组身份，不是模型指定的活动页；同一 profile 内独立保存观察引用。
        */
       tabScope?: string;
+    }
+  | {
+      type: 'session.control';
+      mode: 'AUTO' | 'HUMAN';
+      revision: number;
+      grant?: {
+        id: string;
+        tokenHash: string;
+        connectExpiresAt: number;
+        expiresAt: number;
+        origin: string;
+        authRevision: number;
+        state: {
+          [k: string]: unknown;
+        };
+      };
+    }
+  | {
+      type: 'session.watch';
+      revision: number;
+      grant: {
+        id: string;
+        tokenHash: string;
+        connectExpiresAt: number;
+        expiresAt: number;
+        origin: string;
+        authRevision: number;
+        state: {
+          [k: string]: unknown;
+        };
+      };
     };
 
 /**

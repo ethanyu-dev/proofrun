@@ -192,6 +192,37 @@ export type BrowserCommand =
        * 平台分配的标签页分组身份，不是模型指定的活动页；同一 profile 内独立保存观察引用。
        */
       tabScope?: string;
+    }
+  | {
+      type: 'session.control';
+      mode: 'AUTO' | 'HUMAN';
+      revision: number;
+      grant?: {
+        id: string;
+        tokenHash: string;
+        connectExpiresAt: number;
+        expiresAt: number;
+        origin: string;
+        authRevision: number;
+        state: {
+          [k: string]: unknown;
+        };
+      };
+    }
+  | {
+      type: 'session.watch';
+      revision: number;
+      grant: {
+        id: string;
+        tokenHash: string;
+        connectExpiresAt: number;
+        expiresAt: number;
+        origin: string;
+        authRevision: number;
+        state: {
+          [k: string]: unknown;
+        };
+      };
     };
 
 /**
@@ -231,6 +262,12 @@ export interface NodeCommand {
    */
   timeoutMs: number;
   command: BrowserCommand;
+  /**
+   * 浏览器操作者；缺省仅兼容尚未交接的自动执行。
+   */
+  actor?: 'AGENT' | 'HUMAN';
+  controlRevision?: number;
+  authRevision?: number;
 }
 /**
  * 预留本机容量并创建独立的受监管浏览器会话。
