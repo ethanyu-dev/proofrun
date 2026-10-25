@@ -20,7 +20,6 @@ const legacyNode: ConsoleNode = {
   name: '旧版节点',
   pool: 'internal',
   node_epoch: null,
-  capacity: 1,
   capabilities: {},
   inventory: [],
   last_seen_at: null,

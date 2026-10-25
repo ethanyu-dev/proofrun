@@ -169,11 +169,11 @@ export class NodeRegistry {
     return { id: result.rows[0].id as string, hash };
   }
 
-  /** 不返回凭据摘要；在线和可分配容量由调用方结合当前连接判断。 */
+  /** 不返回凭据摘要；准入沿用节点声明，占用数仅展示未确认释放的会话。 */
   async list() {
     return (
       await this.db.query(
-        `SELECT n.id,name,pool,node_epoch,runtime,capacity,public_url,admission,capabilities,inventory,last_seen_at,revoked_at,routing_revision,
+        `SELECT n.id,name,pool,node_epoch,runtime,public_url,admission,capabilities,inventory,last_seen_at,revoked_at,routing_revision,
           ARRAY(SELECT hostname FROM pr_node_routes WHERE node_id=n.id ORDER BY hostname) AS routing_domains,
           (SELECT count(*)::integer FROM (
             SELECT item->>'sessionId' AS id FROM jsonb_array_elements(n.inventory) item

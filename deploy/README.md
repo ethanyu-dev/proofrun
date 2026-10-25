@@ -53,7 +53,7 @@ Node 经机器认证的心跳登记 `public_url`，API 保存并在授权时返�
 
 资源准入参数都在节点 TOML：`memory_reserve_bytes` 默认保留 1 GiB，`session_reserve_bytes` 默认每会话至少预算 512 MiB；CPU 默认 80% 停止新接收、低于 60% 恢复，CPU PSI 阈值 20%。按机器和任务负载调参，不能把这些默认值当作实测容量。Node 读取宿主与 cgroup 实际余量，扣除尚未体现为实际占用的会话预算，并在启动后等待五秒稳定。指标缺失、隔离会话或资源压力均暂停新任务；已运行任务继续受租约管理。没有固定 `capacity`，也没有 Node 本地任务排队。
 
-升级必须先停止新任务、等待现有会话关闭，然后备份并升级 API（迁移 034）、Console 和节点。旧 TOML 的 `capacity` 必须删除，加入 `public_url` 与 `listen`；安装器遇到旧字段会明确拒绝并提示迁移，不擅自覆盖已有配置。旧节点不再满足资源准入协议，旧直连前的网页须刷新。新安装器支持 `--public-url https://browser-node-01.example.com`；它不代办 DNS、证书或 Caddy 的系统安装。
+升级必须先停止新任务、等待现有会话关闭，然后备份并升级 API（迁移 034 引入资源准入，036 删除历史节点 `capacity` 列）、Console 和节点。旧 TOML 的 `capacity` 必须删除，加入 `public_url` 与 `listen`；安装器遇到旧字段会明确拒绝并提示迁移，不擅自覆盖已有配置。旧节点不再满足资源准入协议，仍携带 `capacity` 的心跳会被拒绝，旧直连前的网页须刷新。新安装器支持 `--public-url https://browser-node-01.example.com`；它不代办 DNS、证书或 Caddy 的系统安装。
 
 资源拒绝只有在 `session.open` 明确 `NOT_STARTED / RESOURCE_UNAVAILABLE` 时才安全重排；API 归档拒绝尝试并撤销旧执行身份，保持原排队期限。未知结果不重排、不自动重放。回滚应恢复成套数据库与组件版本，不能只切换旧 Node 程序。
 

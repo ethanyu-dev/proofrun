@@ -11,7 +11,7 @@
       "type": "array",
       "items": {
         "type": "object",
-        "description": "容量占用取节点上报与控制面未确认关闭会话的并集。",
+        "description": "会话占用取节点上报与控制面未确认关闭会话的并集，仅供展示；资源准入由节点决定。",
         "additionalProperties": false,
         "required": [
           "id",
@@ -39,10 +39,6 @@
           },
           "node_epoch": {
             "type": ["string", "null"]
-          },
-          "capacity": {
-            "type": "integer",
-            "minimum": 0
           },
           "capabilities": {
             "type": "object"

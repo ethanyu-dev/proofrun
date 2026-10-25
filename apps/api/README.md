@@ -246,4 +246,4 @@ Console 与 API 通过同源部署或开发代理通信，本批不开放跨源�
 
 API 不再代理实时画面或 HITL 输入。`POST /v1/hitl/bootstrap` 用处理链接换取会话限定的节点地址和一次性凭据；`POST /v1/admin/executions/:id/live` 为管理员签发只读画面凭据。Node 经主 WSS 连接接收能力摘要，客户端再连接节点 `/hitl/control`、`/hitl/frames` 或 `/live/frames`。人工结果和完成事件经可靠节点通道持久化，操作摘要同时进入活动记录与时间线。
 
-调度只读取节点的 `admission` 作为候选提示，并串行同节点创建握手；最终准入由 Node 检查 CPU/内存。固定 capacity 不再参与派发。域名唯一配置来源是节点 `public_url`，具体迁移见[部署说明](../../deploy/README.md#节点直连域名与升级)。
+调度只读取节点的 `admission` 作为候选提示，并串行同节点创建握手；最终准入由 Node 检查 CPU/内存。迁移 036 删除历史 `capacity` 列，节点心跳和列表契约同步移除此字段；`occupied` 仅用于占用展示和候选排序，不设固定并发上限。`NODE_CAPACITY` 排队原因表示节点暂不接收新任务。Case 内的 `profilePlan.maxConcurrency` 保持不变。域名唯一配置来源是节点 `public_url`，具体迁移见[部署说明](../../deploy/README.md#节点直连域名与升级)。

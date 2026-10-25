@@ -7,14 +7,13 @@ export interface NodeList {
   nodes: NodeSummary[];
 }
 /**
- * 容量占用取节点上报与控制面未确认关闭会话的并集。
+ * 会话占用取节点上报与控制面未确认关闭会话的并集，仅供展示；资源准入由节点决定。
  */
 export interface NodeSummary {
   id: string;
   name: string;
   pool: string;
   node_epoch: string | null;
-  capacity?: number;
   capabilities: {
     [k: string]: unknown;
   };

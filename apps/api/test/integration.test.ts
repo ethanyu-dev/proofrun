@@ -177,8 +177,8 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       assert.equal(response.headers.get('cache-control'), 'no-store');
     return { status: response.status, data };
   };
-  const addNode = async (pool: string, capacity = 1) => {
-    const node = new SimulatedNode(base, pool, capacity);
+  const addNode = async (pool: string, simulatedSessionLimit = 1) => {
+    const node = new SimulatedNode(base, pool, simulatedSessionLimit);
     nodes.push(node);
     await node.pair(ADMIN);
     await until(
@@ -1666,7 +1666,7 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
     );
 
     // 范围：真实调度事务的精确绑定、满载等待、未命中回退及修改不迁移活动会话；不运行 Chrome。
-    await suite.test('域名绑定固定节点并保留容量约束', async () => {
+    await suite.test('域名绑定固定节点并遵循节点准入声明', async () => {
       const spare = await addNode('domain-schedule');
       const target = await addNode('domain-schedule');
       await api('POST', `/v1/nodes/${target.id}/routing`, {
@@ -2142,14 +2142,53 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       assert.equal(await claim(), null);
     });
 
-    // 范围：真实事务中的并发领取和资源预留；关闭事实来自协议夹具，不是进程探测。
-    await suite.test('并发领取不超配，清理后队列继续', async () => {
-      await addNode('capacity');
-      await addNode('capacity');
+    // 范围：真实 HTTP/数据库遵循节点准入而非占用数量，空闲节点也可拒绝；夹具不采样真实 CPU/内存。
+    await suite.test('节点自主准入且 API 不按会话数量限制并发', async () => {
+      const node = await addNode('node-admission-only');
+      const readNode = async () =>
+        (await api('GET', '/v1/nodes')).data.nodes.find(
+          (row: { id: string }) => row.id === node.id,
+        );
+      const definitions = [task(node.pool), task(node.pool)];
+      for (const definition of definitions) await submit(definition);
+
+      node.acceptingOverride = false;
+      node.heartbeat();
+      await until(readNode, (row) => row.admission.accepting === false);
+      assert.equal((await readNode()).occupied, 0);
+      assert.equal(await claim(), null);
+      assert.equal(
+        (await api('GET', `/v1/tasks/${definitions[0]!.taskId}`)).data
+          .queueReason.code,
+        'NODE_CAPACITY',
+      );
+
+      node.acceptingOverride = true;
+      node.heartbeat();
+      await until(readNode, (row) => row.admission.accepting === true);
+      for (const definition of definitions) {
+        const execution = await claim();
+        assert.equal(execution.task.taskId, definition.taskId);
+        assert.equal(execution.nodeId, node.id);
+        await ready(execution);
+      }
+      const listed = await readNode();
+      assert.equal(listed.occupied, 2);
+      assert.equal(Object.hasOwn(listed, 'capacity'), false);
+      for (const definition of definitions) {
+        await api('POST', `/v1/tasks/${definition.taskId}/cancel`);
+        await cleaned(definition.taskId);
+      }
+    });
+
+    // 范围：真实事务中的并发领取遵循节点准入声明；准入和关闭来自协议夹具，不验证真实资源容量。
+    await suite.test('并发领取遵循节点准入，清理后队列继续', async () => {
+      await addNode('admission');
+      await addNode('admission');
       const definitions = [
-        task('capacity'),
-        task('capacity'),
-        task('capacity'),
+        task('admission'),
+        task('admission'),
+        task('admission'),
       ];
       for (const definition of definitions) await submit(definition);
       const claims = (

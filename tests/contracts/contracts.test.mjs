@@ -153,7 +153,7 @@ test('control requests share browser commands without accepting server-owned ide
   );
 });
 
-// 验证范围：心跳必须声明节点可接受的租约上限；不验证网络延迟和实际授权期限。
+// 验证范围：心跳声明租约上限和资源准入且拒绝旧 capacity；不验证真实资源、网络延迟和授权期限。
 test('node heartbeat exposes bounded lease limits', async () => {
   const { validateNodeEvent } = await import('../../contracts/dist/index.js');
   const heartbeat = {
@@ -163,7 +163,6 @@ test('node heartbeat exposes bounded lease limits', async () => {
     nodeEpoch: 'epoch-1',
     pool: 'internal',
     leaseRequestId: 'request-1',
-    capacity: 1,
     occupied: [],
     capabilities: {
       observe: true,
@@ -176,7 +175,21 @@ test('node heartbeat exposes bounded lease limits', async () => {
     limits: { maxLeaseMs: 60000, maxSessionMs: 3600000 },
   };
   assert.equal(validateNodeEvent(heartbeat), true);
-  // 范围：旧心跳仍兼容，新身份必须完整有界；不验证节点自报身份的真实性。
+  assert.equal(validateNodeEvent({ ...heartbeat, capacity: 1 }), false);
+  assert.equal(
+    validateNodeEvent({
+      ...heartbeat,
+      admission: {
+        accepting: true,
+        reason: 'AVAILABLE',
+        cpuPercent: 10,
+        availableBytes: 8 * 1024 ** 3,
+        reserveBytes: 1024 ** 3,
+      },
+    }),
+    true,
+  );
+  // 范围：未上报 runtime 的心跳仍兼容，上报时身份必须完整有界；不验证节点自报身份的真实性。
   const runtime = {
     version: 'node-v0.1.0-alpha.6',
     sourceCommit: 'a'.repeat(40),
@@ -209,6 +222,28 @@ test('node heartbeat exposes bounded lease limits', async () => {
     }),
     false,
   );
+});
+
+// 范围：节点列表仅暴露资源准入和会话占用，拒绝旧 capacity；不验证实际数据库或资源采样。
+test('节点列表不再包含固定容量', async () => {
+  const { validateNodeList } = await import('../../contracts/dist/index.js');
+  const node = {
+    id: 'node-1',
+    name: '测试节点',
+    pool: 'internal',
+    node_epoch: 'epoch-1',
+    capabilities: {},
+    inventory: [],
+    last_seen_at: null,
+    revoked_at: null,
+    online: true,
+    occupied: 2,
+    routing_domains: [],
+    routing_revision: 0,
+    admission: { accepting: true, reason: 'AVAILABLE' },
+  };
+  assert.equal(validateNodeList({ nodes: [node] }), true);
+  assert.equal(validateNodeList({ nodes: [{ ...node, capacity: 1 }] }), false);
 });
 
 // 范围：领取协议必须给出硬截止时间，模型协议不能包含服务器身份；不核实实际租约授权。

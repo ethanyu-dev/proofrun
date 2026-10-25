@@ -157,8 +157,8 @@ export class SimulatedNode {
   domUnknownClick = false;
   /** 供 Agent 动作定位回归使用的可见目标，仅是协议夹具。 */
   observationTargets: { target: string; role: string; name: string }[] = [];
-  /** 模拟节点临时调整可用容量，只影响协议心跳，不代表真实浏览器占用。 */
-  capacityOverride?: number;
+  /** 显式模拟节点的准入结论，不依据 CPU/内存实测，也不代表真实浏览器容量。 */
+  acceptingOverride?: boolean;
   /** 仅供网络协议测试启用；记录仍由夹具生成。 */
   networkEvidence = false;
   /** 默认支持登录快照协议；不证明真实 Cookie 的业务有效性。 */
@@ -190,7 +190,8 @@ export class SimulatedNode {
   constructor(
     readonly base: string,
     readonly pool: string,
-    readonly capacity = 1,
+    /** 仅用于生成默认准入结论的夹具阈值，不通过协议上报。 */
+    readonly simulatedSessionLimit = 1,
   ) {}
 
   /** 通过真实注册 HTTP 接口取得机器凭据。 */
@@ -249,7 +250,7 @@ export class SimulatedNode {
     this.socket.once('close', () => clearInterval(timer));
   }
 
-  /** 心跳携带真实协议字段，允许测试租约和容量策略。 */
+  /** 心跳携带真实协议字段，允许测试租约和节点准入声明。 */
   heartbeat(): void {
     this.send({
       type: 'node.heartbeat',
@@ -259,11 +260,11 @@ export class SimulatedNode {
       pool: this.pool,
       ...(this.runtime ? { runtime: this.runtime } : {}),
       leaseRequestId: randomUUID(),
-      capacity: this.capacityOverride ?? this.capacity,
       publicUrl: this.publicUrl,
       admission: {
         accepting:
-          this.sessions.size < (this.capacityOverride ?? this.capacity),
+          this.acceptingOverride ??
+          this.sessions.size < this.simulatedSessionLimit,
         reason: 'FIXTURE',
         cpuPercent: 10,
         availableBytes: 8 * 1024 ** 3,
