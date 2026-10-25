@@ -41,6 +41,10 @@ const ADMIN = 'proofrun-admin-integration-only-credential';
 const WORKER = 'proofrun-worker-integration-only-credential';
 /** 明确跨越初始租约边界；不改变控制面配置或轮询超时。 */
 const LEASE_BOUNDARY_MARGIN_MS = 100;
+/** 状态读取回归保留原有截止时间，超时用于发现锁等待，不作为生产性能承诺。 */
+const SNAPSHOT_REQUEST_MS = 1500;
+/** 超过 API 业务连接池的读请求数，确保写锁回归会形成可观察的排队。 */
+const SNAPSHOT_READERS = 20;
 
 // 范围：真实 PostgreSQL、HTTP 与 WebSocket 的控制面约束；浏览器行为由协议夹具模拟。
 test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => {
@@ -2674,8 +2678,14 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
     await suite.test(
       '状态轮询不等待执行写锁，也不挤占其他执行续租',
       async () => {
-        await addNode('read-snapshot', 2);
-        const definitions = [task('read-snapshot'), task('read-snapshot')];
+        // 同节点心跳会在一个事务中依次锁住全部会话，其遍历顺序不固定。
+        // 两个执行分属不同节点，排除心跳跨会话锁的干扰，只验证状态读取是否占住连接池。
+        await addNode('read-snapshot');
+        await addNode('read-snapshot-other');
+        const definitions = [
+          task('read-snapshot'),
+          task('read-snapshot-other'),
+        ];
         for (const definition of definitions) await submit(definition);
         const first = await claim();
         await ready(first);
@@ -2689,28 +2699,51 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
             'SELECT id FROM pr_executions WHERE id=$1 FOR UPDATE',
             [first.id],
           );
-          await Promise.all(
-            Array.from({ length: 20 }, async () => {
-              const response = await fetch(
-                `${base}/v1/executions/${first.id}`,
-                {
-                  headers: { authorization: `Bearer ${first.leaseToken}` },
-                  signal: AbortSignal.timeout(1500),
-                },
-              );
-              assert.equal(response.status, 200);
-              assert.equal((await response.json()).state, 'RUNNING');
+          // 续租与读取同时进行；所有请求结束后才释放行锁，失败也不能留下后台请求污染后续用例。
+          const results = await Promise.allSettled([
+            ...Array.from({ length: SNAPSHOT_READERS }, async (_, index) => {
+              try {
+                const response = await fetch(
+                  `${base}/v1/executions/${first.id}`,
+                  {
+                    headers: { authorization: `Bearer ${first.leaseToken}` },
+                    signal: AbortSignal.timeout(SNAPSHOT_REQUEST_MS),
+                  },
+                );
+                assert.equal(response.status, 200);
+                assert.equal((await response.json()).state, 'RUNNING');
+              } catch (cause) {
+                throw new Error(
+                  `状态读取 ${index + 1} 在执行写锁持有期间失败`,
+                  { cause },
+                );
+              }
             }),
+            (async () => {
+              try {
+                const response = await fetch(
+                  `${base}/v1/executions/${second.id}/heartbeat`,
+                  {
+                    method: 'POST',
+                    headers: { authorization: `Bearer ${second.leaseToken}` },
+                    signal: AbortSignal.timeout(SNAPSHOT_REQUEST_MS),
+                  },
+                );
+                assert.equal(response.status, 200);
+                await response.json();
+              } catch (cause) {
+                throw new Error('独立节点执行的续租被状态轮询阻塞', { cause });
+              }
+            })(),
+          ]);
+          const failures = results.filter(
+            (result) => result.status === 'rejected',
           );
-          const response = await fetch(
-            `${base}/v1/executions/${second.id}/heartbeat`,
-            {
-              method: 'POST',
-              headers: { authorization: `Bearer ${second.leaseToken}` },
-              signal: AbortSignal.timeout(1500),
-            },
-          );
-          assert.equal(response.status, 200);
+          if (failures.length)
+            throw new AggregateError(
+              failures.map((failure) => failure.reason),
+              '持锁期间的读取或续租失败',
+            );
         } finally {
           await blocker.query('ROLLBACK');
           blocker.release();
@@ -3784,14 +3817,19 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
           async () => resumed.messages,
           (rows) => rows.some((m) => m.type === 'completed'),
         );
-        const view = (
-          await api(
-            'GET',
-            `/v1/executions/${execution.id}`,
-            undefined,
-            execution.leaseToken,
-          )
-        ).data;
+        // 节点先通知页面完成，再异步回传控制命令结果；等待控制面确认，不能把消息到达当作事务提交。
+        const view = await until(
+          async () =>
+            (
+              await api(
+                'GET',
+                `/v1/executions/${execution.id}`,
+                undefined,
+                execution.leaseToken,
+              )
+            ).data,
+          (state) => state.controlMode === 'AUTO',
+        );
         assert.equal(
           resumed.messages.find((m) => m.type === 'completed')?.authStatus,
           'disabled',
