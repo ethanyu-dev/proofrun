@@ -76,8 +76,8 @@ async function boot(t, { source = 'json', profile = PROFILE, mode } = {}) {
   };
 }
 
-// 范围：真实启动入口将两种来源的遗留模式归一为 LLM，并保留其他配置；不启动真实 API 或迁移历史任务。
-test('Railway 旧 profile 的 parallel 不再覆盖新 case 单组默认值', async (t) => {
+// 范围：真实启动入口读取两种来源的 LLM 配置，并保留其他配置；不启动真实 API 或迁移历史任务。
+test('Railway JSON 与文件配置均保持 LLM 单组', async (t) => {
   for (const source of ['json', 'file']) {
     const result = await boot(t, { source });
     assert.equal(result.status, 0, result.stderr);
@@ -92,8 +92,8 @@ test('Railway 旧 profile 的 parallel 不再覆盖新 case 单组默认值', as
   }
 });
 
-// 范围：独立变量允许三种显式模式，并覆盖 JSON/文件中的旧模式；不验证双组的真实调度。
-test('Railway 只有独立变量能显式选择纯 LLM 或双组对照', async (t) => {
+// 范围：独立变量支持显式 LLM，并保持 JSON/文件中的配置；不运行真实调度。
+test('Railway 独立变量支持显式 LLM', async (t) => {
   for (const source of ['json', 'file'])
     for (const mode of ['llm']) {
       const result = await boot(t, {
@@ -107,7 +107,7 @@ test('Railway 只有独立变量能显式选择纯 LLM 或双组对照', async (
 });
 
 // 范围：省略模式和省略整个 profile 的行为保持明确；不以缺配置虚构业务环境。
-test('省略旧模式使用 LLM，未配置 profile 时仍不启用 case 提交', async (t) => {
+test('省略模式使用 LLM，未配置 profile 时仍不启用 case 提交', async (t) => {
   const { executionMode: _, ...profile } = PROFILE;
   const defaults = await boot(t, { profile });
   assert.equal(defaults.status, 0, defaults.stderr);

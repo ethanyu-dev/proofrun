@@ -92,8 +92,8 @@ test(
         'utf8',
       ),
     );
-    // 模拟生产遗留的显式双组配置，检查镜像启动后新 case 仍只创建 JEV 单组。
-    profile.executionMode = 'parallel';
+    // 使用发布示例的当前单 LLM 配置；旧模式启动拒绝由 api-entry.test.mjs 单独覆盖。
+    assert.equal(profile.executionMode, 'llm');
     /** 使用两个不同 PORT，验证对外代理与私网 API 都遵守平台分配的监听端口。 */
     const startApi = () =>
       docker(
@@ -210,7 +210,7 @@ test(
         headers: { authorization: `Bearer ${admin}` },
       });
       assert.equal(detail.status, 200);
-      assert.equal((await detail.json()).definition.executionMode, 'jev');
+      assert.equal((await detail.json()).definition.executionMode, 'llm');
       const extra = await fetch(`${base}/v1/tasks/comparison-${taskId}-jev`, {
         headers: { authorization: `Bearer ${admin}` },
       });

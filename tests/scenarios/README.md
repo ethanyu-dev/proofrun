@@ -86,15 +86,15 @@ pnpm eval:e2e --output /private/eval-run --environment /private/environment.json
 
 ## 输出、判定和比较
 
-`run/manifest.json` 固定样本全集、种子、版本、配置和额度；每个样本有 `sample.json`、`task.json`、`facts.json`、`calls.json`、`evidence.json` 与证据二进制。`summary.json` 保留计划、启动、完成、通过、未运行及不完整样本。Linux 额外的 `runtime-check.json` 只在实际用户服务已关闭后生成，脚本冒烟的 `recovery-check.json` 记录进程中断前后的同一任务身份。`routing.json` 在测量结束后采集模型路由原因，不保存完整模型正文，也不计入样本耗时；配置为 JEV 不代表每一步实际调用了 JEV，应结合 `calls.json` 核对供应商请求。
+`run/manifest.json` 固定样本全集、种子、版本、配置和额度；每个样本有 `sample.json`、`task.json`、`facts.json`、`calls.json`、`evidence.json` 与证据二进制。`summary.json` 保留计划、启动、完成、通过、未运行及不完整样本。Linux 额外的 `runtime-check.json` 只在实际用户服务已关闭后生成，脚本冒烟的 `recovery-check.json` 记录进程中断前后的同一任务身份。`routing.json` 在测量结束后采集模型路由原因，不保存完整模型正文，也不计入样本耗时；当前只运行 LLM，应结合 `calls.json` 核对实际供应商请求。
 
 人工脚本失败保留具体错误码，取消本样本并收集已有事实；确认会话关闭后才继续其他样本。失败不会自动重放输入或改为通过。此类错误属于测评工具/交接链路异常，不能直接归因为模型业务判断错误。
 
 `activity.json` 保存测量结束后的命令类型、状态和错误码，`routing.json` 同时保留模型决策的动作/等待条件摘要，不保存填写值。脚本模式单独运行 `E07` 会故意等待不存在的文本，验证真实节点在命令截止前返回、Agent 重观察后查询记录且不重复保存；`wait-recovery-check.json` 记录恢复耗时。它只验收恢复链路，不计入真实模型通过率。真实模型稳定性测评可用 `--repeat 3`（Linux 为 `PROOFRUN_EVAL_REPEAT=3`），同一场景每次使用独立样本，全部重复按固定种子排序；应保留逐轮结果和失败，不挑选最好的一轮。
 
-`--max-calls`（Linux 为 `PROOFRUN_EVAL_MAX_CALLS`）按每例的最坏请求额度预留，已完成样本不会释放预留量；它不是只累加已发生的 HTTP 请求。运行完整批次前应按 `callAllowance(definition(...), mode)` 累加所有场景并乘以重复次数。当前 `core` 三轮需要为纯 LLM 预留 1200、JEV+LLM 预留 2400 次；实际请求数仍以 `calls.json` 为准。额度不足导致的未启动样本必须保留，不能当作完整批次比较。
+`--max-calls`（Linux 为 `PROOFRUN_EVAL_MAX_CALLS`）按每例的最坏请求额度预留，已完成样本不会释放预留量；它不是只累加已发生的 HTTP 请求。运行完整批次前应按 `callAllowance(definition(...), mode)` 累加所有场景并乘以重复次数。当前 `core` 三轮需要为 LLM 预留 1200 次；实际请求数仍以 `calls.json` 为准。额度不足导致的未启动样本必须保留，不能当作完整批次比较。
 
-JEV 图片模式启动前会检查原生图片依赖。跨平台挂载工作目录时，测试镜像通过 `NODE_PATH` 提供与 Agent 同版本的 Linux `sharp` 依赖；修改版本后需重新构建镜像。缺失依赖应在请求模型前失败，不能将图片预处理失败后的纯 LLM 回退当作 JEV 实际效果。
+模型视觉输入直接使用已核实的当前截图；测试镜像不再安装 JEV 图片预处理依赖，也不配置额外 `NODE_PATH`。截图证据校验和模型视觉能力配置仍按正常执行路径生效。
 
 分类包括正确结论、错误通过、错误失败、无事实支持、未观察、结论不完整、证据不足、重复验收项。事实未知不能当作产品失败，缺失关闭事实不能当作关闭成功；业务判定和清理判定分别记录。
 
