@@ -35,7 +35,11 @@ import {
   type StepResult,
 } from '@proofrun/contracts';
 import type { AgentConfig } from '../config.js';
-import type { BrowserOperation, ControlClient } from '../client.js';
+import type {
+  BrowserOperation,
+  ControlClient,
+  ExecutionTiming,
+} from '../client.js';
 import type { DecisionInput, DecisionModel } from '../model/chat.js';
 import { modelTraceFault } from '../model/request.js';
 import { executionStrategy } from '../model/strategy.js';
@@ -109,11 +113,26 @@ export type ExecutionClient = Pick<
     { mode: 'guest' | 'configured'; confirmedRevision?: number } | undefined;
 };
 
+/** 分组借用 profile 的执行租约，只订阅自己的预算视图，不拥有最终提交权。 */
+export interface GroupExecutionScope {
+  /** 整个领取唯一的续租和撤权守卫。 */
+  lease: LeaseGuard;
+  /** 从共享时间快照选择当前组步骤预算。 */
+  timing: (view: ExecutionTiming) => ExecutionTiming;
+}
+/** 分组只有业务操作端口，不能直接续租或提交整场报告。 */
+export type GroupExecutionClient = Omit<
+  ExecutionClient,
+  'heartbeat' | 'complete'
+>;
+
 /** 一个领取结果对应一个执行器；实例不复用，也不恢复已经失去租约的动作。 */
 class Execution {
   /** 本地只保留当前观察和有界历史，完整命令与证据由控制面持久化。 */
   private readonly started = performance.now();
   private readonly guard: LeaseGuard;
+  /** 分组退出仅取消订阅；独立执行退出才关闭租约。 */
+  private readonly releaseLease: () => Promise<void>;
   private readonly evidence = new Map<
     string,
     VerificationReport['artifacts'][number]
@@ -230,17 +249,29 @@ class Execution {
 
   constructor(
     private readonly config: AgentConfig,
-    private readonly client: ExecutionClient,
+    private readonly client: GroupExecutionClient,
     private readonly model: DecisionModel,
     private readonly grant: ExecutionGrant,
-    stop: AbortSignal,
+    private readonly guardOwner: {
+      /** 当前执行唯一的守卫；子组借用它。 */
+      lease: LeaseGuard;
+      /** 子组仅提取本组预算，独立执行直接使用原快照。 */
+      timing?: (view: ExecutionTiming) => ExecutionTiming;
+      /** 只有租约所有者提交最终报告并关闭守卫。 */
+      complete?: ExecutionClient['complete'];
+    },
   ) {
     this.environmentMode = grant.task.executionPlan?.environment.mode;
     this.pendingNavigation =
       grant.task.steps?.[0]?.url ?? grant.task.target.url;
-    this.guard = new LeaseGuard(client, grant, stop, (view) =>
-      this.allowance?.sync(view),
+    this.guard = guardOwner.lease;
+    const unsubscribe = this.guard.subscribe((view) =>
+      this.allowance?.sync(guardOwner.timing?.(view) ?? view),
     );
+    this.releaseLease = async () => {
+      unsubscribe();
+      if (guardOwner.complete) await this.guard.close();
+    };
     this.workflow = new Workflow(grant.task.objective, undefined, undefined);
     this.criteria = new CriteriaLedger(grant.task.acceptanceCriteria);
     this.stepResults = (grant.task.steps ?? []).map((step) => ({
@@ -987,13 +1018,13 @@ class Execution {
     ];
     if (this.setupPhase !== 'CHECKING') return;
     const steps = this.workflow.view().steps;
-    const assessments = [
+    const requirements = [
       ...new Set(results.map((result) => result.policyIndex)),
     ].map((index) => {
       const group = results.filter((result) => result.policyIndex === index);
       return {
-        stepId: steps[index]!.id,
-        outcome: group.every((result) => result.status === 'SATISFIED')
+        id: steps[index]!.id,
+        status: group.every((result) => result.status === 'SATISFIED')
           ? 'complete'
           : 'incomplete',
         summary: group
@@ -1005,7 +1036,7 @@ class Execution {
         ].slice(0, 24),
       };
     });
-    this.workflow.apply({ assessments }, new Set(this.evidence.keys()));
+    this.workflow.apply({ requirements }, new Set(this.evidence.keys()));
   }
 
   /** 缺失与明确失败均不能跳过固定条件；先反馈补证据，耗尽后由报告表达原因。 */
@@ -1218,7 +1249,7 @@ class Execution {
                   keys[requested.indexOf(condition)]!,
                 )),
           );
-          const assessments = this.workflow
+          const requirements = this.workflow
             .view()
             .steps.filter((step) =>
               confirmed.some(
@@ -1227,14 +1258,17 @@ class Execution {
               ),
             )
             .map((step) => ({
-              stepId: step.id,
-              outcome: 'complete',
+              id: step.id,
+              status: 'complete',
               summary:
                 '人工在本次交接中逐项确认该 policy；页面证据仅记录交还现场',
               evidenceRefs: this.current!.artifactRefs.map((r) => r.artifactId),
             }));
-          if (assessments.length)
-            this.workflow.apply({ assessments }, new Set(this.evidence.keys()));
+          if (requirements.length)
+            this.workflow.apply(
+              { requirements },
+              new Set(this.evidence.keys()),
+            );
         }
       }
       this.feedback = HANDOFF_REVIEW_FEEDBACK;
@@ -1808,6 +1842,8 @@ class Execution {
         }
         this.allowance?.assertTime();
         const decision = output.decision;
+        const progress = decision.progress;
+        const decidedCriteria = progress?.criteria ?? [];
         if (!validateAgentDecision(decision))
           throw new AgentFault('INVALID_MODEL_DECISION', '决定不满足工具协议');
         // 工具 schema 不能代替执行端围栏，忽略只读限制的动作绝不派发。
@@ -1852,20 +1888,18 @@ class Execution {
         // 已有结论先校验并保存；后续计划、目标失效或浏览器失败不能抹掉本批结果。
         let savedChanged = false;
         const attached =
-          output.conclusions ??
-          (!this.isSetup() &&
-          !this.isCleanup() &&
-          ['verification.record', 'verification.finish'].includes(
+          !['verification.record', 'verification.finish'].includes(
             decision.type,
-          ) &&
-          'criteria' in decision &&
-          !decision.criteria.some((c) =>
-            this.task.acceptanceCriteria
-              .find((expected) => expected.id === c.criterionId)
-              ?.evidenceKinds.includes('TRACE'),
-          )
-            ? decision.criteria
-            : undefined);
+          ) ||
+          (!this.isSetup() &&
+            !this.isCleanup() &&
+            !decidedCriteria.some((c) =>
+              this.task.acceptanceCriteria
+                .find((expected) => expected.id === c.criterionId)
+                ?.evidenceKinds.includes('TRACE'),
+            ))
+            ? decidedCriteria
+            : undefined;
         if (attached?.length) {
           if (
             this.isSetup() ||
@@ -1873,7 +1907,7 @@ class Execution {
             !validateAgentDecision({
               type: 'verification.record',
               summary: '本轮已有证据结论',
-              criteria: attached,
+              progress: { criteria: attached },
             })
           )
             throw this.criteria.invalid('当前阶段不接受同轮验收结论');
@@ -1885,11 +1919,11 @@ class Execution {
             '根据动作前已有证据保存独立结论',
           );
         }
-        const readings = this.interactions.validate(output.workflow?.readings);
+        const readings = this.interactions.validate(progress?.readings);
         const readingRevision = this.interactions.view().revision;
         const revision = this.workflow.view().revision;
         this.workflow.apply(
-          output.workflow,
+          progress,
           new Set(
             [...this.evidence.keys()].filter(
               (id) =>
@@ -1904,7 +1938,7 @@ class Execution {
           revision !== this.workflow.view().revision ||
           readingRevision !== this.interactions.view().revision;
         const stepState = this.stepResults[this.stepIndex];
-        if (stepState && output.workflow && !this.recheck) {
+        if (stepState && progress && !this.recheck) {
           stepState.requirements = this.workflow
             .view()
             .steps.map(({ requirement: _text, ...item }) => item);
@@ -1941,7 +1975,7 @@ class Execution {
             this.interactions.assertClick(
               this.current!,
               target,
-              output.workflow?.revisitReason,
+              decision.revisitReason,
             );
         }
         if (decision.type === 'verification.intervene') {
@@ -1982,7 +2016,7 @@ class Execution {
           ) {
             this.workflow.assertFinish(decision);
             const prepared = new CriteriaLedger(this.task.acceptanceCriteria);
-            prepared.record(decision.criteria, this.evidence);
+            prepared.record(decidedCriteria, this.evidence);
             this.finish(decision, prepared);
             this.criteria = prepared;
             this.currentTask = { ...this.task, acceptanceCriteria: [] };
@@ -2016,7 +2050,7 @@ class Execution {
                 'setup 请统一提交 finish 和逐条准备证据，不逐项保存业务验收',
               );
             this.workflow.assertFinish(decision);
-            if (decision.criteria.some((c) => c.verdict !== 'PASSED')) {
+            if (decidedCriteria.some((c) => c.verdict !== 'PASSED')) {
               if (this.grant.task.executionPlan)
                 return this.blocked(decision.summary, 'ENVIRONMENT_NOT_READY');
               const blocked = await this.environmentNotReady(decision.summary);
@@ -2026,14 +2060,14 @@ class Execution {
           }
           // TRACE 先落地再校验引用；逐项提交也必须有真实交付的证据。
           if (
-            decision.criteria.some((c) =>
+            decidedCriteria.some((c) =>
               this.task.acceptanceCriteria
                 .find((expected) => expected.id === c.criterionId)
                 ?.evidenceKinds.includes('TRACE'),
             )
           ) {
             const traces = await this.captureTrace();
-            for (const criterion of decision.criteria) {
+            for (const criterion of decidedCriteria) {
               if (
                 this.task.acceptanceCriteria
                   .find((c) => c.id === criterion.criterionId)
@@ -2048,7 +2082,7 @@ class Execution {
           if (this.isSetup() && decision.type === 'verification.finish') {
             // 准备结果整批提交；无效 finish 或后续人工交接不能留下半份旧账号结论。
             const ready = new CriteriaLedger(this.task.acceptanceCriteria);
-            ready.record(decision.criteria, currentEvidence);
+            ready.record(decidedCriteria, currentEvidence);
             await this.captureTrace();
             const report = this.finish(decision, ready);
             if (this.recheck) {
@@ -2061,7 +2095,7 @@ class Execution {
             return report;
           }
           const changed =
-            (await this.saveCriteria(decision.criteria, decision.summary)) ||
+            (await this.saveCriteria(decidedCriteria, decision.summary)) ||
             savedChanged ||
             progressChanged;
           if (finalReview && decision.type !== 'verification.finish')
@@ -2708,8 +2742,14 @@ class Execution {
         }
         if (!this.grant.task.profilePlan && !validateVerificationReport(report))
           throw new AgentFault('INVALID_REPORT', '执行器生成的报告不满足协议');
+        // 子组只交付结果给 profile，报告提交及与人工交接的冲突由所有者处理。
+        if (!this.guardOwner.complete) return report;
         try {
-          await this.client.complete(this.grant, report, this.controlRevision);
+          await this.guardOwner.complete(
+            this.grant,
+            report,
+            this.controlRevision,
+          );
         } catch (error) {
           if (
             error instanceof AgentFault &&
@@ -2737,12 +2777,16 @@ class Execution {
                 failure.executionDetails?.reasonCode ?? null,
               )
             : failure;
-          await this.client.complete(this.grant, report, this.controlRevision);
+          await this.guardOwner.complete(
+            this.grant,
+            report,
+            this.controlRevision,
+          );
         }
         return report;
       }
     } finally {
-      await this.guard.close();
+      await this.releaseLease();
     }
   }
 }
@@ -2764,10 +2808,20 @@ export function execute(
 /** 子组复用单组执行器，最终报告由 profile 编排器统一提交。 */
 export function executeSingle(
   config: AgentConfig,
-  client: ExecutionClient,
+  client: ExecutionClient | GroupExecutionClient,
   model: DecisionModel,
   grant: ExecutionGrant,
   stop: AbortSignal,
+  scope?: GroupExecutionScope,
 ): Promise<VerificationReport> {
-  return new Execution(config, client, model, grant, stop).run();
+  if (scope)
+    return new Execution(config, client, model, grant, {
+      lease: scope.lease,
+      timing: scope.timing,
+    }).run();
+  const owner = client as ExecutionClient;
+  return new Execution(config, client, model, grant, {
+    lease: new LeaseGuard(owner, grant, stop),
+    complete: (...args) => owner.complete(...args),
+  }).run();
 }

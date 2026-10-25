@@ -13,6 +13,9 @@
         "screenshot": {
           "description": "是否同时采集 PNG 截图；截图与 DOM 来自不同时间点。",
           "type": "boolean"
+        },
+        "progress": {
+          "$ref": "#/definitions/progress"
         }
       },
       "required": ["type"],
@@ -68,6 +71,14 @@
           "minimum": 0,
           "maximum": 16384,
           "description": "visual.click 使用当前截图的视口 CSS 坐标。"
+        },
+        "progress": {
+          "$ref": "#/definitions/progress"
+        },
+        "revisitReason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 600
         }
       },
       "required": ["type", "action"],
@@ -87,6 +98,9 @@
         "text": {
           "description": "目标元素文本中必须包含的字符串。",
           "type": "string"
+        },
+        "progress": {
+          "$ref": "#/definitions/progress"
         }
       },
       "required": ["type", "selector", "text"],
@@ -105,55 +119,6 @@
           "minLength": 1,
           "description": "基于已取得证据解释本次验收结论。"
         },
-        "criteria": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["criterionId", "verdict", "summary", "evidenceRefs"],
-            "properties": {
-              "criterionId": {
-                "type": "string",
-                "minLength": 1
-              },
-              "verdict": {
-                "enum": ["PASSED", "FAILED", "INCONCLUSIVE", "SKIPPED"]
-              },
-              "summary": {
-                "type": "string",
-                "minLength": 1
-              },
-              "evidenceRefs": {
-                "type": "array",
-                "uniqueItems": true,
-                "items": {
-                  "type": "string",
-                  "minLength": 1
-                }
-              }
-            },
-            "allOf": [
-              {
-                "if": {
-                  "properties": {
-                    "verdict": {
-                      "enum": ["PASSED", "FAILED"]
-                    }
-                  },
-                  "required": ["verdict"]
-                },
-                "then": {
-                  "properties": {
-                    "evidenceRefs": {
-                      "type": "array",
-                      "minItems": 1
-                    }
-                  }
-                }
-              }
-            ]
-          }
-        },
         "evidenceRefs": {
           "type": "array",
           "uniqueItems": true,
@@ -162,9 +127,12 @@
             "minLength": 1
           },
           "description": "结构化步骤完成的执行证据，setup 无验收项时也必须提供。"
+        },
+        "progress": {
+          "$ref": "#/definitions/progress"
         }
       },
-      "required": ["type", "summary", "criteria"]
+      "required": ["type", "summary"]
     },
     {
       "title": "BlockVerification",
@@ -182,6 +150,9 @@
         "reasonCode": {
           "enum": ["LOGIN_REQUIRED", "IDENTITY_UNCONFIRMED", "OTHER"],
           "description": "登录缺失或失效用 LOGIN_REQUIRED；账号角色、绑定或资格待确认用 IDENTITY_UNCONFIRMED；其余用 OTHER。平台在授权范围内先尝试一次人工交接，兼容旧回复省略此字段。"
+        },
+        "progress": {
+          "$ref": "#/definitions/progress"
         }
       },
       "required": ["type", "summary"]
@@ -213,6 +184,9 @@
         "reasonCode": {
           "enum": ["LOGIN_REQUIRED", "IDENTITY_UNCONFIRMED", "OTHER"],
           "description": "登录缺失单独交接，不占用其他未解决条件的交接机会。"
+        },
+        "progress": {
+          "$ref": "#/definitions/progress"
         }
       },
       "required": ["type", "reason"]
@@ -229,6 +203,98 @@
           "type": "string",
           "minLength": 1,
           "description": "基于已取得证据解释本次验收结论。"
+        },
+        "progress": {
+          "$ref": "#/definitions/progress"
+        }
+      },
+      "required": ["type", "summary", "progress"],
+      "description": "立即保存当前步骤已取得证据的部分验收结论，不结束步骤；已保存结论不会被后续故障覆盖。"
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "仅在后续清理阶段删除任务站点明确指定名称的 Cookie，并核实已删除；不会返回 Cookie 值。",
+      "properties": {
+        "type": {
+          "const": "browser.cookies.clear"
+        },
+        "names": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9!#$%&'*+.^_`|~-]+$"
+          }
+        },
+        "progress": {
+          "$ref": "#/definitions/progress"
+        }
+      },
+      "required": ["type", "names"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "verification.environment"
+        },
+        "mode": {
+          "enum": ["guest", "configured"]
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "progress": {
+          "$ref": "#/definitions/progress"
+        }
+      },
+      "required": ["type", "mode", "summary"],
+      "description": "仅共享环境准备阶段使用。依据原始 setup 与 policy 声明是否必须使用未登录访客；这是意图分类，不是登录事实证明，平台单独核实准备来源。"
+    }
+  ],
+  "definitions": {
+    "progress": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "requirements": {
+          "type": "array",
+          "maxItems": 33,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "status": {
+                "enum": ["complete", "incomplete", "blocked"]
+              },
+              "summary": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 600
+              },
+              "evidenceRefs": {
+                "type": "array",
+                "maxItems": 24,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "required": ["id", "status", "summary", "evidenceRefs"]
+          }
         },
         "criteria": {
           "type": "array",
@@ -279,52 +345,27 @@
             ]
           },
           "minItems": 0
-        }
-      },
-      "required": ["type", "summary", "criteria"],
-      "description": "立即保存当前步骤已取得证据的部分验收结论，不结束步骤；已保存结论不会被后续故障覆盖。"
-    },
-    {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "仅在后续清理阶段删除任务站点明确指定名称的 Cookie，并核实已删除；不会返回 Cookie 值。",
-      "properties": {
-        "type": {
-          "const": "browser.cookies.clear"
         },
-        "names": {
+        "readings": {
           "type": "array",
-          "minItems": 1,
-          "maxItems": 20,
-          "uniqueItems": true,
+          "maxItems": 32,
           "items": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 256,
-            "pattern": "^[A-Za-z0-9!#$%&'*+.^_`|~-]+$"
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "itemId": {
+                "type": "string"
+              },
+              "quote": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 600
+              }
+            },
+            "required": ["itemId", "quote"]
           }
         }
-      },
-      "required": ["type", "names"]
-    },
-    {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "type": {
-          "const": "verification.environment"
-        },
-        "mode": {
-          "enum": ["guest", "configured"]
-        },
-        "summary": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 1000
-        }
-      },
-      "required": ["type", "mode", "summary"],
-      "description": "仅共享环境准备阶段使用。依据原始 setup 与 policy 声明是否必须使用未登录访客；这是意图分类，不是登录事实证明，平台单独核实准备来源。"
+      }
     }
-  ]
+  }
 }

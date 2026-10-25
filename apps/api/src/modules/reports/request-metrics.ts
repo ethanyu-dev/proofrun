@@ -20,7 +20,7 @@ export async function requestMetrics(
       finished_at: Date | null;
       details: VerificationReport['executionDetails'] | null;
     }>(
-      `WITH members AS (SELECT task_id FROM pr_verification_request_arms WHERE request_id=$1),
+      `WITH members AS (SELECT task_id FROM pr_request_runs WHERE request_id=$1),
     ids AS (SELECT task_id FROM members UNION SELECT c.task_id FROM pr_case_cleanups c JOIN members m ON m.task_id=c.parent_task_id WHERE c.task_id IS NOT NULL)
     SELECT t.id,t.state,t.finished_at,e.created_at AS started_at,t.report->'executionDetails' AS details
     FROM ids JOIN pr_tasks t ON t.id=ids.task_id LEFT JOIN pr_executions e ON e.task_id=t.id WHERE t.deleted_at IS NULL`,

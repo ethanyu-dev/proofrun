@@ -29,7 +29,7 @@ import { NodeGateway } from './modules/nodes/gateway.js';
 import { ArtifactStore } from './modules/reports/artifacts.js';
 import { Coordinator } from './modules/scheduling/coordinator.js';
 import { ExecutionControl } from './modules/scheduling/control.js';
-import { NodeProfiles } from './modules/nodes/profiles.js';
+import { HistoricalNodeProfiles } from './modules/nodes/profiles.js';
 import { HitlService } from './modules/hitl/service.js';
 import { CaseNotifications } from './modules/notifications/service.js';
 import { TaskReader } from './modules/tasks/reader.js';
@@ -105,7 +105,7 @@ export async function buildApp(
     app.log,
   );
   coordinator.gateway = gateway;
-  const nodeProfiles = new NodeProfiles(db);
+  const nodeProfiles = new HistoricalNodeProfiles(db, coordinator);
   const hitl = new HitlService(db, config, control, coordinator, gateway);
   const live = new LiveService(db, gateway, config.adminToken);
   const notifications = new CaseNotifications(db, config, app.log);
@@ -210,29 +210,6 @@ export async function buildApp(
     (socket) => hitl.accept(socket),
   );
   app.get(
-    '/v1/node-profiles/connect',
-    {
-      websocket: true,
-      preValidation: async (request) => {
-        const origin = request.headers.origin;
-        const local =
-          origin &&
-          /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) &&
-          new URL(origin).host === request.headers.host;
-        if (
-          origin !== new URL(config.consoleUrl ?? config.publicUrl).origin &&
-          !local
-        )
-          throw new ApiError(
-            403,
-            'HITL_ORIGIN',
-            'Invalid handling page origin',
-          );
-      },
-    },
-    (socket) => hitl.accept(socket, true),
-  );
-  app.get(
     '/v1/hitl/relay',
     { websocket: true, preValidation: node },
     (socket, request) =>
@@ -312,16 +289,20 @@ export async function buildApp(
       return routing.save(request.params.id, request.body);
     },
   );
-  // 模板维护的创建、恢复和关闭都需要 Console 鉴权，地址不携带可分享的处理令牌。
+  // 退役入口继续鉴权；历史会话只保留读取和通用任务关闭，不再维护专属通道。
   app.post<{ Params: { id: string } }>(
     '/v1/nodes/:id/profile',
     { preHandler: admin },
-    (request) => nodeProfiles.create(request.params.id, request.body),
+    () => {
+      throw new ApiError(410, 'NODE_PROFILE_RETIRED', '节点模板维护已停用');
+    },
   );
   app.get<{ Params: { id: string } }>(
     '/v1/nodes/:id/profile',
     { preHandler: admin },
-    (request) => nodeProfiles.current(request.params.id),
+    () => {
+      throw new ApiError(410, 'NODE_PROFILE_RETIRED', '节点模板维护已停用');
+    },
   );
   app.get<{ Params: { id: string } }>(
     '/v1/node-profiles/:id',
@@ -332,7 +313,7 @@ export async function buildApp(
     '/v1/node-profiles/:id/close',
     { preHandler: admin },
     async (request) => {
-      await nodeProfiles.finish(request.params.id, false);
+      await nodeProfiles.close(request.params.id);
       return { closing: true };
     },
   );

@@ -92,6 +92,8 @@ def run():
             command(type='browser.act', action='navigate', target=base + '/login?token=fixture-secret')
             first = command(type='browser.observe')
             assert 'Authenticated' in first['text'], first
+            # 范围：默认真实 DOM 观察不附带 AX 诊断；不衡量页面加载性能。
+            assert 'referenceSnapshot' not in first, first
             network = first['network']
             assert any(row['url'] == base + '/login' and row['status'] == 200 for row in network['requests']), network
             assert 'fixture-secret' not in json.dumps(network)

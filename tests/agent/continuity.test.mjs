@@ -230,7 +230,7 @@ test('人工完成后保留团队与语言，后续步骤收到确认事实但�
     assert.match(body.messages[0].content, /前置条件满足不等于验收通过/);
     observations.push(context.page.observationId);
     const result = finish(context);
-    if (turn === 2) result.criteria[0].verdict = 'FAILED';
+    if (turn === 2) result.progress.criteria[0].verdict = 'FAILED';
     return result;
   });
   try {

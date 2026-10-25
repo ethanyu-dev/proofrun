@@ -916,7 +916,7 @@ test(
         const { report, stored } = await run(definition, (context) => ({
           type: 'verification.block',
           summary: '已确认第一项，第二项缺少触发条件',
-          conclusions: finish(context).criteria.slice(0, 1),
+          conclusions: finish(context).progress.criteria.slice(0, 1),
         }));
         assert.equal(report.verdict, null);
         assert.deepEqual(

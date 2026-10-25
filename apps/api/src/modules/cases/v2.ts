@@ -7,7 +7,7 @@ import {
   type VerificationReport,
   type VerificationTask,
 } from '@proofrun/contracts';
-import { ApiError, canonical, digest } from '../../domain.js';
+import { ApiError, canonical } from '../../domain.js';
 import type { Coordinator } from '../scheduling/coordinator.js';
 import { validateCaseProfile, type CaseProfile } from './profile.js';
 import { extendRerunTimeBudget, parseRerunTimeBudget } from './rerun-budget.js';
@@ -174,7 +174,6 @@ export class CaseV2Service {
     const input = structuredClone(definition.caseV2Definition!);
     const result = compileCase(input, validateCaseProfile(profile));
     result.taskId = taskId;
-    result.resourceKey = digest(canonical([result.resourceKey, taskId]));
     if (budgetMode === 'original') {
       result.budget = structuredClone(definition.budget);
       if (definition.stepBudget)

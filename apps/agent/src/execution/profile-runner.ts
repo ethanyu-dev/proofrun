@@ -8,7 +8,11 @@ import type {
 } from '@proofrun/contracts';
 import type { AgentConfig } from '../config.js';
 import type { DecisionModel } from '../model/chat.js';
-import type { ExecutionClient } from './runner.js';
+import type {
+  ExecutionClient,
+  GroupExecutionClient,
+  GroupExecutionScope,
+} from './runner.js';
 import type { ExecutionTiming, ExecutionView } from '../client.js';
 import { AgentFault, pause } from '../http.js';
 import { LeaseGuard } from './lease.js';
@@ -43,10 +47,11 @@ export async function executeProfile(
   stop: AbortSignal,
   run: (
     config: AgentConfig,
-    client: ExecutionClient,
+    client: GroupExecutionClient,
     model: DecisionModel,
     grant: ExecutionGrant,
     stop: AbortSignal,
+    scope: GroupExecutionScope,
   ) => Promise<VerificationReport>,
 ): Promise<VerificationReport> {
   const plan = grant.task.profilePlan!;
@@ -112,7 +117,6 @@ export async function executeProfile(
 
   /** 各组只看自己的步骤预算；总动作数不能覆盖组内计数。 */
   const project = <T extends ExecutionTiming>(view: T, stepId?: string): T => {
-    guard.syncTiming(view);
     return {
       ...view,
       stepBudget: stepId ? (view.stepBudgets?.[stepId] ?? null) : null,
@@ -140,15 +144,12 @@ export async function executeProfile(
         target: { url: steps.find((step) => selected.has(step.stepId!))!.url },
       },
     };
-    const scoped: ExecutionClient = {
+    const scoped: GroupExecutionClient = {
       profileEnvironment: () => sharedEnvironment,
       view: async (_grant, abortSignal) =>
         project(await client.view(grant, abortSignal), active) as ExecutionView,
-      heartbeat: async (_grant, abortSignal) =>
-        project(await client.heartbeat(grant, abortSignal), active),
       image: (_grant, artifact, abortSignal) =>
         client.image(grant, artifact, abortSignal),
-      complete: async () => {},
       recordModelCall: async (_grant, callId, body) => {
         if (body.phase === 'start')
           body = {
@@ -252,6 +253,7 @@ export async function executeProfile(
       model.fork?.() ?? model,
       localGrant,
       guard.signal,
+      { lease: guard, timing: (view) => project(view, active) },
     );
     // 撤权时持久化可能被拒绝，最终内存汇总仍须保留子组真实终态与原始根因。
     for (const state of report.steps ?? [])

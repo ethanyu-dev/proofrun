@@ -11,6 +11,8 @@ export class LeaseGuard {
   readonly signal: AbortSignal;
   private readonly controller = new AbortController();
   private readonly heartbeat: Promise<void>;
+  /** 分组订阅同一执行的续租快照，不另开后台心跳。 */
+  private readonly listeners = new Set<(view: ExecutionTiming) => void>();
   private leaseTimer: ReturnType<typeof setTimeout> | undefined;
   /** 同一执行已确认的最长租约；旧状态快照不能回退它，截止后也不能复活。 */
   private leaseExpiresAt = 0;
@@ -72,6 +74,7 @@ export class LeaseGuard {
     )
       return false;
     this.timing?.(view);
+    for (const listener of this.listeners) listener(view);
     if (!view.controlMode || view.controlRevision === undefined) {
       if (view.leaseExpiresAt) this.arm(view.leaseExpiresAt);
       return true;
@@ -111,6 +114,13 @@ export class LeaseGuard {
       );
     if (view.leaseExpiresAt) this.arm(view.leaseExpiresAt);
     return true;
+  }
+  /** 订阅者只释放自己的观察回调，不能结束兄弟分组共用的租约。 */
+  subscribe(listener: (view: ExecutionTiming) => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
   }
   /** 自动执行使用单调时钟；暂停期间仍保留独立的 worker 租约计时器。 */
   remaining(): number {

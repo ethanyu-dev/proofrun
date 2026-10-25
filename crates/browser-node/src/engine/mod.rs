@@ -6,6 +6,10 @@ mod external_account;
 mod scroll;
 mod visual;
 
+// 故障引擎适配仅存在于显式测试构建，发布二进制不含 AX 回退路径。
+#[cfg(feature = "protocol-fixtures")]
+#[path = "../../../../tests/browser-node/engine_fixture.rs"]
+mod fixture;
 mod scopes;
 use crate::{
     error::{Fault, Result},
@@ -73,6 +77,9 @@ pub struct EngineConfig {
     pub directory: PathBuf,
     /// 开发测试写动作开关，不代表生产写入语义已验证。
     pub allow_unverified_writes: bool,
+    /// 附加语义诊断不生成动作身份，默认不采集。
+    #[serde(default)]
+    pub diagnostic_snapshots: bool,
     /// 仅解码旧 host 配置以明确拒绝持久状态恢复，不参与新会话。
     #[serde(default)]
     pub auth_state: Option<PathBuf>,
@@ -402,7 +409,7 @@ impl Engine {
                 self.dom = None;
                 self.visual = None;
                 self.observation = None;
-                let snapshot = self.cli(vec!["snapshot".into()], remaining()).await?;
+                self.targets.clear();
                 let url = self
                     .cli(vec!["get".into(), "url".into()], remaining())
                     .await?;
@@ -410,35 +417,14 @@ impl Engine {
                     .cli(vec!["get".into(), "title".into()], remaining())
                     .await?;
                 let id = uuid::Uuid::new_v4().to_string();
-                self.targets.clear();
-                let mut text = snapshot["snapshot"].as_str().unwrap_or_default().to_owned();
-                let mut targets = Vec::new();
-                if let Some(refs) = snapshot["refs"].as_object() {
-                    for (index, (reference, descriptor)) in refs.iter().enumerate() {
-                        let target = format!("element-{}", index + 1);
-                        self.targets.insert(target.clone(), format!("@{reference}"));
-                        text = text
-                            .replace(&format!("[ref={reference}]"), &format!("[target={target}]"));
-                        targets.push(json!({"target":target,"role":descriptor["role"],"name":descriptor["name"]}));
-                    }
-                }
-                // 固定版本引擎提供私有 CDP 地址；旧协议夹具没有该字段，继续使用其声明的 AX 夹具。
                 let endpoint = self
                     .cli(vec!["get".into(), "cdp-url".into()], remaining())
                     .await?;
-                let mut dom_truncated = false;
-                let mut coverage = json!({"controls":{"scope":"legacy","visibility":"unknown"}});
-                // 原始语义快照仅作为有界诊断证据，不把其 ref 混入 native-dom 的动作身份。
-                let reference_text = snapshot["snapshot"].as_str().unwrap_or_default();
-                let reference_snapshot = json!({"source":"agent-browser","text":reference_text.chars().take(REFERENCE_SNAPSHOT_CHARS).collect::<String>(),
-                    "truncated":reference_text.chars().count()>REFERENCE_SNAPSHOT_CHARS,"refCount":snapshot["refs"].as_object().map_or(0, |refs|refs.len())});
-                let mut tabs = json!([]);
-                let mut documents = None;
-                if let Some(endpoint) = endpoint["cdpUrl"].as_str() {
+                let mut result = if let Some(endpoint) = endpoint["cdpUrl"].as_str() {
                     let listed = self
                         .cli(vec!["tab".into(), "list".into()], remaining())
                         .await?;
-                    tabs = listed["tabs"].clone();
+                    let tabs = listed["tabs"].clone();
                     let active = tabs
                         .as_array()
                         .and_then(|tabs| tabs.iter().find(|tab| tab["active"] == true))
@@ -447,16 +433,41 @@ impl Engine {
                             Fault::unknown("DOM_ENGINE_FAILED", "active tab unavailable")
                         })?;
                     let mut dom = dom::Dom::connect(endpoint).await?;
-                    let native = dom.snapshot(active, self.frame.as_deref()).await?;
-                    text = native["text"].as_str().unwrap_or_default().to_owned();
-                    targets = native["targets"].as_array().cloned().unwrap_or_default();
-                    dom_truncated = native["truncated"] == true;
-                    coverage = native["coverage"].clone();
-                    documents = Some(native["documents"].clone());
-                    coverage["referenceSnapshot"] = json!({"source":"agent-browser","refCount":reference_snapshot["refCount"],"scope":"semantic snapshot; not filtered to viewport; diagnostic only"});
+                    let mut native = dom.snapshot(active, self.frame.as_deref()).await?;
+                    native["tabs"] = tabs;
                     self.dom = Some(dom);
-                    self.targets.clear();
+                    native
+                } else {
+                    #[cfg(feature = "protocol-fixtures")]
+                    {
+                        self.fixture_observation(remaining()).await?
+                    }
+                    #[cfg(not(feature = "protocol-fixtures"))]
+                    {
+                        return Err(Fault::rejected(
+                            "DOM_ENGINE_REQUIRED",
+                            "native CDP observation is required",
+                        ));
+                    }
+                };
+                result["observationId"] = json!(id);
+                result["url"] = url["url"].clone();
+                result["title"] = title["title"].clone();
+                result["atomic"] = json!(false);
+                // 附加诊断失败不能否定已采集的 DOM；也不建立第二套目标映射。
+                if self.config.diagnostic_snapshots
+                    && remaining() > 1_000
+                    && let Ok(snapshot) = self
+                        .cli(vec!["snapshot".into()], remaining().min(1_000))
+                        .await
+                {
+                    let text = snapshot["snapshot"].as_str().unwrap_or_default();
+                    result["referenceSnapshot"] = json!({"source":"agent-browser",
+                            "text":text.chars().take(REFERENCE_SNAPSHOT_CHARS).collect::<String>(),
+                            "truncated":text.chars().count()>REFERENCE_SNAPSHOT_CHARS,
+                            "refCount":snapshot["refs"].as_object().map_or(0, |refs|refs.len())});
                 }
+                let mut tabs = result["tabs"].clone();
                 if let Some(scope) = &self.active_scope {
                     let owned = &self.scopes[scope].tab_id;
                     tabs = json!(
@@ -475,14 +486,10 @@ impl Engine {
                     .filter_map(|t| t["tabId"].as_str().map(str::to_owned))
                     .collect();
                 self.observation = Some(id.clone());
-                let mut result = json!({"observationId":id,"url":url.get("url"),"title":title.get("title"),"text":text,"targets":targets,"atomic":false,"truncated":dom_truncated,"coverage":coverage,"tabs":tabs});
+                result["tabs"] = tabs;
                 if let Some(scope) = &self.active_scope {
                     result["tabScope"] = json!(scope);
                 }
-                if let Some(documents) = documents {
-                    result["documents"] = documents;
-                }
-                result["referenceSnapshot"] = reference_snapshot;
                 if self.config.network_evidence {
                     result["network"] = if let Some(target) = network_target {
                         let mut network = self
@@ -494,11 +501,17 @@ impl Engine {
                         network["tabScope"] = json!(self.active_scope);
                         network
                     } else {
-                        // 旧引擎夹具只提供 profile 日志，不能冒充 tab 定位证据。
-                        let network = self
-                            .cli(vec!["network".into(), "requests".into()], remaining())
-                            .await?;
-                        crate::network::sanitize(&network)?
+                        #[cfg(feature = "protocol-fixtures")]
+                        {
+                            self.fixture_network(remaining()).await?
+                        }
+                        #[cfg(not(feature = "protocol-fixtures"))]
+                        {
+                            return Err(Fault::rejected(
+                                "NETWORK_SCOPE_UNAVAILABLE",
+                                "active tab unavailable",
+                            ));
+                        }
                     };
                 }
                 // 纯文本观察同样声明滚动幅度能力；旧协议夹具继续不声明。
@@ -874,24 +887,17 @@ impl Engine {
                     }
                 }
 
-                let selector = serde_json::to_string(&selector).unwrap();
-                let text = serde_json::to_string(&text).unwrap();
-                // 只把用户输入序列化成 JS 字符串字面量；不接收可执行脚本。
-                let expression = format!(
-                    "(() => {{ const walk = root => {{ for (const el of root.querySelectorAll('*')) {{ if (el.matches({selector}) && (el.textContent || '').includes({text})) return true; if (el.shadowRoot && walk(el.shadowRoot)) return true; try {{ if (el.contentDocument && walk(el.contentDocument)) return true; }} catch {{}} }} return false; }}; return walk(document); }})()"
-                );
-                self.cli(
-                    vec![
-                        "wait".into(),
-                        "--fn".into(),
-                        expression,
-                        "--timeout".into(),
-                        remaining().to_string(),
-                    ],
-                    remaining(),
-                )
-                .await?;
-                Ok(json!({"conditionMet":true}))
+                #[cfg(feature = "protocol-fixtures")]
+                {
+                    self.fixture_wait(&selector, &text, remaining()).await
+                }
+                #[cfg(not(feature = "protocol-fixtures"))]
+                {
+                    Err(Fault::rejected(
+                        "DOM_ENGINE_REQUIRED",
+                        "native CDP wait is required",
+                    ))
+                }
             }
             _ => Err(Fault::rejected("UNSUPPORTED", "not a browser operation")),
         }

@@ -91,7 +91,7 @@ export class RequestReader {
   async memberships(taskId: string) {
     return (
       await this.db.query<{ requestId: string; title: string }>(
-        `SELECT r.request_id AS "requestId",r.title FROM pr_verification_requests r JOIN pr_verification_request_arms a USING(request_id) WHERE a.task_id=$1 AND r.deleted_at IS NULL ORDER BY r.created_at DESC,r.request_id DESC`,
+        `SELECT r.request_id AS "requestId",r.title FROM pr_verification_requests r JOIN pr_request_runs a USING(request_id) WHERE a.task_id=$1 AND r.deleted_at IS NULL ORDER BY r.created_at DESC,r.request_id DESC`,
         [taskId],
       )
     ).rows;
@@ -154,7 +154,7 @@ export class RequestReader {
       await refreshRequestSummaries(client);
       const filters: string[] = [
         'r.deleted_at IS NULL',
-        'EXISTS(SELECT 1 FROM pr_verification_request_arms a JOIN pr_tasks t ON t.id=a.task_id WHERE a.request_id=r.request_id AND t.deleted_at IS NULL)',
+        'EXISTS(SELECT 1 FROM pr_request_runs a JOIN pr_tasks t ON t.id=a.task_id WHERE a.request_id=r.request_id AND t.deleted_at IS NULL)',
       ];
       const values: unknown[] = [];
       const parameter = (value: unknown) => {

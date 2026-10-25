@@ -104,7 +104,7 @@ API 持久化可选 StepResult.requirements，验证唯一要求身份、证据�
 | `prompts/settlement.ts`      | 收尾修复反馈                                     |
 | `prompts/report-analysis.ts` | 报告复盘的独立请求                               |
 
-工具机器协议仍由 Contracts 提供，Agent 的 tools.ts 收紧本轮能力与枚举、附加 progress，并覆盖模型用途说明。身份选择与报告复盘不是浏览器循环中的隐藏子调用。
+工具机器协议仍由 Contracts 提供，Agent 的 tools.ts 收紧本轮能力与枚举及 progress 引用范围，并覆盖模型用途说明。身份选择与报告复盘不是浏览器循环中的隐藏子调用。
 
 ## 删除清单
 
@@ -147,3 +147,5 @@ API 持久化可选 StepResult.requirements，验证唯一要求身份、证据�
 5. 旧 JEV/双跑任务查看历史或创建新的 llm 运行，历史结果不被覆盖。
 
 单元/HTTP/临时 PostgreSQL 回归验证上下文边界、阶段门禁、进度保存、未知副作用、租约、历史读取和退役接口。真实 Chrome 本地夹具验证逐轮填写、单次提交、观察，以及临时身份隔离和禁止保存。脚本模型和本地网页不代表真实供应商模型质量或生产业务验收；Linux/systemd 部署与真实模型效果需在对应环境验证。
+
+执行内 Contracts 的 AgentDecision 直接承载 progress（requirements、criteria、readings）；模型解析器与执行账本不再转换旧别名。多个 tab 分组共享外层 LeaseGuard 的续租结果，分组只维护本地预算和进度，最终聚合后由外层提交报告。Contracts 与 Agent 必须同步升级。

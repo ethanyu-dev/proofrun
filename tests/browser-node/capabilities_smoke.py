@@ -116,7 +116,7 @@ def run():
     try:
         assert receive()['type']=='host.ready'
         boot = int(float(Path('/proc/uptime').read_text().split()[0])*1000)
-        send({'type':'init','deadline_ms':boot+300000,'startup_deadline_ms':boot+120000,'config':{'binary':os.environ['PROOFRUN_AGENT_BROWSER_BIN'],'chrome':os.environ['PROOFRUN_CHROME_BIN'],'session':session,'directory':str(root),'allow_unverified_writes':True}})
+        send({'type':'init','deadline_ms':boot+300000,'startup_deadline_ms':boot+120000,'config':{'binary':os.environ['PROOFRUN_AGENT_BROWSER_BIN'],'chrome':os.environ['PROOFRUN_CHROME_BIN'],'session':session,'directory':str(root),'allow_unverified_writes':True,'diagnostic_snapshots':True}})
         assert 'Ok' in receive()['result']
         # 范围：原始 Chromium timeline 从业务导航前开始到最后操作后停止；不验证文件可靠上传。
         command(type='browser.trace',action='start')

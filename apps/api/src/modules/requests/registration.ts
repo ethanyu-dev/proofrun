@@ -1,7 +1,6 @@
 import type { PoolClient } from 'pg';
 import type { VerificationTask } from '@proofrun/contracts';
 import { ApiError, canonical, digest } from '../../domain.js';
-import { caseArmIds } from '../cases/structured.js';
 
 /** 已由入口校验的请求身份；不参与任何 case 定义哈希。 */
 export interface RequestRegistration {
@@ -81,24 +80,17 @@ export async function registerMembers(
         request.sources?.[caseId] ?? null,
       ],
     );
-    const ids = caseArmIds(definition);
-    const arms = await client.query(
-      'SELECT id,definition FROM pr_tasks WHERE id=ANY($1::text[])',
-      [ids],
-    );
-    if (arms.rows.length !== ids.length)
-      throw new ApiError(409, 'CASE_INCOMPLETE', 'case 执行组记录不完整');
-    for (const arm of arms.rows)
+    if (definition.comparison) {
+      const siblingId = `comparison-${definition.comparison.sourceTaskId ?? definition.taskId}-jev`;
+      const sibling = (
+        await client.query('SELECT id FROM pr_tasks WHERE id=$1', [siblingId])
+      ).rows[0];
+      if (!sibling)
+        throw new ApiError(409, 'CASE_INCOMPLETE', '历史双跑执行组记录不完整');
       await client.query(
-        `INSERT INTO pr_verification_request_arms(request_id,case_id,execution_mode,task_id) VALUES($1,$2,$3,$4)`,
-        [
-          request.requestId,
-          caseId,
-          arm.definition.comparison?.arm ??
-            arm.definition.executionMode ??
-            'llm',
-          arm.id,
-        ],
+        `INSERT INTO pr_verification_request_arms(request_id,case_id,execution_mode,task_id) VALUES($1,$2,'jev',$3)`,
+        [request.requestId, caseId, siblingId],
       );
+    }
   }
 }

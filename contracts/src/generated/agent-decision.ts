@@ -10,6 +10,7 @@ export type AgentDecision =
        * 是否同时采集 PNG 截图；截图与 DOM 来自不同时间点。
        */
       screenshot?: boolean;
+      progress?: Progress;
     }
   | {
       type: 'browser.act';
@@ -52,6 +53,8 @@ export type AgentDecision =
        * visual.click 使用当前截图的视口 CSS 坐标。
        */
       y?: number;
+      progress?: Progress;
+      revisitReason?: string;
     }
   | {
       type: 'browser.wait';
@@ -63,6 +66,7 @@ export type AgentDecision =
        * 目标元素文本中必须包含的字符串。
        */
       text: string;
+      progress?: Progress;
     }
   | FinishVerification
   | BlockVerification
@@ -221,29 +225,56 @@ export type AgentDecision =
             string,
             string,
           ];
+      progress?: Progress;
     }
   | {
       type: 'verification.environment';
       mode: 'guest' | 'configured';
       summary: string;
+      progress?: Progress;
     };
 
-export interface FinishVerification {
-  type: 'verification.finish';
+export interface Progress {
   /**
-   * 基于已取得证据解释本次验收结论。
+   * @maxItems 33
    */
-  summary: string;
-  criteria: {
+  requirements?: {
+    id: string;
+    status: 'complete' | 'incomplete' | 'blocked';
+    summary: string;
+    /**
+     * @maxItems 24
+     */
+    evidenceRefs: string[];
+  }[];
+  /**
+   * @minItems 0
+   */
+  criteria?: {
     criterionId: string;
     verdict: 'PASSED' | 'FAILED' | 'INCONCLUSIVE' | 'SKIPPED';
     summary: string;
     evidenceRefs: string[];
   }[];
   /**
+   * @maxItems 32
+   */
+  readings?: {
+    itemId: string;
+    quote: string;
+  }[];
+}
+export interface FinishVerification {
+  type: 'verification.finish';
+  /**
+   * 基于已取得证据解释本次验收结论。
+   */
+  summary: string;
+  /**
    * 结构化步骤完成的执行证据，setup 无验收项时也必须提供。
    */
   evidenceRefs?: string[];
+  progress?: Progress;
 }
 export interface BlockVerification {
   type: 'verification.block';
@@ -255,6 +286,7 @@ export interface BlockVerification {
    * 登录缺失或失效用 LOGIN_REQUIRED；账号角色、绑定或资格待确认用 IDENTITY_UNCONFIRMED；其余用 OTHER。平台在授权范围内先尝试一次人工交接，兼容旧回复省略此字段。
    */
   reasonCode?: 'LOGIN_REQUIRED' | 'IDENTITY_UNCONFIRMED' | 'OTHER';
+  progress?: Progress;
 }
 export interface RequestHumanAssistance {
   type: 'verification.intervene';
@@ -280,6 +312,7 @@ export interface RequestHumanAssistance {
    * 登录缺失单独交接，不占用其他未解决条件的交接机会。
    */
   reasonCode?: 'LOGIN_REQUIRED' | 'IDENTITY_UNCONFIRMED' | 'OTHER';
+  progress?: Progress;
 }
 /**
  * 立即保存当前步骤已取得证据的部分验收结论，不结束步骤；已保存结论不会被后续故障覆盖。
@@ -290,13 +323,5 @@ export interface RecordVerification {
    * 基于已取得证据解释本次验收结论。
    */
   summary: string;
-  /**
-   * @minItems 0
-   */
-  criteria: {
-    criterionId: string;
-    verdict: 'PASSED' | 'FAILED' | 'INCONCLUSIVE' | 'SKIPPED';
-    summary: string;
-    evidenceRefs: string[];
-  }[];
+  progress: Progress;
 }

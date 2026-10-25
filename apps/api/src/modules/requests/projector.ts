@@ -129,7 +129,7 @@ export class RequestProjector {
       ${detail ? 't.step_results' : 'NULL::jsonb'} AS "stepResults",t.queue_reason,
       NULL::jsonb AS execution_outcome,t.created_at,t.archived_at,
       ${detail ? "CASE WHEN legacy.parent_task_id IS NULL THEN NULL ELSE jsonb_build_object('taskId',legacy.task_id,'status',coalesce(clean.state,legacy.state),'report',clean.report) END" : 'NULL::jsonb'} AS legacy_cleanup
-      FROM pr_verification_request_arms a JOIN pr_verification_request_cases c USING(request_id,case_id)
+      FROM pr_request_runs a JOIN pr_verification_request_cases c USING(request_id,case_id)
       JOIN pr_tasks t ON t.id=a.task_id
       LEFT JOIN pr_case_cleanups legacy ON legacy.parent_task_id=t.id LEFT JOIN pr_tasks clean ON clean.id=legacy.task_id
       WHERE a.request_id=ANY($1::text[]) AND t.deleted_at IS NULL ORDER BY c.position,CASE a.execution_mode WHEN 'llm' THEN 0 ELSE 1 END`,

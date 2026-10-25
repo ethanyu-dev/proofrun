@@ -141,7 +141,7 @@ test('单轮 LLM 直接保存 progress 并提出动作，无 plan 或 JEV 子调
       new AbortController().signal,
     );
     assert.equal(out.decision.type, 'browser.act');
-    assert.equal(out.workflow.assessments[0].outcome, 'incomplete');
+    assert.equal(out.decision.progress.requirements[0].status, 'incomplete');
     assert.equal(requests, 1);
     assert.deepEqual(server.errors, []);
   } finally {

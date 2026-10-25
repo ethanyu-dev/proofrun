@@ -97,7 +97,7 @@ export type VerificationTask = {
    */
   parentTaskId?: string;
   /**
-   * 平台生成的任务及业务上下文互斥键；主任务与其清理共享，不同 caseId 独立。
+   * 仅保留历史任务的互斥键用于读取；新任务禁止提交，当前调度不使用资源锁。
    */
   resourceKey?: string;
   /**

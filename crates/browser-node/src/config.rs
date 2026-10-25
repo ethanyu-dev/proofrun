@@ -43,6 +43,8 @@ pub struct NodeConfig {
     pub artifact_upload_url: Option<String>,
     /// 仅供开发测试启用写动作；不能据此宣称引擎的丢响应行为已验证。
     pub allow_unverified_writes: bool,
+    /// 按需保留 agent-browser 语义诊断快照；常规观察只使用原生 DOM。
+    pub diagnostic_snapshots: bool,
 }
 impl Default for NodeConfig {
     fn default() -> Self {
@@ -59,6 +61,7 @@ impl Default for NodeConfig {
             artifact_limit_bytes: DEFAULT_ARTIFACT_LIMIT_BYTES,
             artifact_upload_url: None,
             allow_unverified_writes: false,
+            diagnostic_snapshots: false,
         }
     }
 }

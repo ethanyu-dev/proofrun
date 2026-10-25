@@ -13,7 +13,7 @@ docker run -d --name "$container_name" --label proofrun.test=browser-node \
   --privileged --cgroupns=private --tmpfs /run --tmpfs /run/lock \
   -v "$root_dir:/workspace:ro" -w /workspace -e CARGO_TARGET_DIR=/target "$image_name" >/dev/null
 docker exec "$container_name" bash -c 'for attempt in {1..30}; do systemctl start user@1000.service && exit 0; sleep 1; done; exit 1'
-docker exec "$container_name" cargo build --locked --workspace
+docker exec "$container_name" cargo build --locked --workspace --features protocol-fixtures
 for suite in systemd_integration gateway_integration; do
   docker exec "$container_name" runuser -u proofrun -- \
     env XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus \

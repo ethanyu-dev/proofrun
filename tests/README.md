@@ -30,7 +30,7 @@ pnpm build
 | `pnpm test:hitl:linux`          | Linux 实时画面、坐标与中文输入、交还原会话及关闭                             | 执行者为夹具；回环 WS 不证明生产 TLS、SSO/MFA   |
 | `pnpm test:deploy`              | 构建后用 Docker 检查 Caddy 路由、空库迁移、鉴权和重启持久化                  | HTTP；HA 模板指向同一测试 API，不证明跨主机切换 |
 
-JEV 图片与候选测试包含在 `pnpm test:agent`：合成 PNG 的缩放、来源和存档，独立视觉开关，超过 255 项的分组，以及 Box 存在性、唯一性、坐标与预算拒绝。模型回答为夹具，不能据此声称真实多模态准确率、置信度校准或任务成功率。
+`pnpm test:agent` 覆盖统一 progress 决策与多组共享租约；历史 JEV/双跑仅保留报告读取回归，不再作为新任务执行模式。模型回答为夹具，不能据此声称真实多模态准确率或任务成功率。
 
 ## 数据库集成
 
@@ -51,6 +51,8 @@ node scripts/download-test-engine.mjs x64 .proofrun/bin/agent-browser-linux-x64
 PROOFRUN_TEST_AGENT_BROWSER="$PWD/.proofrun/bin/agent-browser-linux-x64" \
 PROOFRUN_TEST_FULL_LINUX=true pnpm test:agent:linux
 ```
+
+真实 Chromium 使用默认 Cargo 构建；故障引擎通过 `protocol-fixtures` feature 单独构建，避免旧 AX 回退掩盖正式路径缺少 CDP 的问题。默认观察无 AX 诊断，能力测试显式打开 `diagnostic_snapshots` 验证附加输出。
 
 完整入口包含临时身份隔离与网络、systemd 生命周期、网关、DOM/Shadow DOM/iframe/TRACE 和 HITL。容器中的 privileged 仅用于一次性 systemd/cgroup 测试，不能复制到生产服务。脚本创建独立容器、网络与数据并负责回收；需要 Docker、Python 3 及可构建 Rust 的环境。
 

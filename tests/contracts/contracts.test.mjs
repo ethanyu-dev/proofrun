@@ -282,22 +282,26 @@ test('逐项保存需明确标准及证据，Cookie 清理不允许模型指定 
   const record = {
     type: 'verification.record',
     summary: '部分已完成',
-    criteria: [
-      {
-        criterionId: 'c1',
-        verdict: 'PASSED',
-        summary: '已观察',
-        evidenceRefs: ['a1'],
-      },
-    ],
+    progress: {
+      criteria: [
+        {
+          criterionId: 'c1',
+          verdict: 'PASSED',
+          summary: '已观察',
+          evidenceRefs: ['a1'],
+        },
+      ],
+    },
   };
   assert(validateAgentDecision(record));
   // 允许只保存原始要求或读取事实；非空 progress 由 Agent 模型入口校验。
-  assert(validateAgentDecision({ ...record, criteria: [] }));
+  assert(validateAgentDecision({ ...record, progress: { criteria: [] } }));
   assert(
     !validateAgentDecision({
       ...record,
-      criteria: [{ ...record.criteria[0], evidenceRefs: [] }],
+      progress: {
+        criteria: [{ ...record.progress.criteria[0], evidenceRefs: [] }],
+      },
     }),
   );
   const clear = { type: 'browser.cookies.clear', names: ['NEXT_LOCALE'] };

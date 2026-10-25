@@ -81,6 +81,8 @@ def run():
     harness = Harness()
     page = ThreadingHTTPServer(('127.0.0.1', 0), Fixture)
     page.writes = []
+    # 复用页面夹具的按键回调，避免记录接口抛错；此场景不据此验收键盘语义。
+    page.key_events = []
     model = ThreadingHTTPServer(('127.0.0.1', 0), ModelFixture)
     model.contexts, model.errors = [], []
     for server in [page, model]:

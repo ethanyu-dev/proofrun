@@ -6,7 +6,7 @@ import {
   type HitlServer,
 } from '@proofrun/contracts';
 import { Database } from '../../db.js';
-import { ApiError, digest, requireToken } from '../../domain.js';
+import { ApiError, digest } from '../../domain.js';
 import type { ApiConfig } from '../../config.js';
 import { ExecutionControl } from '../scheduling/control.js';
 import { interventionToken } from '../scheduling/hitl-token.js';
@@ -176,7 +176,7 @@ export class HitlService {
     });
   }
   /** 首条消息认证，凭据不进入 URL、代理日志或节点；单一处理者占有当前连接。 */
-  accept(socket: WebSocket, consoleProfile = false): void {
+  accept(socket: WebSocket): void {
     this.tracked(socket);
     let viewer: Viewer | undefined;
     let queued = 0;
@@ -204,12 +204,10 @@ export class HitlService {
           if (!viewer) {
             if (message.type !== 'authenticate')
               throw new ApiError(401, 'HITL_INVALID', '请使用完整处理链接');
-            if (consoleProfile)
-              requireToken(`Bearer ${message.token}`, this.config.adminToken);
             const grant = await this.grant(message.id);
             if (
-              grant.node_profile !== consoleProfile ||
-              (!consoleProfile && digest(message.token) !== grant.token_hash)
+              grant.node_profile ||
+              digest(message.token) !== grant.token_hash
             )
               throw new ApiError(401, 'HITL_INVALID', '处理链接无效');
             clearTimeout(authTimer);
@@ -218,12 +216,6 @@ export class HitlService {
                 409,
                 'HITL_OCCUPIED',
                 '此任务已在另一个处理页打开',
-              );
-            if (consoleProfile || grant.node_profile)
-              throw new ApiError(
-                410,
-                'NODE_PROFILE_RETIRED',
-                '节点默认模板维护已停用',
               );
             if (grant.unable_reason) {
               this.send(socket, {

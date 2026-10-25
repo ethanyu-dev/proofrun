@@ -12,7 +12,6 @@ import {
 import type { AgentConfig } from '../config.js';
 import { AgentFault, jsonRequest } from '../http.js';
 import { modelRequest } from './request.js';
-import type { WorkflowUpdate } from '../execution/workflow.js';
 import { reasoningParameters, toolChoice } from './reasoning.js';
 
 /** 将封闭协议的各分支映射成独立工具，避免供应商遗漏嵌套联合对象的外层字段。 */
@@ -66,10 +65,6 @@ export interface DecisionInput {
 /** 一次模型调用的结构化结果，token 数仅来自服务回复。 */
 export interface DecisionOutput {
   decision: AgentDecision;
-  /** 可选的证据进度，由公共执行器验证并保存。 */
-  workflow?: WorkflowUpdate;
-  /** 仅引用本轮动作前已有证据，公共执行器先保存再执行下一动作。 */
-  conclusions?: VerificationReport['criteria'];
   promptTokens: number;
   completionTokens: number;
 }
@@ -279,32 +274,13 @@ export class ChatModel implements DecisionModel {
       !validateAgentDecision({
         type: 'verification.record',
         summary: '保存当前证据结论',
-        criteria: conclusions,
+        progress: { criteria: conclusions },
       })
     )
       throw new AgentFault(
         'INVALID_MODEL_DECISION',
         'progress.criteria 不符合验收协议',
       );
-    const requirements = saved?.requirements as unknown[] | undefined;
-    const assessments = requirements?.map((item) => {
-      if (
-        !object(item) ||
-        Object.keys(item).some(
-          (key) => !['id', 'status', 'summary', 'evidenceRefs'].includes(key),
-        )
-      )
-        throw new AgentFault(
-          'INVALID_MODEL_DECISION',
-          'progress.requirements 条目无效',
-        );
-      return {
-        stepId: item.id,
-        outcome: item.status,
-        summary: item.summary,
-        evidenceRefs: item.evidenceRefs,
-      };
-    });
     if (
       revisitReason !== undefined &&
       (tool.type !== 'browser.act' ||
@@ -316,11 +292,6 @@ export class ChatModel implements DecisionModel {
         'INVALID_MODEL_DECISION',
         '重访原因只能随浏览器动作提交',
       );
-    const workflow = {
-      ...(assessments ? { assessments } : {}),
-      ...(saved?.readings ? { readings: saved.readings } : {}),
-      ...(revisitReason ? { revisitReason } : {}),
-    } as WorkflowUpdate;
     if (
       tool.type === 'verification.record' &&
       !Object.values(saved ?? {}).some(
@@ -331,9 +302,12 @@ export class ChatModel implements DecisionModel {
         'INVALID_MODEL_DECISION',
         'record 必须提供可保存的 progress',
       );
-    if (['verification.record', 'verification.finish'].includes(tool.type))
-      args.criteria = conclusions ?? [];
-    const decision = { ...args, type: tool.type };
+    const decision = {
+      ...args,
+      type: tool.type,
+      ...(progress !== undefined ? { progress } : {}),
+      ...(revisitReason !== undefined ? { revisitReason } : {}),
+    };
     if (
       decision.type === 'browser.act' &&
       args.action === 'visual.click' &&
@@ -364,10 +338,7 @@ export class ChatModel implements DecisionModel {
           decision: {
             type: 'verification.record',
             summary: `本轮动作参数无效，未执行；仅保存已提交的独立结论。${issues}`,
-            criteria: conclusions as Extract<
-              AgentDecision,
-              { type: 'verification.record' }
-            >['criteria'],
+            progress: { criteria: conclusions },
           },
           promptTokens: tokens(raw.usage?.prompt_tokens),
           completionTokens: tokens(raw.usage?.completion_tokens),
@@ -380,13 +351,6 @@ export class ChatModel implements DecisionModel {
     }
     return {
       decision,
-      ...(Object.keys(workflow).length > 0
-        ? { workflow: workflow as WorkflowUpdate }
-        : {}),
-      ...(conclusions !== undefined &&
-      !['verification.record', 'verification.finish'].includes(decision.type)
-        ? { conclusions: conclusions as VerificationReport['criteria'] }
-        : {}),
       promptTokens: tokens(raw.usage?.prompt_tokens),
       completionTokens: tokens(raw.usage?.completion_tokens),
     };

@@ -456,6 +456,7 @@ async fn start(
             session: record.launch_id.clone(),
             directory,
             allow_unverified_writes: config.allow_unverified_writes,
+            diagnostic_snapshots: config.diagnostic_snapshots,
             auth_state: None,
             restore_auth: false,
             restore_auth_if_present: false,

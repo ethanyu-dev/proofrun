@@ -300,7 +300,7 @@ test('拒绝虚构目标和证据，修复前不发动作', async () => {
         context.feedback.map((item) => item.message ?? item.code).join(' '),
       );
       const value = finish(context);
-      value.criteria[0].evidenceRefs = ['foreign'];
+      value.progress.criteria[0].evidenceRefs = ['foreign'];
       return value;
     }
     assert.ok(
@@ -1359,16 +1359,16 @@ test('通用 workflow 不允许改写要求或用虚构证据跳过步骤', asyn
     () =>
       workflow.apply(
         {
-          assessments: [
+          requirements: [
             {
-              stepId: 'step-1',
-              outcome: 'complete',
+              id: 'step-1',
+              status: 'complete',
               summary: '已观察',
               evidenceRefs: ['real'],
             },
             {
-              stepId: 'step-2',
-              outcome: 'complete',
+              id: 'step-2',
+              status: 'complete',
               summary: '未知',
               evidenceRefs: ['invented'],
             },
@@ -1384,10 +1384,10 @@ test('通用 workflow 不允许改写要求或用虚构证据跳过步骤', asyn
   });
   workflow.apply(
     {
-      assessments: [
+      requirements: [
         {
-          stepId: 'step-1',
-          outcome: 'complete',
+          id: 'step-1',
+          status: 'complete',
           summary: '列表已显示',
           evidenceRefs: ['real'],
         },
@@ -1608,7 +1608,7 @@ test('setup 验收不通过时拦截后续业务', async () => {
     (context) => {
       assert.equal(context.task.stepId, 'step-1');
       const result = finish(context);
-      result.criteria[0].verdict = 'FAILED';
+      result.progress.criteria[0].verdict = 'FAILED';
       return result;
     },
     (_client, execution) => structuredGrant(execution, [{ type: 'setup' }, {}]),
@@ -2102,7 +2102,7 @@ test('业务失败或阻塞后继续后续业务和清理，保留原结论', as
           if (mode === 'blocked')
             return { type: 'verification.block', summary: '夹具阻塞' };
           const result = finish(context);
-          result.criteria[0].verdict = 'FAILED';
+          result.progress.criteria[0].verdict = 'FAILED';
           return result;
         }
         return {

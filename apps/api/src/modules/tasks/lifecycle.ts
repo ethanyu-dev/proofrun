@@ -49,21 +49,21 @@ export class TaskLifecycle {
         );
         // 与共享提交和其他删除串行化，拿到执行锁后重新计算剩余引用。
         await client.query(
-          `SELECT t.id FROM pr_tasks t WHERE t.id IN (SELECT task_id FROM pr_verification_request_arms WHERE request_id=ANY($1::text[])) ORDER BY t.id FOR UPDATE`,
+          `SELECT t.id FROM pr_tasks t WHERE t.id IN (SELECT task_id FROM pr_request_runs WHERE request_id=ANY($1::text[])) ORDER BY t.id FOR UPDATE`,
           [ids],
         );
         // 共享执行只在所有关联请求都被删除后排除，不能误伤仍可见的请求。
         taskIds = (
           await client.query<{ task_id: string }>(
-            `SELECT DISTINCT a.task_id FROM pr_verification_request_arms a WHERE a.request_id=ANY($1::text[])
-          AND NOT EXISTS(SELECT 1 FROM pr_verification_request_arms other JOIN pr_verification_requests r USING(request_id)
+            `SELECT DISTINCT a.task_id FROM pr_request_runs a WHERE a.request_id=ANY($1::text[])
+          AND NOT EXISTS(SELECT 1 FROM pr_request_runs other JOIN pr_verification_requests r USING(request_id)
             WHERE other.task_id=a.task_id AND r.deleted_at IS NULL AND NOT r.request_id=ANY($1::text[]))`,
             [ids],
           )
         ).rows.map((r) => r.task_id);
         // 即使执行共享，正在运行的请求也不能被隐藏。
         const active = await client.query(
-          `SELECT 1 FROM pr_verification_request_arms a JOIN pr_tasks t ON t.id=a.task_id
+          `SELECT 1 FROM pr_request_runs a JOIN pr_tasks t ON t.id=a.task_id
           WHERE a.request_id=ANY($1::text[]) AND t.state IN ('QUEUED','RUNNING') LIMIT 1`,
           [ids],
         );
@@ -114,7 +114,7 @@ export class TaskLifecycle {
       );
       const requestIds = (
         await client.query<{ request_id: string }>(
-          'SELECT DISTINCT request_id FROM pr_verification_request_arms WHERE task_id=ANY($1::text[])',
+          'SELECT DISTINCT request_id FROM pr_request_runs WHERE task_id=ANY($1::text[])',
           [changed],
         )
       ).rows.map((r) => r.request_id);

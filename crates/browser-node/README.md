@@ -29,6 +29,10 @@ target/release/proofrun-node --config deploy/node.example.toml serve
 
 先调整示例中的绝对路径、资源池和控制面地址，用管理员签发的一次性配对码执行 `pair`，它会将机器凭据写入 credential_file（0600）。成功后删除配对码文件。配对不启动浏览器，不自动改写 TOML。安装示例见 [deploy](../../deploy/README.md)。配置不会自动读取 `.env`；可用环境变量覆盖 home、引擎路径和 Chrome 路径。
 
+观察默认只构造原生 DOM 快照。排障时可在节点 TOML 配置 `diagnostic_snapshots = true`，额外附带有界的 AX `referenceSnapshot`；该诊断最多使用剩余预算中的 1 秒，失败不会否定已成功的 DOM 观察。缺少 CDP 时返回 `DOM_ENGINE_REQUIRED`，不退回另一套动作目标。
+
+`protocol-fixtures` Cargo feature 仅供故障引擎协议测试；默认发布构建不含其 AX、网络或等待回退。真实 Chromium 回归使用默认构建。
+
 `doctor` 探测配置、引擎版本和 systemd 用户管理器，但不启动浏览器、不验证网关或执行故障注入。读取其 JSON 检查结果；退出码 0 不代表依赖全部可用，也不代表生产验收通过。
 
 `serve --stdio` 是集成测试入口，使用相同的命令处理逻辑，标准输入 EOF 会关闭会话。它不加载网络凭据、不上传证据，也不实现网络 outbox 重送。`session-host` 是内部管道协议，不是另一个公共服务。
