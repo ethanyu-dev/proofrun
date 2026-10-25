@@ -4,6 +4,26 @@ import type { ReactNode } from 'react';
 /** 数字保留精确计数，避免大数缩写掩盖输入、输出合计关系。 */
 const TOKEN_FORMAT = new Intl.NumberFormat('zh-CN');
 
+/** 历史模式即使用量缺失也保留占位；实际调用记录可补足旧报告缺少模式信息的情况。 */
+function verificationUsageRows(
+  metrics: RequestMetrics | undefined,
+  historicalJev: boolean,
+): [string, TokenUsage | undefined][] {
+  const jev = metrics?.jev;
+  const hasJev =
+    historicalJev ||
+    (jev !== undefined &&
+      [jev.calls, jev.promptTokens, jev.completionTokens, jev.totalTokens].some(
+        (value) => value != null && value > 0,
+      ));
+  return [
+    ...(hasJev
+      ? [['JEV（历史）', jev] as [string, TokenUsage | undefined]]
+      : []),
+    ['LLM', metrics?.llm],
+  ];
+}
+
 /** 历史未采集用横线占位，不渲染告警，也不把空值显示成零消耗。 */
 export function tokenText(value: number | null | undefined): string {
   return value == null ? '—' : TOKEN_FORMAT.format(value);
@@ -27,13 +47,13 @@ export function durationText(ms: number | null | undefined): string {
 /** 顶部只展示验证执行用量，异步分析的消耗在分析卡片单独展示。 */
 export function ReportUsage({
   metrics,
+  historicalJev = false,
 }: {
   metrics: RequestMetrics | undefined;
+  /** 由请求的冻结执行组判断，不根据用量缺失推断为当前模式。 */
+  historicalJev?: boolean;
 }) {
-  const rows = [
-    ['JEV', metrics?.jev],
-    ['LLM', metrics?.llm],
-  ] as const;
+  const rows = verificationUsageRows(metrics, historicalJev);
   return (
     <div className="report-usage">
       <dl className="report-usage-stats" aria-label="运行时间与 Tokens">
@@ -61,12 +81,19 @@ export function ReportUsage({
 /** 验证明细包含所有执行组和清理，与顶部验证合计保持相同口径。 */
 export function ReportUsageDetails({
   metrics,
+  historicalJev = false,
 }: {
   metrics: RequestMetrics | undefined;
+  /** 与顶部用量使用同一历史模式判断，避免明细重新露出空 JEV 行。 */
+  historicalJev?: boolean;
 }) {
   const rows: [string, TokenUsage | undefined][] = [
-    ['JEV 验证', metrics?.jev],
-    ['LLM 验证', metrics?.llm],
+    ...verificationUsageRows(metrics, historicalJev).map(
+      ([label, usage]): [string, TokenUsage | undefined] => [
+        `${label} 验证`,
+        usage,
+      ],
+    ),
     ['验证执行合计', metrics?.execution],
   ];
   return (

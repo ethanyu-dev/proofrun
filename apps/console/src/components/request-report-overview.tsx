@@ -1,6 +1,7 @@
 import { ReportUsage, ReportUsageDetails } from './report-usage';
 import type { RequestResultV2 } from '@proofrun/contracts';
 import { requestVerification } from '@proofrun/contracts/request-verification';
+import { HISTORICAL_EXECUTION_NOTICE } from '../execution-mode';
 import {
   VerificationStatusBadge,
   VERIFICATION_LABELS,
@@ -9,6 +10,9 @@ import {
 /** 顶部按 case 汇总，与下方当前展示执行组保持相同口径。 */
 export function RequestReportOverview({ value }: { value: RequestResultV2 }) {
   const counts = requestVerification(value);
+  const historicalJev = value.cases.some((member) =>
+    member.arms.some((arm) => arm.executionMode === 'jev'),
+  );
   return (
     <section
       className="panel request-report-overview"
@@ -41,9 +45,13 @@ export function RequestReportOverview({ value }: { value: RequestResultV2 }) {
             ))}
           </dl>
         </div>
-        <ReportUsage metrics={value.metrics} />
+        <ReportUsage metrics={value.metrics} historicalJev={historicalJev} />
       </div>
-      <ReportUsageDetails metrics={value.metrics} />
+      <ReportUsageDetails
+        metrics={value.metrics}
+        historicalJev={historicalJev}
+      />
+      {historicalJev && <p className="muted">{HISTORICAL_EXECUTION_NOTICE}</p>}
       <p className="muted">
         全部验收项通过才计入 Case
         通过数；部分失败表示已有明确失败且有部分验证通过。未完成或证据不足单独列出。

@@ -80,7 +80,7 @@ export interface TaskSummary {
   executionOutcome?: ExecutionOutcome;
 }
 /**
- * 控制面原子创建的双组对比身份；两组业务目标与预算一致，分别占用独立会话。
+ * 历史双组对比身份，仅供读取原执行记录；新任务不接受此字段，重跑创建 LLM 单组。
  */
 export interface Comparison {
   id: string;

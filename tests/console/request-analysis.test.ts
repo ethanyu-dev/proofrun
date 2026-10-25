@@ -124,7 +124,7 @@ test('报告按汇总、分析、case 展示，生成与重跑不阻塞结果', 
     assert.match(text, /4 分 33 秒/);
     assert.match(text, /验证 Tokens 合计577,300/);
     assert.doesNotMatch(text, /610,300/);
-    assert.match(text, /JEV105,000/);
+    assert.match(text, /JEV（历史）105,000/);
     assert.match(text, /LLM472,300/);
     assert.match(text, /累计 Tokens33,000/);
     assert.doesNotMatch(text, /部分用量未知/);

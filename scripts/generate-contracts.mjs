@@ -36,6 +36,7 @@ const names = [
   'node-list',
   'node-routing-write',
   'execution-activity',
+  'execution-timeline',
   'hitl-client',
   'hitl-server',
   'model-call',

@@ -1,0 +1,82 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ExecutionTimeline",
+  "description": "分页读取完整浏览器操作及截图身份，不包含输入值、凭据或模型正文。",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "commands": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "actor": {
+            "enum": ["AGENT", "HUMAN"]
+          },
+          "action": {
+            "type": ["string", "null"]
+          },
+          "status": {
+            "type": ["string", "null"]
+          },
+          "effect": {
+            "type": ["string", "null"]
+          },
+          "error": {
+            "type": ["string", "null"]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "screenshots": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "sha256": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": "string"
+                }
+              },
+              "required": ["id", "sha256", "state"]
+            }
+          },
+          "tabScope": {
+            "type": ["string", "null"],
+            "description": "并行浏览器分组身份，用于区分同时执行的步骤。"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "actor",
+          "action",
+          "status",
+          "effect",
+          "error",
+          "created_at",
+          "screenshots",
+          "tabScope"
+        ]
+      }
+    },
+    "nextCursor": {
+      "type": ["string", "null"]
+    }
+  },
+  "required": ["commands", "nextCursor"]
+}

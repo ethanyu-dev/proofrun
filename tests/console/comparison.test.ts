@@ -2,17 +2,18 @@ import { verificationProgress } from '../../apps/console/src/report-presentation
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import test from 'node:test';
+import { Window } from 'happy-dom';
 import type { TaskDetail } from '../../contracts/src/index.ts';
 import { ApiClient } from '../../apps/console/src/api.ts';
 import { ExecutionControl } from '../../apps/console/src/components/execution-control.tsx';
-import { ComparisonDetails } from '../../apps/console/src/components/comparison.tsx';
 import { ReportDetails } from '../../apps/console/src/pages/report-detail.tsx';
+import { TaskDetailPage } from '../../apps/console/src/pages/task-detail.tsx';
 
 /** 使用控制台自身的 React，服务端渲染只验证数据归属，不启动网络或真实执行。 */
 const require = createRequire(
   new URL('../../apps/console/package.json', import.meta.url),
 );
-const { createElement } = require('react');
+const { createElement, act } = require('react');
 const { renderToStaticMarkup } = require('react-dom/server');
 const api = new ApiClient('fixture-comparison-credential');
 
@@ -25,6 +26,8 @@ test('双跑报告从任一组进入都标识对照模式', () => {
     );
     assert.doesNotMatch(report, /当前仅展示/);
     assert.match(report, /LLM \/ LLM \+ JEV/);
+    assert.match(report, /历史对照/);
+    assert.match(report, /JEV 与双跑模式已停用/);
     assert.match(report, /执行时长/);
   }
 });
@@ -108,51 +111,6 @@ function fixture(arm: 'llm' | 'jev'): TaskDetail {
   };
 }
 
-/** 只切分独立组容器，内部验收条目的 article 不改变组归属。 */
-function renderArms(tasks: TaskDetail[]): string[] {
-  const html = renderToStaticMarkup(
-    createElement(ComparisonDetails, { api, arms: tasks }),
-  );
-  return html.split(/<article class="comparison-detail-arm[^\"]*"/).slice(1);
-}
-
-// 范围：两组五个模块及报告、证据、关闭状态不串组；不覆盖浏览器异步请求或真实模型运行。
-test('所有详情模块按组隔离报告、证据与资源清理状态', () => {
-  const cards = renderArms([fixture('llm'), fixture('jev')]);
-  assert.equal(cards.length, 10);
-  assert.ok(!cards.join('').includes('人工介入与操作记录'));
-  for (const [index, card] of cards.entries()) {
-    const arm = index % 2 === 0 ? 'llm' : 'jev';
-    const other = arm === 'llm' ? 'jev' : 'llm';
-    assert.ok(card.includes(`data-task-id="fixture-pair-${arm}"`));
-    assert.ok(!card.includes(`REPORT-${other}`));
-    assert.ok(!card.includes(`CRITERION-${other}`));
-    assert.ok(!card.includes(`artifact-${other}`));
-    assert.ok(!card.includes(`node-${other}`));
-  }
-  assert.ok(cards[0].includes('已确认关闭'));
-  assert.ok(cards[1].includes('尚未确认关闭'));
-  assert.ok(cards[4].includes('CRITERION-llm'));
-  assert.ok(cards[5].includes('CRITERION-jev'));
-  assert.ok(cards[6].includes('artifact-llm'));
-  assert.ok(cards[7].includes('artifact-jev'));
-});
-
-// 范围：单组排队、无会话及无报告时保留独立空态；不模拟请求错误、轮询或人工取消。
-test('尚未开始的一组不会沿用另一组上下文或报告', () => {
-  const waiting = fixture('jev');
-  waiting.state = 'QUEUED';
-  waiting.finished_at = null;
-  waiting.executions = [];
-  waiting.report = null;
-  const cards = renderArms([fixture('llm'), waiting]);
-  assert.ok(cards[3].includes('尚未分配执行'));
-  assert.ok(cards[5].includes('尚未生成报告'));
-  assert.ok(cards[7].includes('尚未生成报告'));
-  assert.ok(!cards[5].includes('REPORT-llm'));
-});
-
-/** 只渲染待办入口；服务端渲染不触发链接接口或真实人工交接。 */
 function renderControl(task: TaskDetail): string {
   return renderToStaticMarkup(
     createElement(ExecutionControl, {
@@ -275,7 +233,8 @@ test('报告从任一组进入都呈现相同合并计数和固定模式顺序',
     const table = html.slice(html.indexOf('<table'), html.indexOf('</table>'));
     assert.match(table, />✓</);
     assert.match(table, />×</);
-    assert(table.indexOf('>LLM<') < table.indexOf('>LLM + JEV<'));
+    assert.match(table, /LLM \+ JEV（历史）/);
+    assert(table.indexOf('>LLM<') < table.indexOf('>LLM + JEV（历史）<'));
     assert.match(html, /12.3 秒/);
     assert.match(html, /45.6 秒/);
     assert(html.indexOf('验证汇总') < html.indexOf('各模式验证记录'));
@@ -312,4 +271,203 @@ test('双跑报告保留各组执行原因且不改变合并通过数', () => {
   assert.match(html, /JEV 组缺少指定测试账号/);
   assert.match(html, /旧节点未记录具体触发原因/);
   assert.match(html, />1 \/ 1</);
+});
+
+// 范围：执行页移除旧模块、完整读取分页并保留来源；HTTP 为夹具，不覆盖真实浏览器会话。
+test('执行页仅显示当前运行并读完操作分页', async (context) => {
+  const window = new Window({
+    url: 'http://localhost/#/tasks/fixture-pair-jev?request=request-fixture',
+  });
+  const globals = {
+    window,
+    document: window.document,
+    location: window.location,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  };
+  const prior = new Map(
+    Object.keys(globals).map((key) => [
+      key,
+      Object.getOwnPropertyDescriptor(globalThis, key),
+    ]),
+  );
+  for (const [key, value] of Object.entries(globals))
+    Object.defineProperty(globalThis, key, {
+      configurable: true,
+      writable: true,
+      value,
+    });
+  const { createRoot } = require('react-dom/client');
+  const container = window.document.createElement('div');
+  window.document.body.append(container);
+  const root = createRoot(container);
+  const localApi = new ApiClient('fixture');
+  const calls: string[] = [];
+  context.mock.method(localApi, 'json', async (path: string) => {
+    calls.push(path);
+    if (path === '/v1/tasks/fixture-pair-jev') return fixture('jev');
+    if (path.endsWith('/timeline'))
+      return {
+        commands: [
+          {
+            id: 'first',
+            kind: 'browser.act',
+            action: 'click',
+            actor: 'AGENT',
+            status: 'SUCCEEDED',
+            error: null,
+            effect: null,
+            created_at: '2026-09-28T00:00:01Z',
+            screenshots: [],
+          },
+        ],
+        nextCursor: 'first',
+      };
+    if (path.endsWith('/timeline?after=first'))
+      return {
+        commands: [
+          {
+            id: 'second',
+            kind: 'browser.act',
+            action: 'scroll',
+            actor: 'HUMAN',
+            status: 'FAILED',
+            error: 'TEST_ERROR',
+            effect: null,
+            created_at: '2026-09-28T00:00:02Z',
+            screenshots: [],
+          },
+        ],
+        nextCursor: null,
+      };
+    throw new Error(`非预期读取：${path}`);
+  });
+  try {
+    await act(async () =>
+      root.render(
+        createElement(TaskDetailPage, {
+          api: localApi,
+          id: 'fixture-pair-jev',
+        }),
+      ),
+    );
+    assert.equal(container.querySelector('h1')?.textContent, '执行过程');
+    assert.match(container.textContent!, /点击/);
+    assert.match(container.textContent!, /滚动 · 人工/);
+    assert.match(container.textContent!, /TEST_ERROR/);
+    assert.doesNotMatch(
+      container.textContent!,
+      /验收报告|决策上下文|原始任务定义|执行与资源清理|同次历史运行|JEV|CRITERION/,
+    );
+    assert(container.querySelector('a[href="#/requests/request-fixture"]'));
+    assert.deepEqual(
+      calls.filter((path) => path.includes('/timeline')),
+      [
+        '/v1/admin/executions/execution-jev/timeline',
+        '/v1/admin/executions/execution-jev/timeline?after=first',
+      ],
+    );
+    assert(
+      !calls.some((path) =>
+        /comparison|model-calls|live-frame|execution-llm/.test(path),
+      ),
+    );
+  } finally {
+    await act(async () => root.unmount());
+    await window.happyDOM.close();
+    for (const [key, descriptor] of prior) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
+    }
+  }
+});
+
+// 范围：模拟实时帧与任务终态切换，完成后关闭订阅并进入步骤回放；不代表真实节点视频传输验收。
+test('执行完成后退出实时画面且不把最后帧冒充步骤截图', async (context) => {
+  const window = new Window({
+    url: 'http://localhost/#/tasks/fixture-pair-llm',
+  });
+  const globals = {
+    window,
+    document: window.document,
+    location: window.location,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  };
+  const prior = new Map(
+    Object.keys(globals).map((key) => [
+      key,
+      Object.getOwnPropertyDescriptor(globalThis, key),
+    ]),
+  );
+  for (const [key, value] of Object.entries(globals))
+    Object.defineProperty(globalThis, key, {
+      configurable: true,
+      writable: true,
+      value,
+    });
+  const { StepPlayback } =
+    await import('../../apps/console/src/components/step-playback.tsx');
+  const { createRoot } = require('react-dom/client');
+  const container = window.document.createElement('div');
+  window.document.body.append(container);
+  const root = createRoot(container);
+  const localApi = new ApiClient('fixture');
+  let closed = 0;
+  const socket = {
+    onmessage: null as null | ((event: { data: string }) => void),
+    onerror: null,
+    onclose: null,
+    close: () => {
+      closed++;
+    },
+  };
+  context.mock.method(localApi, 'live', () => socket);
+  context.mock.method(localApi, 'json', async (path: string) => {
+    if (path.endsWith('/timeline')) return { commands: [], nextCursor: null };
+    if (path.endsWith('/live-frame')) return { frame: null };
+    throw Error(`非预期读取：${path}`);
+  });
+  const task = fixture('llm');
+  task.state = 'RUNNING';
+  task.report = null;
+  task.executions[0]!.state = 'RUNNING';
+  try {
+    await act(async () =>
+      root.render(
+        createElement(StepPlayback, {
+          api: localApi,
+          task,
+          execution: task.executions[0],
+        }),
+      ),
+    );
+    assert(container.querySelector('[aria-label="实时交互"]'));
+    await act(async () =>
+      socket.onmessage!({
+        data: JSON.stringify({ type: 'frame', data: 'YWJj', capturedAt: 123 }),
+      }),
+    );
+    assert(container.querySelector('img[alt="浏览器实时画面"]'));
+    const completed = structuredClone(task);
+    completed.state = 'COMPLETED';
+    completed.executions[0]!.state = 'FINISHED';
+    await act(async () =>
+      root.render(
+        createElement(StepPlayback, {
+          api: localApi,
+          task: completed,
+          execution: completed.executions[0],
+        }),
+      ),
+    );
+    assert(container.querySelector('[aria-label="步骤回放"]'));
+    assert.equal(container.querySelector('img'), null);
+    assert.equal(closed, 1);
+  } finally {
+    await act(async () => root.unmount());
+    await window.happyDOM.close();
+    for (const [key, descriptor] of prior) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
+    }
+  }
 });

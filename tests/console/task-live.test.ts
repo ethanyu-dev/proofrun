@@ -63,7 +63,7 @@ test('人工接管显示顶部待办且不显示自动画面的重连按钮', ()
   assert.ok(html.includes('请完成测试账号登录'));
   assert.ok(html.includes('独立处理页查看画面'));
   assert.ok(!html.includes('重新连接画面'));
-  assert.ok(html.indexOf('待处理事项') < html.indexOf('comparison-screen'));
+  assert.ok(html.indexOf('待处理事项') < html.indexOf('live-screen'));
   const requested = render(task('REQUESTED'));
   assert.ok(requested.includes('等待执行交接'));
   assert.ok(requested.includes('交接完成后可打开处理页'));
@@ -78,7 +78,7 @@ test('终态与未分配会话不会误报人工等待', () => {
   assert.ok(html.includes('live-screen-empty'));
   const queued = task('AUTO', 'QUEUED');
   queued.executions = [];
-  assert.ok(!render(queued).includes('comparison-screen'));
+  assert.ok(!render(queued).includes('live-screen'));
 });
 
 // 范围：环境不符合独立展示，不冒充产品失败或残留人工等待；不覆盖真实浏览器和网络。
@@ -167,7 +167,7 @@ test('阻塞截图与清理截图分开，主画面不使用最后一帧', () =>
   assert.match(html, /尚未进入设置页核实/);
   assert.ok(!html.includes('cleanup-image'));
   assert.ok(!html.includes('later-image'));
-  assert.ok(!html.includes('comparison-screen'));
+  assert.ok(!html.includes('live-screen'));
   const cleanup = renderToStaticMarkup(
     createElement(FollowUpCleanup, { api, task: value }),
   );

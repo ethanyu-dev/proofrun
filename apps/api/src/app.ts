@@ -1,3 +1,4 @@
+import { executionTimeline } from './modules/scheduling/timeline.js';
 import { TaskLifecycle } from './modules/tasks/lifecycle.js';
 import { RequestAnalyses } from './modules/reports/request-analysis.js';
 import { analysisRoutes } from './modules/reports/analysis-routes.js';
@@ -698,6 +699,11 @@ export async function buildApp(
     '/v1/admin/executions/:id/activity',
     { preHandler: admin },
     (request) => control.activity(request.params.id),
+  );
+  app.get<{ Params: IdParams; Querystring: { after?: string } }>(
+    '/v1/admin/executions/:id/timeline',
+    { preHandler: admin },
+    (request) => executionTimeline(db, request.params.id, request.query.after),
   );
   app.post<{ Params: IdParams }>(
     '/v1/admin/executions/:id/intervene',

@@ -619,7 +619,7 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
                 </div>
               )}
               <p className="muted note">
-                完成后自动关闭此页。直接离开只会断开画面，任务继续等待人工处理。链接过期后请从任务详情重新打开处理页。
+                完成后自动关闭此页。直接离开只会断开画面，任务继续等待人工处理。链接过期后请从执行过程页重新打开处理页。
               </p>
             </aside>
           </div>
