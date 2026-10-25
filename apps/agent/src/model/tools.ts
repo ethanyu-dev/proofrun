@@ -66,12 +66,11 @@ export function decisionTools(
         allOf?: object[];
       };
       parameters.properties.progress = structuredClone(progress);
+      // record 的必填 progress 已由 Contracts 定义；这里只补充 finish 的阶段约束。
       if (
         tool.type === 'verification.finish' &&
         ['PREPARING', 'CHECKING'].includes(context.state.phase)
       )
-        parameters.required = [...(parameters.required ?? []), 'progress'];
-      if (tool.type === 'verification.record')
         parameters.required = [...(parameters.required ?? []), 'progress'];
       if (tool.type === 'browser.act') {
         parameters.properties.revisitReason = {
