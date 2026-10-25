@@ -192,6 +192,7 @@ export type VerificationTask = {
     };
     evidenceKinds: ('DOM' | 'SCREENSHOT' | 'NETWORK' | 'TRACE')[];
   };
+  rerunSession?: SessionRequest1;
 };
 export type CaseStep = {
   /**
@@ -556,6 +557,17 @@ export type SessionPlan = {
     origin: string;
     durationSeconds: number;
   };
+};
+/**
+ * 只支持访客、当前会话人工登录和 DevPass 外部账号；禁止携带密码或 Cookie。
+ */
+export type SessionRequest1 = {
+  mode: 'guest' | 'manual' | 'external';
+  /**
+   * @maxItems 32
+   */
+  requirements?: IdentityCheck[];
+  external?: ExternalAccountSelector;
 };
 /**
  * 平台内部执行报告；外部读取 CaseResult。结构有效不代表业务判断已被独立证实。

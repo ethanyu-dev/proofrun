@@ -446,6 +446,7 @@
                     "type": "string",
                     "pattern": "^[A-Za-z0-9_-]{1,80}$"
                   },
+                  "session": { "$ref": "#/components/schemas/SessionRequest" },
                   "budgetMode": {
                     "enum": ["current", "original"],
                     "default": "current"
@@ -3355,6 +3356,10 @@
                   "type": "string",
                   "pattern": "^[A-Za-z0-9_-]{1,80}$",
                   "description": "新运行幂等键；重试保持不变，caseId 不改变。"
+                },
+                "session": {
+                  "$ref": "#/components/schemas/SessionRequest",
+                  "description": "仅为此 case 的新运行替换会话身份；省略时沿用来源，历史本地身份须显式重新选择。"
                 }
               },
               "required": ["sourceCaseId"],

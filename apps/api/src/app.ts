@@ -416,6 +416,7 @@ export async function buildApp(
             runId?: unknown;
             budgetMode?: 'current' | 'original';
             timeBudget?: unknown;
+            session?: unknown;
           }
         | undefined;
       if (
@@ -424,7 +425,13 @@ export async function buildApp(
         Array.isArray(body) ||
         Object.keys(body).some(
           (key) =>
-            !['caseId', 'runId', 'budgetMode', 'timeBudget'].includes(key),
+            ![
+              'caseId',
+              'runId',
+              'budgetMode',
+              'timeBudget',
+              'session',
+            ].includes(key),
         ) ||
         (body.budgetMode !== undefined &&
           !['current', 'original'].includes(body.budgetMode)) ||
@@ -444,6 +451,7 @@ export async function buildApp(
             body.runId ?? body.caseId,
             body.budgetMode,
             body.timeBudget,
+            body.session,
           ),
         );
     },

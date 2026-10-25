@@ -1,4 +1,4 @@
-import type { CaseResultV2 } from '@proofrun/contracts';
+import type { CaseResultV2, SessionRequest } from '@proofrun/contracts';
 import type { ApiClient } from '../api';
 
 /** case 由服务端整体重建；普通任务继续使用原入口，调用方在重试时保持 runId 不变。 */
@@ -8,12 +8,13 @@ export async function rerunTask(
   runId: string,
   signal: AbortSignal,
   caseId?: string | null,
+  session?: SessionRequest,
 ): Promise<string> {
   if (caseId) {
     const result = await api.json<CaseResultV2>(
       `/v2/cases/${encodeURIComponent(caseId)}/rerun`,
       signal,
-      { runId },
+      { runId, ...(session ? { session } : {}) },
     );
     return (
       result.taskId ??

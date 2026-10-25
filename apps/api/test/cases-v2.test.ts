@@ -729,3 +729,181 @@ function currentTasks(task: import('@proofrun/contracts').VerificationTask) {
   assertCaseExecution(task);
   return [task];
 }
+
+// 范围：历史身份显式迁移、重新编译及快照不变；内存端口不覆盖数据库事务、真实登录或账号租约。
+test('历史身份重跑可显式改用访客、人工登录或 DevPass', async () => {
+  for (const session of [
+    { mode: 'guest' as const },
+    { mode: 'manual' as const },
+    {
+      mode: 'external' as const,
+      external: { provider: 'devpass', platform: 'fixture', poolId: 'members' },
+      requirements: [
+        {
+          id: 'member',
+          description: '会员身份',
+          method: 'text' as const,
+          value: '会员',
+        },
+      ],
+    },
+  ]) {
+    const f = fixture();
+    await f.service.submit([INPUT]);
+    const old = f.records.get(`case-v2-${INPUT.caseId}`)!;
+    old.definition.sessionPlan = {
+      version: 1,
+      mode: 'pool',
+      library: true,
+      selection: 'pending',
+      candidates: [],
+      requirements: [],
+      preparationMs: 120000,
+    };
+    old.definition.caseV2Definition!.session = {
+      mode: 'identity',
+      identityRef: 'retired',
+    } as never;
+    old.definition.environment.auth = {
+      nodeId: 'retired-node',
+      stateId: 'retired-state',
+      restore: true,
+    };
+    old.definition.environment.allowIntervention = false;
+    const before = structuredClone(old);
+    await assert.rejects(f.service.rerun(INPUT.caseId, 'no-override'), {
+      code: 'LOCAL_IDENTITY_REMOVED',
+    });
+    await f.service.rerun(
+      INPUT.caseId,
+      'migrated',
+      'current',
+      undefined,
+      session,
+    );
+    const next = f.records.get('case-run-migrated')!.definition;
+    assert.ok(
+      validateVerificationTask(next),
+      JSON.stringify(validateVerificationTask.errors),
+    );
+    assert.equal(next.sessionPlan!.mode, session.mode);
+    assert.deepEqual(next.sessionPlan!.candidates, []);
+    assert.equal(next.sessionPlan!.library, undefined);
+    assert.equal(next.sessionPlan!.selection, undefined);
+    assert.equal(next.environment.auth, undefined);
+    assert.equal(next.environment.allowIntervention, session.mode === 'manual');
+    assert.deepEqual(next.caseV2Definition!.steps, INPUT.steps);
+    assert.deepEqual(next.rerunSession, session);
+    assert.deepEqual(old, before);
+    const count = f.records.size;
+    await f.service.rerun(
+      INPUT.caseId,
+      'migrated',
+      'current',
+      undefined,
+      session,
+    );
+    assert.equal(f.records.size, count);
+    for (const changed of [
+      undefined,
+      { mode: session.mode === 'guest' ? 'manual' : 'guest' },
+    ])
+      await assert.rejects(
+        f.service.rerun(
+          INPUT.caseId,
+          'migrated',
+          'current',
+          undefined,
+          changed,
+        ),
+        { code: 'CASE_CONFLICT' },
+      );
+  }
+});
+
+// 范围：覆盖输入严格校验及业务准备要求的冲突；不验证站点是否真的处于登录或访客状态。
+test('重跑拒绝旧身份参数和无效 DevPass，显式身份不能绕过业务冲突', async () => {
+  const f = fixture();
+  await f.service.submit([INPUT]);
+  for (const session of [
+    null,
+    {},
+    { mode: 'auto' },
+    { mode: 'guest', cookie: 'forbidden' },
+    { mode: 'external' },
+    {
+      mode: 'external',
+      external: { provider: 'devpass', platform: 'fixture', poolId: 'members' },
+      requirements: [],
+    },
+  ])
+    await assert.rejects(
+      f.service.rerun(
+        INPUT.caseId,
+        'invalid-session',
+        'current',
+        undefined,
+        session,
+      ),
+      { code: 'INVALID_RERUN' },
+    );
+  const guest = {
+    ...INPUT,
+    caseId: 'explicit-guest',
+    steps: [{ ...INPUT.steps[1]!, description: '保持未登录' }, INPUT.steps[0]!],
+  };
+  await f.service.submit([guest]);
+  await assert.rejects(
+    f.service.rerun(guest.caseId, 'conflicting-session', 'current', undefined, {
+      mode: 'manual',
+    }),
+    { code: 'ENVIRONMENT_CONFIG_CONFLICT' },
+  );
+  assert.equal(f.records.has('case-run-invalid-session'), false);
+  assert.equal(f.records.has('case-run-conflicting-session'), false);
+});
+
+// 范围：重配外部身份后按最终时间预算申请租期，超过外部上限时不入队；不证明真实 DevPass 租约可续期。
+test('DevPass 重跑按最终预算计算租期并拒绝超过两小时的运行', async () => {
+  const f = fixture();
+  await f.service.submit([INPUT]);
+  const session = {
+    mode: 'external',
+    external: { provider: 'devpass', platform: 'fixture', poolId: 'members' },
+    requirements: [
+      { id: 'member', description: '会员身份', method: 'text', value: '会员' },
+    ],
+  };
+  await f.service.rerun(
+    INPUT.caseId,
+    'external-time',
+    'original',
+    { stepTimeoutMs: 600000 },
+    session,
+  );
+  const task = f.records.get('case-run-external-time')!.definition;
+  const plan = task.stepBudget!;
+  assert.equal(
+    task.sessionPlan!.external!.durationSeconds,
+    Math.ceil(
+      (task.budget.timeoutMs +
+        task.sessionPlan!.preparationMs +
+        plan.settleMs * plan.steps.length +
+        plan.cleanup.timeoutMs +
+        300000 +
+        30000) /
+        1000,
+    ),
+  );
+  await assert.rejects(
+    f.service.rerun(
+      INPUT.caseId,
+      'external-too-long',
+      'current',
+      { stepTimeoutMs: 2400000 },
+      session,
+    ),
+    { code: 'EXTERNAL_ACCOUNT_BUDGET' },
+  );
+  assert.equal(f.records.has('case-run-external-too-long'), false);
+});

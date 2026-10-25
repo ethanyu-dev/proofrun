@@ -1250,6 +1250,204 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
         '上一轮结果',
       );
     });
+    // 范围：真实 PostgreSQL/HTTP 的身份替换、原子失败、并发幂等及历史证据引用保留；不运行真实浏览器或 DevPass。
+    await suite.test(
+      '历史请求按 case 重配身份并保留历史及共享请求',
+      async () => {
+        await submit('identity-history', ['identity-a', 'identity-b']);
+        await submit('identity-shared', ['identity-a']);
+        const shared = (await call('/v2/requests/identity-shared')).json();
+        const oldIds = ['case-v2-identity-a', 'case-v2-identity-b'];
+        for (const id of oldIds) {
+          const row = (
+            await sql.query('SELECT definition FROM pr_tasks WHERE id=$1', [id])
+          ).rows[0];
+          row.definition.sessionPlan = {
+            version: 1,
+            mode: 'pool',
+            candidates: [],
+            requirements: [],
+            preparationMs: 120000,
+            library: true,
+            selection: 'pending',
+          };
+          row.definition.caseV2Definition.session = {
+            mode: 'pool',
+            poolRef: 'retired',
+          };
+          row.definition.environment.auth = {
+            nodeId: 'retired',
+            stateId: 'retired',
+            restore: true,
+          };
+          await sql.query('UPDATE pr_tasks SET definition=$2 WHERE id=$1', [
+            id,
+            row.definition,
+          ]);
+        }
+        // 报告及证据引用由夹具注入，只验证历史事实保留，不冒充真实浏览器采集。
+        const reportTemplate = (
+          await sql.query(
+            "SELECT report FROM pr_tasks WHERE id='case-v2-alpha'",
+          )
+        ).rows[0].report;
+        const historicalReport = {
+          ...reportTemplate,
+          taskId: oldIds[0],
+          summary: '重配身份前的历史报告',
+          artifacts: [
+            {
+              id: 'identity-history-dom',
+              kind: 'DOM',
+              uri: 'artifact://identity-history-dom',
+              sha256: 'a'.repeat(64),
+            },
+          ],
+        };
+        await sql.query('UPDATE pr_tasks SET report=$2 WHERE id=$1', [
+          oldIds[0],
+          historicalReport,
+        ]);
+        const historicalView = (
+          await call('/v2/cases/identity-a?runId=case-v2-identity-a')
+        ).json();
+        const old = (
+          await sql.query(
+            'SELECT id,definition,report,step_results FROM pr_tasks WHERE id=ANY($1) ORDER BY id',
+            [oldIds],
+          )
+        ).rows;
+        const path = '/v2/requests/identity-history/rerun';
+        const body = {
+          caseIds: [
+            {
+              sourceCaseId: 'identity-a',
+              runId: 'identity-new-a',
+              session: { mode: 'guest' },
+            },
+            {
+              sourceCaseId: 'identity-b',
+              runId: 'identity-new-b',
+              session: { mode: 'manual' },
+            },
+          ],
+        };
+        const incomplete = structuredClone(body);
+        delete (incomplete.caseIds[1] as { session?: unknown }).session;
+        const rejected = await call(path, incomplete);
+        assert.equal(rejected.statusCode, 422, rejected.body);
+        assert.equal(rejected.json().code, 'LOCAL_IDENTITY_REMOVED');
+        assert.equal(
+          (
+            await sql.query(
+              "SELECT count(*)::int n FROM pr_tasks WHERE id LIKE 'case-run-identity-new-%'",
+            )
+          ).rows[0].n,
+          0,
+        );
+        const invalid = await call(path, {
+          caseIds: [
+            {
+              sourceCaseId: 'identity-a',
+              runId: 'bad-session',
+              session: { mode: 'external' },
+            },
+          ],
+        });
+        assert.equal(invalid.statusCode, 400, invalid.body);
+        const replies = await Promise.all([call(path, body), call(path, body)]);
+        for (const reply of replies)
+          assert.equal(reply.statusCode, 202, reply.body);
+        for (const [index, mapping] of body.caseIds.entries()) {
+          const current = (
+            await sql.query('SELECT definition FROM pr_tasks WHERE id=$1', [
+              `case-run-${mapping.runId}`,
+            ])
+          ).rows[0].definition;
+          assert.equal(current.sessionPlan.mode, mapping.session.mode);
+          assert.deepEqual(current.rerunSession, mapping.session);
+          assert.equal(current.environment.auth, undefined);
+          assert.equal(current.caseV2Definition.caseId, mapping.sourceCaseId);
+          assert.deepEqual(
+            current.caseV2Definition.steps,
+            old[index].definition.caseV2Definition.steps,
+          );
+        }
+        const changed = structuredClone(body);
+        changed.caseIds[0]!.session.mode = 'manual';
+        assert.equal((await call(path, changed)).statusCode, 409);
+        assert.equal(
+          (
+            await call('/v2/cases/identity-a/rerun', {
+              runId: 'identity-new-a',
+              session: { mode: 'manual' },
+            })
+          ).statusCode,
+          409,
+        );
+        const single = await call('/v2/cases/identity-a/rerun', {
+          runId: 'identity-single',
+          session: { mode: 'manual' },
+        });
+        assert.equal(single.statusCode, 202, single.body);
+        const inherited = await call('/v2/cases/identity-a/rerun', {
+          runId: 'identity-inherited',
+        });
+        assert.equal(inherited.statusCode, 202, inherited.body);
+        assert.equal(
+          (
+            await sql.query(
+              "SELECT definition#>>'{sessionPlan,mode}' mode FROM pr_tasks WHERE id='case-run-identity-inherited'",
+            )
+          ).rows[0].mode,
+          'manual',
+        );
+        assert.deepEqual(
+          (
+            await sql.query(
+              'SELECT id,definition,report,step_results FROM pr_tasks WHERE id=ANY($1) ORDER BY id',
+              [oldIds],
+            )
+          ).rows,
+          old,
+        );
+        const sharedNow = (await call('/v2/requests/identity-shared')).json();
+        assert.equal(
+          sharedNow.cases[0].arms[0].taskId,
+          shared.cases[0].arms[0].taskId,
+        );
+        assert.equal(
+          (await call('/v2/requests/identity-history')).json().cases[0].arms[0]
+            .taskId,
+          'case-run-identity-new-a',
+        );
+        const historicalAfter = (
+          await call('/v2/cases/identity-a?runId=case-v2-identity-a')
+        ).json();
+        assert.deepEqual(historicalAfter.result, historicalView.result);
+        assert.equal(historicalAfter.result.summary, historicalReport.summary);
+        assert.ok(
+          historicalAfter.result.evidence.some(
+            (item: { id: string }) => item.id === 'identity-history-dom',
+          ),
+        );
+        // 相同最终身份但覆盖意图不同，也必须在并发写入检查中拒绝复用运行 ID。
+        const raced = await Promise.all([
+          call('/v2/cases/identity-a/rerun', {
+            runId: 'identity-race',
+            session: { mode: 'manual' },
+          }),
+          call('/v2/cases/identity-a/rerun', { runId: 'identity-race' }),
+        ]);
+        assert.deepEqual(
+          raced.map((reply) => reply.statusCode).sort(),
+          [202, 409],
+        );
+        const runs = await call('/v2/cases/identity-a/runs');
+        assert.equal(runs.statusCode, 200, runs.body);
+        assert.ok(runs.body.includes('case-v2-identity-a'));
+      },
+    );
     // 范围：真实 HTTP 创建、共享、原子重跑后的全部摘要字段与详情一致；不代表真实模型判定准确性。
     await suite.test(
       '所有已提交及重跑请求的列表摘要与详情逐字段一致',

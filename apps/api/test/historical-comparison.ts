@@ -12,8 +12,9 @@ export async function seedHistoricalPair(
   ).rows[0];
   if (!row) return;
   const original = row.definition as VerificationTask;
+  // 先保存从组再公开主组的双跑标记，避免并发读取看到缺少从组的半份夹具。
   if (!row.definition.comparison)
-    for (const arm of ['llm', 'jev'] as const) {
+    for (const arm of ['jev', 'llm'] as const) {
       const definition = {
         ...structuredClone(original),
         taskId: arm === 'llm' ? primaryId : `comparison-${primaryId}-jev`,

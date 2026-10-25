@@ -188,3 +188,28 @@ steps 按实际执行顺序包含清理步骤；cleanup 仍提供 taskId、statu
 ## 会话来源
 
 `session.mode` 仅接受 `guest`、`manual`、`external`。省略时按访客准备要求生成 guest，否则使用人工临时会话，不调用账号选择 Agent。需要自动账号时显式选择 DevPass，提供 platform、poolId 或 accountId，以及 requirements；具体配置见 [DevPass 说明](../apps/api/src/modules/account-providers/README.md)。本地 identity/pool/auto 与 identityRef/poolRef 已移除，不能用于新提交或重跑。人工介入只影响当前临时会话，不保存为后续任务的登录来源。
+
+### 重跑时重新配置会话
+
+`POST /v2/cases/:id/rerun` 可传可选 `session`；`POST /v2/requests/:id/rerun` 在各 `caseIds[]` 映射中传可选 `session`，允许同一请求的不同 case 使用不同身份。字段沿用 `SessionRequest`，支持 `guest`、`manual`、`external`，例如：
+
+```json
+{
+  "caseIds": [
+    {
+      "sourceCaseId": "public-page",
+      "runId": "public-page-next",
+      "session": { "mode": "guest" }
+    },
+    {
+      "sourceCaseId": "account-page",
+      "runId": "account-page-next",
+      "session": { "mode": "manual" }
+    }
+  ]
+}
+```
+
+省略 `session` 时沿用来源配置；历史本地身份仍返回 `LOCAL_IDENTITY_REMOVED`，须显式选择新的身份。覆盖只作用于新运行的冻结定义，保留步骤、验收、旧运行的报告与证据，不改变其他共享请求。显式替换会清除旧登录槽绑定；选择 `manual` 会允许当前新会话人工登录。业务准备要求仍参与冲突校验，不能用会话覆盖绕过访客或已登录要求。
+
+相同 `runId` 的重试必须保持是否覆盖及会话内容一致；更换或撤销会话覆盖返回 409，须使用新的 `runId`。整请求重跑仍为原子提交。Console 的重跑弹窗支持逐 case 配置；提交结果不确定时冻结输入并沿用原运行 ID 重试，明确拒绝后可以修改配置。

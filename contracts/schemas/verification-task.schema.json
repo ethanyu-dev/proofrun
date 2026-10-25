@@ -374,6 +374,10 @@
           }
         }
       }
+    },
+    "rerunSession": {
+      "$ref": "session-request.schema.json",
+      "description": "本次重跑显式提交的会话配置，用于运行幂等检查；只保存在新运行，省略表示未覆盖。"
     }
   },
   "$schema": "http://json-schema.org/draft-07/schema#",

@@ -453,6 +453,13 @@
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
+.request-detail-meta .request-delete-trigger {
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
 .request-detail-meta a {
   text-decoration: underline;
   text-underline-offset: 3px;

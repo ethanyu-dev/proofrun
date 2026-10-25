@@ -314,6 +314,7 @@ const document = {
             object(
               {
                 runId: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,80}$' },
+                session: ref('SessionRequest'),
                 budgetMode: {
                   enum: ['current', 'original'],
                   default: 'current',

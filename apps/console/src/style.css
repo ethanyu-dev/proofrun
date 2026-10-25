@@ -2176,3 +2176,16 @@ summary {
     gap: 8px;
   }
 }
+
+/* 多 case 重跑只滚动配置区，提交按钮保持可见。 */
+.rerun-session-list {
+  max-height: 55vh;
+  overflow-y: auto;
+  display: grid;
+  gap: 1rem;
+}
+.rerun-session-list fieldset {
+  min-width: 0;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+}
