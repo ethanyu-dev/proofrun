@@ -1303,11 +1303,10 @@ export class Coordinator {
         );
     }
     await client.query(
-      'UPDATE pr_nodes SET node_epoch=$2,capacity=$3,capabilities=$4,inventory=$5,runtime=$6,public_url=$7,admission=$8,last_seen_at=clock_timestamp() WHERE id=$1',
+      'UPDATE pr_nodes SET node_epoch=$2,capabilities=$3,inventory=$4,runtime=$5,public_url=$6,admission=$7,last_seen_at=clock_timestamp() WHERE id=$1',
       [
         connection.nodeId,
         heartbeat.nodeEpoch,
-        heartbeat.capacity ?? 0,
         heartbeat.capabilities,
         JSON.stringify(heartbeat.occupied),
         // 旧版进程不报版本时清空，避免降级后沿用上个进程的版本号。

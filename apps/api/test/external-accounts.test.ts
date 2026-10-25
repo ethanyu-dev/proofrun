@@ -168,7 +168,7 @@ test(
     assert.equal(
       (await sql.query('SELECT max(version) AS version FROM pr_migrations'))
         .rows[0].version,
-      35,
+      36,
     );
     assert.equal(
       (await sql.query("SELECT to_regclass('pr_external_accounts') AS name"))

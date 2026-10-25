@@ -52,11 +52,7 @@ export type NodeEvent =
       leaseRequestId: string;
       pool: string;
       /**
-       * 仅用于读取旧节点，不参与新版资源准入。
-       */
-      capacity?: number;
-      /**
-       * 本机仍占用容量的会话，包括关闭中和隔离状态。
+       * 本机尚未释放资源的会话，包括关闭中和隔离状态；数量不作为固定准入上限。
        */
       occupied: {
         sessionId: string;

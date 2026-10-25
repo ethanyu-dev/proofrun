@@ -90,7 +90,7 @@ Node 在派发前记录 commandId 与规范化 payload hash。相同请求重复
 
 ## 资源准入与客户端连接
 
-`admission` 包含 accepting、reason、cpuPercent、availableBytes、reserveBytes；旧 capacity 字段仅为历史兼容，不参与调度。缺少准入声明的旧节点不能接收新任务。`publicUrl` 是节点上报的客户端 HTTPS origin，`capabilities.directHitl` 表示节点直连能力。创建时节点仍原子复核资源，`RESOURCE_UNAVAILABLE` 且 `NOT_STARTED` 的创建拒绝可以安全重排。
+`admission` 包含 accepting、reason、cpuPercent、availableBytes、reserveBytes；节点心跳与列表不再接受或返回 `capacity`，API 也不保存固定节点容量。缺少准入声明的旧节点不能接收新任务。`publicUrl` 是节点上报的客户端 HTTPS origin，`capabilities.directHitl` 表示节点直连能力。创建时节点仍原子复核资源，`RESOURCE_UNAVAILABLE` 且 `NOT_STARTED` 的创建拒绝可以安全重排。
 
 浏览器命令携带 actor、controlRevision 与 authRevision。`session.control` 切换 AUTO/HUMAN 或安装短期人工能力，`session.watch` 安装只读画面能力。能力绑定会话信封身份、精确 Origin、有效期和令牌摘要；不会返回节点凭据。
 
