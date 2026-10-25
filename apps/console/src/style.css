@@ -1197,7 +1197,7 @@ summary {
   display: grid;
   gap: 8px;
   margin: 10px 0;
-  max-height: 180px;
+  max-height: 120px;
   overflow: auto;
 }
 .hitl-checks label {
@@ -1227,7 +1227,7 @@ summary {
   display: block;
   width: auto;
   max-width: 100%;
-  max-height: 60vh;
+  max-height: 55vh;
   height: auto;
   margin: auto;
   /* 保持图片本身比例，不引入 object-fit 留白，坐标始终映射到真实画面。 */
