@@ -29,9 +29,14 @@ export function assertSupportedSession(plan: SessionPlan | undefined): void {
 export function resolveSession(
   request: SessionRequest | undefined,
   entry: string,
+  automatic = false,
 ): SessionPlan {
   const selection = request ?? { mode: 'manual' as const };
-  if (!['guest', 'manual', 'external'].includes(selection.mode))
+  if (
+    selection.mode !== 'guest' &&
+    selection.mode !== 'manual' &&
+    selection.mode !== 'external'
+  )
     throw new ApiError(
       422,
       'LOCAL_IDENTITY_REMOVED',
@@ -39,7 +44,7 @@ export function resolveSession(
     );
   if (
     selection.mode === 'external' &&
-    (!selection.external || !selection.requirements?.length)
+    (!selection.external || (!automatic && !selection.requirements?.length))
   )
     throw new ApiError(
       422,

@@ -129,6 +129,23 @@
         }
       },
       "required": ["selector", "origin", "durationSeconds"]
+    },
+    "automatic": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "loginRequired": {
+          "type": "boolean",
+          "description": "根据原始操作与身份条件冻结的登录需求；访客要求优先。"
+        },
+        "fallbackReason": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "本次运行转入人工准备的公开原因码，不含凭据或供应方原始错误。"
+        }
+      },
+      "required": ["loginRequired"],
+      "description": "本次运行自动判断的登录需求及转人工原因，不改写历史快照。"
     }
   },
   "required": [
@@ -159,10 +176,6 @@
             "maxItems": 0,
             "type": "array"
           },
-          "requirements": {
-            "minItems": 1,
-            "type": "array"
-          },
           "library": {
             "const": false
           }
@@ -171,6 +184,29 @@
       "else": {
         "not": {
           "required": ["external"]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "mode": {
+            "const": "external"
+          }
+        },
+        "not": {
+          "required": ["automatic"],
+          "properties": {
+            "automatic": {}
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "requirements": {
+            "type": "array",
+            "minItems": 1
+          }
         }
       }
     }

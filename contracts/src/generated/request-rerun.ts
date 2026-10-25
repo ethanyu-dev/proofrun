@@ -4,7 +4,7 @@
  * 仅为此 case 的新运行替换会话身份；省略时沿用来源，历史本地身份须显式重新选择。
  */
 export type SessionRequest = {
-  mode: 'guest' | 'manual' | 'external';
+  mode: 'auto' | 'guest' | 'manual' | 'external';
   /**
    * @maxItems 32
    */
@@ -19,28 +19,6 @@ export type IdentityCheck = {
   description: string;
   method: 'text' | 'absent' | 'manual';
   value?: string;
-};
-/**
- * 外部账号的无秘密选择条件；地址和密钥仅由部署配置提供。
- */
-export type ExternalAccountSelector = (
-  | {
-      poolId: string;
-      [k: string]: unknown;
-    }
-  | {
-      accountId: string;
-      [k: string]: unknown;
-    }
-) & {
-  provider: string;
-  platform: string;
-  poolId?: string;
-  accountId?: string;
-  /**
-   * @maxItems 32
-   */
-  roles?: string[];
 };
 
 export interface RequestRerun {
@@ -167,4 +145,17 @@ export interface RequestRerun {
      */
     cleanupTimeoutMs?: number;
   };
+}
+/**
+ * 外部账号的无秘密选择条件；地址和密钥仅由部署配置提供。
+ */
+export interface ExternalAccountSelector {
+  provider: string;
+  platform: string;
+  poolId?: string;
+  accountId?: string;
+  /**
+   * @maxItems 32
+   */
+  roles?: string[];
 }

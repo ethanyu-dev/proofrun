@@ -1,5 +1,6 @@
 import { compileStepBudget, type VerificationTask } from '@proofrun/contracts';
 import { ApiError } from '../../domain.js';
+import { useManualSession } from './automatic.js';
 import {
   ACCOUNT_HUMAN_MARGIN_MS,
   ACCOUNT_CLOSE_MARGIN_MS,
@@ -20,6 +21,10 @@ export function refreshExternalSessionBudget(task: VerificationTask): void {
       ACCOUNT_CLOSE_MARGIN_MS) /
       1000,
   );
+  if (duration > ACCOUNT_MAX_SECONDS && session.automatic) {
+    useManualSession(task, 'EXTERNAL_ACCOUNT_BUDGET');
+    return;
+  }
   if (duration > ACCOUNT_MAX_SECONDS)
     throw new ApiError(
       422,

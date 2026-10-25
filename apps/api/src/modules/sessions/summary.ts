@@ -12,14 +12,15 @@ export async function identitySummary(
     `SELECT i.reason_code,count(*)::integer AS count,count(i.completed_at)::integer AS completed FROM pr_interventions i JOIN pr_executions e ON e.id=i.execution_id WHERE e.task_id=$1 GROUP BY i.reason_code ORDER BY i.reason_code`,
     [taskId],
   );
-  const external = plan.external
-    ? (
-        await db.query(
-          'SELECT request_id,lease_id,account_id,material_version,expires_at,state,reason FROM pr_external_accounts WHERE task_id=$1',
-          [taskId],
-        )
-      ).rows[0]
-    : undefined;
+  const external =
+    plan.external || plan.automatic?.fallbackReason
+      ? (
+          await db.query(
+            'SELECT request_id,lease_id,account_id,material_version,expires_at,state,reason FROM pr_external_accounts WHERE task_id=$1',
+            [taskId],
+          )
+        ).rows[0]
+      : undefined;
   const externalOpen = plan.external
     ? (
         await db.query(
@@ -69,7 +70,7 @@ export async function identitySummary(
       source: plan.external ? 'cookies' : 'none',
       reasonCode: plan.external
         ? (external?.reason ?? externalOpen?.task_error ?? null)
-        : null,
+        : (plan.automatic?.fallbackReason ?? null),
       durationMs: plan.external
         ? externalOpen?.completed_at
           ? Math.max(

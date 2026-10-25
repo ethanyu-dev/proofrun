@@ -771,9 +771,12 @@ test('历史身份重跑可显式改用访客、人工登录或 DevPass', async 
     };
     old.definition.environment.allowIntervention = false;
     const before = structuredClone(old);
-    await assert.rejects(f.service.rerun(INPUT.caseId, 'no-override'), {
-      code: 'LOCAL_IDENTITY_REMOVED',
-    });
+    await f.service.rerun(INPUT.caseId, 'no-override');
+    const automatic = f.records.get('case-run-no-override')!.definition;
+    assert.ok(automatic.sessionPlan?.automatic);
+    assert.equal(automatic.environment.auth, undefined);
+    assert.deepEqual(automatic.caseV2Definition!.steps, INPUT.steps);
+    assert.deepEqual(old, before);
     await f.service.rerun(
       INPUT.caseId,
       'migrated',
@@ -828,7 +831,7 @@ test('重跑拒绝旧身份参数和无效 DevPass，显式身份不能绕过业
   for (const session of [
     null,
     {},
-    { mode: 'auto' },
+    { mode: 'pool', poolRef: 'retired' },
     { mode: 'guest', cookie: 'forbidden' },
     { mode: 'external' },
     {

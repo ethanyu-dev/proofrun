@@ -250,6 +250,7 @@ export class Coordinator {
             throw new ApiError(409, 'CASE_CONFLICT', 'caseId 已绑定另一份定义');
           continue;
         }
+        this.externalAccounts.prepare(task);
         this.externalAccounts.validate(task);
         created.add(task.taskId);
         assertCaseExecution(task);
