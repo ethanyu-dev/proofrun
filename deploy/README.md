@@ -11,7 +11,7 @@
 - 控制面：API、数据库、队列协调、证据对象存储。
 - 验证执行 Agent：独立 worker，由模型配置和吞吐需求决定副本。
 - Console：静态资源。
-- Browser Node：部署在可访问业务环境的 VM，主动连接控制面，运行 Chrome 和 agent-browser。
+- Browser Node：部署在可访问业务环境的 VM，主动连接控制面，并通过独立 HTTPS 域名向客户端提供画面与人工操作，运行 Chrome 和 agent-browser。
 
 已完成 systemd 容器内的控制面与节点闭环，真实 Linux 内网 VM 仍需验收，再固化生产镜像与运维流程。不从旧项目直接复制带历史假设的部署脚本。
 
@@ -34,6 +34,28 @@ apps/api 已提供 `/v1/nodes/connect` 网关与 `/v1/artifacts` 上传服务，
 复制相应 service 到运行用户的 `~/.config/systemd/user/`，执行 `systemctl --user daemon-reload` 和 `systemctl --user enable --now proofrun-api.service proofrun-agent.service`。生产环境按实际 Node.js 24 安装位置调整 ExecStart。Caddyfile 中的 PROOFRUN_DOMAIN 由服务环境提供；静态 Console 与 `/v1/*`、`/v2/*` 在同一个 HTTPS origin，节点使用同源 WSS，无需反向访问内网。
 
 备份范围为 PostgreSQL、API 证据目录、节点 home（含身份、SQLite、凭据与登录状态）；数据库和证据应在停止写入后一起备份，恢复到同一版本。维护默认只预览；配对回执恢复、轮换、清理和重启处理见 [部署与运行维护](README.md)。不要用测试容器的 privileged 配置作为生产部署方式。
+
+## 节点直连域名与升级
+
+每台 Browser Node 配置一个客户端可访问的 HTTPS origin，例如 `https://browser-node-01.example.com`。这个地址与待测站点的域名路由不同：前者用于看画面和人工操作，后者决定在哪个节点执行任务。
+
+| 配置                                                | 所在位置                                                                                     | 用途                                              |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| `public_url`                                        | 节点 TOML；安装器默认 `~/.config/proofrun/node.toml`，手动服务模板 `/etc/proofrun/node.toml` | 对客户端公布的 HTTPS origin，不带路径、参数、凭据 |
+| `listen`                                            | 同一个 TOML，默认 `127.0.0.1:9310`                                                           | Node 明文回环入口，仅供本机反向代理               |
+| `PROOFRUN_NODE_PUBLIC_URL` / `PROOFRUN_NODE_LISTEN` | Node 服务环境，可选覆盖                                                                      | 容器或受管理部署的同一配置入口                    |
+| `PROOFRUN_NODE_DOMAIN`                              | 节点本机 Caddy 服务环境                                                                      | 证书和域名，例如 `browser-node-01.example.com`    |
+| `PROOFRUN_CONSOLE_URL`                              | API 服务环境；省略则使用 `PROOFRUN_PUBLIC_URL`                                               | 处理页地址及直连授权的精确 Origin                 |
+
+Node 经机器认证的心跳登记 `public_url`，API 保存并在授权时返回当前节点地址，Console 无需维护节点域名列表。不要在 Console 填写节点凭据。TLS 由节点本机 [node.Caddyfile](node.Caddyfile) 终止，它只代理三个直连 WebSocket 路径到 `listen`；如果修改端口，同时修改该代理目标。外部反代机器不能直接使用回环监听，需把 TLS 入口部署在节点本机。
+
+部署时把域名解析到节点入口，确保客户端能访问 443，并让 Caddy 能完成证书签发/续期（按所选验证方式开放 80 或配置 DNS 验证）。配置 Node 的 `public_url` 和 Caddy 域名一致，重启 Node 后从 Console 节点页检查上报地址。客户端直接使用 WSS，无需 WebRTC、STUN 或 TURN。仅本地开发允许 `http://localhost` / 回环 IP；HTTPS Console 不能连接明文 WS。
+
+资源准入参数都在节点 TOML：`memory_reserve_bytes` 默认保留 1 GiB，`session_reserve_bytes` 默认每会话至少预算 512 MiB；CPU 默认 80% 停止新接收、低于 60% 恢复，CPU PSI 阈值 20%。按机器和任务负载调参，不能把这些默认值当作实测容量。Node 读取宿主与 cgroup 实际余量，扣除尚未体现为实际占用的会话预算，并在启动后等待五秒稳定。指标缺失、隔离会话或资源压力均暂停新任务；已运行任务继续受租约管理。没有固定 `capacity`，也没有 Node 本地任务排队。
+
+升级必须先停止新任务、等待现有会话关闭，然后备份并升级 API（迁移 034）、Console 和节点。旧 TOML 的 `capacity` 必须删除，加入 `public_url` 与 `listen`；安装器遇到旧字段会明确拒绝并提示迁移，不擅自覆盖已有配置。旧节点不再满足资源准入协议，旧直连前的网页须刷新。新安装器支持 `--public-url https://browser-node-01.example.com`；它不代办 DNS、证书或 Caddy 的系统安装。
+
+资源拒绝只有在 `session.open` 明确 `NOT_STARTED / RESOURCE_UNAVAILABLE` 时才安全重排；API 归档拒绝尝试并撤销旧执行身份，保持原排队期限。未知结果不重排、不自动重放。回滚应恢复成套数据库与组件版本，不能只切换旧 Node 程序。
 
 ## 节点轮换与停机维护
 

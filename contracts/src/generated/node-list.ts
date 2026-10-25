@@ -14,7 +14,7 @@ export interface NodeSummary {
   name: string;
   pool: string;
   node_epoch: string | null;
-  capacity: number;
+  capacity?: number;
   capabilities: {
     [k: string]: unknown;
   };
@@ -37,6 +37,15 @@ export interface NodeSummary {
    * 最近心跳上报的进程版本；未上报时为 null，离线节点仅代表最后一次上报。
    */
   runtime?: NodeRuntime | null;
+  public_url?: string | null;
+  admission?: {
+    accepting?: boolean;
+    reason?: string;
+    cpuPercent?: number;
+    availableBytes?: number;
+    reserveBytes?: number;
+    [k: string]: unknown;
+  } | null;
 }
 /**
  * 节点进程上报的编译身份；用于排查部署版本，不作为授权或能力判断依据。

@@ -11,10 +11,27 @@ const HUMAN_MS = 90_000;
 
 /** 真正通过 HITL WebSocket 交还控制权；管理员直接恢复不能代替人工确认。 */
 export async function assist(control, intervention, sampleId, getState) {
-  const socket = new WebSocket(
-    control.origin.replace(/^http/, 'ws') + '/v1/hitl/connect',
-    { origin: control.origin },
-  );
+  const deadline = Date.now() + HUMAN_MS;
+  let bootstrap;
+  while (Date.now() < deadline) {
+    const response = await fetch(`${control.origin}/v1/hitl/bootstrap`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: control.origin },
+      body: JSON.stringify({
+        id: intervention.id,
+        token: intervention.path.split('/').at(-1),
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!response.ok) throw new Error(`HITL_BOOTSTRAP_${response.status}`);
+    bootstrap = await response.json();
+    if (bootstrap.direct) break;
+    await delay(100);
+  }
+  if (!bootstrap?.direct) throw new Error('HITL_TIMEOUT');
+  const socket = new WebSocket(bootstrap.direct.controlUrl, {
+    origin: control.origin,
+  });
   const messages = [];
   let failure;
   socket.on('error', () => {
@@ -49,8 +66,8 @@ export async function assist(control, intervention, sampleId, getState) {
     socket.send(
       JSON.stringify({
         type: 'authenticate',
-        id: intervention.id,
-        token: intervention.path.split('/').at(-1),
+        id: bootstrap.direct.id,
+        token: bootstrap.direct.token,
       }),
     );
     const state = await until(() =>

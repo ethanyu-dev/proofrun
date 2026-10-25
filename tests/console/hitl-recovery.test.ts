@@ -42,6 +42,18 @@ test('人工页面没有首帧时仍可导航，超时可重连且不重放操�
     location: window.location,
     localStorage: window.localStorage,
     WebSocket: Socket,
+    fetch: async () => ({
+      ok: true,
+      json: async () => ({
+        state: state('HUMAN'),
+        direct: {
+          controlUrl: 'wss://node.test/hitl/control',
+          frameUrl: 'wss://node.test/hitl/frames',
+          id: 'fixture',
+          token: 'direct-fixture',
+        },
+      }),
+    }),
     IS_REACT_ACT_ENVIRONMENT: true,
   };
   const prior = new Map(
@@ -116,18 +128,18 @@ test('人工页面没有首帧时仍可导航，超时可重连且不重放操�
     assert.match(container.textContent!, /浏览器画面加载超时/);
     assert.equal(button('重新连接').disabled, false);
     await act(async () => button('重新连接').click());
-    assert.equal(sockets.length, 2);
+    assert.equal(sockets.length, 3);
     await act(async () => {
-      sockets[1]!.onopen?.();
-      sockets[1]!.receive(state('HUMAN'));
+      sockets[2]!.onopen?.();
+      sockets[2]!.receive(state('HUMAN'));
     });
     assert.equal(
-      sockets[1]!.sent.filter((m) => m.type === 'command').length,
+      sockets[2]!.sent.filter((m) => m.type === 'command').length,
       0,
     );
     assert.doesNotMatch(container.textContent!, /浏览器画面加载超时/);
     await act(async () =>
-      sockets[1]!.receive({
+      sockets[2]!.receive({
         type: 'frame',
         data: 'fixture',
         width: 1280,
@@ -137,7 +149,7 @@ test('人工页面没有首帧时仍可导航，超时可重连且不重放操�
     await act(async () => context.mock.timers.tick(10001));
     assert.ok(container.querySelector('img.hitl-screen'));
     assert.doesNotMatch(container.textContent!, /浏览器画面加载超时/);
-    await act(async () => sockets[1]!.close());
+    await act(async () => sockets[2]!.close());
     assert.equal(button('前往').disabled, true);
   } finally {
     await act(async () => root.unmount());

@@ -547,8 +547,131 @@
             }
           },
           "required": ["type", "url", "names"]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "session.control"
+            },
+            "mode": {
+              "enum": ["AUTO", "HUMAN"]
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "grant": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "tokenHash": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "connectExpiresAt": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "expiresAt": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "origin": {
+                  "type": "string"
+                },
+                "authRevision": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "state": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "id",
+                "tokenHash",
+                "connectExpiresAt",
+                "expiresAt",
+                "origin",
+                "authRevision",
+                "state"
+              ]
+            }
+          },
+          "required": ["type", "mode", "revision"]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "session.watch"
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "grant": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "tokenHash": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "connectExpiresAt": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "expiresAt": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "origin": {
+                  "type": "string"
+                },
+                "authRevision": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "state": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "id",
+                "tokenHash",
+                "connectExpiresAt",
+                "expiresAt",
+                "origin",
+                "authRevision",
+                "state"
+              ]
+            }
+          },
+          "required": ["type", "revision", "grant"]
         }
       ]
+    },
+    "actor": {
+      "enum": ["AGENT", "HUMAN"],
+      "description": "浏览器操作者；缺省仅兼容尚未交接的自动执行。"
+    },
+    "controlRevision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "authRevision": {
+      "type": "integer",
+      "minimum": 0
     }
   },
   "required": [

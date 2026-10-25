@@ -44,6 +44,7 @@ const MIGRATIONS = [
   '031-external-accounts.sql',
   '032-case-runs.sql',
   '033-current-execution.sql',
+  '034-direct-hitl-admission.sql',
 ];
 
 /** 所有业务事务使用同一连接；独占连接单独维护控制面实例锁。 */

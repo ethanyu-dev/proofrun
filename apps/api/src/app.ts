@@ -113,8 +113,13 @@ export async function buildApp(
   );
   coordinator.gateway = gateway;
   const nodeProfiles = new HistoricalNodeProfiles(db, coordinator);
-  const hitl = new HitlService(db, config, control, coordinator, gateway);
-  const live = new LiveService(db, gateway, config.adminToken);
+  const hitl = new HitlService(db, config, control);
+  coordinator.humanEvent = (client, nodeId, event) =>
+    hitl.receive(client, nodeId, event);
+  const live = new LiveService(
+    db,
+    new URL(config.consoleUrl ?? config.publicUrl).origin,
+  );
   const notifications = new CaseNotifications(db, config, app.log);
   app.addHook('onReady', async () => notifications.start());
   const modelCalls = new ModelCalls(db);
@@ -192,65 +197,24 @@ export async function buildApp(
       },
     };
   });
-  // 独立处理页首帧使用任务专属凭据；跨站页面不能借浏览器连接处理入口。
-  app.get(
-    '/v1/hitl/connect',
-    {
-      websocket: true,
-      preValidation: async (request) => {
-        const origin = request.headers.origin;
-        const local =
-          origin &&
-          /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) &&
-          new URL(origin).host === request.headers.host;
-        if (
-          origin !== new URL(config.consoleUrl ?? config.publicUrl).origin &&
-          !local
-        )
-          throw new ApiError(
-            403,
-            'HITL_ORIGIN',
-            'Invalid handling page origin',
-          );
-      },
-    },
-    (socket) => hitl.accept(socket),
-  );
-  app.get(
-    '/v1/hitl/relay',
-    { websocket: true, preValidation: node },
-    (socket, request) =>
-      hitl.relay(socket, authenticatedNodes.get(request)!.id),
-  );
-  app.get(
-    '/v1/live/connect',
-    {
-      websocket: true,
-      preValidation: async (request) => {
-        const origin = request.headers.origin;
-        const local =
-          origin &&
-          /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) &&
-          new URL(origin).host === request.headers.host;
-        if (
-          origin !== new URL(config.consoleUrl ?? config.publicUrl).origin &&
-          !local
-        )
-          throw new ApiError(403, 'LIVE_ORIGIN', 'Invalid viewer origin');
-      },
-    },
-    (socket) => live.accept(socket),
-  );
-  app.get(
-    '/v1/live/relay',
-    { websocket: true, preValidation: node },
-    (socket, request) =>
-      live.relay(socket, authenticatedNodes.get(request)!.id),
-  );
-  app.get<{ Params: IdParams }>(
-    '/v1/admin/executions/:id/live-frame',
+  // 原始处理链接仅在 API 换取节点短期凭证，不转发任何画面或输入。
+  app.post('/v1/hitl/bootstrap', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const origin = request.headers.origin;
+    if (
+      origin &&
+      origin !== new URL(config.consoleUrl ?? config.publicUrl).origin
+    )
+      throw new ApiError(403, 'HITL_ORIGIN', '处理页来源不匹配');
+    return hitl.bootstrap(request.body);
+  });
+  app.post<{ Params: IdParams }>(
+    '/v1/admin/executions/:id/live',
     { preHandler: admin },
-    (request) => live.snapshot(request.params.id),
+    async (request, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      return live.bootstrap(request.params.id);
+    },
   );
   app.get<{ Params: IdParams }>(
     '/v1/admin/executions/:id/intervention',
@@ -843,8 +807,6 @@ export async function buildApp(
     clearInterval(timer);
     await notifications.close();
     await ticking;
-    hitl.close();
-    live.close();
     // 先取得网关在途事件的等待对象，连接关闭事件随后可能移除业务路由记录。
     const draining = gateway.close();
     for (const socket of app.websocketServer.clients) socket.terminate();

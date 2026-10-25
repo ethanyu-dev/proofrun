@@ -23,27 +23,6 @@ export function LivePage({
   const [capturedAt, setCapturedAt] = useState<number>();
   const [version, setVersion] = useState(0);
   useEffect(() => {
-    const controller = new AbortController();
-    void api
-      .json<{ frame: null | { data: string; capturedAt: number } }>(
-        `/v1/admin/executions/${execution.id}/live-frame`,
-        controller.signal,
-      )
-      .then(({ frame }) => {
-        if (
-          frame &&
-          !controller.signal.aborted &&
-          frame.capturedAt >= latestFrameAt.current
-        ) {
-          latestFrameAt.current = frame.capturedAt;
-          setFrame(`data:image/jpeg;base64,${frame.data}`);
-          setCapturedAt(frame.capturedAt);
-        }
-      })
-      .catch(() => {});
-    return () => controller.abort();
-  }, [api, execution.id, active]);
-  useEffect(() => {
     if (!active) {
       setState('执行已结束 · 保留最后画面');
       return;
@@ -56,42 +35,67 @@ export function LivePage({
     }
     let disposed = false;
     let ended = false;
-    const socket = api.live(execution.id);
-    setState('正在连接画面');
-    socket.onmessage = (event) => {
-      if (disposed) return;
-      try {
-        const message = JSON.parse(event.data);
-        if (
-          message.type === 'frame' &&
-          typeof message.data === 'string' &&
-          message.data.length < 2 * 1024 * 1024 &&
-          /^[A-Za-z0-9+/=]+$/.test(message.data)
-        ) {
-          latestFrameAt.current = message.capturedAt;
-          setFrame(`data:image/jpeg;base64,${message.data}`);
-          setCapturedAt(message.capturedAt);
-          setFrames((n) => n + 1);
-          setState('实时画面');
-        } else if (message.type === 'state') setCount(message.actionCount);
-        else if (message.type === 'ended' || message.type === 'error') {
-          ended = true;
-          setState(message.reason ?? message.message);
-        }
-      } catch {
-        setState('画面数据无效');
-        socket.close();
+    const controller = new AbortController();
+    let socket: WebSocket | undefined;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const connect = async () => {
+      const connection = await api.live(execution.id, controller.signal);
+      if (disposed) {
+        connection?.close();
+        return;
       }
+      if (!connection) {
+        retry = setTimeout(() => void connect().catch(failed), 1000);
+        return;
+      }
+      socket = connection;
+      // 到期前重新取得只读凭证；重连不会重放浏览器操作。
+      retry = setTimeout(() => {
+        if (!disposed) setVersion((v) => v + 1);
+      }, 4 * 60_000);
+      setState('正在连接画面');
+      socket.onmessage = (event) => {
+        if (disposed) return;
+        try {
+          const message = JSON.parse(event.data);
+          if (
+            message.type === 'frame' &&
+            typeof message.data === 'string' &&
+            message.data.length < 2 * 1024 * 1024 &&
+            /^[A-Za-z0-9+/=]+$/.test(message.data)
+          ) {
+            latestFrameAt.current = message.capturedAt;
+            setFrame(`data:image/jpeg;base64,${message.data}`);
+            setCapturedAt(message.capturedAt);
+            setFrames((n) => n + 1);
+            setState('实时画面');
+          } else if (message.type === 'state') setCount(message.actionCount);
+          else if (message.type === 'ended' || message.type === 'error') {
+            ended = true;
+            setState(message.reason ?? message.message);
+          }
+        } catch {
+          setState('画面数据无效');
+          socket?.close();
+        }
+      };
+      socket.onerror = () => {
+        if (!disposed) setState('画面连接失败');
+      };
+      socket.onclose = () => {
+        if (!disposed && !ended) setState('画面连接已断开');
+      };
     };
-    socket.onerror = () => {
-      if (!disposed) setState('画面连接失败');
+    const failed = (error: unknown) => {
+      if (!disposed)
+        setState(error instanceof Error ? error.message : '画面连接失败');
     };
-    socket.onclose = () => {
-      if (!disposed && !ended) setState('画面连接已断开');
-    };
+    void connect().catch(failed);
     return () => {
       disposed = true;
-      socket.close();
+      controller.abort();
+      clearTimeout(retry);
+      socket?.close();
     };
   }, [
     api,

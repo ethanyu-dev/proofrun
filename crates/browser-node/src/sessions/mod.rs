@@ -57,6 +57,8 @@ pub struct Session {
     pub lease_id: String,
     /// 与租约绑定的栅栏值，阻止旧执行者继续操作。
     pub fence: u64,
+    /// 所有入口共用的操作者、代次与人工凭证。
+    pub control: std::sync::Mutex<crate::control::Control>,
     /// 当前租约期限，使用跨进程一致的 CLOCK_BOOTTIME 毫秒。
     pub deadline: AtomicU64,
     /// 普通会话总时限；人工可续期也不能越过外部账号硬期限，始终受短租约限制。
@@ -66,7 +68,7 @@ pub struct Session {
     /// 外部账号元数据仅绑定当前会话，不允许保存为共享 profile。
     external_account: Option<serde_json::Value>,
     network_evidence: bool,
-    /// 本次任务是否允许人工画面访问。
+    /// 本次会话是否初始化实时画面，实际观看和操作分别授权。
     live_view: bool,
     /// 关闭、到期或故障时立即撤销执行许可。
     cancel: CancellationToken,
@@ -80,7 +82,7 @@ pub struct Session {
     closed: watch::Receiver<Option<std::result::Result<(), String>>>,
     /// 从准入到结果持久化期间阻止第二个浏览器操作。
     busy: Arc<Semaphore>,
-    /// 同一会话至多一个画面中转，断线释放后才允许重新连接。
+    /// 同一人工会话至多一个媒体连接，只读观看使用独立凭证。
     stream_busy: Arc<Semaphore>,
 }
 impl Session {
@@ -132,6 +134,19 @@ impl Session {
         Ok(())
     }
     /// 不排队获取会话操作许可；忙碌时立即返回 SESSION_BUSY。
+    /// 控制切换等待同一操作许可，防止管理员恢复越过正在执行的人工输入。
+    pub async fn acquire_control(
+        &self,
+        timeout_ms: u64,
+    ) -> Result<tokio::sync::OwnedSemaphorePermit> {
+        tokio::time::timeout(
+            Duration::from_millis(timeout_ms),
+            self.busy.clone().acquire_owned(),
+        )
+        .await
+        .map_err(|_| Fault::rejected("SESSION_BUSY", "等待浏览器操作结束超时"))?
+        .map_err(|_| Fault::rejected("SESSION_CLOSED", "会话已经关闭"))
+    }
     pub fn try_acquire(&self) -> Result<tokio::sync::OwnedSemaphorePermit> {
         self.busy
             .clone()
@@ -184,6 +199,8 @@ pub struct Sessions {
     entries: Arc<Mutex<HashMap<String, Arc<Session>>>>,
     /// 停机后阻止任何新会话占用容量。
     stopping: CancellationToken,
+    /// 创建请求与心跳共享的本机资源采样和准入裁决。
+    pub admission: Arc<crate::admission::Admission>,
 }
 impl Sessions {
     /// 构建空登记表；启动恢复由 Node 在开放网关之前执行。
@@ -195,6 +212,7 @@ impl Sessions {
             node_epoch,
             entries: Arc::new(Mutex::new(HashMap::new())),
             stopping: CancellationToken::new(),
+            admission: Arc::new(crate::admission::Admission::default()),
         }
     }
     /// 读取进程内会话句柄，不查询历史已关闭会话。
@@ -290,6 +308,7 @@ impl Sessions {
         let session = Arc::new(Session {
             lease_id,
             fence,
+            control: std::sync::Mutex::new(crate::control::Control::default()),
             deadline: AtomicU64::new(deadline.min(hard_deadline)),
             hard_deadline,
             identity_seed: if external_account.is_some() {
@@ -313,17 +332,25 @@ impl Sessions {
         if self.stopping.is_cancelled() {
             return Err(Fault::rejected("NODE_STOPPING", "node is draining"));
         }
-        self.store
-            .reserve(record.clone(), self.config.capacity)
-            .await
-            .map_err(|e| {
-                let code = match e.downcast_ref::<crate::store::AdmissionError>() {
-                    Some(crate::store::AdmissionError::Capacity) => "NODE_BUSY",
-                    Some(crate::store::AdmissionError::SessionExists) => "SESSION_EXISTS",
-                    _ => "STORE_FAILED",
-                };
-                Fault::rejected(code, e.to_string())
-            })?;
+        let status = self.admission.status(
+            &self.config,
+            &self
+                .store
+                .sessions()
+                .await
+                .map_err(|e| Fault::rejected("STORE_FAILED", e.to_string()))?,
+        );
+        if !status.accepting {
+            return Err(Fault::rejected("RESOURCE_UNAVAILABLE", status.reason));
+        }
+        self.store.reserve(record.clone()).await.map_err(|e| {
+            let code = match e.downcast_ref::<crate::store::AdmissionError>() {
+                Some(crate::store::AdmissionError::SessionExists) => "SESSION_EXISTS",
+                _ => "STORE_FAILED",
+            };
+            Fault::rejected(code, e.to_string())
+        })?;
+        self.admission.accepted();
         entries.insert(id, session.clone());
         drop(entries);
         let (opened_tx, opened) = oneshot::channel();
@@ -764,6 +791,7 @@ mod external_tests {
         let session = Session {
             lease_id: "fixture".into(),
             fence: 1,
+            control: std::sync::Mutex::new(crate::control::Control::default()),
             deadline: AtomicU64::new(now + 1_000),
             hard_deadline: now + 10_000,
             identity_seed: None,

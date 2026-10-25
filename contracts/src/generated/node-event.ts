@@ -51,7 +51,10 @@ export type NodeEvent =
        */
       leaseRequestId: string;
       pool: string;
-      capacity: number;
+      /**
+       * 仅用于读取旧节点，不参与新版资源准入。
+       */
+      capacity?: number;
       /**
        * 本机仍占用容量的会话，包括关闭中和隔离状态。
        */
@@ -113,6 +116,7 @@ export type NodeEvent =
          * 案例使用临时目录和输入身份材料，不恢复或保存本地身份基准。
          */
         ephemeralProfiles?: boolean;
+        directHitl?: boolean;
       };
       /**
        * 节点接受的租约和会话硬期限上限，控制面不得超额授权。
@@ -122,6 +126,14 @@ export type NodeEvent =
         maxSessionMs: number;
       };
       runtime?: NodeRuntime;
+      publicUrl?: string;
+      admission?: {
+        accepting: boolean;
+        reason: string;
+        cpuPercent: number;
+        availableBytes: number;
+        reserveBytes: number;
+      };
     }
   | {
       type: 'protocol.error';
@@ -159,6 +171,74 @@ export type NodeEvent =
         | 'SESSION_OPERATION_FAILED'
         | 'SESSION_COMMAND_TIMEOUT'
         | 'UNKNOWN';
+    }
+  | {
+      type: 'hitl.result';
+      messageId: string;
+      nodeId: string;
+      nodeEpoch: string;
+      sessionId: string;
+      leaseId: string;
+      fence: number;
+      interventionId: string;
+      controlRevision: number;
+      authRevision: number;
+      commandId: string;
+      operationStatus: 'SUCCEEDED' | 'FAILED' | 'TIMED_OUT' | 'UNKNOWN' | 'CANCELLED';
+      effect: 'NOT_STARTED' | 'COMPLETED' | 'MAY_HAVE_HAPPENED';
+      error?: {
+        [k: string]: unknown;
+      };
+      operation: {
+        type: 'browser.input' | 'browser.cookies.set' | 'browser.act';
+        action?: string;
+      };
+    }
+  | {
+      type: 'hitl.finished';
+      messageId: string;
+      nodeId: string;
+      nodeEpoch: string;
+      sessionId: string;
+      leaseId: string;
+      fence: number;
+      interventionId: string;
+      controlRevision: number;
+      authRevision: number;
+      completion: {
+        type: 'complete' | 'unable';
+        /**
+         * @maxItems 10
+         */
+        confirmedItems?:
+          | []
+          | [number]
+          | [number, number]
+          | [number, number, number]
+          | [number, number, number, number]
+          | [number, number, number, number, number]
+          | [number, number, number, number, number, number]
+          | [number, number, number, number, number, number, number]
+          | [number, number, number, number, number, number, number, number]
+          | [number, number, number, number, number, number, number, number, number]
+          | [number, number, number, number, number, number, number, number, number, number];
+        /**
+         * @maxItems 10
+         */
+        confirmedConditionKeys?:
+          | []
+          | [string]
+          | [string, string]
+          | [string, string, string]
+          | [string, string, string, string]
+          | [string, string, string, string, string]
+          | [string, string, string, string, string, string]
+          | [string, string, string, string, string, string, string]
+          | [string, string, string, string, string, string, string, string]
+          | [string, string, string, string, string, string, string, string, string]
+          | [string, string, string, string, string, string, string, string, string, string];
+        reason?: string;
+      };
     };
 
 /**

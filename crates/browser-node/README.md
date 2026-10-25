@@ -71,3 +71,9 @@ target/release/proofrun-node --config deploy/node.example.toml serve
 协议详见 [node-protocol](../../docs/node-protocol.md)，测试命令和范围见 [测试入口与覆盖边界](../../tests/README.md)。
 
 独立免登录 HITL 处理页、实时浏览器画面、受限输入和完成交接现已接入，使用与验证边界见 [HITL 说明](../../docs/hitl.md)。
+
+## 客户端直连与资源准入
+
+节点本身不设置固定会话数。`admission.rs` 根据 Linux CPU 差值、有效 cgroup 配额、可用内存与 PSI 决定是否接收下一次 `session.open`，启动期间保留内存预算并等待稳定；资源不足直接拒绝，不建立本地任务队列。
+
+`direct.rs` 提供 `/hitl/control`、`/hitl/frames`、`/live/frames`，默认只监听 `127.0.0.1:9310`。配置 `public_url` 后由本机 Caddy 提供 HTTPS；地址通过心跳登记给 API，客户端在 API 授权后直连。媒体与操作不经过 API。配置位置、域名与升级步骤见[部署说明](../../deploy/README.md#节点直连域名与升级)，交接流程见[HITL](../../docs/hitl.md)。

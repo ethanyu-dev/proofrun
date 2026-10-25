@@ -28,12 +28,17 @@ export type HitlServer =
         | [string, string, string, string, string, string, string, string]
         | [string, string, string, string, string, string, string, string, string]
         | [string, string, string, string, string, string, string, string, string, string];
+      /**
+       * 节点已冻结输入，等待控制面确认完成。
+       */
+      finalizing?: boolean;
     }
   | {
       type: 'frame';
       data: string;
       width: number;
       height: number;
+      capturedAt?: number;
     }
   | {
       type: 'error';

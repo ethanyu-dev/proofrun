@@ -29,6 +29,7 @@ flowchart LR
   A -.->|逐项验收结果与证据引用| API
   N -->|主动建立 WSS、心跳与结果| G
   G -->|通过已有连接下发命令| N
+  UI <-->|直连 WSS：实时画面、人工输入| N
   N -->|有限浏览器操作| E
   E -->|页面访问| B
   API -.->|汇总验收结论| UI
@@ -50,6 +51,8 @@ flowchart TB
 
   subgraph NODE[proofrun-node · 一个可部署的 Rust 二进制]
     GW[gateway/mod.rs<br/>主动连接、心跳、ACK、重连]
+    DIRECT[direct.rs / control.rs<br/>独立控制与媒体连接、代次授权]
+    ADMISSION[admission.rs<br/>CPU、内存和压力裁决]
     ENTRY[node.rs<br/>Schema、身份与租约校验<br/>先登记、再派发、后提交]
     STORE[(store.rs · SQLite<br/>会话意图、命令去重、结果 outbox)]
     SESS[sessions/mod.rs<br/>本机容量、租约、取消与串行准入]
@@ -67,6 +70,9 @@ flowchart TB
     GW -->|下发命令| ENTRY
     ENTRY -->|派发前登记、提交终态| STORE
     STORE -->|未确认结果重送| GW
+    CLIENT[客户端] <-->|节点 HTTPS 域名| DIRECT
+    DIRECT -->|共用执行入口| ENTRY
+    SESS --> ADMISSION
     ENTRY -->|会话准入| SESS
     SESS -->|启动与关闭| PROC
     PROC -->|监管进程范围| HOST

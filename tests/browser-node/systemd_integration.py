@@ -23,7 +23,7 @@ class Client:
     def __init__(self, root):
         self.root = Path(root)
         self.config = self.root / 'node.toml'
-        self.config.write_text(f'home = {json.dumps(str(self.root / "state"))}\nagent_browser_bin = {json.dumps(str(FAKE))}\ncapacity = 2\nallow_unverified_writes = true\n')
+        self.config.write_text(f'home = {json.dumps(str(self.root / "state"))}\nagent_browser_bin = {json.dumps(str(FAKE))}\nmemory_reserve_bytes = 67108864\nsession_reserve_bytes = 67108864\nallow_unverified_writes = true\n')
         self.start()
 
     def start(self):
@@ -77,6 +77,10 @@ class Client:
         return self.result(command)
 
     def open(self, session, ttl=60000, max_ms=120000, renewable=False):
+        if ttl > 1:
+            self.fresh_heartbeat()
+        while ttl > 1 and not self.heartbeat.get('admission', {}).get('accepting'):
+            self.fresh_heartbeat()
         options = {'renewable': True, 'liveView': True} if renewable else {}
         return self.call(session, 'session.open', leaseRequestId=self.heartbeat['leaseRequestId'], leaseTtlMs=ttl, maxDurationMs=max_ms, **options)
 
@@ -132,12 +136,14 @@ def run():
     client = Client(root)
     checks = []
     try:
-        # 容量准入：两个会话占满配置上限，第三个立即拒绝；不验证全局调度队列。
-        assert_ok(client.open('one')); assert_ok(client.open('two'))
+        # 范围：启动稳定窗口拒绝瞬间追加，恢复后无固定槽位上限；不验证生产资源容量。
+        assert_ok(client.open('one'))
+        rejected=client.call('third','session.open',leaseRequestId=client.heartbeat['leaseRequestId'],leaseTtlMs=60000,maxDurationMs=120000)
+        assert rejected['error']['code']=='RESOURCE_UNAVAILABLE',rejected
+        client.fresh_heartbeat()
+        assert_ok(client.open('two'))
         pids_one, pids_two = client.pids('one'), client.pids('two')
-        rejected = client.open('third')
-        assert rejected['error']['code'] == 'NODE_BUSY', rejected
-        checks.append('capacity admission')
+        checks.append('resource admission and startup settling')
 
         # 观察与证据：假引擎截图进入本地 spool 并保持 PENDING；不验证远端存储。
         observation = client.call('one', 'browser.observe', screenshot=True)

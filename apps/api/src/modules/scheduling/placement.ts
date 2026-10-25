@@ -22,7 +22,7 @@ const QUEUE_MESSAGES: Record<QueueReason['code'], string> = {
   NO_ELIGIBLE_NODE: '当前没有满足路由、指定身份节点及所需能力的在线节点。',
   SESSION_BUDGET_UNSUPPORTED:
     '在线节点的最长会话时限不足以覆盖全部步骤、操作收尾和后续清理，请拆分 case 或提高节点会话能力。',
-  NODE_CAPACITY: '符合条件的节点容量已满，正在等待浏览器会话释放。',
+  NODE_CAPACITY: '符合条件的节点暂不接收新任务，正在等待资源恢复。',
   NODE_ROTATING: '符合条件的节点正在轮换凭据，暂时不能领取任务。',
 };
 

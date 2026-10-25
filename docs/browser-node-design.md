@@ -2,12 +2,12 @@
 
 节点实现与目标架构须区分，部分能力仍待真实环境验收。实际接口与限制以 [节点说明](../crates/browser-node/README.md)、[协议](node-protocol.md) 和 [测试入口与覆盖边界](../tests/README.md) 为准。
 
-目标是提供容易部署、容易定位故障、可以可靠回收的远端浏览器执行节点。Spec 定义、模型决策和业务验收判定属于上层与执行 Agent；Browser Node 只执行有授权、有期限的浏览器操作并返回事实和证据。
+目标是提供容易部署、容易定位故障、可以可靠回收的远端浏览器执行节点。Spec 定义、模型决策和业务验收判定属于上层与执行 Agent；Browser Node 只执行有授权、有期限的浏览器操作并返回事实和证据。直连链路见 [HITL 设计](hitl.md)，域名与资源参数见 [部署说明](../deploy/README.md#节点直连域名与升级)。
 
 ## 1. 首版决策
 
 1. 一个 Cargo crate、一个可部署二进制 `proofrun-node`。
-2. 一个常驻主服务，主动通过 WSS 连接控制面；节点不开放业务 HTTP 监听端口。
+2. 一个常驻主服务，主动通过 WSS 连接控制面；同时在回环地址提供直连 WebSocket，由节点本机 TLS 代理通过独立 HTTPS 域名暴露给客户端。
 3. 一场浏览器会话对应一个内部 `session-host` 进程、一个 agent-browser session、一组独立 Chrome 进程。
 4. 首个生产目标限定为 Linux VM + systemd + cgroup v2；macOS 用于开发与适配验证。
 5. 控制面保留全局队列；节点只做本机容量准入，会话内一次只执行一个浏览器操作。
@@ -77,6 +77,9 @@ crates/browser-node/src/
   main.rs                子命令分发、启动与退出
   config.rs              配置读取和启动检查
   node.rs                组装组件、主服务生命周期
+  admission.rs           CPU、内存和 cgroup 压力准入
+  control.rs             唯一控制代次及直连能力
+  direct.rs              客户端控制/媒体入口
   protocol.rs            同源生成的协议入口
   error.rs               稳定的节点错误分类
 
@@ -84,7 +87,7 @@ crates/browser-node/src/
     mod.rs               WSS 连接、心跳、重连、消息收发
 
   sessions/
-    mod.rs               容量、session 注册表、租约和命令准入
+    mod.rs               session 注册表、租约和命令串行
     host.rs              内部 session-host 模式及串行执行
 
   engine/
@@ -320,3 +323,9 @@ Node 采集证据，执行 Agent 判断证据是否足够，控制面生成最�
 测试重点是外部可见行为：服务端提交次数、真实进程存活、租约是否仍授权、证据能否读取。Linux 集成测试为生产依据，macOS 上的 CLI 和类型检查不代替这些验收。
 
 建议记录五组指标：会话启动/关闭耗时、命令耗时、证据上传耗时、占用/隔离中的 slot、UNKNOWN 与恢复失败次数。先使用 tracing 日志和心跳摘要，不为首版额外搭建完整可观测性子系统。
+
+## 资源准入与直连状态
+
+API 保留唯一全局队列，每个节点同一时刻只进行一个创建握手。Node 在会话注册锁内重新采样并记录创建意图，不以心跳提示代替最终判断。CPU 差值不足时等待采样，使用停止/恢复双阈值；内存同时受宿主和 cgroup 祖先限制，正在启动或未核实关闭的会话不会被当成释放资源。资源不足明确拒绝，Node 不保存待执行任务队列。
+
+客户端输入共享原有命令账本和单会话执行许可。`session.control` 在取得该许可后切换控制代次；安装直连能力只保存随机令牌摘要。完成先冻结输入，再把可靠事件交给 API；API 在事务中保存确认事项并生成 AUTO 命令，Node 收到后才开放自动动作。API 不持有媒体或代理输入，控制连接与媒体连接互相独立。

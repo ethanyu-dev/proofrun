@@ -1,9 +1,15 @@
+import type { PoolClient } from 'pg';
 import { caseArmIds } from '../cases/structured.js';
 import { recordHumanUnable } from '../hitl/unable.js';
 import { pauseStepBudget } from './step-budget.js';
 import { Database } from '../../db.js';
 import { ApiError, digest } from '../../domain.js';
-import { executionContext, type ExecutionContext } from './state.js';
+import {
+  executionContext,
+  envelope,
+  insertCommand,
+  type ExecutionContext,
+} from './state.js';
 import { randomUUID } from 'node:crypto';
 import { interventionToken } from './hitl-token.js';
 import {
@@ -37,8 +43,9 @@ export class ExecutionControl {
     confirmedItems?: string[],
     conditionKeys?: string[],
     confirmedConditionKeys?: string[],
+    transaction?: PoolClient,
   ) {
-    return this.db.transaction(async (client) => {
+    const change = async (client: PoolClient) => {
       const context = await executionContext(client, id);
       if (token !== null && digest(token) !== context.token_hash)
         throw new ApiError(401, 'UNAUTHORIZED', 'Invalid execution credential');
@@ -192,12 +199,56 @@ export class ExecutionControl {
           ],
         );
       }
+      if (action !== 'request')
+        await insertCommand(
+          client,
+          id,
+          envelope(
+            context,
+            {
+              type: 'session.control',
+              mode: target as 'AUTO' | 'HUMAN',
+              revision: next,
+            },
+            15_000,
+          ),
+        );
       return {
         controlMode: target,
         controlRevision: next,
         controlReason: nextReason,
       };
-    });
+    };
+    if (transaction) return change(transaction);
+    const view = await this.db.transaction(change);
+    if (action !== 'request') {
+      // 提交后再等节点确认，避免持锁阻塞回执；节点事件事务本身不能等待自己提交。
+      const deadline = Date.now() + 15_000;
+      while (Date.now() < deadline) {
+        const row = (
+          await this.db.query(
+            "SELECT result FROM pr_commands WHERE execution_id=$1 AND kind='session.control' AND envelope#>>'{command,revision}'=$2 AND NOT (envelope->'command' ? 'grant') ORDER BY created_at DESC LIMIT 1",
+            [id, String(view.controlRevision)],
+          )
+        ).rows[0];
+        if (row?.result) {
+          if (row.result.operationStatus !== 'SUCCEEDED')
+            throw new ApiError(
+              409,
+              'CONTROL_HANDOFF_FAILED',
+              '节点未确认控制权交接',
+            );
+          return view;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      throw new ApiError(
+        503,
+        'CONTROL_HANDOFF_PENDING',
+        '节点尚未确认控制权，请查询当前状态',
+      );
+    }
+    return view;
   }
 
   /** 人工无法处理直接终止整个 Case，事务内保存原文并撤销所有尚未结束的执行。 */
@@ -206,6 +257,7 @@ export class ExecutionControl {
     revision: number,
     reason: string,
     publicUrl: string,
+    transaction?: PoolClient,
   ) {
     if (typeof reason !== 'string' || !reason.trim() || reason.length > 2000)
       throw new ApiError(
@@ -213,7 +265,7 @@ export class ExecutionControl {
         'HITL_REASON_REQUIRED',
         '请填写无法处理的具体原因',
       );
-    return this.db.transaction(async (client) => {
+    const unable = async (client: PoolClient) => {
       // 同例两组同时提交人工终态时先串行整例，避免分别持有组锁后交叉等待。
       await client.query(
         "SELECT pg_advisory_xact_lock(hashtextextended(COALESCE(t.definition#>>'{comparison,id}',t.id),8)) FROM pr_tasks t JOIN pr_executions e ON e.task_id=t.id WHERE e.id=$1",
@@ -266,7 +318,8 @@ export class ExecutionControl {
       for (const taskId of [...new Set(ids)].sort())
         await recordHumanUnable(client, taskId, reason.trim(), publicUrl);
       return { reason: reason.trim() };
-    });
+    };
+    return transaction ? unable(transaction) : this.db.transaction(unable);
   }
 
   private active(context: ExecutionContext) {
@@ -337,7 +390,7 @@ export class ExecutionControl {
       throw new ApiError(404, 'EXECUTION_MISSING', 'Execution not found');
     const [commands, events, observation, artifacts] = await Promise.all([
       this.db.query(
-        `SELECT id,kind,actor,envelope#>>'{command,action}' AS action,result->>'operationStatus' AS status,result->>'effect' AS effect,result#>>'{error,code}' AS error,created_at FROM pr_commands WHERE execution_id=$1 AND kind<>'session.renew' ORDER BY created_at DESC,id DESC LIMIT $2`,
+        `SELECT * FROM (SELECT id,kind,actor,envelope#>>'{command,action}' AS action,result->>'operationStatus' AS status,result->>'effect' AS effect,result#>>'{error,code}' AS error,created_at FROM pr_commands WHERE execution_id=$1 AND kind NOT IN ('session.renew','session.watch','session.control') UNION ALL SELECT id,result#>>'{operation,type}' AS kind,'HUMAN' AS actor,result#>>'{operation,action}' AS action,result->>'operationStatus' AS status,result->>'effect' AS effect,result#>>'{error,code}' AS error,created_at FROM pr_human_commands WHERE execution_id=$1) activity ORDER BY created_at DESC,id DESC LIMIT $2`,
         [id, ACTIVITY_LIMIT],
       ),
       this.db.query(

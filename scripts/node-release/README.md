@@ -74,7 +74,7 @@ curl -fsSL https://github.com/ethanyu-dev/proofrun/releases/latest/download/inst
 | ---------------------------------------------- | ---------------------------------------- | -------------------- |
 | `~/.local/lib/proofrun-node/releases/<版本>`   | 不可变程序和引擎                         | 新增版本，保留旧版本 |
 | `~/.local/lib/proofrun-node/current`           | 当前程序指针                             | 检查后原子切换       |
-| `~/.config/proofrun/node.toml`                 | 网关、池、浏览器和容量配置               | 保留，不覆盖         |
+| `~/.config/proofrun/node.toml`                 | 网关、直连地址、浏览器和资源准入配置     | 保留，不覆盖         |
 | `~/.local/share/proofrun-node`                 | 身份、凭据、SQLite、登录状态、会话和证据 | 保留，不删除或重置   |
 | `~/.config/systemd/user/proofrun-node.service` | 用户服务                                 | 仅首次创建           |
 
@@ -90,3 +90,9 @@ python3 -m unittest discover -s tests/node-release -p 'test_*.py'
 ```
 
 这些测试检查真实归档、文件系统和 SQLite，但替代了 systemd 与 doctor 进程边界；不代表真实机器的浏览器、网关重连或版本回滚已经验收。
+
+## 直连版本配置迁移
+
+当前源码安装器新增 `--public-url https://browser-node-01.example.com`，将地址写入 `~/.config/proofrun/node.toml`。生产 HTTPS 域名、TLS 代理和 `listen` 配套配置见[节点直连部署](../../deploy/README.md#节点直连域名与升级)。上文历史 release 命令仅说明已有发行包，不包含这次尚未发布的改造。
+
+升级已有安装前，停止派发并确认会话清理；手动删除旧 `capacity`，填写 `public_url` 和 `listen`，按实际内存调整余量。安装器保留配置，不替用户迁移资源策略。API/Console 与 Node 必须按同一协议升级；仅在线不代表域名、证书与客户端网络已经通过验证。

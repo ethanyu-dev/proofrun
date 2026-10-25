@@ -127,7 +127,7 @@ mod tests {
             fence: 1,
             node_epoch: "fixture-epoch".into(),
         };
-        store.reserve(record.clone(), 1).await.unwrap();
+        store.reserve(record.clone()).await.unwrap();
         let path = root.path().join("sessions").join(&record.launch_id);
         fs::create_dir_all(&path).unwrap();
         fs::write(path.join("profile-data"), "private").unwrap();
@@ -159,6 +159,6 @@ mod tests {
         assert!(path.exists());
         retain(&config, 1, true).await.unwrap();
         assert!(!path.exists());
-        assert!(store.reserve(record, 1).await.is_err());
+        assert!(store.reserve(record).await.is_err());
     }
 }

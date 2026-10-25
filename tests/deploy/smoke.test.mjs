@@ -258,3 +258,30 @@ test(
     assert.equal(Number(count), migrations.length);
   },
 );
+
+// 范围：真实 Caddy 解析节点代理模板，限定三个路径及回环上游；不验证公网 DNS 和证书签发。
+test('节点域名模板只暴露直连控制与媒体路径', async () => {
+  const adapted = JSON.parse(
+    await docker(
+      'run',
+      '--rm',
+      '-v',
+      `${ROOT}:/opt/proofrun:ro`,
+      '-e',
+      'PROOFRUN_NODE_DOMAIN=https://node.example.test',
+      CADDY_IMAGE,
+      'caddy',
+      'adapt',
+      '--config',
+      '/opt/proofrun/deploy/node.Caddyfile',
+      '--adapter',
+      'caddyfile',
+    ),
+  );
+  const text = JSON.stringify(adapted);
+  for (const path of ['/hitl/control', '/hitl/frames', '/live/frames'])
+    assert.ok(text.includes(path));
+  assert.ok(text.includes('127.0.0.1:9310'));
+  assert.ok(text.includes('node.example.test'));
+  assert.ok(!text.includes('/v1/'));
+});

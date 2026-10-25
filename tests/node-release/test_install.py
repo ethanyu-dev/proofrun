@@ -11,6 +11,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -109,6 +110,23 @@ class InstallTests(unittest.TestCase):
             patch.object(sys, "argv", args),
         ):
             installer.main()
+
+    def test_direct_url_and_legacy_capacity_migration(self):
+        # 范围：公开域名落盘、无固定槽位及旧配置拒绝；不配置真实 DNS、TLS 或 systemd。
+        config=self.root / "node.toml"
+        args=SimpleNamespace(api="https://api.example.test",pool="test",chrome=str(self.chrome),public_url="https://node.example.test")
+        installer.configure(config,self.root / "current",self.home,args)
+        saved=installer.tomllib.loads(config.read_text())
+        self.assertEqual(saved["public_url"],args.public_url)
+        self.assertEqual(saved["listen"],"127.0.0.1:9310")
+        self.assertNotIn("capacity",saved)
+        config.write_text(config.read_text()+"capacity = 8\n")
+        with self.assertRaisesRegex(ValueError,"capacity"):
+            installer.configure(config,self.root / "current",self.home,args)
+        config.unlink()
+        args.public_url="https://node.example.test/private"
+        with self.assertRaisesRegex(ValueError,"HTTPS origin"):
+            installer.configure(config,self.root / "current",self.home,args)
 
     def test_reject_checksum_and_traversal(self):
         # 范围：校验失败或越界归档不产生目录外文件；不覆盖网络下载或签名信任。

@@ -245,6 +245,37 @@ export type BrowserCommand =
        * 平台分配的标签页分组身份，不是模型指定的活动页；同一 profile 内独立保存观察引用。
        */
       tabScope?: string;
+    }
+  | {
+      type: 'session.control';
+      mode: 'AUTO' | 'HUMAN';
+      revision: number;
+      grant?: {
+        id: string;
+        tokenHash: string;
+        connectExpiresAt: number;
+        expiresAt: number;
+        origin: string;
+        authRevision: number;
+        state: {
+          [k: string]: unknown;
+        };
+      };
+    }
+  | {
+      type: 'session.watch';
+      revision: number;
+      grant: {
+        id: string;
+        tokenHash: string;
+        connectExpiresAt: number;
+        expiresAt: number;
+        origin: string;
+        authRevision: number;
+        state: {
+          [k: string]: unknown;
+        };
+      };
     };
 
 /**

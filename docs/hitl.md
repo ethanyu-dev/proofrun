@@ -48,29 +48,49 @@ Cookie 值不进入 CLI 参数、操作回执、活动摘要或模型工具上�
 
 ## 接口和授权
 
-- 管理员：`GET /v1/admin/executions/:id/intervention`。
-- 本次执行者：`GET /v1/executions/:id/intervention`，使用执行租约令牌。
-- 返回 `{ intervention: { id, items, expiresAt, path, url } }`；没有有效介入时为 null。
-- 处理页：`/#/hitl/<id>/<token>`。token 留在 URL fragment，通过 `/v1/hitl/connect` 的首条消息认证，不进入 HTTP 请求路径、查询参数或节点。
-- 节点：另建主动连接 `/v1/hitl/relay`，使用原节点凭据及服务端刚下发的临时 streamId，不能任意选择其他会话。
+任务页通过已认证的 `GET /v1/admin/executions/:id/intervention`（或执行者对应入口）取得 `/#/hitl/<id>/<token>`。处理链接有效四小时，仍受任务、人工等待、外部账号期限和短租约约束。过期链接只能由任务页重新签发；轮换身份后旧链接失效。
 
-每个链接有效四小时，独立于任务执行预算。只有通过管理员或执行者认证的任务详情接口能为仍在等待的活动执行更新过期链接；更新会轮换链接身份，旧凭据不再有效。完成、取消、租约失效或控制代次变化仍撤销操作权。旧链接不能访问其他任务或管理员接口，完成后重开只返回完成状态。平台管理员密钥轮换后，不应依赖旧链接的重新派生；已经持有的旧链接仍受原有效期和任务状态约束。
+处理页把链接凭据放在 `POST /v1/hitl/bootstrap` 请求体中。REQUESTED 时只轮询等待；HUMAN 且节点确认交接后，API 生成一分钟内可连接的随机凭据，通过可靠 `session.control` 命令把摘要和授权范围安装到节点，等待节点回执后返回直连地址。原始链接、管理员密钥及机器凭据都不会发给节点直连客户端。响应禁止缓存，令牌不放进 URL 或查询串。
 
-本地 Console 与 API 分端口时，设置 `PROOFRUN_CONSOLE_URL=http://127.0.0.1:5173` 生成可打开的链接。生产默认使用 `PROOFRUN_PUBLIC_URL` 的同源 HTTPS 页面和 WSS。Vite 开发代理已开启 WebSocket；Caddy 的 `/v1/*` 转发覆盖两个新连接入口。
+节点验证 WebSocket Origin、首条 `authenticate` 消息、令牌摘要、介入身份、控制代次与会话短租约。控制凭据只消费一次，每个会话只有一个人工控制连接；媒体连接必须依附该控制连接。重连重新向 API 换取凭据，旧连接退出不会撤销新连接。
+
+```mermaid
+sequenceDiagram
+  participant C as Console / HITL 页面
+  participant A as API
+  participant N as Browser Node
+  participant B as Chromium
+  C->>A: POST bootstrap（处理链接）
+  A->>N: session.control（摘要、Origin、代次、期限）
+  N-->>A: 持久化命令回执
+  A-->>C: 节点地址 + 短期凭据
+  C->>N: WSS /hitl/control + 首消息认证
+  C->>N: WSS /hitl/frames + 首消息认证
+  N-->>C: JPEG 视口帧
+  C->>N: 受限操作 + commandId
+  N->>B: 串行执行
+  N-->>C: 已落盘的操作回执
+  N-->>A: hitl.result（可靠摘要事件）
+  C->>N: complete + 逐项确认
+  N->>N: 冻结输入并保存完成事件
+  N->>A: hitl.finished
+  A->>N: session.control AUTO（新代次）
+  N-->>C: completed
+```
+
+人工“无法处理”同样先保存可靠事件，再由 API 终止 Case。完成期间断线后只查询结果，不重放输入。取消、租约失效、节点重启或控制代次变更会撤销直连。
 
 ## 节点与实时通道
 
-复用固定 agent-browser 0.38.1 的本机 streaming 服务。Node 仅为允许介入的任务确保流服务可用，读取该会话私有目录中的端口元数据，不开放 VM 入站端口。原生服务仅绑定回环地址。
+客户端通过节点公开 HTTPS 域名连接本机代理，再到 Node 回环监听。`/hitl/control` 传输入和回执，`/hitl/frames` 传人工画面；只读 Live 使用单独的 `/live/frames` 和只读凭据，不能取得输入权。API 只负责授权和持久状态，不持有媒体 socket 或最后帧缓存，也没有 `/v1/hitl/connect`、`/v1/hitl/relay`、`/v1/live/connect`、`/v1/live/relay` 入口。
 
-浏览器画面经 `Node → API → 处理页` 中转，最多请求 8 帧/秒，单帧限制 2 MiB；慢处理页丢弃旧画面。此通道只转发当前视口图像，不转发原生 dashboard、浏览器标签列表、CDP 或任意引擎消息。画面不写入命令 outbox 或报告证据库。
+节点使用固定 agent-browser 0.38.1 的本机 streaming 服务，最多请求 8 帧/秒，单帧限制 2 MiB。发送完成后向本机流 ACK；网络发送超过三秒则断开，控制消息不会排在媒体连接后。流只传视口图像，不公开 CDP、引擎 dashboard、标签列表或任意引擎消息。画面不写入 SQLite outbox 或报告证据库；终态最后一帧仅在当前页面内存保留。
 
-人工输入使用新增的封闭 `browser.input` 操作（click/text/press/scroll），沿用持久命令、commandId 去重和单会话串行，不消耗 Agent 动作额度；连续英文键入在页面短暂合并后提交，中文或粘贴可整段提交。普通 Agent 不允许提交此人工专用操作。
+输入允许 `browser.input`（click/text/press/scroll）、HTTP(S) 导航/刷新、目标站点同源 Cookie 写入；不接受任意脚本、会话管理或分组切换。人工和自动操作共用会话串行许可；SQLite 以完整命令身份去重，先保存结果再回应客户端。人工输入不消耗 Agent 动作预算，可能影响身份的首次操作递增 authRevision，重送不递增。API 只持久化不含输入值的操作摘要，节点账本保存命令哈希和回执摘要，原始输入仅用于当前操作。
 
-处理页相邻的待发送滚动会合并，避免触控板连续事件塞满输入队列；点击与按键保持原顺序。画面背压时每个连接仅缓存最新一帧，每 100ms 检查缓冲排空并补发；静态页面可能不再重绘，不能依赖下一帧恢复画面。持续积压 5 秒或单帧超限时断开连接，撤权和关闭立即清理缓存。操作回执、错误或完成通知独立发送，不能静默丢弃。输入超过 25 秒、完成交接超过 30 秒未确认时关闭连接并提供重连入口，重连前应先检查页面状态，未确认输入不会自动重放。
+初始视口同步为 1280×720。页面按 JPEG 比例显示并映射坐标，输入仍走受限的原生 mouse/keyboard 命令。客户端输入超过 25 秒、交接超过 30 秒未确认时显示重连入口；未确认操作不会自动重放。
 
-启用实时画面的新会话会显式同步 Chromium 与流服务的初始视口为 1280×720；后续视口修改仍走引擎命令。处理页使用 JPEG 自身比例显示，点击按显示区域映射到远端视口，边框不占用坐标区域。升级前创建的会话不自动改变视口，需要创建新会话使用该初始化修复。
-
-调用 `mouse move/down/up`、`keyboard inserttext` 和受限 `press`；前导短横线用字符 `-` 按键处理（物理键名 Minus 不会插入文本），不能被解释为 CLI 参数。没有把客户端事件直接透传给 CDP。任意一步的未知结果都不重放。操作摘要不返回输入内容；原始命令仍按平台既有持久化与保留策略管理。
+域名配置与迁移顺序见 [部署说明](../deploy/README.md#节点直连域名与升级)。本地 Console 分端口时设置 API 的 `PROOFRUN_CONSOLE_URL`，该 origin 同时绑定直连授权；生产节点必须使用客户端可达的 HTTPS 地址。
 
 ## 验证
 
@@ -81,7 +101,7 @@ PROOFRUN_TEST_DATABASE_URL='<独立测试库>' pnpm test:agent:integration
 PROOFRUN_TEST_AGENT_BROWSER=/absolute/path/agent-browser-linux-arm64 pnpm test:hitl:linux
 ```
 
-新增 API 集成场景覆盖：非法链接、越权读取拒绝、单处理者、等待交接、画面中转、拒绝会话管理命令、输入去重与人工/Agent 预算隔离、断线重进、完成撤权、新旧介入隔离和取消失效。模型请求人工与恢复后的报告仍由 Agent/API 集成覆盖；这些测试中的模型和节点是协议夹具。
+新增 API 集成场景覆盖：非法链接、越权读取拒绝、单处理者、等待交接、客户端直连画面、拒绝会话管理命令、输入去重与人工/Agent 预算隔离、断线重进、完成撤权、新旧介入隔离和取消失效。模型请求人工与恢复后的报告仍由 Agent/API 集成覆盖；这些测试中的模型和节点是协议夹具。
 
 浏览器页面联调使用独立临时数据库，确认无需平台登录、仅显示当前待办和画面、提交输入、完成页及交接。内嵌浏览器限制自动关页，页面提供完成页回退，不能保证所有浏览器均能自动关闭。
 
@@ -93,13 +113,13 @@ Linux 测试使用真实 Rust Node、systemd、agent-browser 和 Chromium，检�
 
 ## 控制权与执行代次
 
-`AUTO → REQUESTED → HUMAN → AUTO` 是同一次执行的控制权状态，不是新的任务生命周期。管理员和模型均只能为 `environment.allowIntervention: true` 的任务请求人工辅助。REQUESTED 立即阻止新自动操作；worker 等在途命令完成，在安全点确认后进入 HUMAN。只有管理员能恢复 AUTO。
+`AUTO → REQUESTED → HUMAN → AUTO` 是同一次执行的控制权状态，不是新的任务生命周期。管理员和模型均只能为 `environment.allowIntervention: true` 的任务请求人工辅助。REQUESTED 立即阻止新自动操作；worker 等在途命令完成，在安全点确认后进入 HUMAN。管理员恢复或本次处理者提交完成后，由 API 发出新的 AUTO 代次并等待节点确认。
 
-暂停和恢复都更新 controlRevision。命令及报告绑定该代次；旧页面不能在新的人工会话里操作，旧模型回复不能在人工改动后继续执行。REQUESTED/HUMAN 暂停任务执行时限，默认不因等待时长结束任务；原 worker 和节点仍须持续续租，失联、取消和节点故障继续按原规则回收。
+暂停和恢复都更新 controlRevision。命令及报告绑定该代次；旧页面不能在新的人工会话里操作，旧模型回复不能在人工改动后继续执行。REQUESTED/HUMAN 暂停任务执行时限，使用独立人工等待期限（默认三十分钟）；原 worker 和节点仍须持续续租，失联、取消和节点故障继续按原规则回收。
 
-新 v2（stepBudget.version=1）暂停业务计时，恢复只补回实际等待时间，继续本步剩余额度；模型与动作计数不清零，清理三分钟墙钟不暂停。以下二十分钟重置规则只适用于旧任务。首次执行仍使用提交时的预算。用户完成处理后，控制面在同一事务恢复 AUTO 并把整体任务截止时间设为当前时间加二十分钟；重复提交同一恢复操作不会再次加时。Agent 从心跳及执行视图同步新截止时间，并忽略旧代次的迟到回复。完成后重新观察、重新判断；后续再次介入时同样暂停，再次完成时重新获得二十分钟。`maxActions` 只限制 Agent 的自动动作；HITL 点击、输入、滚动、导航和 Cookie 写入没有该次数上限，也不消耗 Agent 额度。Agent 已消耗次数不因人工完成而清零，单条命令超时、队列容量与串行约束仍生效。
+新 v2（stepBudget.version=1）暂停业务计时，恢复只补回实际等待时间，继续本步剩余额度；模型与动作计数不清零，清理三分钟墙钟不暂停。以下二十分钟重置规则只适用于旧任务。首次执行仍使用提交时的预算。用户完成处理后，控制面在同一事务恢复 AUTO 并把整体任务截止时间设为当前时间加二十分钟；重复提交同一恢复操作不会再次加时。Agent 从心跳及执行视图同步新截止时间，并忽略旧代次的迟到回复。完成后重新观察、重新判断；后续再次介入时同样暂停，再次完成时重新获得二十分钟。`maxActions` 只限制 Agent 的自动动作；HITL 点击、输入、滚动、导航和 Cookie 写入没有该次数上限，也不消耗 Agent 额度。Agent 已消耗次数不因人工完成而清零，单条命令超时与串行约束仍生效。
 
-移除人工次数限制需要部署 API、Agent 和 Console，无需新的 Browser Node release。迁移会从命令记录校准活动执行的 Agent 动作计数，不改写已结束的历史报告。
+直连版本需要同步升级 API、Console 与 Browser Node；旧节点没有资源准入声明，不能领取新任务。迁移会从命令记录校准活动执行的 Agent 动作计数，不改写已结束的历史报告。
 
 暂停时限规则需要同步部署 API、Agent 和 Console，并发布、升级 Browser Node。允许人工介入的任务仅分配给声明 `renewableSessions` 能力的新节点：其浏览器会话及 systemd 进程不再绑定初始任务时限，持续受短租约、宿主失联和取消回收约束；普通任务仍保留固定会话时限。旧节点不会领取人工介入任务，旧 Agent 仍会按领取时的固定期限停止，因此应在服务和节点均升级就绪后创建任务。
 

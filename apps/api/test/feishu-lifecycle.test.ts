@@ -115,7 +115,7 @@ test(
     };
     const remote = new FakeFeishu();
     let service = new CaseNotifications(db, config, log, remote);
-    let control = new ExecutionControl(db, ADMIN);
+    let control = notificationControl(db);
     // 登记订阅起点；首次启用前的历史记录不向新群补发。
     await service.tick();
 
@@ -573,7 +573,7 @@ test(
         await db.close();
         db = new Database(url.toString());
         await db.start();
-        control = new ExecutionControl(db, ADMIN);
+        control = notificationControl(db);
         service = new CaseNotifications(db, config, log, remote);
         await tick();
         assert.equal(remote.sends.length, sent);
@@ -897,3 +897,15 @@ test(
     }
   },
 );
+
+/** 通知夹具没有节点连接：只验证事务内状态和卡片，不声称交接已获真实节点确认。 */
+function notificationControl(db: Database) {
+  const control = new ExecutionControl(db, ADMIN);
+  const change = control.change.bind(control);
+  control.change = (...args) =>
+    db.transaction((client) => {
+      args[10] = client;
+      return change(...args);
+    });
+  return control;
+}

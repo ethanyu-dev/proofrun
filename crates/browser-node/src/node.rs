@@ -125,12 +125,16 @@ impl Node {
         requests.retain(|_, sent| now.saturating_sub(*sent) <= self.config.max_lease_ms);
         requests.insert(request.clone(), now);
         drop(requests);
-        let occupied: Vec<_> = self.store.sessions().await?.into_iter().map(|record| json!({
+        let records = self.store.sessions().await?;
+        let admission = self.sessions.admission.status(&self.config, &records);
+        let occupied: Vec<_> = records.into_iter().map(|record| json!({
             "sessionId":record.session_id,"state":record.state,"leaseId":record.lease_id,"fence":record.fence
         })).collect();
-        Ok(
-            json!({"type":"node.heartbeat","protocolVersion":"0.1","nodeId":self.id,"nodeEpoch":self.epoch,"runtime":crate::version::current(),"leaseRequestId":request,"pool":self.config.pool,"capacity":self.config.capacity,"limits":{"maxLeaseMs":self.config.max_lease_ms,"maxSessionMs":self.config.max_session_ms},"occupied":occupied,"capabilities":{"observe":true,"screenshot":true,"conditionWait":true,"writeActions":self.config.allow_unverified_writes,"engineWritesVerified":false,"networkEvidence":true,"environmentProof":true,"authState":false,"liveView":true,"renewableSessions":true,"identityPreparation":false,"fullProfile":false,"ephemeralProfiles":true,"externalAccounts":true,"nodeProfileManagement":false,"cookieCleanup":true,"profileTabs":true,"trace":true}}),
-        )
+        let mut heartbeat = json!({"type":"node.heartbeat","protocolVersion":"0.1","nodeId":self.id,"nodeEpoch":self.epoch,"runtime":crate::version::current(),"leaseRequestId":request,"pool":self.config.pool,"admission":admission,"limits":{"maxLeaseMs":self.config.max_lease_ms,"maxSessionMs":self.config.max_session_ms},"occupied":occupied,"capabilities":{"observe":true,"screenshot":true,"conditionWait":true,"writeActions":self.config.allow_unverified_writes,"engineWritesVerified":false,"networkEvidence":true,"environmentProof":true,"authState":false,"liveView":true,"directHitl":self.config.public_url.is_some(),"renewableSessions":true,"identityPreparation":false,"fullProfile":false,"ephemeralProfiles":true,"externalAccounts":true,"nodeProfileManagement":false,"cookieCleanup":true,"profileTabs":true,"trace":true}});
+        if let Some(url) = &self.config.public_url {
+            heartbeat["publicUrl"] = json!(url);
+        }
+        Ok(heartbeat)
     }
     /// 将控制面的 TTL 锚定到对应心跳的发出时刻，网络延迟也消耗租约。
     async fn deadline(&self, id: &str, ttl: u64) -> Result<u64> {
@@ -156,12 +160,35 @@ impl Node {
     }
     /// 校验、去重、派发并持久化一条命令；同 ID 重送只返回原结果或进行中状态。
     pub async fn handle(&self, value: Value) -> Value {
+        self.handle_inner(value, None).await
+    }
+    /// 人工直连共享执行账本，但结果是独立事件，不伪装为 API 已派发命令。
+    pub async fn handle_human(&self, value: Value, intervention: &str) -> Value {
+        self.handle_inner(value, Some(intervention)).await
+    }
+    async fn handle_inner(&self, value: Value, intervention: Option<&str>) -> Value {
+        let human = value["actor"] == "HUMAN";
+        let revision = value["controlRevision"].as_u64().unwrap_or(0);
+        let auth_revision = value["authRevision"].as_u64().unwrap_or(0);
         let received = process::boot_ms();
         let command: NodeCommand = match crate::protocol::parse_command(value) {
             Ok(c) => c,
             Err(_) => return json!({"type":"protocol.error","code":"INVALID_COMMAND"}),
         };
         let mut meta = json!({"protocolVersion":"0.1","type":"command.result","messageId":command.command_id,"commandId":command.command_id,"sessionId":command.session_id,"nodeId":command.node_id,"nodeEpoch":command.node_epoch,"leaseId":command.lease_id,"fence":command.fence});
+        if let Some(id) = intervention {
+            meta["type"] = json!("hitl.result");
+            meta["messageId"] = json!(format!("hitl:{}", command.command_id));
+            meta["interventionId"] = json!(id);
+            meta["controlRevision"] = json!(revision);
+            meta["authRevision"] = json!(0);
+            meta.as_object_mut().unwrap().remove("protocolVersion");
+            let raw = serde_json::to_value(&command.command).unwrap();
+            meta["operation"] = json!({"type":raw["type"]});
+            if let Some(action) = raw.get("action") {
+                meta["operation"]["action"] = action.clone();
+            }
+        }
         if let Err(fault) = self.validate(&command) {
             return failure(meta, fault);
         }
@@ -207,9 +234,15 @@ impl Node {
                 | BrowserCommand::BrowserCookiesSet { .. }
                 | BrowserCommand::BrowserCookiesClear { .. }
                 | BrowserCommand::BrowserTrace { .. }
+                | BrowserCommand::SessionControl { .. }
         );
         // 操作许可持有到结果落盘，不能仅凭 CLI 调用结束就放行下一条动作。
-        let permit = if browser {
+        let permit = if matches!(command.command, BrowserCommand::SessionControl { .. }) {
+            match &session {
+                Some(s) => s.acquire_control(command.timeout_ms).await.map(Some),
+                None => Ok(None),
+            }
+        } else if browser {
             session.as_ref().map(|s| s.try_acquire()).transpose()
         } else {
             Ok(None)
@@ -217,11 +250,37 @@ impl Node {
         let result = match &permit {
             Err(error) => Err(error.clone()),
             Ok(_) => {
-                self.dispatch(&command, session, received + command.timeout_ms)
-                    .await
+                let authorized = if browser
+                    && !matches!(command.command, BrowserCommand::SessionControl { .. })
+                {
+                    session
+                        .as_ref()
+                        .map(|s| s.control.lock().unwrap().authorize(human, revision))
+                        .transpose()
+                } else {
+                    Ok(None)
+                };
+                match authorized {
+                    Err(error) => Err(error),
+                    Ok(_) => {
+                        if let Some(s) = &session {
+                            let mut control = s.control.lock().unwrap();
+                            control.auth_revision = control.auth_revision.max(auth_revision);
+                            if intervention.is_some() {
+                                let raw = serde_json::to_value(&command.command).unwrap();
+                                if raw["type"] != "browser.input" || raw["action"] != "scroll" {
+                                    control.auth_revision += 1;
+                                }
+                                meta["authRevision"] = json!(control.auth_revision);
+                            }
+                        }
+                        self.dispatch(&command, session, received + command.timeout_ms)
+                            .await
+                    }
+                }
             }
         };
-        let response = match result {
+        let mut response = match result {
             Ok(mut data) => {
                 match self
                     .artifacts
@@ -241,6 +300,13 @@ impl Node {
             }
             Err(fault) => failure(meta, fault),
         };
+        if intervention.is_some() {
+            // 控制面只收到事实摘要，输入和引擎返回内容保留在节点执行边界。
+            response.as_object_mut().unwrap().remove("data");
+            if response.get("error").is_some() {
+                response["error"]["message"] = json!("人工操作未完成，请根据错误码检查节点状态");
+            }
+        }
         if let Err(error) = self
             .store
             .finish(command.command_id.clone(), response.clone())
@@ -372,6 +438,24 @@ impl Node {
                     let deadline = self.deadline(lease_request_id, *lease_ttl_ms).await?;
                     session.renew(deadline)?;
                     return Ok(json!({"renewed":true}));
+                }
+                if matches!(operation, BrowserCommand::SessionWatch { .. }) {
+                    session
+                        .control
+                        .lock()
+                        .unwrap()
+                        .watch(&serde_json::to_value(operation).unwrap())?;
+                    return Ok(json!({"watching":true}));
+                }
+                if matches!(operation, BrowserCommand::SessionControl { .. }) {
+                    session
+                        .control
+                        .lock()
+                        .unwrap()
+                        .change(&serde_json::to_value(operation).unwrap())?;
+                    return Ok(
+                        json!({"controlled":true,"authRevision":session.control.lock().unwrap().auth_revision}),
+                    );
                 }
                 engine::validate(operation, self.config.allow_unverified_writes)?;
                 session.execute(operation.clone(), command_deadline).await

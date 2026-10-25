@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { once } from 'node:events';
+import { createServer } from 'node:http';
 import { assist } from '../harness/human.mjs';
 import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -25,8 +26,7 @@ test('人工交接保留稳定拒绝码，不导出服务端原始消息', async
     new URL('../../../apps/api/package.json', import.meta.url),
   );
   const { WebSocketServer } = require('ws');
-  const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
-  await once(server, 'listening');
+  const { server, http } = await directFixture(WebSocketServer);
   server.on('connection', (socket) =>
     socket.once('message', () =>
       socket.send(
@@ -50,6 +50,7 @@ test('人工交接保留稳定拒绝码，不导出服务端原始消息', async
     );
   } finally {
     await new Promise((resolve) => server.close(resolve));
+    await new Promise((resolve) => http.close(resolve));
   }
 });
 
@@ -61,8 +62,7 @@ test('人工交接仅在服务端提供条件身份时回传条件键', async (t
   const { WebSocketServer } = require('ws');
   for (const conditionKeys of [undefined, ['condition-1']]) {
     await t.test(conditionKeys ? '结构化条件' : '普通待办', async () => {
-      const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
-      await once(server, 'listening');
+      const { server, http } = await directFixture(WebSocketServer);
       let completion;
       server.on('connection', (socket) =>
         socket.on('message', (bytes) => {
@@ -97,6 +97,7 @@ test('人工交接仅在服务端提供条件身份时回传条件键', async (t
         });
       } finally {
         await new Promise((resolve) => server.close(resolve));
+        await new Promise((resolve) => http.close(resolve));
       }
     });
   }
@@ -434,3 +435,28 @@ test('版本比较对齐全集并保留预算差异', () => {
   b.samples = [];
   assert.throws(() => compareRuns(a, b));
 });
+
+/** 回环 bootstrap 与独立直连路径夹具；只验证客户端协议，不配置真实节点或 TLS。 */
+async function directFixture(WebSocketServer) {
+  const http = createServer((request, response) => {
+    if (request.method !== 'POST' || request.url !== '/v1/hitl/bootstrap') {
+      response.writeHead(404).end();
+      return;
+    }
+    request.resume();
+    response.setHeader('content-type', 'application/json');
+    response.end(
+      JSON.stringify({
+        direct: {
+          id: 'fixture',
+          token: 'fixture-direct-token',
+          controlUrl: `ws://127.0.0.1:${http.address().port}/hitl/control`,
+        },
+      }),
+    );
+  });
+  const server = new WebSocketServer({ server: http, path: '/hitl/control' });
+  http.listen(0, '127.0.0.1');
+  await once(http, 'listening');
+  return { server, http };
+}

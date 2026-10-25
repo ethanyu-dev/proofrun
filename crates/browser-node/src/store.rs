@@ -45,8 +45,6 @@ pub struct SessionRecord {
 pub enum AdmissionError {
     #[error("command ID already binds another request")]
     CommandConflict,
-    #[error("all browser slots are occupied")]
-    Capacity,
     #[error("session ID has already been used")]
     SessionExists,
 }
@@ -147,25 +145,43 @@ impl Store {
                 })?;
             tx.execute(
                 "INSERT OR IGNORE INTO outbox VALUES(?,?)",
-                params![id, value],
+                params![
+                    serde_json::from_str::<Value>(&value)?["messageId"]
+                        .as_str()
+                        .unwrap_or(&id),
+                    value
+                ],
             )?;
             tx.commit()?;
             Ok(())
         })
         .await
     }
-    /// 在同一事务中检查容量、阻止 sessionId 复用并记录创建意图。
-    pub async fn reserve(&self, record: SessionRecord, capacity: usize) -> Result<()> {
+    /// 完成回执只有控制面持久处理后才能消失，客户端不凭网络发送成功判断完成。
+    pub async fn event_pending(&self, id: String) -> Result<bool> {
+        self.call(move |db| {
+            Ok(db
+                .query_row("SELECT 1 FROM outbox WHERE id=?", [id], |_| Ok(()))
+                .optional()?
+                .is_some())
+        })
+        .await
+    }
+    /// 交接事件先落盘，再等待主连接送达控制面；画面不进入该账本。
+    pub async fn event(&self, value: Value) -> Result<()> {
+        self.call(move |db| {
+            db.execute(
+                "INSERT OR IGNORE INTO outbox VALUES(?,?)",
+                params![value["messageId"].as_str().unwrap(), value.to_string()],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+    /// 资源准入后阻止 sessionId 复用并记录创建意图。
+    pub async fn reserve(&self, record: SessionRecord) -> Result<()> {
         self.call(move |db| {
             let tx = db.transaction()?;
-            let count: u32 = tx.query_row(
-                "SELECT count(*) FROM sessions WHERE state != 'CLOSED'",
-                [],
-                |r| r.get(0),
-            )?;
-            if count as usize >= capacity {
-                return Err(AdmissionError::Capacity.into());
-            }
             if tx
                 .query_row(
                     "SELECT 1 FROM sessions WHERE id=?",
@@ -242,7 +258,10 @@ impl Store {
             let tx = db.transaction()?;
             for (id, meta) in rows {
                 let mut result: Value = serde_json::from_str(&meta)?;
-                result["type"] = "command.result".into();
+                // 人工直连的恢复回执仍沿用其独立事件类型。
+                if result.get("type").is_none() {
+                    result["type"] = "command.result".into();
+                }
                 result["operationStatus"] = "UNKNOWN".into();
                 result["effect"] = "MAY_HAVE_HAPPENED".into();
                 result["error"] = serde_json::json!({
@@ -255,7 +274,10 @@ impl Store {
                 )?;
                 tx.execute(
                     "INSERT OR IGNORE INTO outbox VALUES(?,?)",
-                    params![id, result.to_string()],
+                    params![
+                        result["messageId"].as_str().unwrap_or(&id),
+                        result.to_string()
+                    ],
                 )?;
             }
             tx.commit()?;
@@ -296,7 +318,7 @@ mod closure_tests {
         let mut record: SessionRecord = serde_json::from_value(legacy).unwrap();
         assert_eq!(record.close_reason, None);
         let store = Store::open(&path).unwrap();
-        store.reserve(record.clone(), 1).await.unwrap();
+        store.reserve(record.clone()).await.unwrap();
         record.state = "CLOSING".into();
         record.close_reason = Some("NODE_SHUTDOWN".into());
         store.save_session(record.clone()).await.unwrap();

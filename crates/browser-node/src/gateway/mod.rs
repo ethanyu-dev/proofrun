@@ -55,17 +55,6 @@ async fn route(
     jobs: &mut JoinSet<()>,
     out: &mpsc::Sender<Value>,
 ) -> Result<()> {
-    if value["type"] == "hitl.attach" || value["type"] == "live.attach" {
-        if jobs.len() < NORMAL_JOB_LIMIT {
-            let node = node.clone();
-            jobs.spawn(async move {
-                if crate::live::relay(node, value).await.is_err() {
-                    tracing::warn!("人工画面通道已关闭或无法连接");
-                }
-            });
-        }
-        return Ok(());
-    }
     if value["type"] == "ack" {
         if let Some(id) = value["messageId"].as_str() {
             node.store.ack(id.into()).await?;

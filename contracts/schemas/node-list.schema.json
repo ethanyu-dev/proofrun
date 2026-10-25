@@ -18,7 +18,6 @@
           "name",
           "pool",
           "node_epoch",
-          "capacity",
           "capabilities",
           "inventory",
           "last_seen_at",
@@ -91,6 +90,32 @@
               }
             ],
             "description": "最近心跳上报的进程版本；未上报时为 null，离线节点仅代表最后一次上报。"
+          },
+          "public_url": {
+            "type": ["string", "null"]
+          },
+          "admission": {
+            "type": ["object", "null"],
+            "properties": {
+              "accepting": {
+                "type": "boolean"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "cpuPercent": {
+                "type": "number",
+                "minimum": 0
+              },
+              "availableBytes": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "reserveBytes": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
           }
         },
         "title": "NodeSummary"

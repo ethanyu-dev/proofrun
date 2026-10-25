@@ -3,7 +3,16 @@ home = "/var/lib/proofrun"
 gateway_url = "wss://proofrun.example.com/v1/nodes/connect"
 credential_file = "credential.json"
 pool = "internal"
-capacity = 2
+# 客户端访问此 HTTPS 域名，不能填写 API 域名或业务网站域名。
+public_url = "https://browser-node-01.example.com"
+# 本机 Caddy 将上述域名反向代理到此回环地址。
+listen = "127.0.0.1:9310"
+# 不配置固定会话数量；以下是系统余量及每个会话的最低内存预算。
+memory_reserve_bytes = 1073741824
+session_reserve_bytes = 536870912
+cpu_stop_percent = 80.0
+cpu_resume_percent = 60.0
+cpu_pressure_percent = 20.0
 agent_browser_bin = "/opt/proofrun/bin/agent-browser"
 chrome_bin = "/usr/bin/google-chrome"
 max_lease_ms = 60000

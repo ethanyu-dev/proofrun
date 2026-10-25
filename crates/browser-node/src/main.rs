@@ -142,6 +142,21 @@ async fn main() -> Result<()> {
     }
     let node = Node::start(config).await?;
     let stop = CancellationToken::new();
+    let direct = if node.config.public_url.is_some() {
+        let listener = tokio::net::TcpListener::bind(&node.config.listen).await?;
+        let direct_node = node.clone();
+        let direct_stop = stop.clone();
+        Some(tokio::spawn(async move {
+            let result =
+                proofrun_node::direct::serve(direct_node, listener, direct_stop.clone()).await;
+            if result.is_err() {
+                direct_stop.cancel();
+            }
+            result
+        }))
+    } else {
+        None
+    };
     let signal = stop.clone();
     tokio::spawn(async move {
         #[cfg(unix)]
@@ -158,10 +173,14 @@ async fn main() -> Result<()> {
         signal.cancel();
     });
     let result = match cli.command {
-        Action::Serve { stdio: true } => gateway::serve_stdio(node.clone(), stop).await,
-        Action::Serve { stdio: false } => gateway::serve(node.clone(), stop).await,
+        Action::Serve { stdio: true } => gateway::serve_stdio(node.clone(), stop.clone()).await,
+        Action::Serve { stdio: false } => gateway::serve(node.clone(), stop.clone()).await,
         _ => unreachable!(),
     };
+    stop.cancel();
     node.shutdown().await;
+    if let Some(direct) = direct {
+        direct.await??;
+    }
     result
 }

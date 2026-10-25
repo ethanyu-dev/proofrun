@@ -91,11 +91,13 @@ class Harness:
         root = self.root / f'node-{len(self.nodes)}'
         root.mkdir()
         config = root / 'node.toml'
+        direct_port = 19310 + len(self.nodes)
         config.write_text(f'home = {json.dumps(str(root / "state"))}\n'
                           f'agent_browser_bin = {json.dumps(str(FAKE))}\n'
+                          f'public_url = "http://127.0.0.1:{direct_port}"\nlisten = "127.0.0.1:{direct_port}"\n'
                           f'gateway_url = "ws://127.0.0.1:4121/v1/nodes/connect"\n'
                           f'artifact_upload_url = "{BASE}/v1/artifacts"\n'
-                          'pool = "internal"\ncapacity = 1\nallow_unverified_writes = true\n')
+                          'pool = "internal"\nmemory_reserve_bytes = 67108864\nsession_reserve_bytes = 67108864\nallow_unverified_writes = true\n')
         enrollment = api('POST', '/v1/node-pairings', {'type': 'node.enroll', 'pool': 'internal', 'name': root.name})
         code = root / 'pairing-token'
         code.write_text(enrollment['pairingToken'])
@@ -110,6 +112,7 @@ class Harness:
         node = {'root': root, 'config': config, 'id': receipt['nodeId']}
         self.nodes.append(node)
         self.start_node(node)
+        until(lambda: api('GET','/v1/nodes')['nodes'],lambda rows: any(row['id']==node['id'] and row.get('admission',{}).get('accepting') for row in rows))
         return node
 
     def start_node(self, node):

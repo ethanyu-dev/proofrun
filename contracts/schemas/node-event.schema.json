@@ -146,7 +146,8 @@
         },
         "capacity": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "description": "仅用于读取旧节点，不参与新版资源准入。"
         },
         "occupied": {
           "description": "本机仍占用容量的会话，包括关闭中和隔离状态。",
@@ -240,6 +241,9 @@
             "ephemeralProfiles": {
               "type": "boolean",
               "description": "案例使用临时目录和输入身份材料，不恢复或保存本地身份基准。"
+            },
+            "directHitl": {
+              "type": "boolean"
             }
           },
           "required": [
@@ -271,6 +275,41 @@
         },
         "runtime": {
           "$ref": "node-runtime.schema.json"
+        },
+        "publicUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "admission": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "accepting": {
+              "type": "boolean"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "cpuPercent": {
+              "type": "number",
+              "minimum": 0
+            },
+            "availableBytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "reserveBytes": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "accepting",
+            "reason",
+            "cpuPercent",
+            "availableBytes",
+            "reserveBytes"
+          ]
         }
       },
       "required": [
@@ -280,7 +319,6 @@
         "nodeEpoch",
         "leaseRequestId",
         "pool",
-        "capacity",
         "occupied",
         "capabilities",
         "limits"
@@ -379,6 +417,168 @@
         "closureVerified"
       ],
       "description": "会话关闭或进入隔离；QUARANTINED 仍占用节点容量。"
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "hitl.result"
+        },
+        "messageId": {
+          "type": "string"
+        },
+        "nodeId": {
+          "type": "string"
+        },
+        "nodeEpoch": {
+          "type": "string"
+        },
+        "sessionId": {
+          "type": "string"
+        },
+        "leaseId": {
+          "type": "string"
+        },
+        "fence": {
+          "type": "integer"
+        },
+        "interventionId": {
+          "type": "string"
+        },
+        "controlRevision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "authRevision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "commandId": {
+          "type": "string"
+        },
+        "operationStatus": {
+          "enum": ["SUCCEEDED", "FAILED", "TIMED_OUT", "UNKNOWN", "CANCELLED"]
+        },
+        "effect": {
+          "enum": ["NOT_STARTED", "COMPLETED", "MAY_HAVE_HAPPENED"]
+        },
+        "error": {
+          "type": "object"
+        },
+        "operation": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "enum": ["browser.input", "browser.cookies.set", "browser.act"]
+            },
+            "action": {
+              "type": "string"
+            }
+          },
+          "required": ["type"]
+        }
+      },
+      "required": [
+        "type",
+        "messageId",
+        "nodeId",
+        "nodeEpoch",
+        "sessionId",
+        "leaseId",
+        "fence",
+        "interventionId",
+        "controlRevision",
+        "authRevision",
+        "commandId",
+        "operationStatus",
+        "effect",
+        "operation"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "hitl.finished"
+        },
+        "messageId": {
+          "type": "string"
+        },
+        "nodeId": {
+          "type": "string"
+        },
+        "nodeEpoch": {
+          "type": "string"
+        },
+        "sessionId": {
+          "type": "string"
+        },
+        "leaseId": {
+          "type": "string"
+        },
+        "fence": {
+          "type": "integer"
+        },
+        "interventionId": {
+          "type": "string"
+        },
+        "controlRevision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "authRevision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "completion": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "enum": ["complete", "unable"]
+            },
+            "confirmedItems": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9
+              },
+              "maxItems": 10
+            },
+            "confirmedConditionKeys": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 10
+            },
+            "reason": {
+              "type": "string",
+              "maxLength": 2000
+            }
+          },
+          "required": ["type"]
+        }
+      },
+      "required": [
+        "type",
+        "messageId",
+        "nodeId",
+        "nodeEpoch",
+        "sessionId",
+        "leaseId",
+        "fence",
+        "interventionId",
+        "controlRevision",
+        "authRevision",
+        "completion"
+      ]
     }
   ]
 }
