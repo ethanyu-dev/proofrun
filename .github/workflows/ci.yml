@@ -1,6 +1,9 @@
 name: CI
 on:
+  # 分支变更通过 PR 检查；main 推送验证合并结果，避免 PR 分支重复触发。
   push:
+    branches:
+      - main
   pull_request:
   workflow_dispatch:
 
