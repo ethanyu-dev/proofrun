@@ -86,7 +86,7 @@ class Harness:
         self.process.terminate()
         self.process.wait(timeout=10)
 
-    def add_node(self):
+    def add_node(self, managed=False):
         """真实 CLI 完成一次性配对，机器密钥只落在私有凭据文件中。"""
         root = self.root / f'node-{len(self.nodes)}'
         root.mkdir()
@@ -109,6 +109,10 @@ class Harness:
         assert credential.stat().st_mode & 0o777 == 0o600
         assert json.loads(credential.read_text())['token'] not in result
         code.unlink()
+        if managed:
+            # 范围：已有单控制面身份导入后仍由真实 API 识别，批准当前测试 Console 来源。
+            imported = subprocess.check_output([str(BINARY), '--config', str(config), 'bindings', 'import-legacy', '--name', 'integration', '--console-origin', BASE], text=True)
+            assert json.loads(imported)['bindings'][0]['id'] == receipt['nodeId']
         node = {'root': root, 'config': config, 'id': receipt['nodeId']}
         self.nodes.append(node)
         self.start_node(node)

@@ -47,6 +47,7 @@ test('人工页面没有首帧时仍可导航，超时可重连且不重放操�
       json: async () => ({
         state: state('HUMAN'),
         direct: {
+          nodeId: 'bound-node',
           controlUrl: 'wss://node.test/hitl/control',
           frameUrl: 'wss://node.test/hitl/frames',
           id: 'fixture',
@@ -97,6 +98,8 @@ test('人工页面没有首帧时仍可导航，超时可重连且不重放操�
       sockets[0]!.onopen?.();
       sockets[0]!.receive(state('REQUESTED'));
     });
+    // 范围：前端携带 API 返回的绑定身份，不能只凭介入 ID 路由；不验证真实节点认证。
+    assert.equal(sockets[0]!.sent[0].nodeId, 'bound-node');
     assert.equal(button('前往').disabled, true);
     await act(async () => sockets[0]!.receive(state('HUMAN')));
     assert.equal(container.querySelector('img.hitl-screen'), null);

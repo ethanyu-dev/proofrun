@@ -770,6 +770,7 @@ export async function connectHitl(base: string, id: string, token: string) {
       }
       const auth = JSON.stringify({
         type: 'authenticate',
+        nodeId: result.direct.nodeId,
         id: result.direct.id,
         token: result.direct.token,
       });

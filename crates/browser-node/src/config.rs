@@ -19,9 +19,9 @@ const DEFAULT_ARTIFACT_LIMIT_BYTES: u64 = 256 * 1024 * 1024;
 pub struct NodeConfig {
     /// SQLite、会话 profile 和截图等私有数据的根目录。
     pub home: PathBuf,
-    /// 节点主动连接控制面的 WebSocket 地址。
+    /// 单控制面兼容入口；显式 bindings 使用注册表内各自的网关地址。
     pub gateway_url: String,
-    /// 控制面签发的机器凭据文件；相对路径以 home 为基准。
+    /// 旧单控制面机器凭据文件；导入 bindings 后凭据保存在私有注册表。
     pub credential_file: PathBuf,
     /// 控制面选择节点时使用的资源池标识。
     pub pool: String,

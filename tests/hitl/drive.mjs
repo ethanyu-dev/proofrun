@@ -28,6 +28,7 @@ const denied = new Promise((resolve, reject) => {
     unauthorized.send(
       JSON.stringify({
         type: 'authenticate',
+        nodeId: bootstrap.direct.nodeId,
         id: bootstrap.direct.id,
         token: bootstrap.direct.token,
       }),
@@ -80,6 +81,7 @@ try {
   socket.send(
     JSON.stringify({
       type: 'authenticate',
+      nodeId: bootstrap.direct.nodeId,
       id: bootstrap.direct.id,
       token: bootstrap.direct.token,
     }),
@@ -91,6 +93,7 @@ try {
     frames.send(
       JSON.stringify({
         type: 'authenticate',
+        nodeId: bootstrap.direct.nodeId,
         id: bootstrap.direct.id,
         token: bootstrap.direct.token,
       }),
@@ -164,6 +167,7 @@ try {
         viewer.send(
           JSON.stringify({
             type: 'authenticate',
+            nodeId: viewing.nodeId,
             id: viewing.id,
             token: viewing.token,
           }),

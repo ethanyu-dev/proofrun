@@ -66,6 +66,7 @@ export async function assist(control, intervention, sampleId, getState) {
     socket.send(
       JSON.stringify({
         type: 'authenticate',
+        nodeId: bootstrap.direct.nodeId,
         id: bootstrap.direct.id,
         token: bootstrap.direct.token,
       }),

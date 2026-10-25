@@ -20,6 +20,11 @@ struct Cli {
 enum Action {
     /// 输出当前二进制的编译身份，不读取配置、启动服务或探测浏览器。
     BuildInfo,
+    /// 管理节点拥有者批准的控制面绑定。
+    Bindings {
+        #[command(subcommand)]
+        action: proofrun_node::bindings::Action,
+    },
     /// 使用一次性配对码文件注册机器身份，不将密钥放进命令行参数。
     Pair {
         #[arg(long)]
@@ -71,6 +76,10 @@ async fn main() -> Result<()> {
         return sessions::host::run(directory).await;
     }
     let mut config = NodeConfig::load(cli.config.as_deref())?;
+    if let Action::Bindings { action } = cli.command {
+        println!("{}", proofrun_node::bindings::run(&config, action).await?);
+        return Ok(());
+    }
     if let Action::Pair {
         pairing_token_file,
         replace_credential,
@@ -139,6 +148,25 @@ async fn main() -> Result<()> {
             )?
         );
         return Ok(());
+    }
+    if matches!(cli.command, Action::Serve { stdio: false }) {
+        let stop = CancellationToken::new();
+        let signal = stop.clone();
+        tokio::spawn(async move {
+            #[cfg(unix)]
+            {
+                let mut term =
+                    tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                        .expect("install SIGTERM");
+                tokio::select! { _ = tokio::signal::ctrl_c() => {}, _ = term.recv() => {} }
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = tokio::signal::ctrl_c().await;
+            }
+            signal.cancel();
+        });
+        return proofrun_node::runtime::serve(config, stop).await;
     }
     let node = Node::start(config).await?;
     let stop = CancellationToken::new();

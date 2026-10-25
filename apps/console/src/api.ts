@@ -39,6 +39,7 @@ export class ApiClient {
     const ticket = await this.json<{
       waiting: boolean;
       url?: string;
+      nodeId?: string;
       id?: string;
       token?: string;
     }>(`/v1/admin/executions/${executionId}/live`, signal, {});
@@ -49,6 +50,7 @@ export class ApiClient {
       socket.send(
         JSON.stringify({
           type: 'authenticate',
+          nodeId: ticket.nodeId,
           id: ticket.id,
           token: ticket.token,
         }),

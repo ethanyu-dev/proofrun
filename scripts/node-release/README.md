@@ -96,3 +96,5 @@ python3 -m unittest discover -s tests/node-release -p 'test_*.py'
 当前源码安装器新增 `--public-url https://browser-node-01.example.com`，将地址写入 `~/.config/proofrun/node.toml`。生产 HTTPS 域名、TLS 代理和 `listen` 配套配置见[节点直连部署](../../deploy/README.md#节点直连域名与升级)。上文历史 release 命令仅说明已有发行包，不包含这次尚未发布的改造。
 
 升级已有安装前，停止派发并确认会话清理；手动删除旧 `capacity`，填写 `public_url` 和 `listen`，按实际内存调整余量。安装器保留配置，不替用户迁移资源策略。API/Console 与 Node 必须按同一协议升级；仅在线不代表域名、证书与客户端网络已经通过验证。
+
+多控制面节点的授权保存在同一个 `home/node.db`，安装器保留并识别注册表。升级前排空所有绑定；旧单控制面可停机执行 `bindings import-legacy` 原样导入，再热添加其他服务，操作见[多控制面部署](../../deploy/README.md#一个节点授权多套控制面)。SQLite 升级后不能只切回旧二进制。

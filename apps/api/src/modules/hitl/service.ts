@@ -200,6 +200,7 @@ export class HitlService {
         state,
         commandId,
         direct: {
+          nodeId: context.node_id,
           controlUrl: url.toString(),
           frameUrl: frames.toString(),
           id,

@@ -40,6 +40,17 @@ type Socket = WebSocketStream<TcpStream>;
 
 /// 监听失败使整个节点停止接单，避免上报不可用的直连能力。
 pub async fn serve(node: Arc<Node>, listener: TcpListener, stop: CancellationToken) -> Result<()> {
+    let nodes = Arc::new(tokio::sync::RwLock::new(std::collections::BTreeMap::from(
+        [(node.id.clone(), node)],
+    )));
+    serve_nodes(nodes, listener, stop).await
+}
+/// 所有绑定共用一个监听和网络连接上限。
+pub async fn serve_nodes(
+    nodes: crate::runtime::Nodes,
+    listener: TcpListener,
+    stop: CancellationToken,
+) -> Result<()> {
     let permits = Arc::new(Semaphore::new(CONNECTION_LIMIT));
     let mut jobs = tokio::task::JoinSet::new();
     loop {
@@ -48,8 +59,8 @@ pub async fn serve(node: Arc<Node>, listener: TcpListener, stop: CancellationTok
             connection = listener.accept() => {
                 let (stream, _) = connection?;
                 let Ok(permit) = permits.clone().try_acquire_owned() else { continue };
-                let node = node.clone(); let cancelled = stop.clone();
-                jobs.spawn(async move { let _permit = permit; tokio::select! { _ = cancelled.cancelled() => {}, _ = accept(node, stream) => {} } });
+                let nodes = nodes.clone(); let cancelled = stop.clone();
+                jobs.spawn(async move { let _permit = permit; tokio::select! { _ = cancelled.cancelled() => {}, _ = accept(nodes, stream) => {} } });
             }
             _ = jobs.join_next(), if !jobs.is_empty() => {}
         }
@@ -59,7 +70,9 @@ pub async fn serve(node: Arc<Node>, listener: TcpListener, stop: CancellationTok
     Ok(())
 }
 /// HTTP 握手只提取路径和 Origin；凭证只允许放在 WebSocket 首条消息。
-async fn accept(node: Arc<Node>, stream: TcpStream) -> Result<()> {
+// tungstenite 握手回调固定返回完整 HTTP 错误响应，无法改为装箱错误。
+#[allow(clippy::result_large_err)]
+async fn accept(nodes: crate::runtime::Nodes, stream: TcpStream) -> Result<()> {
     let info = Arc::new(Mutex::new((String::new(), 0u8)));
     let captured = info.clone();
     let mut socket = timeout(
@@ -97,8 +110,8 @@ async fn accept(node: Arc<Node>, stream: TcpStream) -> Result<()> {
         ),
     )
     .await??;
-    let authenticated = authenticate(&node, &mut socket, &info).await;
-    let (session, grant, revision, media) = match authenticated {
+    let authenticated = authenticate(&nodes, &mut socket, &info).await;
+    let (node, session, grant, revision, media) = match authenticated {
         Ok(value) => value,
         Err(_) => {
             let _ = send(&mut socket, json!({"type":"error","code":"HITL_INVALID","message":"直连授权已失效，请重新连接"})).await;
@@ -124,15 +137,30 @@ async fn accept(node: Arc<Node>, stream: TcpStream) -> Result<()> {
     result
 }
 async fn authenticate(
-    node: &Node,
+    nodes: &crate::runtime::Nodes,
     socket: &mut Socket,
     info: &Mutex<(String, u8)>,
-) -> Result<(Arc<Session>, Grant, u64, u8)> {
+) -> Result<(Arc<Node>, Arc<Session>, Grant, u64, u8)> {
     let message = timeout(AUTH_TIMEOUT, socket.next())
         .await?
         .context("缺少认证")??;
     let value: Value = serde_json::from_str(message.to_text()?)?;
     ensure!(value["type"] == "authenticate", "首条消息必须认证");
+    let node = {
+        let nodes = nodes.read().await;
+        match value["nodeId"].as_str() {
+            Some(id) => nodes.get(id).cloned(),
+            // 仅旧单控制面夹具兼容省略路由；显式绑定始终要求 nodeId。
+            None if nodes.len() == 1 => nodes
+                .values()
+                .next()
+                .filter(|n| n.binding.is_none())
+                .cloned(),
+            _ => None,
+        }
+        .context("绑定身份无效")?
+    };
+    node.authorize_binding().await?;
     let id = value["id"].as_str().context("缺少介入身份")?;
     let token = value["token"].as_str().context("缺少凭证")?;
     ensure!((32..=512).contains(&token.len()), "凭证长度错误");
@@ -160,7 +188,7 @@ async fn authenticate(
                 };
                 (grant, control.revision)
             };
-            return Ok((session, grant, revision, media));
+            return Ok((node, session, grant, revision, media));
         }
     }
     anyhow::bail!("会话不存在")
@@ -238,6 +266,7 @@ struct Controller {
 impl Controller {
     /// 无输入时也检查撤权；完成通知只有节点确认 AUTO 或无法处理事件 ACK 后发出。
     async fn poll(&self, socket: &mut Socket) -> Result<bool> {
+        self.node.authorize_binding().await?;
         let (done, pending) = {
             let control = self.session.control.lock().unwrap();
             (
@@ -249,21 +278,20 @@ impl Controller {
             send(socket, json!({"type":"completed","authStatus":"disabled"})).await?;
             return Ok(false);
         }
-        if let Some(event) = pending {
-            if event["completion"]["type"] == "unable"
-                && !self
-                    .node
-                    .store
-                    .event_pending(event["messageId"].as_str().unwrap().to_owned())
-                    .await?
-            {
-                send(
-                    socket,
-                    json!({"type":"unable","reason":event["completion"]["reason"]}),
-                )
-                .await?;
-                return Ok(false);
-            }
+        if let Some(event) = pending
+            && event["completion"]["type"] == "unable"
+            && !self
+                .node
+                .store
+                .event_pending(event["messageId"].as_str().unwrap().to_owned())
+                .await?
+        {
+            send(
+                socket,
+                json!({"type":"unable","reason":event["completion"]["reason"]}),
+            )
+            .await?;
+            return Ok(false);
         }
         self.session
             .authorize(&self.session.lease_id, self.session.fence)?;
@@ -276,6 +304,7 @@ impl Controller {
     }
     /// 返回 false 关闭当前连接；预检查失败的导航允许处理者修正，未知操作绝不重放。
     async fn message(&self, socket: &mut Socket, message: Message) -> Result<bool> {
+        self.node.authorize_binding().await?;
         if let Message::Ping(data) = message {
             timeout(WRITE_TIMEOUT, socket.send(Message::Pong(data))).await??;
             return Ok(true);
@@ -466,7 +495,7 @@ async fn frames(
     let mut tick = tokio::time::interval(AUTH_CHECK_INTERVAL);
     loop {
         tokio::select! {
-            _=tick.tick()=>{ session.authorize(&session.lease_id,session.fence)?; frame_authorize(&session,&grant,revision,readonly)?; },
+            _=tick.tick()=>{ node.authorize_binding().await?; session.authorize(&session.lease_id,session.fence)?; frame_authorize(&session,&grant,revision,readonly)?; },
             incoming=socket.next()=>match incoming {Some(Ok(Message::Ping(data)))=>{timeout(WRITE_TIMEOUT,socket.send(Message::Pong(data))).await??;},Some(Ok(Message::Pong(_)))=>{},_=>return Ok(())},
             message=local.next()=>{
                 let Some(message)=message else{return Ok(())};let message=message?;
@@ -474,7 +503,7 @@ async fn frames(
                     let value:Value=serde_json::from_str(&text)?;
                     if value["type"]!="frame" {continue}
                     ensure!(value["data"].as_str().is_some_and(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"+/=".contains(&b))) && ["deviceWidth","deviceHeight"].iter().all(|key| value["metadata"][key].as_f64().is_some_and(|n| n>0.0 && n<=16384.0)), "无效画面");
-                    session.authorize(&session.lease_id,session.fence)?;frame_authorize(&session,&grant,revision,readonly)?;
+                    node.authorize_binding().await?; session.authorize(&session.lease_id,session.fence)?;frame_authorize(&session,&grant,revision,readonly)?;
                     send(&mut socket,json!({"type":"frame","data":value["data"],"width":value["metadata"]["deviceWidth"],"height":value["metadata"]["deviceHeight"],"capturedAt":crate::control::unix_ms()})).await?;
                     if let Some(seq)=value["seq"].as_u64(){timeout(WRITE_TIMEOUT,local.send(Message::Text(json!({"type":"ack","seq":seq}).to_string().into()))).await??;}
                 }

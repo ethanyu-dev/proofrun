@@ -45,6 +45,8 @@ struct History {
 pub struct Admission {
     /// 心跳与创建请求共享采样历史。
     history: Mutex<History>,
+    /// 所有控制面共用；覆盖资源采样、持久预留和启动稳定标记。
+    pub creation: tokio::sync::Mutex<()>,
 }
 impl Admission {
     /// 读取有效 CPU 配额、内存余量和压力；任何必需指标缺失时停止新增会话。
@@ -198,18 +200,17 @@ fn sample(records: &[SessionRecord], reserve: u64) -> anyhow::Result<Sample> {
         .parse()?;
     let mut cpus = std::thread::available_parallelism()?.get() as f64;
     for parent in group.ancestors().take_while(|p| p.starts_with(root)) {
-        if let Ok(max) = std::fs::read_to_string(parent.join("memory.max")) {
-            if let Ok(limit) = max.trim().parse::<u64>() {
-                available =
-                    available.min(limit.saturating_sub(number(parent.join("memory.current"))?));
-            }
+        if let Ok(max) = std::fs::read_to_string(parent.join("memory.max"))
+            && let Ok(limit) = max.trim().parse::<u64>()
+        {
+            available = available.min(limit.saturating_sub(number(parent.join("memory.current"))?));
         }
         if let Ok(max) = std::fs::read_to_string(parent.join("cpu.max")) {
             let fields: Vec<_> = max.split_whitespace().collect();
-            if fields.len() == 2 {
-                if let Ok(quota) = fields[0].parse::<f64>() {
-                    cpus = cpus.min(quota / fields[1].parse::<f64>()?);
-                }
+            if fields.len() == 2
+                && let Ok(quota) = fields[0].parse::<f64>()
+            {
+                cpus = cpus.min(quota / fields[1].parse::<f64>()?);
             }
         }
     }

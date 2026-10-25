@@ -130,3 +130,47 @@ pnpm accept:task /private/verification-task.json
 6. 升级前备份并留存原版本。数据库升级后不能仅切换旧二进制作为回滚；按已验证方案恢复同版本数据库、证据和节点状态。
 
 这些项目需要指定 VM、业务环境和维护窗口。容器回归与模板文件不能把它们自动标为完成。
+
+## 一个节点授权多套控制面
+
+一个 Node 进程可以同时连接生产 API 和开发 API，统一判断 CPU、内存和所有会话的预留。每套控制面保留自己的任务队列；Node 不维护任务队列、不承诺固定并发，也不保证不同控制面之间的公平份额或生产优先级。
+
+`node.toml` 继续保存机器级配置：`home`、`public_url`、`listen`、浏览器路径和资源阈值。启用显式绑定后，控制面端点、资源池、凭据和批准的 Console Origin 以绑定为单位保存在私有 `home/node.db`，不再读取 TOML 的旧控制面字段。`public_url` 仍只需一个，Caddy 模板和三个直连路径不变。
+
+已有单控制面节点先停止派发、等待会话结束并停止服务，然后导入原身份。导入不改变已有 nodeId、账本或待确认结果，也不重新申请配对码：
+
+```sh
+systemctl --user stop proofrun-node.service
+proofrun-node --config ~/.config/proofrun/node.toml bindings import-legacy \
+  --name production --console-origin https://proofrun.example.com
+systemctl --user start proofrun-node.service
+```
+
+在开发服务中取得新的配对码并保存为仅当前用户可读的文件，再在远端 Node 上执行。新增绑定支持热加载，不停止其他绑定的任务：
+
+```sh
+proofrun-node --config ~/.config/proofrun/node.toml bindings add \
+  --name development --api https://dev-api.example.com --pool development \
+  --console-origin http://localhost:5173 \
+  --pairing-token-file /private/path/development-pairing
+proofrun-node --config ~/.config/proofrun/node.toml bindings list
+```
+
+API 地址必须从 Node 所在机器可达。开发机的 `localhost` 不能直接作为远端 Node 的控制面地址；可以提供 HTTPS/WSS 隧道入口，或将开发 API 经安全隧道转发到远端回环地址。`--console-origin` 则是处理者浏览器中实际打开 Console 的精确来源；允许回环 HTTP，生产应使用 HTTPS。API 的 `PROOFRUN_CONSOLE_URL` 必须与批准值一致。可重复传入 `--console-origin` 批准多个来源；API 自行请求未批准来源会被 Node 拒绝。
+
+每个绑定获得独立随机 nodeId 和机器凭据。客户端从对应 API 取得 nodeId 与短期凭据后，直连同一 Node 域名；nodeId 只用于路由，不授予权限。生产 API 看不到开发会话，不能控制、续租或确认开发事件，证据也只上传到所属 API。节点管理员仍拥有本机全部数据；这不是不互信租户之间的系统级沙箱。
+
+```sh
+# 排空只停止接收新会话；现有任务、人工处理和证据交付继续。
+proofrun-node --config ~/.config/proofrun/node.toml bindings drain development
+proofrun-node --config ~/.config/proofrun/node.toml bindings resume development
+# 撤销立即禁止后续授权，并请求关闭该绑定的已有会话；不影响其他绑定。
+proofrun-node --config ~/.config/proofrun/node.toml bindings revoke development
+proofrun-node --config ~/.config/proofrun/node.toml bindings list
+```
+
+状态修改先持久化。`revoke` 命令返回不等于浏览器进程已全部退出，以 `remainingSessions` 为零确认回收；运行服务轮询注册表并取消对应网关，已有直连最多按 250ms 检查周期撤权。已经派发的浏览器操作可能产生效果，不能将撤销解释为业务回滚。节点停止时提交撤销，下一次启动先恢复和清理旧会话，绝不重连已撤销服务。
+
+撤销保留身份墓碑、账本和未确认事件，不能恢复为 ACTIVE、复用名称或把旧数据交给新服务。需要重新授权时使用新名称和新配对码。普通断线不撤销绑定，现有会话受原租约约束，结果只向原控制面重送。配对响应丢失时，在配对码有效期内以完全相同的命令重试；节点保存未完成配对身份，避免响应丢失后生成另一身份。
+
+多绑定升级需排空所有绑定，备份整个节点 home 和各控制面的数据。安装器会检查所有绑定的未关闭会话并识别注册表中的授权，不依赖旧 `credential.json` 启动服务。旧二进制不能直接读取迁移后的 SQLite 主键结构，回滚必须恢复升级前的程序、配置和完整数据备份。

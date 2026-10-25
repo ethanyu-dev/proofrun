@@ -127,7 +127,7 @@ pub async fn serve(node: Arc<Node>, stop: CancellationToken) -> Result<()> {
         ),
         "gateway_url must use ws/wss"
     );
-    let token = node.config.credential()?;
+    let token = node.credential()?;
     if let Some(endpoint) = &node.config.artifact_upload_url {
         validate_endpoint(endpoint)?;
         ensure!(

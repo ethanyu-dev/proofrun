@@ -8,12 +8,8 @@ use std::{io::Write, path::Path, time::Duration};
 /// 配对响应只包含少量配置，限制读取避免异常服务响应占用内存。
 const MAX_RESPONSE_BYTES: usize = 8192;
 
-/// 从配置网关推导同源 HTTPS 配对入口，将凭据写入节点私有文件。
-pub async fn pair(
-    config: &NodeConfig,
-    token_file: &Path,
-    replace_credential: bool,
-) -> Result<Value> {
+/// 向单个已指定控制面配对；调用方决定凭据的原子持久化方式。
+pub async fn exchange(config: &NodeConfig, token_file: &Path, node_id: &str) -> Result<Value> {
     gateway::validate_endpoint(&config.gateway_url)?;
     let mut endpoint = reqwest::Url::parse(&config.gateway_url)?;
     let scheme = match endpoint.scheme() {
@@ -23,22 +19,10 @@ pub async fn pair(
     };
     endpoint
         .set_scheme(scheme)
-        .map_err(|_| anyhow::anyhow!("invalid pairing scheme"))?;
+        .map_err(|_| anyhow::anyhow!("invalid scheme"))?;
     endpoint.set_path("/v1/nodes/pair");
     endpoint.set_query(None);
     endpoint.set_fragment(None);
-    std::fs::create_dir_all(&config.home)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&config.home, std::fs::Permissions::from_mode(0o700))?;
-    }
-    let _lock = artifacts::lock_home(&config.home)?;
-    ensure!(
-        replace_credential || !config.credential_file.exists(),
-        "credential file already exists; refusing to replace an existing identity"
-    );
-    let node_id = artifacts::installation_id(&config.home)?;
     let pairing_token = std::fs::read_to_string(token_file).context("read pairing token file")?;
     ensure!(
         (32..=256).contains(&pairing_token.trim().len()),
@@ -67,10 +51,37 @@ pub async fn pair(
             && receipt["protocolVersion"] == "0.1",
         "pairing identity mismatch"
     );
-    let token = receipt["token"]
+    let _token = receipt["token"]
         .as_str()
         .filter(|value| (32..=256).contains(&value.len()))
         .context("missing machine credential")?;
+    Ok(receipt)
+}
+/// 从配置网关推导同源 HTTPS 配对入口，将凭据写入节点私有文件。
+pub async fn pair(
+    config: &NodeConfig,
+    token_file: &Path,
+    replace_credential: bool,
+) -> Result<Value> {
+    std::fs::create_dir_all(&config.home)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&config.home, std::fs::Permissions::from_mode(0o700))?;
+    }
+    let _lock = artifacts::lock_home(&config.home)?;
+    ensure!(
+        replace_credential || !config.credential_file.exists(),
+        "credential file already exists; refusing to replace an existing identity"
+    );
+    let store = crate::store::Store::open(&config.home.join("node.db"))?;
+    ensure!(
+        crate::bindings::list(&store).await?.is_empty(),
+        "已启用绑定管理，请使用 bindings 命令授权，不能覆盖旧凭据"
+    );
+    let node_id = artifacts::installation_id(&config.home)?;
+    let receipt = exchange(config, token_file, &node_id).await?;
+    let token = receipt["token"].as_str().context("missing credential")?;
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]

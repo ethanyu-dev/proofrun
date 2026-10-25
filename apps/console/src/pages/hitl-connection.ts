@@ -75,10 +75,15 @@ export class HitlConnection {
           this.timer = setTimeout(() => void this.connect(), HANDOFF_POLL_MS);
         return;
       }
-      const { controlUrl, frameUrl, id, token } = result.direct;
+      const { controlUrl, frameUrl, nodeId, id, token } = result.direct;
       const control = new WebSocket(controlUrl);
       this.control = control;
-      const authenticate = JSON.stringify({ type: 'authenticate', id, token });
+      const authenticate = JSON.stringify({
+        type: 'authenticate',
+        nodeId,
+        id,
+        token,
+      });
       control.onopen = () => control.send(authenticate);
       control.onmessage = (event) => {
         let message: HitlServer;

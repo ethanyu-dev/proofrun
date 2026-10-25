@@ -328,6 +328,7 @@ impl Sessions {
             stream_busy: Arc::new(Semaphore::new(1)),
         });
         // 在同一锁范围内预留容量并发布取消句柄；耗时的浏览器启动在锁外进行。
+        let creation = self.admission.creation.lock().await;
         let mut entries = self.entries.lock().await;
         if self.stopping.is_cancelled() {
             return Err(Fault::rejected("NODE_STOPPING", "node is draining"));
@@ -336,7 +337,7 @@ impl Sessions {
             &self.config,
             &self
                 .store
-                .sessions()
+                .all_sessions()
                 .await
                 .map_err(|e| Fault::rejected("STORE_FAILED", e.to_string()))?,
         );
@@ -346,6 +347,7 @@ impl Sessions {
         self.store.reserve(record.clone()).await.map_err(|e| {
             let code = match e.downcast_ref::<crate::store::AdmissionError>() {
                 Some(crate::store::AdmissionError::SessionExists) => "SESSION_EXISTS",
+                Some(crate::store::AdmissionError::BindingStopped) => "RESOURCE_UNAVAILABLE",
                 _ => "STORE_FAILED",
             };
             Fault::rejected(code, e.to_string())
@@ -353,6 +355,7 @@ impl Sessions {
         self.admission.accepted();
         entries.insert(id, session.clone());
         drop(entries);
+        drop(creation);
         let (opened_tx, opened) = oneshot::channel();
         let config = self.config.clone();
         let store = self.store.clone();

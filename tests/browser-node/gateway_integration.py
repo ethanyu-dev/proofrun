@@ -24,8 +24,8 @@ from systemd_integration import BINARY, FAKE, Client, assert_ok
 class Gateway(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self):
-        super().__init__(('127.0.0.1', 0), Handler)
+    def __init__(self, handler=None):
+        super().__init__(('127.0.0.1', 0), handler or Handler)
         self.messages = queue.Queue()
         self.connection = None
         self.send_lock = threading.Lock()
@@ -51,8 +51,8 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
-        assert self.headers['Authorization'] == 'Bearer fixture-token'
-        assert self.path == '/nodes/connect'
+        assert self.headers['Authorization'] == 'Bearer ' + getattr(self.server, 'token', 'fixture-token')
+        assert self.path == getattr(self.server, 'gateway_path', '/nodes/connect')
         key = self.headers['Sec-WebSocket-Key'] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
         self.send_response(101)
         self.send_header('Upgrade', 'websocket')
@@ -88,7 +88,7 @@ class Handler(BaseHTTPRequestHandler):
         self.close_connection = True
 
     def do_PUT(self):
-        assert self.headers['Authorization'] == 'Bearer fixture-token'
+        assert self.headers['Authorization'] == 'Bearer ' + getattr(self.server, 'token', 'fixture-token')
         size = int(self.headers['Content-Length'])
         assert 0 < size <= 8 * 1024 * 1024
         data = self.rfile.read(size)

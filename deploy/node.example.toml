@@ -1,5 +1,6 @@
 # Linux 用户服务配置，按目标 VM 调整绝对路径。
 home = "/var/lib/proofrun"
+# 以下控制面字段仅用于首次单服务配对；启用 bindings 后改由私有注册表管理。
 gateway_url = "wss://proofrun.example.com/v1/nodes/connect"
 credential_file = "credential.json"
 pool = "internal"

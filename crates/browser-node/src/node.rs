@@ -39,7 +39,9 @@ pub struct Node {
     /// 最近心跳的租约请求 ID 到发出时刻，按 CLOCK_BOOTTIME 计时。
     requests: Mutex<BTreeMap<String, u64>>,
     /// 独占 home 的文件锁，随 Node 生命周期持有。
-    _lock: artifacts::HomeLock,
+    _lock: Option<artifacts::HomeLock>,
+    /// 显式绑定包含固定控制面凭据和节点拥有者批准的来源。
+    pub binding: Option<crate::bindings::Binding>,
 }
 impl Node {
     /// 恢复旧会话并确认进程范围已关闭后，才开始接收新命令。
@@ -52,6 +54,25 @@ impl Node {
         let lock = artifacts::lock_home(&config.home)?;
         let id = artifacts::installation_id(&config.home)?;
         let store = Store::open(&config.home.join("node.db"))?;
+        Self::start_context(
+            config,
+            store,
+            id,
+            Some(lock),
+            None,
+            Arc::new(crate::runtime::Resources::default()),
+        )
+        .await
+    }
+    /// 多控制面共享一个恢复账本与准入器，每个上下文只持有所属会话和租约。
+    pub async fn start_context(
+        config: NodeConfig,
+        store: Store,
+        id: String,
+        lock: Option<artifacts::HomeLock>,
+        binding: Option<crate::bindings::Binding>,
+        resources: Arc<crate::runtime::Resources>,
+    ) -> anyhow::Result<Arc<Self>> {
         // 先处理上次进程遗留的会话；无法证实关闭时保持隔离并拒绝启动。
         for mut record in store.sessions().await? {
             if record.cgroup.is_none() {
@@ -103,8 +124,10 @@ impl Node {
         );
         let config = Arc::new(config);
         let epoch = uuid::Uuid::new_v4().to_string();
-        let sessions = Sessions::new(config.clone(), store.clone(), id.clone(), epoch.clone());
-        let artifacts = Artifacts::new(config.clone(), store.clone());
+        let mut sessions = Sessions::new(config.clone(), store.clone(), id.clone(), epoch.clone());
+        sessions.admission = resources.admission.clone();
+        let mut artifacts = Artifacts::new(config.clone(), store.clone());
+        artifacts.lock = resources.artifacts.clone();
         Ok(Arc::new(Self {
             id,
             epoch,
@@ -114,6 +137,7 @@ impl Node {
             artifacts,
             requests: Mutex::new(BTreeMap::new()),
             _lock: lock,
+            binding,
         }))
     }
     /// 发布节点容量及能力，同时生成下一次租约授权要回带的请求 ID。
@@ -126,7 +150,15 @@ impl Node {
         requests.insert(request.clone(), now);
         drop(requests);
         let records = self.store.sessions().await?;
-        let admission = self.sessions.admission.status(&self.config, &records);
+        let mut admission = self
+            .sessions
+            .admission
+            .status(&self.config, &self.store.all_sessions().await?);
+        let state = self.store.binding_state().await?;
+        if state != "ACTIVE" {
+            admission.accepting = false;
+            admission.reason = format!("BINDING_{state}");
+        }
         let occupied: Vec<_> = records.into_iter().map(|record| json!({
             "sessionId":record.session_id,"state":record.state,"leaseId":record.lease_id,"fence":record.fence
         })).collect();
@@ -189,7 +221,11 @@ impl Node {
                 meta["operation"]["action"] = action.clone();
             }
         }
-        if let Err(fault) = self.validate(&command) {
+        if let Err(fault) = self
+            .authorize_binding()
+            .await
+            .and_then(|_| self.validate(&command))
+        {
             return failure(meta, fault);
         }
         // hash 绑定完整命令信封，防止复用 commandId 更换会话、租约或参数。
@@ -362,6 +398,7 @@ impl Node {
         session: Option<Arc<crate::sessions::Session>>,
         command_deadline: u64,
     ) -> Result<Value> {
+        self.authorize_binding().await?;
         if process::boot_ms() >= command_deadline {
             return Err(Fault::rejected(
                 "DEADLINE_EXCEEDED",
@@ -439,6 +476,24 @@ impl Node {
                     session.renew(deadline)?;
                     return Ok(json!({"renewed":true}));
                 }
+                if matches!(
+                    operation,
+                    BrowserCommand::SessionWatch { .. } | BrowserCommand::SessionControl { .. }
+                ) {
+                    let raw = serde_json::to_value(operation).unwrap();
+                    if let Some(grant) = raw.get("grant")
+                        && let Some(binding) = &self.binding
+                        && !binding
+                            .console_origins
+                            .iter()
+                            .any(|origin| Some(origin.as_str()) == grant["origin"].as_str())
+                    {
+                        return Err(Fault::rejected(
+                            "ORIGIN_NOT_ALLOWED",
+                            "客户端来源未经节点拥有者批准",
+                        ));
+                    }
+                }
                 if matches!(operation, BrowserCommand::SessionWatch { .. }) {
                     session
                         .control
@@ -460,6 +515,25 @@ impl Node {
                 engine::validate(operation, self.config.allow_unverified_writes)?;
                 session.execute(operation.clone(), command_deadline).await
             }
+        }
+    }
+    /// 撤销从持久账本读取，网关与直连都不能等待重连后才生效。
+    pub async fn authorize_binding(&self) -> Result<()> {
+        let state = self
+            .store
+            .binding_state()
+            .await
+            .map_err(|e| Fault::rejected("STORE_FAILED", e.to_string()))?;
+        if state == "REVOKED" {
+            return Err(Fault::rejected("BINDING_REVOKED", "控制面绑定已撤销"));
+        }
+        Ok(())
+    }
+    /// 凭据只从本地固定绑定或旧配置读取，不接受命令提供上传身份。
+    pub fn credential(&self) -> anyhow::Result<String> {
+        match &self.binding {
+            Some(binding) => Ok(binding.token.clone()),
+            None => self.config.credential(),
         }
     }
     /// 停止接单并等待所有受监管会话完成关闭。

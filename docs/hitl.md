@@ -52,7 +52,7 @@ Cookie 值不进入 CLI 参数、操作回执、活动摘要或模型工具上�
 
 处理页把链接凭据放在 `POST /v1/hitl/bootstrap` 请求体中。REQUESTED 时只轮询等待；HUMAN 且节点确认交接后，API 生成一分钟内可连接的随机凭据，通过可靠 `session.control` 命令把摘要和授权范围安装到节点，等待节点回执后返回直连地址。原始链接、管理员密钥及机器凭据都不会发给节点直连客户端。响应禁止缓存，令牌不放进 URL 或查询串。
 
-节点验证 WebSocket Origin、首条 `authenticate` 消息、令牌摘要、介入身份、控制代次与会话短租约。控制凭据只消费一次，每个会话只有一个人工控制连接；媒体连接必须依附该控制连接。重连重新向 API 换取凭据，旧连接退出不会撤销新连接。
+客户端在首条 `authenticate` 中携带 bootstrap 返回的 `nodeId`、介入 ID 和短期凭据。显式绑定按 nodeId 选择唯一控制面范围，控制面不能向未获节点拥有者批准的 Console Origin 签发授权。节点验证 WebSocket Origin、首条 `authenticate` 消息、令牌摘要、介入身份、控制代次与会话短租约。控制凭据只消费一次，每个会话只有一个人工控制连接；媒体连接必须依附该控制连接。重连重新向 API 换取凭据，旧连接退出不会撤销新连接。
 
 ```mermaid
 sequenceDiagram

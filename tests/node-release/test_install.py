@@ -25,6 +25,24 @@ SPEC.loader.exec_module(installer)
 class InstallTests(unittest.TestCase):
     """使用临时 home 和假进程入口，检查升级边界而不操作开发机用户服务。"""
 
+    def test_binding_registry_controls_upgrade_restart(self):
+        """范围：SQLite 授权与全绑定活动检查；不启动真实用户服务。"""
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            credential = home / "credential.json"
+            credential.write_text("legacy")
+            with sqlite3.connect(home / "node.db") as db:
+                db.executescript("CREATE TABLE bindings(state TEXT); CREATE TABLE sessions(binding TEXT,id TEXT,state TEXT);")
+                db.execute("INSERT INTO bindings VALUES('REVOKED')")
+            self.assertFalse(installer.authorized(home, credential))
+            with sqlite3.connect(home / "node.db") as db:
+                db.execute("INSERT INTO bindings VALUES('DRAINING')")
+                db.execute("INSERT INTO sessions VALUES('dev','same','ACTIVE')")
+            credential.unlink()
+            self.assertTrue(installer.authorized(home, credential))
+            with self.assertRaises(RuntimeError):
+                installer.idle(home)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

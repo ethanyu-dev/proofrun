@@ -94,6 +94,17 @@ def idle(home):
                 )
 
 
+def authorized(home, credential):
+    """显式注册表优先于旧凭据文件；撤销全部绑定后不能被安装器重新配对。"""
+    path = home / "node.db"
+    if path.exists():
+        with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True) as db:
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='bindings'").fetchone():
+                if db.execute("SELECT count(*) FROM bindings").fetchone()[0]:
+                    return bool(db.execute("SELECT 1 FROM bindings WHERE state!='REVOKED' LIMIT 1").fetchone())
+    return credential.exists()
+
+
 def unit_quote(path):
     """systemd 参数使用独立引号，并转义 %，不能让路径成为 unit 指令。"""
     return (
@@ -300,7 +311,7 @@ def main():
                             )
                         },
                     )
-                if credential.exists():
+                if authorized(home, credential):
                     started = True
                     run("systemctl", "--user", "enable", "--now", SERVICE)
                     time.sleep(3)

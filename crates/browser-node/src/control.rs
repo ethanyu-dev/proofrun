@@ -27,6 +27,7 @@ pub struct Grant {
     pub state: Value,
 }
 /// 同一会话的唯一控制状态；进程重启会关闭会话，不恢复旧人工凭证。
+#[derive(Default)]
 pub struct Control {
     /// 控制权代次，用于拒绝旧页面和旧自动动作。
     pub revision: u64,
@@ -48,22 +49,6 @@ pub struct Control {
     deadline: u64,
     /// 只读凭证不取得操作权，数量与有效期有界。
     watches: std::collections::HashMap<String, (Grant, u64, bool)>,
-}
-impl Default for Control {
-    fn default() -> Self {
-        Self {
-            revision: 0,
-            human: false,
-            grant: None,
-            auth_revision: 0,
-            connected: false,
-            consumed: false,
-            finalizing: false,
-            completion: None,
-            deadline: 0,
-            watches: Default::default(),
-        }
-    }
 }
 impl Control {
     /// 观看授权独立于人工授权；切换代次后自动失效。

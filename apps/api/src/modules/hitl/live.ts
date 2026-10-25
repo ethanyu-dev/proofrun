@@ -72,6 +72,7 @@ export class LiveService {
       url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
       return {
         waiting: false as const,
+        nodeId: context.node_id,
         id,
         token,
         url: url.toString(),
@@ -95,6 +96,7 @@ export class LiveService {
           );
         return {
           waiting: false as const,
+          nodeId: ticket.nodeId,
           id: ticket.id,
           token: ticket.token,
           url: ticket.url,

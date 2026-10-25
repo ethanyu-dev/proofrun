@@ -13,6 +13,8 @@ type Job = Box<dyn FnOnce(&mut Connection) + Send>;
 pub struct Store {
     /// 有界任务通道，限制数据库积压对主服务的影响。
     tx: mpsc::Sender<Job>,
+    /// 本句柄固定的控制面范围；空串保留旧单控制面账本。
+    pub scope: String,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 /// 会话的持久创建意图及关闭身份，供崩溃恢复核实原进程范围。
@@ -47,6 +49,8 @@ pub enum AdmissionError {
     CommandConflict,
     #[error("session ID has already been used")]
     SessionExists,
+    #[error("binding is not accepting new sessions")]
+    BindingStopped,
 }
 /// 开始去重记录后的命令状态；Pending 和 Finished 均不可再次派发。
 #[derive(Debug)]
@@ -59,6 +63,7 @@ impl Store {
     /// 创建恢复表并启动唯一的 SQLite 连接所有者。
     pub fn open(path: &Path) -> Result<Self> {
         let connection = Connection::open(path)?;
+        connection.busy_timeout(std::time::Duration::from_secs(5))?;
         connection.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
           CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, state TEXT NOT NULL, record TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY, hash TEXT NOT NULL, meta TEXT NOT NULL, result TEXT);
@@ -77,6 +82,31 @@ impl Store {
                 [],
             )?;
         }
+        // 在一个事务内迁移主键；旧数据归原控制面，不能交给新绑定重放。
+        let scoped = connection
+            .prepare("PRAGMA table_info(sessions)")?
+            .query_map([], |r| r.get::<_, String>(1))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .iter()
+            .any(|c| c == "binding");
+        if !scoped {
+            connection.execute_batch("BEGIN IMMEDIATE;
+                ALTER TABLE sessions RENAME TO old_sessions;
+                ALTER TABLE commands RENAME TO old_commands;
+                ALTER TABLE outbox RENAME TO old_outbox;
+                ALTER TABLE artifacts RENAME TO old_artifacts;
+                CREATE TABLE sessions(binding TEXT NOT NULL, id TEXT NOT NULL, state TEXT NOT NULL, record TEXT NOT NULL, PRIMARY KEY(binding,id));
+                CREATE TABLE commands(binding TEXT NOT NULL, id TEXT NOT NULL, hash TEXT NOT NULL, meta TEXT NOT NULL, result TEXT, PRIMARY KEY(binding,id));
+                CREATE TABLE outbox(binding TEXT NOT NULL, id TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(binding,id));
+                CREATE TABLE artifacts(binding TEXT NOT NULL, id TEXT NOT NULL, session_id TEXT NOT NULL, command_id TEXT NOT NULL, hash TEXT NOT NULL, path TEXT NOT NULL, available INTEGER NOT NULL DEFAULT 0, kind TEXT NOT NULL DEFAULT 'SCREENSHOT', PRIMARY KEY(binding,id));
+                INSERT INTO sessions SELECT '',* FROM old_sessions;
+                INSERT INTO commands SELECT '',* FROM old_commands;
+                INSERT INTO outbox SELECT '',* FROM old_outbox;
+                INSERT INTO artifacts SELECT '',* FROM old_artifacts;
+                DROP TABLE old_sessions; DROP TABLE old_commands; DROP TABLE old_outbox; DROP TABLE old_artifacts;
+                COMMIT;")?;
+        }
+        connection.execute_batch("CREATE TABLE IF NOT EXISTS binding_requests(name TEXT PRIMARY KEY, config TEXT NOT NULL); CREATE TABLE IF NOT EXISTS bindings(id TEXT PRIMARY KEY, scope TEXT NOT NULL UNIQUE, name TEXT NOT NULL UNIQUE, config TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('ACTIVE','DRAINING','REVOKED')));")?;
         let (tx, mut rx) = mpsc::channel::<Job>(64);
         // 单线程持有连接；短事务不跨越浏览器或网络 I/O。
         std::thread::Builder::new()
@@ -87,30 +117,60 @@ impl Store {
                     job(&mut connection);
                 }
             })?;
-        Ok(Self { tx })
+        Ok(Self {
+            tx,
+            scope: String::new(),
+        })
     }
     /// 在专用线程执行一个数据库工作单元，不阻塞 Tokio 执行线程。
     pub async fn call<T: Send + 'static>(
         &self,
-        f: impl FnOnce(&mut Connection) -> Result<T> + Send + 'static,
+        f: impl FnOnce(&mut Connection, &str) -> Result<T> + Send + 'static,
     ) -> Result<T> {
         let (tx, rx) = oneshot::channel();
+        let scope = self.scope.clone();
         self.tx
             .send(Box::new(move |db| {
-                let _ = tx.send(f(db));
+                let _ = tx.send(f(db, &scope));
             }))
             .await
             .map_err(|_| anyhow::anyhow!("store stopped"))?;
         rx.await
             .map_err(|_| anyhow::anyhow!("store worker stopped"))?
     }
+    /// 创建固定归属句柄；外部命令无法选择或更换这个范围。
+    pub fn scoped(&self, scope: &str) -> Self {
+        Self {
+            tx: self.tx.clone(),
+            scope: scope.into(),
+        }
+    }
+    /// 全局资源裁决读取所有绑定的占用，不把这些记录交给任一控制面。
+    pub async fn all_sessions(&self) -> Result<Vec<SessionRecord>> {
+        self.call(|db, _| {
+            let mut q = db.prepare("SELECT record FROM sessions WHERE state != 'CLOSED'")?;
+            q.query_map([], |r| r.get::<_, String>(0))?
+                .map(|r| Ok(serde_json::from_str(&r?)?))
+                .collect()
+        })
+        .await
+    }
+    /// 维护与启动恢复必须覆盖已撤销绑定留下的账本。
+    pub async fn scopes(&self) -> Result<Vec<String>> {
+        self.call(|db, _| {
+            let mut q = db.prepare("SELECT binding FROM sessions UNION SELECT binding FROM commands UNION SELECT binding FROM outbox UNION SELECT binding FROM artifacts UNION SELECT ''")?;
+            Ok(q.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?)
+        }).await
+    }
     /// 派发前登记 commandId；同 ID 仅可取回原结果或进行中状态。
     pub async fn begin(&self, id: String, hash: String, meta: Value) -> Result<Begin> {
-        self.call(move |db| {
+        self.call(move |db, scope| {
             let row: Option<(String, Option<String>)> = db
-                .query_row("SELECT hash,result FROM commands WHERE id=?", [&id], |r| {
-                    Ok((r.get(0)?, r.get(1)?))
-                })
+                .query_row(
+                    "SELECT hash,result FROM commands WHERE id=? AND binding=?",
+                    [id.as_str(), scope],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
                 .optional()?;
             if let Some((stored, result)) = row {
                 if stored != hash {
@@ -123,8 +183,8 @@ impl Store {
             }
             // 派发前持久化；此后崩溃时保守地将命令恢复为 UNKNOWN。
             db.execute(
-                "INSERT INTO commands(id,hash,meta) VALUES(?,?,?)",
-                params![id, hash, meta.to_string()],
+                "INSERT INTO commands(id,hash,meta,binding) VALUES(?,?,?,?)",
+                params![id, hash, meta.to_string(), scope],
             )?;
             Ok(Begin::New)
         })
@@ -132,24 +192,26 @@ impl Store {
     }
     /// 原子提交终态和待 ACK 结果；迟到完成不得覆盖先前已提交的结果。
     pub async fn finish(&self, id: String, result: Value) -> Result<()> {
-        self.call(move |db| {
-            let tx = db.transaction()?;
+        self.call(move |db, scope| {
+            let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
             tx.execute(
-                "UPDATE commands SET result=? WHERE id=? AND result IS NULL",
-                params![result.to_string(), id],
+                "UPDATE commands SET result=? WHERE id=? AND result IS NULL AND binding=?",
+                params![result.to_string(), id, scope],
             )?;
             // 已提交的结果不可被迟到的完成消息覆盖。
-            let value: String =
-                tx.query_row("SELECT result FROM commands WHERE id=?", [&id], |r| {
-                    r.get(0)
-                })?;
+            let value: String = tx.query_row(
+                "SELECT result FROM commands WHERE id=? AND binding=?",
+                [id.as_str(), scope],
+                |r| r.get(0),
+            )?;
             tx.execute(
-                "INSERT OR IGNORE INTO outbox VALUES(?,?)",
+                "INSERT OR IGNORE INTO outbox(id,payload,binding) VALUES(?,?,?)",
                 params![
                     serde_json::from_str::<Value>(&value)?["messageId"]
                         .as_str()
                         .unwrap_or(&id),
-                    value
+                    value,
+                    scope
                 ],
             )?;
             tx.commit()?;
@@ -159,9 +221,13 @@ impl Store {
     }
     /// 完成回执只有控制面持久处理后才能消失，客户端不凭网络发送成功判断完成。
     pub async fn event_pending(&self, id: String) -> Result<bool> {
-        self.call(move |db| {
+        self.call(move |db, scope| {
             Ok(db
-                .query_row("SELECT 1 FROM outbox WHERE id=?", [id], |_| Ok(()))
+                .query_row(
+                    "SELECT 1 FROM outbox WHERE id=? AND binding=?",
+                    [id.as_str(), scope],
+                    |_| Ok(()),
+                )
                 .optional()?
                 .is_some())
         })
@@ -169,23 +235,55 @@ impl Store {
     }
     /// 交接事件先落盘，再等待主连接送达控制面；画面不进入该账本。
     pub async fn event(&self, value: Value) -> Result<()> {
-        self.call(move |db| {
+        self.call(move |db, scope| {
             db.execute(
-                "INSERT OR IGNORE INTO outbox VALUES(?,?)",
-                params![value["messageId"].as_str().unwrap(), value.to_string()],
+                "INSERT OR IGNORE INTO outbox(id,payload,binding) VALUES(?,?,?)",
+                params![
+                    value["messageId"].as_str().unwrap(),
+                    value.to_string(),
+                    scope
+                ],
             )?;
             Ok(())
         })
         .await
     }
+    /// 默认旧绑定保持兼容；显式绑定的撤销状态在每次授权时从持久账本读取。
+    pub async fn binding_state(&self) -> Result<String> {
+        self.call(|db, scope| {
+            Ok(db
+                .query_row("SELECT state FROM bindings WHERE scope=?", [scope], |r| {
+                    r.get(0)
+                })
+                .optional()?
+                .unwrap_or_else(|| {
+                    if scope.is_empty() {
+                        "ACTIVE".into()
+                    } else {
+                        "REVOKED".into()
+                    }
+                }))
+        })
+        .await
+    }
     /// 资源准入后阻止 sessionId 复用并记录创建意图。
     pub async fn reserve(&self, record: SessionRecord) -> Result<()> {
-        self.call(move |db| {
-            let tx = db.transaction()?;
+        self.call(move |db, scope| {
+            let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            let state: Option<String> = tx
+                .query_row("SELECT state FROM bindings WHERE scope=?", [scope], |r| {
+                    r.get(0)
+                })
+                .optional()?;
+            if state.as_deref().is_some_and(|s| s != "ACTIVE")
+                || (state.is_none() && !scope.is_empty())
+            {
+                return Err(AdmissionError::BindingStopped.into());
+            }
             if tx
                 .query_row(
-                    "SELECT 1 FROM sessions WHERE id=?",
-                    [&record.session_id],
+                    "SELECT 1 FROM sessions WHERE id=? AND binding=?",
+                    [record.session_id.as_str(), scope],
                     |_| Ok(()),
                 )
                 .optional()?
@@ -194,11 +292,12 @@ impl Store {
                 return Err(AdmissionError::SessionExists.into());
             }
             tx.execute(
-                "INSERT INTO sessions VALUES(?,?,?)",
+                "INSERT INTO sessions(id,state,record,binding) VALUES(?,?,?,?)",
                 params![
                     record.session_id,
                     record.state,
-                    serde_json::to_string(&record)?
+                    serde_json::to_string(&record)?,
+                    scope
                 ],
             )?;
             tx.commit()?;
@@ -208,14 +307,15 @@ impl Store {
     }
     /// 持久化状态；终态同时写入可重送的关闭事件。
     pub async fn save_session(&self, record: SessionRecord) -> Result<()> {
-        self.call(move |db| {
-            let tx = db.transaction()?;
+        self.call(move |db, scope| {
+            let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
             tx.execute(
-                "UPDATE sessions SET state=?,record=? WHERE id=?",
+                "UPDATE sessions SET state=?,record=? WHERE id=? AND binding=?",
                 params![
                     record.state,
                     serde_json::to_string(&record)?,
-                    record.session_id
+                    record.session_id,
+                    scope
                 ],
             )?;
             if matches!(record.state.as_str(), "CLOSED" | "QUARANTINED") {
@@ -230,8 +330,8 @@ impl Store {
                     event["closeReason"] = serde_json::json!(reason);
                 }
                 tx.execute(
-                    "INSERT OR IGNORE INTO outbox VALUES(?,?)",
-                    params![id, event.to_string()],
+                    "INSERT OR IGNORE INTO outbox(id,payload,binding) VALUES(?,?,?)",
+                    params![id, event.to_string(), scope],
                 )?;
             }
             tx.commit()?;
@@ -241,21 +341,22 @@ impl Store {
     }
     /// 返回所有未确认 CLOSED 的会话，供启动恢复与心跳占用统计。
     pub async fn sessions(&self) -> Result<Vec<SessionRecord>> {
-        self.call(|db| {
-            let mut s = db.prepare("SELECT record FROM sessions WHERE state != 'CLOSED'")?;
-            let rows = s.query_map([], |r| r.get::<_, String>(0))?;
+        self.call(|db, scope| {
+            let mut s =
+                db.prepare("SELECT record FROM sessions WHERE state != 'CLOSED' AND binding=?")?;
+            let rows = s.query_map([scope], |r| r.get::<_, String>(0))?;
             rows.map(|r| Ok(serde_json::from_str(&r?)?)).collect()
         })
         .await
     }
     /// 将崩溃前未提交结果改为 UNKNOWN，并仅重送结果而不重放动作。
     pub async fn recover_commands(&self) -> Result<()> {
-        self.call(|db| {
+        self.call(|db, scope| {
             let rows: Vec<(String, String)> = db
-                .prepare("SELECT id,meta FROM commands WHERE result IS NULL")?
-                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .prepare("SELECT id,meta FROM commands WHERE result IS NULL AND binding=?")?
+                .query_map([scope], |r| Ok((r.get(0)?, r.get(1)?)))?
                 .collect::<rusqlite::Result<_>>()?;
-            let tx = db.transaction()?;
+            let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
             for (id, meta) in rows {
                 let mut result: Value = serde_json::from_str(&meta)?;
                 // 人工直连的恢复回执仍沿用其独立事件类型。
@@ -269,14 +370,15 @@ impl Store {
                     "message": "No committed result; the operation is not replayed."
                 });
                 tx.execute(
-                    "UPDATE commands SET result=? WHERE id=?",
-                    params![result.to_string(), id],
+                    "UPDATE commands SET result=? WHERE id=? AND binding=?",
+                    params![result.to_string(), id, scope],
                 )?;
                 tx.execute(
-                    "INSERT OR IGNORE INTO outbox VALUES(?,?)",
+                    "INSERT OR IGNORE INTO outbox(id,payload,binding) VALUES(?,?,?)",
                     params![
                         result["messageId"].as_str().unwrap_or(&id),
-                        result.to_string()
+                        result.to_string(),
+                        scope
                     ],
                 )?;
             }
@@ -287,9 +389,10 @@ impl Store {
     }
     /// 分批读取待确认消息；断线重连时继续发送同一 messageId。
     pub async fn pending(&self) -> Result<Vec<Value>> {
-        self.call(|db| {
-            let mut s = db.prepare("SELECT payload FROM outbox ORDER BY rowid LIMIT 64")?;
-            s.query_map([], |r| r.get::<_, String>(0))?
+        self.call(|db, scope| {
+            let mut s =
+                db.prepare("SELECT payload FROM outbox WHERE binding=? ORDER BY rowid LIMIT 64")?;
+            s.query_map([scope], |r| r.get::<_, String>(0))?
                 .map(|r| Ok(serde_json::from_str(&r?)?))
                 .collect()
         })
@@ -297,8 +400,11 @@ impl Store {
     }
     /// 仅在控制面确认持久接收后删除 outbox 消息。
     pub async fn ack(&self, id: String) -> Result<()> {
-        self.call(move |db| {
-            db.execute("DELETE FROM outbox WHERE id=?", [id])?;
+        self.call(move |db, scope| {
+            db.execute(
+                "DELETE FROM outbox WHERE id=? AND binding=?",
+                [id.as_str(), scope],
+            )?;
             Ok(())
         })
         .await
@@ -334,5 +440,42 @@ mod closure_tests {
         let events = store.pending().await.unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0]["closeReason"], "NODE_SHUTDOWN");
+    }
+}
+
+#[cfg(test)]
+mod migration_tests {
+    use super::*;
+    /// 范围：旧主键账本迁移仍保存原会话、待确认回执与证据，不交给新绑定；不启动旧二进制。
+    #[tokio::test]
+    async fn legacy_rows_stay_in_original_scope() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("node.db");
+        let db = Connection::open(&path).unwrap();
+        db.execute_batch("CREATE TABLE sessions(id TEXT PRIMARY KEY,state TEXT NOT NULL,record TEXT NOT NULL);
+            CREATE TABLE commands(id TEXT PRIMARY KEY,hash TEXT NOT NULL,meta TEXT NOT NULL,result TEXT);
+            CREATE TABLE outbox(id TEXT PRIMARY KEY,payload TEXT NOT NULL);
+            CREATE TABLE artifacts(id TEXT PRIMARY KEY,session_id TEXT NOT NULL,command_id TEXT NOT NULL,hash TEXT NOT NULL,path TEXT NOT NULL,available INTEGER NOT NULL DEFAULT 0);
+            INSERT INTO outbox VALUES('event','{\"messageId\":\"event\",\"type\":\"session.closed\"}');
+            INSERT INTO artifacts VALUES('artifact','session','command','hash','/fixture',0);").unwrap();
+        drop(db);
+        let store = Store::open(&path).unwrap();
+        assert_eq!(store.pending().await.unwrap()[0]["messageId"], "event");
+        assert!(store.scoped("other").pending().await.unwrap().is_empty());
+        store.scoped("other").ack("event".into()).await.unwrap();
+        assert_eq!(store.pending().await.unwrap().len(), 1);
+        let evidence: (String, String) = store
+            .call(|db, _| {
+                Ok(db.query_row(
+                    "SELECT binding,kind FROM artifacts WHERE id='artifact'",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )?)
+            })
+            .await
+            .unwrap();
+        assert_eq!(evidence, ("".into(), "SCREENSHOT".into()));
+        store.ack("event".into()).await.unwrap();
+        assert!(store.pending().await.unwrap().is_empty());
     }
 }

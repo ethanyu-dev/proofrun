@@ -25,7 +25,7 @@ def run():
     harness=Harness();page=ThreadingHTTPServer(('127.0.0.1',0),Page);page.writes=[]
     threading.Thread(target=page.serve_forever,daemon=True).start()
     try:
-        harness.start_api();harness.add_node()
+        harness.start_api();harness.add_node(managed=True)
         definition=task();definition['environment']['allowIntervention']=True
         # 首次 Agent 导航耗尽预算后，人工点击、输入及按键仍须完成；仅验证本地夹具，不代表真实账号登录验收。
         definition['budget']['maxActions']=1
