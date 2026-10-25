@@ -1,11 +1,13 @@
 //! 客户端直连入口。TLS 由回环前的本机代理终止，画面与输入使用独立连接。
+mod heartbeat;
 use crate::{control::Grant, node::Node, sessions::Session};
 use anyhow::{Context, Result, ensure};
 use futures_util::{SinkExt, StreamExt};
+use heartbeat::Heartbeat;
 use serde_json::{Value, json};
 use std::{
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::{
     net::{TcpListener, TcpStream},
@@ -60,7 +62,8 @@ pub async fn serve_nodes(
                 let (stream, _) = connection?;
                 let Ok(permit) = permits.clone().try_acquire_owned() else { continue };
                 let nodes = nodes.clone(); let cancelled = stop.clone();
-                jobs.spawn(async move { let _permit = permit; tokio::select! { _ = cancelled.cancelled() => {}, _ = accept(nodes, stream) => {} } });
+                // 不记录帧、认证消息或输入值；异常退出至少留有可定位的通道生命周期记录。
+                jobs.spawn(async move { let _permit = permit; tokio::select! { _ = cancelled.cancelled() => {}, result = accept(nodes, stream) => { if result.is_err() { tracing::warn!("客户端直连异常结束"); } } } });
             }
             _ = jobs.join_next(), if !jobs.is_empty() => {}
         }
@@ -392,10 +395,18 @@ async fn control(
         record,
     };
     let mut tick = tokio::time::interval(AUTH_CHECK_INTERVAL);
+    let mut heartbeat = Heartbeat::new(Instant::now());
     loop {
         let keep = tokio::select! {
-            _=tick.tick()=>controller.poll(socket).await?,
+            _=tick.tick()=>{
+                if !controller.poll(socket).await? { return Ok(()); }
+                if let Some(payload) = heartbeat.tick(Instant::now())? {
+                    timeout(WRITE_TIMEOUT, socket.send(Message::Ping(payload.to_vec().into()))).await??;
+                }
+                true
+            },
             message=socket.next()=>match message {
+                Some(Ok(Message::Pong(payload)))=>{heartbeat.pong(&payload);true},
                 Some(message)=>controller.message(socket,message?).await?,
                 None=>false,
             },
@@ -493,10 +504,16 @@ async fn frames(
     )
     .await??;
     let mut tick = tokio::time::interval(AUTH_CHECK_INTERVAL);
+    let mut heartbeat = Heartbeat::new(Instant::now());
     loop {
         tokio::select! {
-            _=tick.tick()=>{ node.authorize_binding().await?; session.authorize(&session.lease_id,session.fence)?; frame_authorize(&session,&grant,revision,readonly)?; },
-            incoming=socket.next()=>match incoming {Some(Ok(Message::Ping(data)))=>{timeout(WRITE_TIMEOUT,socket.send(Message::Pong(data))).await??;},Some(Ok(Message::Pong(_)))=>{},_=>return Ok(())},
+            _=tick.tick()=>{
+                node.authorize_binding().await?; session.authorize(&session.lease_id,session.fence)?; frame_authorize(&session,&grant,revision,readonly)?;
+                if let Some(payload) = heartbeat.tick(Instant::now())? {
+                    timeout(WRITE_TIMEOUT, socket.send(Message::Ping(payload.to_vec().into()))).await??;
+                }
+            },
+            incoming=socket.next()=>match incoming {Some(Ok(Message::Ping(data)))=>{timeout(WRITE_TIMEOUT,socket.send(Message::Pong(data))).await??;},Some(Ok(Message::Pong(data)))=>{heartbeat.pong(&data)},_=>return Ok(())},
             message=local.next()=>{
                 let Some(message)=message else{return Ok(())};let message=message?;
                 if let Message::Text(text)=message {
