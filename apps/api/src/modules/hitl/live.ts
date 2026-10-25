@@ -1,3 +1,8 @@
+import {
+  discardFrame,
+  sendStreamMessage,
+  trackStreamSocket,
+} from './transport.js';
 import { randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
 import { Database } from '../../db.js';
@@ -94,18 +99,6 @@ export class LiveService {
     }
     return { frame: frame ?? null };
   }
-  private send(socket: WebSocket, value: unknown) {
-    if (
-      socket.readyState === WebSocket.OPEN &&
-      socket.bufferedAmount < FRAME_LIMIT
-    )
-      socket.send(JSON.stringify(value));
-  }
-  private track(socket: WebSocket) {
-    this.sockets.add(socket);
-    socket.on('error', () => socket.terminate());
-    socket.on('close', () => this.sockets.delete(socket));
-  }
   private async grant(id: string): Promise<LiveGrant | undefined> {
     return (
       await this.db.query<LiveGrant>(
@@ -124,13 +117,14 @@ export class LiveService {
     clearTimeout(stream.attachTimer);
     stream.relay?.terminate();
     for (const socket of stream.viewers) {
-      this.send(socket, { type: 'ended', reason });
+      discardFrame(socket);
+      sendStreamMessage(socket, { type: 'ended', reason });
       socket.close(1000);
     }
   }
   /** 首条消息携带凭据；URL、节点和帧中均不会包含管理员 token。 */
   accept(socket: WebSocket) {
-    this.track(socket);
+    trackStreamSocket(this.sockets, socket);
     let stream: Stream | undefined;
     let received = false;
     const timer = setTimeout(() => socket.close(4001), AUTH_MS);
@@ -180,7 +174,7 @@ export class LiveService {
         clearTimeout(timer);
         await this.refresh(stream);
       })().catch(() => {
-        this.send(socket, {
+        sendStreamMessage(socket, {
           type: 'error',
           message: '实时画面认证失败或执行不可访问',
         });
@@ -211,7 +205,7 @@ export class LiveService {
       }
       stream.grant = grant;
       for (const socket of stream.viewers)
-        this.send(socket, {
+        sendStreamMessage(socket, {
           type: 'state',
           taskId: grant.task_id,
           executionState: grant.state,
@@ -241,7 +235,7 @@ export class LiveService {
   }
   /** 节点凭据已在路由层认证；流身份必须同时匹配节点、代次及尚未占用的通道。 */
   relay(socket: WebSocket, nodeId: string) {
-    this.track(socket);
+    trackStreamSocket(this.sockets, socket);
     let stream: Stream | undefined;
     const timer = setTimeout(() => socket.close(4001), AUTH_MS);
     socket.on('close', () => {
@@ -291,7 +285,7 @@ export class LiveService {
         this.previews.set(stream.executionId, frame);
         while (this.previews.size > PREVIEW_LIMIT)
           this.previews.delete(this.previews.keys().next().value!);
-        for (const viewer of stream.viewers) this.send(viewer, frame);
+        for (const viewer of stream.viewers) sendStreamMessage(viewer, frame);
       } catch {
         socket.close(4003);
       }

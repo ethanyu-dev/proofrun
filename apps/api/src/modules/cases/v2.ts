@@ -1,10 +1,9 @@
+import { projectCase } from './projection.js';
+import type { TaskReader } from '../tasks/reader.js';
 import { assertSupportedSession } from '../sessions/plan.js';
 import {
-  summarizeReport,
   validateVerificationCaseV2,
   type CaseResultV2,
-  type StepResult,
-  type VerificationReport,
   type VerificationTask,
 } from '@proofrun/contracts';
 import { ApiError, canonical } from '../../domain.js';
@@ -22,11 +21,9 @@ import {
 export class CaseV2Service {
   constructor(
     /** 复用控制面的任务、清理和原子提交端口。 */
-    private readonly tasks: Pick<
-      Coordinator,
-      'submitCaseBatch' | 'task' | 'cancel' | 'caseCleanup'
-    > &
-      Partial<Pick<Coordinator, 'caseTask'>>,
+    private readonly tasks: Pick<Coordinator, 'submitCaseBatch' | 'cancel'> &
+      Pick<TaskReader, 'task' | 'caseCleanup'> &
+      Partial<Pick<TaskReader, 'caseTask'>>,
     /** 首次接收使用的平台配置；幂等重提使用已冻结快照。 */
     private readonly profile: CaseProfile | undefined,
     /** 构造同源公开证据地址，不透传内部报告地址。 */
@@ -49,30 +46,6 @@ export class CaseV2Service {
     if (task.definition.caseV2Definition?.caseId !== id)
       throw new ApiError(404, 'CASE_MISSING', 'Case not found');
     return task;
-  }
-
-  /** 报告只映射公开结果；证据链接仍需验证主任务或关联清理任务归属。 */
-  private result(
-    id: string,
-    report: VerificationReport | null,
-    runId: string,
-  ): CaseResultV2['result'] {
-    return report
-      ? {
-          outcome:
-            report.executionDisposition === 'EXECUTED'
-              ? report.verdict!
-              : report.executionDisposition,
-          summary: report.summary,
-          criteria: report.criteria,
-          evidence: report.artifacts.map((a) => ({
-            id: a.id,
-            kind: a.kind,
-            sha256: a.sha256,
-            url: `${this.publicUrl}/v2/cases/${encodeURIComponent(id)}/evidence/${encodeURIComponent(a.id)}?runId=${encodeURIComponent(runId)}`,
-          })),
-        }
-      : null;
   }
 
   /** 先校验整批，再由调度器事务接收；配置改变后重提仍复用首次冻结的快照。 */
@@ -238,67 +211,10 @@ export class CaseV2Service {
   /** 每组保留独立生命周期、步骤和清理；顶层沿用主组，不合并相互矛盾的结论。 */
   private async project(
     id: string,
-    task: Awaited<ReturnType<Coordinator['task']>>,
+    task: Awaited<ReturnType<TaskReader['task']>>,
   ): Promise<Omit<CaseResultV2, 'comparison'>> {
     const cleanup = await this.tasks.caseCleanup(task.definition.taskId);
-    const pending: StepResult[] = task.definition.steps!.map((step) => ({
-      stepId: step.stepId!,
-      status: ['QUEUED', 'RUNNING'].includes(task.state)
-        ? 'PENDING'
-        : 'SKIPPED',
-      summary: '尚未执行',
-      evidenceRefs: [],
-      criteria: [],
-      startedAt: null,
-      finishedAt: null,
-    }));
-    const steps = structuredClone(
-      task.report?.steps ?? task.stepResults ?? pending,
-    );
-    if (!['QUEUED', 'RUNNING'].includes(task.state) && !task.report) {
-      for (const step of steps) {
-        if (step.status === 'RUNNING') {
-          step.status = 'ERROR';
-          step.summary = '执行已终止，未交付该步骤完成结论';
-        } else if (step.status === 'PENDING') {
-          step.status = 'SKIPPED';
-          step.summary = '任务已终止，未执行';
-        }
-      }
-    }
-    return {
-      caseId: id,
-      runId: task.definition.comparison?.sourceTaskId ?? task.definition.taskId,
-      taskId: task.definition.taskId,
-      status: task.state,
-      ...(task.executionOutcome
-        ? { executionOutcome: task.executionOutcome }
-        : {}),
-      queueReason: task.queueReason ?? null,
-      ...summarizeReport(
-        task.report,
-        task.definition.acceptanceCriteria.map((c) => c.id),
-        task.definition,
-      ),
-      result: this.result(
-        id,
-        task.report,
-        task.definition.comparison?.sourceTaskId ?? task.definition.taskId,
-      ),
-      steps,
-      cleanup: cleanup
-        ? {
-            taskId: cleanup.taskId,
-            status: cleanup.status,
-            result: this.result(
-              id,
-              cleanup.report,
-              task.definition.comparison?.sourceTaskId ??
-                task.definition.taskId,
-            ),
-          }
-        : null,
-    };
+    return projectCase(id, task, cleanup, this.publicUrl);
   }
 
   /** 取消同任务业务与收尾；历史独立清理仍按旧调度规则处理。 */

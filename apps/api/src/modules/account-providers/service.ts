@@ -161,33 +161,6 @@ export class ExternalAccounts {
       return null;
     }
     this.validate(task);
-    // 首组先固定账号，另一组使用同账号申请独立额度；不能竞争分配出两个不同账号。
-    let paired:
-      | {
-          account_id: string | null;
-          material_version: string | null;
-          state: string;
-        }
-      | undefined;
-    if (task.comparison) {
-      const primary = task.comparison.sourceTaskId;
-      if (task.taskId !== primary) {
-        paired = (
-          await tx.query(
-            'SELECT a.account_id,a.material_version,t.state FROM pr_tasks t LEFT JOIN pr_external_accounts a ON a.task_id=t.id WHERE t.id=$1',
-            [primary],
-          )
-        ).rows[0];
-        if (!paired?.account_id) {
-          if (paired && !['QUEUED', 'RUNNING'].includes(paired.state))
-            await tx.query(
-              "UPDATE pr_tasks SET state='ERROR',finished_at=clock_timestamp(),error=jsonb_build_object('code','EXTERNAL_ACCOUNT_COMPARISON_UNAVAILABLE') WHERE id=$1 AND state='QUEUED'",
-              [task.taskId],
-            );
-          return null;
-        }
-      }
-    }
     const requestId = `pr-${randomUUID()}`;
     const request: GetAccountInput = {
       request_id: requestId,
@@ -197,8 +170,8 @@ export class ExternalAccounts {
       duration_seconds: plan.durationSeconds,
       role_description: plan.selector.roles ?? [],
       ...(plan.selector.poolId ? { pool_id: plan.selector.poolId } : {}),
-      ...(paired?.account_id || plan.selector.accountId
-        ? { account_id: paired?.account_id ?? plan.selector.accountId! }
+      ...(plan.selector.accountId
+        ? { account_id: plan.selector.accountId }
         : {}),
     };
     await tx.query(
@@ -536,7 +509,8 @@ export class ExternalAccounts {
           await this.fail(row.task_id, `EXTERNAL_ACCOUNT_${reason}`);
         return;
       }
-      // 同轮只比较相同账号与材料；DevPass 不能按旧版本申请，差异不能伪装成策略差异。
+      // 仅兼容升级前已持久化的双跑租约恢复；新预留不再创建配对。
+      // 交还前恢复材料时仍须核对原账号，不能用另一账号覆盖遗留绑定。
       const primary = task.definition.comparison?.sourceTaskId;
       if (primary && primary !== row.task_id) {
         const paired = (

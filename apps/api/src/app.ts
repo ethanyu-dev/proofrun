@@ -69,15 +69,15 @@ export async function buildApp(
     config.artifactDirectory,
     config.publicUrl,
   );
-  const coordinator = new Coordinator(db, config, artifacts);
   const tasks = new TaskReader(db);
+  const coordinator = new Coordinator(db, config, artifacts, tasks);
   const lifecycle = new TaskLifecycle(db);
   const cases = new CaseService(
     {
       submit: (definition) => coordinator.submit(definition),
       task: async (id) => {
         await lifecycle.visible(id);
-        return coordinator.task(id);
+        return tasks.task(id);
       },
       cancel: (id) => coordinator.cancel(id),
     },
@@ -85,7 +85,14 @@ export async function buildApp(
     config.publicUrl,
   );
   const casesV2 = new CaseV2Service(
-    coordinator,
+    {
+      submitCaseBatch: (definitions, request) =>
+        coordinator.submitCaseBatch(definitions, request),
+      cancel: (id) => coordinator.cancel(id),
+      task: (id) => tasks.task(id),
+      caseTask: (id, runId) => tasks.caseTask(id, runId),
+      caseCleanup: (id) => tasks.caseCleanup(id),
+    },
     config.caseProfile,
     config.publicUrl,
   );
@@ -406,8 +413,8 @@ export async function buildApp(
     '/v2/cases/:id/runs',
     { preHandler: admin },
     async (request) => {
-      await coordinator.caseTask(request.params.id);
-      return { runs: await coordinator.caseRuns(request.params.id) };
+      await tasks.caseTask(request.params.id);
+      return { runs: await tasks.caseRuns(request.params.id) };
     },
   );
   app.post('/v1/tasks/delete', { preHandler: admin }, (request) =>
@@ -521,7 +528,7 @@ export async function buildApp(
     { preHandler: admin },
     async (request) => {
       await lifecycle.visible(request.params.id);
-      return coordinator.task(request.params.id);
+      return tasks.task(request.params.id);
     },
   );
   app.post<{ Params: IdParams }>(
@@ -568,7 +575,7 @@ export async function buildApp(
     { preHandler: admin },
     async (request) => {
       await lifecycle.visible(request.params.id);
-      return coordinator.comparison(request.params.id);
+      return tasks.comparison(request.params.id);
     },
   );
   app.post<{ Params: IdParams }>(
@@ -585,7 +592,7 @@ export async function buildApp(
         request.params.id,
         request.body,
       );
-      return coordinator.task(request.params.id);
+      return tasks.task(request.params.id);
     },
   );
   app.post('/v1/worker/claim', { preHandler: worker }, (request) => {

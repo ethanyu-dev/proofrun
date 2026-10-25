@@ -1296,13 +1296,11 @@ test('差分使用节点比较键，并将当前变化控件提前', () => {
     role: 'button',
     name: '打开',
   };
-  assert.equal(
-    tracker.observe(deltaPage([old], '打开 [target=old]')).baseline,
-    true,
-  );
+  tracker.observe(deltaPage([old], '打开 [target=old]'));
+  assert.equal(old.change, undefined);
   const same = { ...old, target: 'new' };
   const unchanged = tracker.observe(deltaPage([same], '打开 [target=new]'));
-  assert.deepEqual(unchanged.added, []);
+  assert.equal(same.change, undefined);
   assert.equal(unchanged.unchangedRounds, 1);
   const changed = deltaPage([
     same,
@@ -1314,14 +1312,14 @@ test('差分使用节点比较键，并将当前变化控件提前', () => {
       activeRegion: true,
     },
   ]);
-  assert.deepEqual(tracker.observe(changed).added, ['menu']);
+  tracker.observe(changed);
+  assert.equal(changed.targets[0].change, 'added');
   assert.equal(changed.targets[0].target, 'menu');
   const reused = deltaPage([{ ...same, name: '关闭' }], '关闭', {
     truncated: true,
   });
-  const result = tracker.observe(reused);
-  assert.deepEqual(result.updated, ['new']);
-  assert.equal(result.removedCount, null);
+  tracker.observe(reused);
+  assert.equal(reused.targets[0].change, 'updated');
 });
 
 // 范围：通过完整执行循环验证两类模型共用的停滞止损；页面与模型均为夹具，不代表业务成功率。
@@ -1513,7 +1511,8 @@ test('同名控件移动到不同语义区域时产生变化', () => {
     ...field,
     region: { key: 'b', role: 'dialog', name: '新增' },
   };
-  assert.deepEqual(tracker.observe(deltaPage([moved])).updated, ['same']);
+  tracker.observe(deltaPage([moved]));
+  assert.equal(moved.change, 'updated');
   assert.equal(
     tracker.observe(
       deltaPage([{ ...moved, region: { ...moved.region, key: 'c' } }]),

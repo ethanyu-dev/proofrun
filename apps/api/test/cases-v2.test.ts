@@ -1,3 +1,4 @@
+import type { TaskReader } from '../src/modules/tasks/reader.js';
 import { cleanupTask } from './legacy-cleanup.js';
 import { inlineCleanup } from '../src/modules/cases/inline-cleanup.js';
 import assert from 'node:assert/strict';
@@ -100,12 +101,10 @@ test('v2 默认 LLM 单组、独立会话并允许人工辅助，保留平台显
 
 /** 只模拟原子任务端口，事务隔离和并发由 PostgreSQL 集成测试检查。 */
 function fixture(profile: CaseProfile = PROFILE) {
-  const records = new Map<string, Awaited<ReturnType<Coordinator['task']>>>();
+  const records = new Map<string, Awaited<ReturnType<TaskReader['task']>>>();
   let batches = 0;
-  const tasks: Pick<
-    Coordinator,
-    'submitCaseBatch' | 'task' | 'cancel' | 'caseCleanup'
-  > = {
+  const tasks: Pick<Coordinator, 'submitCaseBatch' | 'cancel'> &
+    Pick<TaskReader, 'task' | 'caseCleanup'> = {
     async submitCaseBatch(definitions) {
       for (const d of definitions)
         if (

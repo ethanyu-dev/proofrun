@@ -1,3 +1,4 @@
+import type { TaskReader } from '../src/modules/tasks/reader.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
@@ -37,8 +38,9 @@ const INPUT: VerificationCase = {
 
 /** 提供同定义幂等与冲突端口，以独立检查公开适配层的行为。 */
 function fixture() {
-  const records = new Map<string, Awaited<ReturnType<Coordinator['task']>>>();
-  const tasks: Pick<Coordinator, 'submit' | 'task' | 'cancel'> = {
+  const records = new Map<string, Awaited<ReturnType<TaskReader['task']>>>();
+  const tasks: Pick<Coordinator, 'submit' | 'cancel'> &
+    Pick<TaskReader, 'task'> = {
     async submit(definition: VerificationTask) {
       const existing = records.get(definition.taskId);
       if (existing && canonical(existing.definition) !== canonical(definition))

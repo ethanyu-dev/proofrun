@@ -4,8 +4,8 @@ import WebSocket, { WebSocketServer } from 'ws';
 import { EventEmitter, once } from 'node:events';
 import type { HitlServer } from '@proofrun/contracts';
 import {
-  discardHitlFrame,
-  sendHitlMessage,
+  discardFrame,
+  sendStreamMessage,
 } from '../src/modules/hitl/transport.js';
 
 /** 仅模拟发送背压；不使用真实网络或声称验证了 TLS 与带宽。 */
@@ -30,7 +30,7 @@ function socket(bufferedAmount: number) {
 // 范围：同一积压下画面可丢弃但成功回执与完成通知必须送出；不模拟客户端渲染。
 test('画面背压不能静默丢失操作回执', () => {
   const f = socket(2 * 1024 * 1024);
-  sendHitlMessage(f.socket, {
+  sendStreamMessage(f.socket, {
     type: 'frame',
     data: 'fixture',
     width: 1280,
@@ -42,11 +42,11 @@ test('画面背压不能静默丢失操作回执', () => {
     status: 'SUCCEEDED',
     effect: 'APPLIED',
   };
-  sendHitlMessage(f.socket, result);
-  sendHitlMessage(f.socket, { type: 'completed' });
+  sendStreamMessage(f.socket, result);
+  sendStreamMessage(f.socket, { type: 'completed' });
   assert.deepEqual(f.sent, [result, { type: 'completed' }]);
   assert.equal(f.stub.terminated, false);
-  discardHitlFrame(f.socket);
+  discardFrame(f.socket);
 });
 
 // 范围：延迟帧不得越过撤权/关闭，新帧不得被旧缓存覆盖；不模拟浏览器截图内容。
@@ -54,17 +54,17 @@ test('撤权和新画面清理旧缓存', (t) => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
   for (const action of ['revoke', 'close', 'new-frame']) {
     const f = socket(2 * 1024 * 1024);
-    sendHitlMessage(f.socket, {
+    sendStreamMessage(f.socket, {
       type: 'frame',
       data: 'old',
       width: 1,
       height: 1,
     });
     f.stub.bufferedAmount = 0;
-    if (action === 'revoke') discardHitlFrame(f.socket);
+    if (action === 'revoke') discardFrame(f.socket);
     else if (action === 'close') f.stub.terminate();
     else
-      sendHitlMessage(f.socket, {
+      sendStreamMessage(f.socket, {
         type: 'frame',
         data: 'new',
         width: 1,
@@ -82,7 +82,7 @@ test('撤权和新画面清理旧缓存', (t) => {
 test('画面持续阻塞或单帧超限时断线', (t) => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
   const f = socket(2 * 1024 * 1024);
-  sendHitlMessage(f.socket, {
+  sendStreamMessage(f.socket, {
     type: 'frame',
     data: 'latest',
     width: 1,
@@ -92,7 +92,7 @@ test('画面持续阻塞或单帧超限时断线', (t) => {
   assert.equal(f.stub.terminated, true);
   assert.deepEqual(f.sent, []);
   const large = socket(0);
-  sendHitlMessage(large.socket, {
+  sendStreamMessage(large.socket, {
     type: 'frame',
     data: 'a'.repeat(2 * 1024 * 1024),
     width: 1,
@@ -104,7 +104,7 @@ test('画面持续阻塞或单帧超限时断线', (t) => {
 // 范围：持续积压超过控制消息预留时主动断线；不验证 WebSocket 实际关闭传播时间。
 test('控制消息也无法发送时明确断线而非无限等待', () => {
   const f = socket(2 * 1024 * 1024 + 64 * 1024);
-  sendHitlMessage(f.socket, { type: 'completed' });
+  sendStreamMessage(f.socket, { type: 'completed' });
   assert.equal(f.stub.terminated, true);
   assert.deepEqual(f.sent, []);
 });
@@ -119,15 +119,15 @@ test('页面停止重绘后仍补发最新画面，操作回执不被画面阻�
     width: 1280,
     height: 720,
   });
-  sendHitlMessage(f.socket, frame('old-popup'));
-  sendHitlMessage(f.socket, frame('popup-closed'));
+  sendStreamMessage(f.socket, frame('old-popup'));
+  sendStreamMessage(f.socket, frame('popup-closed'));
   const result: HitlServer = {
     type: 'result',
     commandId: 'click',
     status: 'SUCCEEDED',
     effect: 'COMPLETED',
   };
-  sendHitlMessage(f.socket, result);
+  sendStreamMessage(f.socket, result);
   assert.deepEqual(f.sent, [result]);
   f.stub.bufferedAmount = 0;
   t.mock.timers.tick(100);
@@ -162,7 +162,7 @@ test('真实连接排空后收到静态页面的最后一帧', { timeout: 10000 
       if (text.startsWith('{')) resolve(JSON.parse(text));
     });
   });
-  sendHitlMessage(peer, {
+  sendStreamMessage(peer, {
     type: 'frame',
     data: 'popup-open',
     width: 1,
@@ -174,7 +174,7 @@ test('真实连接排空后收到静态页面的最后一帧', { timeout: 10000 
     width: 1,
     height: 1,
   };
-  sendHitlMessage(peer, expected);
+  sendStreamMessage(peer, expected);
   client.resume();
   assert.deepEqual(await final, expected);
 });

@@ -1,5 +1,4 @@
 import WebSocket from 'ws';
-import type { HitlServer } from '@proofrun/contracts';
 
 /** 慢客户端只保留最新画面，不累积待发送帧。 */
 const FRAME_BUFFER_BYTES = 2 * 1024 * 1024;
@@ -23,7 +22,7 @@ interface PendingFrame {
 const pendingFrames = new WeakMap<WebSocket, PendingFrame>();
 
 /** 撤权必须立即丢弃未发送的画面，不能等浏览器或 TCP 完成关闭。 */
-export function discardHitlFrame(socket: WebSocket): void {
+export function discardFrame(socket: WebSocket): void {
   const pending = pendingFrames.get(socket);
   if (!pending) return;
   clearTimeout(pending.timer);
@@ -35,17 +34,17 @@ export function discardHitlFrame(socket: WebSocket): void {
 function flushFrame(socket: WebSocket, pending: PendingFrame): void {
   if (pendingFrames.get(socket) !== pending) return;
   if (socket.readyState !== WebSocket.OPEN) {
-    discardHitlFrame(socket);
+    discardFrame(socket);
     return;
   }
   if (
     socket.bufferedAmount + Buffer.byteLength(pending.encoded) <=
     FRAME_BUFFER_BYTES
   ) {
-    discardHitlFrame(socket);
+    discardFrame(socket);
     socket.send(pending.encoded);
   } else if (Date.now() - pending.since >= FRAME_STALL_MS) {
-    discardHitlFrame(socket);
+    discardFrame(socket);
     socket.terminate();
   } else {
     pending.timer = setTimeout(
@@ -56,14 +55,17 @@ function flushFrame(socket: WebSocket, pending: PendingFrame): void {
   }
 }
 
-/** 中间帧可以合并，最后状态不能静默丢失；回执仍独立发送，不等待画面。 */
-export function sendHitlMessage(socket: WebSocket, value: HitlServer): void {
+/** 自动观看与人工处理共用背压；仅合并画面，其他消息保留独立发送额度。 */
+export function sendStreamMessage(
+  socket: WebSocket,
+  value: { type: string; [key: string]: unknown },
+): void {
   if (socket.readyState !== WebSocket.OPEN) return;
   const encoded = JSON.stringify(value);
   const buffered = socket.bufferedAmount + Buffer.byteLength(encoded);
   if (value.type === 'frame') {
     if (Buffer.byteLength(encoded) > FRAME_BUFFER_BYTES) {
-      discardHitlFrame(socket);
+      discardFrame(socket);
       socket.terminate();
       return;
     }
@@ -74,7 +76,7 @@ export function sendHitlMessage(socket: WebSocket, value: HitlServer): void {
         pending = {
           encoded,
           since: Date.now(),
-          close: () => discardHitlFrame(socket),
+          close: () => discardFrame(socket),
         };
         pendingFrames.set(socket, pending);
         socket.once('close', pending.close);
@@ -82,12 +84,25 @@ export function sendHitlMessage(socket: WebSocket, value: HitlServer): void {
       }
       return;
     }
-    discardHitlFrame(socket);
+    discardFrame(socket);
   }
   if (buffered > FRAME_BUFFER_BYTES + CONTROL_BUFFER_BYTES) {
-    discardHitlFrame(socket);
+    discardFrame(socket);
     socket.terminate();
     return;
   }
   socket.send(encoded);
+}
+
+/** 跟踪画面连接的关闭与错误；业务层仍负责撤权和租约结束。 */
+export function trackStreamSocket(
+  sockets: Set<WebSocket>,
+  socket: WebSocket,
+): void {
+  sockets.add(socket);
+  socket.on('error', () => socket.terminate());
+  socket.once('close', () => {
+    discardFrame(socket);
+    sockets.delete(socket);
+  });
 }
