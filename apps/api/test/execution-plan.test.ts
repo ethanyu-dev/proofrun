@@ -65,7 +65,7 @@ test('明确访客需求冻结为 guest，显式冲突提前拒绝', () => {
 });
 
 // 范围：否定、引用、条件及 expected 不参与自动身份选择；不声称覆盖所有自然语言语法。
-test('歧义文本不自动更改会话', () => {
+test('歧义文本不会把默认访客提升为登录会话', () => {
   for (const text of [
     '如果未登录则提示登录',
     '不要退出登录',
@@ -75,7 +75,7 @@ test('歧义文本不自动更改会话', () => {
     const original = input();
     original.steps[0]!.description = text;
     original.steps[0]!.expected = ['保持未登录访客状态'];
-    assert.equal(compileCase(original, profile).sessionPlan?.mode, 'manual');
+    assert.equal(compileCase(original, profile).sessionPlan?.mode, 'guest');
   }
 });
 

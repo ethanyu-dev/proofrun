@@ -38,6 +38,8 @@ export async function devPassFixture(directory: string) {
     wrongRecipient: false,
     /** 恢复旧租约时模拟服务端材料拒绝，不代表已经释放额度。 */
     replayError: null as 'MATERIAL_REVOKED' | 'TEMPORARY_UNAVAILABLE' | null,
+    /** 明确未分配账号的业务响应，与传输超时分开验证。 */
+    unavailable: null as 'NO_MATCH' | 'CAPACITY_EXHAUSTED' | null,
     capacity: 1,
     dropGet: false,
     dropRelease: false,
@@ -87,6 +89,14 @@ export async function devPassFixture(directory: string) {
               retryable: state.replayError === 'TEMPORARY_UNAVAILABLE',
               retry_after_seconds: null,
             },
+          };
+        } else if (!allocated && state.unavailable) {
+          result = {
+            schema_version: '1',
+            status: 'unavailable',
+            reason: state.unavailable,
+            message: '夹具无可用账号',
+            retry_after_seconds: null,
           };
         } else if (
           !allocated &&

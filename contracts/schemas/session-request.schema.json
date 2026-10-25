@@ -3,7 +3,7 @@
   "additionalProperties": false,
   "properties": {
     "mode": {
-      "enum": ["guest", "manual", "external"]
+      "enum": ["auto", "guest", "manual", "external"]
     },
     "requirements": {
       "type": "array",
@@ -43,8 +43,18 @@
         }
       },
       "else": {
-        "properties": {
-          "external": false
+        "if": {
+          "properties": {
+            "mode": {
+              "const": "auto"
+            }
+          }
+        },
+        "then": {},
+        "else": {
+          "properties": {
+            "external": false
+          }
         }
       }
     }
@@ -52,5 +62,5 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://proofrun.invalid/contracts/0.1/session-request.schema.json",
   "title": "SessionRequest",
-  "description": "只支持访客、当前会话人工登录和 DevPass 外部账号；禁止携带密码或 Cookie。"
+  "description": "省略或 auto 时按 case 自动准备身份，优先 DevPass、无账号则人工介入；可显式约束身份，禁止携带密码或 Cookie。"
 }

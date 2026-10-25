@@ -12,11 +12,13 @@ import {
 import type { NodeCommand, VerificationTask } from '@proofrun/contracts';
 import type { PoolClient } from 'pg';
 import { Database } from '../../db.js';
-import { ApiError } from '../../domain.js';
+import { ApiError, canonical, digest } from '../../domain.js';
 import { executionContext, stopExecution } from '../scheduling/state.js';
 import { privateText, type DevPassConfig } from './config.js';
 import { ACCOUNT_CLOSE_MARGIN_MS, ACCOUNT_HUMAN_MARGIN_MS } from './policy.js';
 import { PREPARATION_MS } from '../sessions/plan.js';
+import { refreshExternalSessionBudget } from '../sessions/budget.js';
+import { useManualSession } from '../sessions/automatic.js';
 export { ACCOUNT_CLOSE_MARGIN_MS } from './policy.js';
 
 /** 准备预留有界；账号分配在事务外，不占用浏览器进程或数据库行锁。 */
@@ -75,6 +77,38 @@ export class ExternalAccounts {
     private readonly db: Database,
     private readonly config?: DevPassConfig,
   ) {}
+
+  /** 自动会话按原始平台和精确 origin 询问 DevPass；账号范围仍由供应方的调用方授权约束。 */
+  prepare(task: VerificationTask): void {
+    const session = task.sessionPlan;
+    if (!session?.automatic?.loginRequired || session.automatic.fallbackReason)
+      return;
+    if (!this.config) {
+      useManualSession(task, 'DEVPASS_NOT_CONFIGURED');
+      return;
+    }
+    const selector = session.external?.selector ?? {
+      provider: this.config.id,
+      platform: task.caseV2Definition!.platform,
+    };
+    if (!selector.platform || selector.platform.length > 128) {
+      useManualSession(task, 'DEVPASS_PLATFORM_UNAVAILABLE');
+      return;
+    }
+    session.mode = 'external';
+    session.external = {
+      selector,
+      origin: new URL(task.target.url).origin,
+      durationSeconds: 60,
+    };
+    try {
+      refreshExternalSessionBudget(task);
+      this.validate(task);
+    } catch (error) {
+      if (!(error instanceof ApiError)) throw error;
+      useManualSession(task, error.code);
+    }
+  }
 
   /** 在提交时发现来源或预算错误；幂等重提不改变已冻结任务。 */
   validate(task: VerificationTask): void {
@@ -487,6 +521,13 @@ export class ExternalAccounts {
             : result.error.retryable;
         const reason =
           result.status === 'unavailable' ? result.reason : result.error.code;
+        // 明确未分配账号才可转人工；超时或丢响应必须重放原申请，不能遗弃可能已存在的租约。
+        if (
+          result.status === 'unavailable' &&
+          !terminal &&
+          (await this.fallback(row.task_id, reason))
+        )
+          return;
         if (row.lease_id) {
           // 恢复失败不代表旧租约已释放；保留可扫描的交还阶段，关闭事实仍由下一轮核实。
           await this.fail(row.task_id, `EXTERNAL_ACCOUNT_${reason}`);
@@ -554,6 +595,42 @@ export class ExternalAccounts {
     } finally {
       await client.disconnect();
     }
+  }
+
+  /** 与领取、取消使用相同任务锁顺序；只有尚未创建会话且没有租约的自动运行允许降级。 */
+  private async fallback(taskId: string, reason: string): Promise<boolean> {
+    return this.db.transaction(async (tx) => {
+      const task = (
+        await tx.query<{ state: string; definition: VerificationTask }>(
+          'SELECT state,definition FROM pr_tasks WHERE id=$1 FOR UPDATE',
+          [taskId],
+        )
+      ).rows[0];
+      const binding = (
+        await tx.query<Binding>(
+          'SELECT * FROM pr_external_accounts WHERE task_id=$1 FOR UPDATE',
+          [taskId],
+        )
+      ).rows[0];
+      if (
+        task?.state !== 'QUEUED' ||
+        !task.definition.sessionPlan?.automatic?.loginRequired ||
+        !binding ||
+        binding.lease_id ||
+        binding.session_id
+      )
+        return false;
+      useManualSession(task.definition, `DEVPASS_${reason}`);
+      await tx.query(
+        'UPDATE pr_tasks SET definition=$2,definition_hash=$3,queue_reason=NULL WHERE id=$1',
+        [taskId, task.definition, digest(canonical(task.definition))],
+      );
+      await tx.query(
+        "UPDATE pr_external_accounts SET state='RELEASED',reason=$2,reserved_until=clock_timestamp() WHERE task_id=$1",
+        [taskId, reason],
+      );
+      return true;
+    });
   }
 
   /** 未执行业务的环境错误不生成产品失败；已开始任务沿用可靠关闭流程。 */

@@ -96,6 +96,19 @@ export type SessionPlan = {
     origin: string;
     durationSeconds: number;
   };
+  /**
+   * 本次运行自动判断的登录需求及转人工原因，不改写历史快照。
+   */
+  automatic?: {
+    /**
+     * 根据原始操作与身份条件冻结的登录需求；访客要求优先。
+     */
+    loginRequired: boolean;
+    /**
+     * 本次运行转入人工准备的公开原因码，不含凭据或供应方原始错误。
+     */
+    fallbackReason?: string;
+  };
 };
 /**
  * 显式前置条件；文本检查使用完整观察，人工条件只能由当前会话的人工确认满足。
@@ -106,19 +119,11 @@ export type IdentityCheck = {
   method: 'text' | 'absent' | 'manual';
   value?: string;
 };
+
 /**
  * 外部账号的无秘密选择条件；地址和密钥仅由部署配置提供。
  */
-export type ExternalAccountSelector = (
-  | {
-      poolId: string;
-      [k: string]: unknown;
-    }
-  | {
-      accountId: string;
-      [k: string]: unknown;
-    }
-) & {
+export interface ExternalAccountSelector {
   provider: string;
   platform: string;
   poolId?: string;
@@ -127,4 +132,4 @@ export type ExternalAccountSelector = (
    * @maxItems 32
    */
   roles?: string[];
-};
+}

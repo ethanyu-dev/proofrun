@@ -702,24 +702,6 @@
           }
         },
         "required": ["provider", "platform"],
-        "anyOf": [
-          {
-            "required": ["poolId"],
-            "properties": {
-              "poolId": { "type": "string", "minLength": 1, "maxLength": 128 }
-            }
-          },
-          {
-            "required": ["accountId"],
-            "properties": {
-              "accountId": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 128
-              }
-            }
-          }
-        ],
         "title": "ExternalAccountSelector",
         "description": "外部账号的无秘密选择条件；地址和密钥仅由部署配置提供。"
       },
@@ -814,7 +796,7 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "mode": { "enum": ["guest", "manual", "external"] },
+          "mode": { "enum": ["auto", "guest", "manual", "external"] },
           "requirements": {
             "type": "array",
             "items": { "$ref": "#/components/schemas/IdentityCheck" },
@@ -840,11 +822,15 @@
                 }
               }
             },
-            "else": { "properties": { "external": false } }
+            "else": {
+              "if": { "properties": { "mode": { "const": "auto" } } },
+              "then": {},
+              "else": { "properties": { "external": false } }
+            }
           }
         ],
         "title": "SessionRequest",
-        "description": "只支持访客、当前会话人工登录和 DevPass 外部账号；禁止携带密码或 Cookie。"
+        "description": "省略或 auto 时按 case 自动准备身份，优先 DevPass、无账号则人工介入；可显式约束身份，禁止携带密码或 Cookie。"
       },
       "QueueReason": {
         "title": "QueueReason",

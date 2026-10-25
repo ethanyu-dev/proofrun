@@ -92,7 +92,7 @@ test('整体和单 case 重跑留在原请求页，未知结果重试复用身�
       posts.push({ path, body: structuredClone(body) });
       if (rejectNext) {
         rejectNext = false;
-        throw new ApiError(422, 'LOCAL_IDENTITY_REMOVED', '需要重新选择身份');
+        throw new ApiError(422, 'INVALID_RERUN', '请求被拒绝夹具');
       }
       if (posts.length === 1)
         await new Promise((_resolve, reject) => {
@@ -120,31 +120,6 @@ test('整体和单 case 重跑留在原请求页，未知结果重试复用身�
     assert.ok(found, `缺少按钮：${label}`);
     return found;
   };
-  const choose = async (index: number, label: string) => {
-    const trigger =
-      window.document.querySelectorAll('[role="combobox"]')[index]!;
-    await act(async () => {
-      trigger.dispatchEvent(
-        new window.KeyboardEvent('keydown', {
-          key: 'ArrowDown',
-          bubbles: true,
-        }),
-      );
-    });
-    const option = [
-      ...window.document.querySelectorAll('[role="option"]'),
-    ].find((item) => item.textContent === label)!;
-    assert.ok(option);
-    await act(async () => {
-      (option as unknown as HTMLElement).focus();
-      option.dispatchEvent(
-        new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
-      );
-    });
-  };
-  const submit = async () => {
-    await act(async () => button('提交重跑').click());
-  };
   try {
     await act(async () =>
       root.render(createElement(RequestDetailPage, { api, id: 'fixture' })),
@@ -152,19 +127,12 @@ test('整体和单 case 重跑留在原请求页，未知结果重试复用身�
     const whole = button('重跑整个请求');
     await act(async () => {
       whole.click();
-    });
-    assert.equal(posts.length, 0);
-    await choose(0, '访客（未登录）');
-    await choose(1, '当前会话人工登录');
-    await act(async () => {
-      button('提交重跑').click();
-      button('提交重跑').click();
+      whole.click();
     });
     assert.equal(posts.length, 1);
-    assert.deepEqual(
-      posts[0].body.caseIds.map((c: any) => c.session),
-      [{ mode: 'guest' }, { mode: 'manual' }],
-    );
+    assert.equal(window.document.querySelector('[role="dialog"]'), null);
+    assert.equal(window.document.querySelector('[role="combobox"]'), null);
+    assert.ok(posts[0].body.caseIds.every((c: any) => c.session === undefined));
     assert.equal(whole.disabled, true);
     assert.equal(posts[0].path, '/v2/requests/fixture/rerun');
     assert.equal(posts[0].body.requestId, undefined);
@@ -176,12 +144,7 @@ test('整体和单 case 重跑留在原请求页，未知结果重试复用身�
       rejectFirst(new ApiError(408, 'HTTP_ERROR', '响应丢失夹具')),
     );
     assert.match(window.document.body.textContent!, /响应丢失夹具/);
-    assert.ok(
-      [...window.document.querySelectorAll('[role="combobox"]')].every(
-        (field) => field.hasAttribute('disabled'),
-      ),
-    );
-    await act(async () => button('重试提交').click());
+    await act(async () => button('重跑整个请求').click());
     assert.deepEqual(posts[1], posts[0]);
     assert.equal(window.location.hash, '#/requests/fixture');
     assert.ok(reads >= 2);
@@ -193,37 +156,27 @@ test('整体和单 case 重跑留在原请求页，未知结果重试复用身�
     const single = beta.querySelector('button')!;
     assert.equal(single.textContent, '重跑此 case');
     await act(async () => single.click());
-    await submit();
     assert.equal(posts[2].body.caseIds.length, 1);
     assert.equal(posts[2].body.caseIds[0].sourceCaseId, 'beta');
     assert.equal(value.cases[0].arms[0].taskId, unchanged);
     assert.equal(window.location.hash, '#/requests/fixture');
     await act(async () => single.click());
-    await submit();
     assert.notEqual(
       posts[3].body.caseIds[0].runId,
       posts[2].body.caseIds[0].runId,
     );
     await act(async () => button('重跑整个请求').click());
-    await submit();
     assert.notDeepEqual(posts[4].body.caseIds, posts[0].body.caseIds);
-    // 明确拒绝后允许重新配置并更换运行身份；仍然只覆盖模拟 HTTP。
+    // 范围：明确拒绝可重新生成运行身份，未知结果则沿用原映射；不覆盖真实 API 事务。
     rejectNext = true;
     await act(async () => button('重跑整个请求').click());
-    await submit();
-    assert.ok(
-      !window.document
-        .querySelectorAll('[role="combobox"]')[0]!
-        .hasAttribute('disabled'),
-      window.document.body.textContent!,
-    );
-    await choose(0, '当前会话人工登录');
-    await submit();
+    assert.match(window.document.body.textContent!, /请求被拒绝夹具/);
+    await act(async () => button('重跑整个请求').click());
     assert.notEqual(
       posts[6].body.caseIds[0].runId,
       posts[5].body.caseIds[0].runId,
     );
-    assert.deepEqual(posts[6].body.caseIds[0].session, { mode: 'manual' });
+    assert.equal(posts[6].body.caseIds[0].session, undefined);
   } finally {
     await act(async () => root.unmount());
     await window.happyDOM.abort();

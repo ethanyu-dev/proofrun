@@ -1,7 +1,7 @@
 import { refreshExternalSessionBudget } from '../sessions/budget.js';
 import { projectCase } from './projection.js';
 import type { TaskReader } from '../tasks/reader.js';
-import { assertSupportedSession } from '../sessions/plan.js';
+import { assertSupportedSession, usesLocalIdentity } from '../sessions/plan.js';
 import {
   validateVerificationCaseV2,
   validateSessionRequest,
@@ -118,7 +118,7 @@ export class CaseV2Service {
       throw new ApiError(
         400,
         'INVALID_RERUN',
-        '会话配置无效，请选择访客、人工登录或 DevPass 并填写核验条件',
+        '会话配置无效；省略时自动判断身份，也可提供有效的显式会话约束',
       );
     const time = parseRerunTimeBudget(timeBudget);
     const taskId = `case-run-${runId}`;
@@ -143,8 +143,6 @@ export class CaseV2Service {
       return previous.definition;
     }
     const { definition } = await this.stored(id, sourceTaskId);
-    // 只有显式配置才替换退役身份；省略时不丢弃历史账号约束。
-    if (session === undefined) assertSupportedSession(definition.sessionPlan);
     if (
       budgetMode === 'original' &&
       (definition.comparison ||
@@ -156,7 +154,7 @@ export class CaseV2Service {
         '历史 JEV/双跑预算不能用于新执行，请选择当前预算',
       );
     const profile: CaseProfile = {
-      // 沿用时保留原人工权限；显式替换身份时再清理旧登录元数据。
+      // 保留原人工权限；退役身份迁移和显式人工配置再按当前平台权限决定是否允许交接。
       environment: {
         ...structuredClone(definition.environment),
         allowIntervention: definition.environment.allowIntervention ?? false,
@@ -165,16 +163,38 @@ export class CaseV2Service {
       executionMode: 'llm',
       evidenceKinds: [...definition.acceptanceCriteria[0]!.evidenceKinds],
     };
-    if (replacement) {
-      // 新身份不能继续绑定旧登录槽节点；显式人工登录授权当前新会话接受人工操作。
-      delete profile.environment.auth;
-      delete profile.environment.reuseAuth;
-      if (replacement.mode === 'manual')
-        profile.environment.allowIntervention = true;
-    }
+    // 所有新运行都使用临时会话，不能继续绑定旧登录槽节点。
+    delete profile.environment.auth;
+    delete profile.environment.reuseAuth;
+    if (
+      replacement?.mode === 'manual' ||
+      replacement?.mode === 'auto' ||
+      (!replacement && usesLocalIdentity(definition.sessionPlan))
+    )
+      profile.environment.allowIntervention =
+        this.profile?.environment.allowIntervention ?? true;
     // 新运行独立编译配置，跳过同 case 的提交幂等分支，业务定义保持原身份。
     const input = structuredClone(definition.caseV2Definition!);
+    // 默认重跑重新判断身份；沿用业务核验与已指定的外部账号范围，不恢复旧本地账号或登录槽。
+    const requirements = definition.sessionPlan?.automatic
+      ? (input.session?.requirements ?? [])
+      : (definition.sessionPlan?.requirements ??
+        input.session?.requirements ??
+        []);
+    const external =
+      definition.sessionPlan?.external?.selector ?? input.session?.external;
     if (replacement) input.session = structuredClone(replacement);
+    else if (
+      input.session?.mode !== 'guest' &&
+      (input.session || requirements.length || external)
+    )
+      input.session = {
+        mode: 'auto',
+        ...(requirements.length
+          ? { requirements: structuredClone(requirements) }
+          : {}),
+        ...(external ? { external: structuredClone(external) } : {}),
+      };
     const result = compileCase(input, validateCaseProfile(profile));
     if (replacement) result.rerunSession = structuredClone(replacement);
     result.taskId = taskId;

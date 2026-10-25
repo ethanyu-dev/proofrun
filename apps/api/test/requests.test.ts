@@ -1250,6 +1250,114 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
         '上一轮结果',
       );
     });
+    // 范围：历史混合请求默认重跑分别判断身份并保留旧记录；数据库与 HTTP 真实，未运行浏览器。
+    await suite.test(
+      '历史请求无需身份选择即可重跑访客和登录 case',
+      async () => {
+        await submit('automatic-history', [
+          'automatic-guest',
+          'automatic-login',
+        ]);
+        const oldIds = ['case-v2-automatic-guest', 'case-v2-automatic-login'];
+        for (const [index, id] of oldIds.entries()) {
+          const definition = (
+            await sql.query('SELECT definition FROM pr_tasks WHERE id=$1', [id])
+          ).rows[0].definition;
+          definition.sessionPlan = {
+            version: 1,
+            mode: 'pool',
+            candidates: [],
+            requirements: [],
+            preparationMs: 120000,
+            library: true,
+            selection: 'pending',
+          };
+          definition.caseV2Definition.session = {
+            mode: 'pool',
+            poolRef: 'retired',
+          };
+          definition.caseV2Definition.steps[0].exec_order = 2;
+          definition.caseV2Definition.steps.unshift({
+            ...definition.caseV2Definition.steps[0],
+            stepId: 'prepare',
+            type: 'setup',
+            exec_order: 1,
+            expected: [],
+            description: index
+              ? '使用测试账号登录后检查页面'
+              : '保持未登录访客状态',
+          });
+          definition.environment.auth = {
+            nodeId: 'retired',
+            stateId: 'retired',
+            restore: true,
+          };
+          definition.environment.allowIntervention = false;
+          await sql.query('UPDATE pr_tasks SET definition=$2 WHERE id=$1', [
+            id,
+            definition,
+          ]);
+        }
+        const before = (
+          await sql.query(
+            'SELECT id,definition,report FROM pr_tasks WHERE id=ANY($1) ORDER BY id',
+            [oldIds],
+          )
+        ).rows;
+        const body = {
+          caseIds: ['automatic-guest', 'automatic-login'].map(
+            (sourceCaseId) => ({ sourceCaseId, runId: `${sourceCaseId}-new` }),
+          ),
+        };
+        for (const reply of await Promise.all([
+          call('/v2/requests/automatic-history/rerun', body),
+          call('/v2/requests/automatic-history/rerun', body),
+        ]))
+          assert.equal(reply.statusCode, 202, reply.body);
+        for (const [index, mapping] of body.caseIds.entries()) {
+          const current = (
+            await sql.query('SELECT definition FROM pr_tasks WHERE id=$1', [
+              `case-run-${mapping.runId}`,
+            ])
+          ).rows[0].definition;
+          assert.equal(current.sessionPlan.mode, index ? 'manual' : 'guest');
+          assert.equal(current.sessionPlan.automatic.loginRequired, !!index);
+          assert.equal(current.environment.auth, undefined);
+          assert.equal(current.environment.allowIntervention, true);
+          if (index) {
+            assert.equal(
+              current.sessionPlan.automatic.fallbackReason,
+              'DEVPASS_NOT_CONFIGURED',
+            );
+            assert.equal(current.sessionPlan.requirements.length, 1);
+            assert.equal(current.sessionPlan.requirements[0].method, 'manual');
+          }
+        }
+        assert.deepEqual(
+          (
+            await sql.query(
+              'SELECT id,definition,report FROM pr_tasks WHERE id=ANY($1) ORDER BY id',
+              [oldIds],
+            )
+          ).rows,
+          before,
+        );
+        const next = await call('/v2/cases/automatic-login/rerun', {
+          runId: 'automatic-login-again',
+        });
+        assert.equal(next.statusCode, 202, next.body);
+        const plan = (
+          await sql.query(
+            "SELECT definition->'sessionPlan' AS plan FROM pr_tasks WHERE id='case-run-automatic-login-again'",
+          )
+        ).rows[0].plan;
+        assert.equal(
+          plan.requirements.length,
+          1,
+          '再次重跑不继承上一轮临时人工门禁',
+        );
+      },
+    );
     // 范围：真实 PostgreSQL/HTTP 的身份替换、原子失败、并发幂等及历史证据引用保留；不运行真实浏览器或 DevPass。
     await suite.test(
       '历史请求按 case 重配身份并保留历史及共享请求',
@@ -1333,10 +1441,10 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
           ],
         };
         const incomplete = structuredClone(body);
-        delete (incomplete.caseIds[1] as { session?: unknown }).session;
+        incomplete.caseIds[1]!.sourceCaseId = 'outside-request';
         const rejected = await call(path, incomplete);
-        assert.equal(rejected.statusCode, 422, rejected.body);
-        assert.equal(rejected.json().code, 'LOCAL_IDENTITY_REMOVED');
+        assert.equal(rejected.statusCode, 400, rejected.body);
+        assert.equal(rejected.json().code, 'INVALID_RERUN');
         assert.equal(
           (
             await sql.query(
@@ -1394,13 +1502,14 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
           runId: 'identity-inherited',
         });
         assert.equal(inherited.statusCode, 202, inherited.body);
+        // 未显式覆盖的新重跑重新判断需求；原步骤不需要登录，因此不会继承上一轮人工会话。
         assert.equal(
           (
             await sql.query(
               "SELECT definition#>>'{sessionPlan,mode}' mode FROM pr_tasks WHERE id='case-run-identity-inherited'",
             )
           ).rows[0].mode,
-          'manual',
+          'guest',
         );
         assert.deepEqual(
           (

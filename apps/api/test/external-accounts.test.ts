@@ -472,6 +472,98 @@ test(
           }
         },
       );
+      // 范围：自动选择真实经过 MCP、数据库和模拟节点；丢响应不能被误判为无账号，不验证真实网页登录。
+      await suite.test(
+        '自动账号查询无需手填池，响应丢失仍沿用原键',
+        async () => {
+          fixture.state.capacity = 20;
+          fixture.state.dropGet = true;
+          const original = example('auto-recovery');
+          delete original.session;
+          original.steps[0]!.policy = ['必须登录后查看成员页面'];
+          await api('/v2/cases', [original]);
+          await claim();
+          await until(
+            () => row('auto-recovery'),
+            (r) => r?.reason === 'EXTERNAL_ACCOUNT_TRANSPORT',
+          );
+          const binding = await row('auto-recovery');
+          const definition = (
+            await sql.query('SELECT definition FROM pr_tasks WHERE id=$1', [
+              'case-v2-auto-recovery',
+            ])
+          ).rows[0].definition;
+          assert.equal(definition.sessionPlan.mode, 'external');
+          assert.equal(
+            definition.sessionPlan.automatic.fallbackReason,
+            undefined,
+          );
+          await hurry();
+          const execution = await start();
+          const requests = fixture.state.requests.filter(
+            (r) => r.request_id === binding.request_id,
+          );
+          assert.ok(requests.length >= 2);
+          assert.equal(requests[0]!.platform, original.platform);
+          assert.equal(requests[0]!.origin, 'https://example.test');
+          assert.equal(requests[0]!.pool_id, undefined);
+          assert.equal(execution.task.sessionPlan.mode, 'external');
+          await api('/v2/cases/auto-recovery/cancel', {});
+          await until(
+            async () => {
+              await hurry();
+              return row('auto-recovery');
+            },
+            (r) => r.state === 'RELEASED',
+          );
+        },
+      );
+      // 范围：明确无匹配或无额度原子转人工，保留请求账本和原需求；人工登录由 Agent 回归另行模拟。
+      for (const reason of ['NO_MATCH', 'CAPACITY_EXHAUSTED'] as const) {
+        await suite.test(`自动账号 ${reason} 转人工且不重复申请`, async () => {
+          fixture.state.unavailable = reason;
+          const id = `auto-${reason.toLowerCase()}`;
+          const original = example(id);
+          delete original.session;
+          original.steps[0]!.policy = ['必须登录后查看成员页面'];
+          const before = structuredClone(original);
+          await api('/v2/cases', [original]);
+          await claim();
+          await until(
+            () => row(id),
+            (r) => r?.state === 'RELEASED',
+          );
+          const binding = await row(id);
+          assert.equal(binding.lease_id, null);
+          assert.equal(binding.reason, reason);
+          const execution = await start();
+          assert.equal(execution.task.sessionPlan.mode, 'manual');
+          assert.equal(
+            execution.task.sessionPlan.automatic.fallbackReason,
+            `DEVPASS_${reason}`,
+          );
+          assert.equal(execution.task.sessionPlan.external, undefined);
+          assert.equal(
+            execution.task.sessionPlan.requirements.at(-1).method,
+            'manual',
+          );
+          assert.deepEqual(execution.task.caseV2Definition, before);
+          const open = node.sessions.get(execution.sessionId)!.command;
+          assert.equal(open.type, 'session.open');
+          if (open.type !== 'session.open') throw new Error('夹具命令错误');
+          assert.equal(open.externalAccount, undefined);
+          assert.equal(open.externalCookies, undefined);
+          await api('/v2/cases', [original]);
+          assert.equal(
+            fixture.state.requests.filter(
+              (r) => r.request_id === binding.request_id,
+            ).length,
+            1,
+          );
+          await api(`/v2/cases/${id}/cancel`, {});
+          fixture.state.unavailable = null;
+        });
+      }
     } finally {
       for (const w of workers) await w.close().catch(() => {});
       node.close();

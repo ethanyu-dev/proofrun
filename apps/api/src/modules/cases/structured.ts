@@ -81,7 +81,12 @@ export function compileCase(
     executionMode: profile.executionMode ?? DEFAULT_CASE_EXECUTION_MODE,
   });
   const resolved = resolveExecutionPlan(input, profile.evidenceKinds);
-  const sessionPlan = resolveSession(resolved.session, input.entry);
+  const sessionPlan = resolveSession(
+    resolved.session,
+    input.entry,
+    !!resolved.automatic,
+  );
+  if (resolved.automatic) sessionPlan.automatic = resolved.automatic;
   // 人工处理页最多呈现十项；在提交时拒绝溢出或冲突，不能事后漏确认某些角色条件。
   for (const step of businessSteps) {
     const checks = new Map<string, unknown>();
@@ -101,10 +106,14 @@ export function compileCase(
       checks.set(check.id, check);
     }
     if (
-      checks.size > 10 ||
+      checks.size > (resolved.automatic?.loginRequired ? 9 : 10) ||
       [...checks.values()].filter(
         (check) => (check as { method: string }).method === 'manual',
-      ).length > (resolved.plan.environment.mode === 'guest' ? 8 : 9)
+      ).length >
+        (resolved.plan.environment.mode === 'guest' ||
+        resolved.automatic?.loginRequired
+          ? 8
+          : 9)
     )
       throw new ApiError(
         422,
@@ -114,7 +123,7 @@ export function compileCase(
   }
   const budget = businessBudget(stepBudget);
   if (sessionPlan.external) {
-    if (profile.environment.auth)
+    if (profile.environment.auth && !resolved.automatic)
       throw new ApiError(
         422,
         'EXTERNAL_ACCOUNT_AUTH_CONFLICT',
@@ -167,6 +176,10 @@ export function compileCase(
     acceptanceCriteria: stepCriteria(steps, profile.evidenceKinds),
     caseV2Definition: structuredClone(input),
   };
+  if (resolved.automatic) {
+    delete task.environment.auth;
+    if (task.environment.reuseAuth !== false) delete task.environment.reuseAuth;
+  }
   refreshExternalSessionBudget(task);
   return task;
 }

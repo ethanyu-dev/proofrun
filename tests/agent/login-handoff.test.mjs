@@ -246,3 +246,31 @@ test('有效登录继续验收，登录按钮本身不触发人工', async () =>
     false,
   );
 });
+
+// 范围：DevPass 无账号后的人工条件在模型执行前触发交接，完成后继续原步骤；账号、页面与人工均为夹具。
+test('自动会话无账号先进入 HITL，人工确认后继续验收', async () => {
+  const { report, client } = await runHandoff(
+    (context, _turn, _body, control) => {
+      assert.equal(control.resumed, true);
+      assert.equal(control.requests.length, 1);
+      return finish(context);
+    },
+    (execution) => {
+      execution.task.sessionPlan.automatic = {
+        loginRequired: true,
+        fallbackReason: 'DEVPASS_NO_MATCH',
+      };
+      execution.task.sessionPlan.requirements = [
+        {
+          id: 'automatic-login',
+          method: 'manual',
+          description:
+            '请在当前会话完成登录，并确认账号满足本 case 原有身份与前置条件',
+        },
+      ];
+    },
+  );
+  assert.equal(report.verdict, 'PASSED');
+  assert.equal(client.requests.length, 1);
+  assert.deepEqual(client.transitions, ['REQUESTED', 'HUMAN', 'AUTO']);
+});

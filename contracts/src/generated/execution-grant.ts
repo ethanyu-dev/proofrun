@@ -429,37 +429,15 @@ export type IdentityCheck = {
   value?: string;
 };
 /**
- * 只支持访客、当前会话人工登录和 DevPass 外部账号；禁止携带密码或 Cookie。
+ * 省略或 auto 时按 case 自动准备身份，优先 DevPass、无账号则人工介入；可显式约束身份，禁止携带密码或 Cookie。
  */
 export type SessionRequest = {
-  mode: 'guest' | 'manual' | 'external';
+  mode: 'auto' | 'guest' | 'manual' | 'external';
   /**
    * @maxItems 32
    */
   requirements?: IdentityCheck[];
   external?: ExternalAccountSelector;
-};
-/**
- * 外部账号的无秘密选择条件；地址和密钥仅由部署配置提供。
- */
-export type ExternalAccountSelector = (
-  | {
-      poolId: string;
-      [k: string]: unknown;
-    }
-  | {
-      accountId: string;
-      [k: string]: unknown;
-    }
-) & {
-  provider: string;
-  platform: string;
-  poolId?: string;
-  accountId?: string;
-  /**
-   * @maxItems 32
-   */
-  roles?: string[];
 };
 /**
  * 执行会话快照。新任务仅生成 guest/manual/external；旧本地身份字段仅用于读取历史快照，提交与执行入口拒绝使用。
@@ -557,12 +535,25 @@ export type SessionPlan = {
     origin: string;
     durationSeconds: number;
   };
+  /**
+   * 本次运行自动判断的登录需求及转人工原因，不改写历史快照。
+   */
+  automatic?: {
+    /**
+     * 根据原始操作与身份条件冻结的登录需求；访客要求优先。
+     */
+    loginRequired: boolean;
+    /**
+     * 本次运行转入人工准备的公开原因码，不含凭据或供应方原始错误。
+     */
+    fallbackReason?: string;
+  };
 };
 /**
- * 只支持访客、当前会话人工登录和 DevPass 外部账号；禁止携带密码或 Cookie。
+ * 省略或 auto 时按 case 自动准备身份，优先 DevPass、无账号则人工介入；可显式约束身份，禁止携带密码或 Cookie。
  */
 export type SessionRequest1 = {
-  mode: 'guest' | 'manual' | 'external';
+  mode: 'auto' | 'guest' | 'manual' | 'external';
   /**
    * @maxItems 32
    */
@@ -720,4 +711,17 @@ export interface VerificationCaseV2 {
     }[];
   }[];
   session?: SessionRequest;
+}
+/**
+ * 外部账号的无秘密选择条件；地址和密钥仅由部署配置提供。
+ */
+export interface ExternalAccountSelector {
+  provider: string;
+  platform: string;
+  poolId?: string;
+  accountId?: string;
+  /**
+   * @maxItems 32
+   */
+  roles?: string[];
 }
