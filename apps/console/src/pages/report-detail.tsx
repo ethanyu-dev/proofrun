@@ -27,7 +27,11 @@ import { ReportCriteria } from '../components/report-criteria';
 import { ReportExport } from '../components/report-export';
 import { TaskEvidence } from '../components/task-sections';
 import { FollowUpCleanup } from '../components/follow-up-cleanup';
-import { executionModeLabel } from '../execution-mode';
+import { taskHref } from '../task-links';
+import {
+  executionModeLabel,
+  HISTORICAL_EXECUTION_NOTICE,
+} from '../execution-mode';
 
 /** 报告按单次任务身份读取；重新执行产生新任务，不覆盖此页的历史结论。 */
 export function ReportDetailPage({ api, id }: { api: ApiClient; id: string }) {
@@ -47,13 +51,8 @@ export function ReportDetailPage({ api, id }: { api: ApiClient; id: string }) {
           </a>
         </Button>
         <Button asChild variant="outline">
-          <a
-            className="button button-secondary"
-            href={`#/tasks/${encodeURIComponent(id)}`}
-          >
-            {resource.data?.definition.comparison
-              ? '查看执行对比'
-              : '查看任务详情'}
+          <a className="button button-secondary" href={taskHref('tasks', id)}>
+            查看执行过程
           </a>
         </Button>
       </PageHeader>
@@ -134,6 +133,9 @@ export function ReportDetails({
   return (
     <div className="verification-report">
       <section className="panel report-overview" aria-label="报告结论">
+        {(paired || reportMode(task) === 'jev') && (
+          <p className="muted">{HISTORICAL_EXECUTION_NOTICE}</p>
+        )}
         <div className="report-overview-main">
           <div>
             <p className="eyebrow">本次验证结论 · 通过 / 总数</p>
@@ -156,7 +158,9 @@ export function ReportDetails({
                   const arm = tasks.find((item) => reportMode(item) === mode);
                   return (
                     <div key={mode}>
-                      <strong>{mode === 'llm' ? 'LLM' : 'LLM + JEV'}</strong>
+                      <strong>
+                        {mode === 'llm' ? 'LLM' : 'LLM + JEV（历史）'}
+                      </strong>
                       <span>
                         执行时长：{arm ? reportDuration(arm) : '待获取'}
                       </span>
@@ -185,7 +189,7 @@ export function ReportDetails({
           <span>
             验证模式：
             {paired
-              ? 'LLM / LLM + JEV'
+              ? '历史对照：LLM / LLM + JEV（已停用）'
               : executionModeLabel(task.definition.executionMode)}
           </span>
           <span>环境：{task.definition.environment.id}</span>
@@ -216,7 +220,7 @@ export function ReportDetails({
           {tasks.map((item) => (
             <details key={item.id} className="panel report-support">
               <summary>
-                {reportMode(item) === 'llm' ? 'LLM' : 'LLM + JEV'} ·
+                {reportMode(item) === 'llm' ? 'LLM' : 'LLM + JEV（历史）'} ·
                 验证记录与证据{' '}
                 <ReportProgress counts={verificationProgress([item])} />
               </summary>
@@ -261,7 +265,7 @@ function ReportSupportingDetails({
           <div>
             <dt>关联任务</dt>
             <dd className="mono wrap">
-              <a href={`#/tasks/${encodeURIComponent(task.id)}`}>{task.id}</a>
+              <a href={taskHref('tasks', task.id)}>{task.id}</a>
             </dd>
           </div>
           <div>

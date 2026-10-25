@@ -325,7 +325,7 @@ test('报告明显展示验证模式，导出保留模式编码和文案', () =>
   for (const mode of ['jev', 'llm', undefined] as const) {
     const task = fixture();
     task.definition.executionMode = mode;
-    const label = mode === 'jev' ? 'JEV + LLM' : '纯 LLM';
+    const label = mode === 'jev' ? 'JEV + LLM（历史，已停用）' : '纯 LLM';
     const html = renderToStaticMarkup(
       createElement(ReportDetails, { api, task }),
     );
@@ -351,6 +351,8 @@ test('报告明显展示验证模式，导出保留模式编码和文案', () =>
     assert.equal(json.executionMode, mode ?? 'llm');
     assert.equal(json.executionModeLabel, label);
     assert.equal(json.taskId, task.id);
+    if (mode === 'jev') assert.match(html, /JEV 与双跑模式已停用/);
+    else assert.doesNotMatch(html, /JEV|历史对照|已停用/);
   }
 });
 

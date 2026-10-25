@@ -123,7 +123,7 @@ export class Coordinator {
       throw new ApiError(
         400,
         'COMPARISON_ENDPOINT_REQUIRED',
-        '请通过任务并行对比入口创建两组任务',
+        '双跑模式已停用，请移除 comparison 并使用 LLM 创建新任务',
       );
     const ids = task.acceptanceCriteria.map((c) => c.id);
     if (

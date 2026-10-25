@@ -1,207 +1,88 @@
-import { toast } from 'sonner';
-import { Modal } from '../components/modal';
-import { Button } from '../components/ui/button';
-import { RequestMemberships } from '../components/request-memberships';
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import type { TaskDetail } from '@proofrun/contracts';
-import { ApiClient, errorMessage } from '../api';
+import { ApiClient } from '../api';
 import { useResource } from '../use-resource';
-import { TaskLive, TaskExecutionStatus } from '../components/task-live';
-import { TaskRerun } from '../components/task-rerun';
-import { Comparison } from '../components/comparison';
-import {
-  TaskResources,
-  TaskReport,
-  TaskEvidence,
-  TaskDefinition,
-} from '../components/task-sections';
-import { DecisionContext } from '../components/decision-context';
-import { Empty, ErrorNotice, PageHeader, RefreshBar } from '../components/ui';
+import { sourceRequestId } from '../task-links';
+import { TaskExecutionStatus } from '../components/execution-outcome';
+import { StepPlayback } from '../components/step-playback';
+import { Button } from '../components/ui/button';
+import { Empty, ErrorNotice, PageHeader } from '../components/ui';
 
-/** 任务结果与资源清理并列显示；取消的成功响应不能冒充节点已释放。 */
+/** 任务入口仅承载实时交互与步骤回放，不再挂载旧详情、报告或历史对照模块。 */
 export function TaskDetailPage({ api, id }: { api: ApiClient; id: string }) {
   const resource = useResource<TaskDetail>(
     api,
     `/v1/tasks/${encodeURIComponent(id)}`,
   );
-  const [confirmCancel, setConfirmCancel] = useState(false);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string>();
-  const active = useRef<AbortController | null>(null);
-  useEffect(() => () => active.current?.abort(), []);
-  const cancel = async () => {
-    if (pending) return;
-    const controller = new AbortController();
-    active.current = controller;
-    setPending(true);
-    setError(undefined);
-    try {
-      await api.json(
-        `/v1/tasks/${encodeURIComponent(id)}/cancel`,
-        controller.signal,
-        {},
-      );
-      if (!controller.signal.aborted) {
-        setConfirmCancel(false);
-        toast.success('取消请求已提交');
-        resource.refresh();
-      }
-    } catch (error) {
-      if (!controller.signal.aborted) setError(errorMessage(error));
-    } finally {
-      if (!controller.signal.aborted) setPending(false);
-    }
-  };
   const task = resource.data;
-  const paired = !!task?.definition.comparison;
+  const requestId = sourceRequestId();
   return (
     <>
       <PageHeader
-        title={paired ? '对照任务详情' : '任务详情'}
-        description={task?.definition.comparison?.id ?? id}
+        title="执行过程"
+        description={task?.definition.objective ?? ''}
       >
+        {task && <TaskExecutionStatus task={task} />}
         <Button asChild variant="outline">
-          <a className="button button-secondary" href="#/tasks">
-            返回任务
+          <a
+            href={
+              requestId
+                ? `#/requests/${encodeURIComponent(requestId)}`
+                : '#/tasks'
+            }
+          >
+            {requestId ? '返回来源请求' : '返回任务'}
           </a>
         </Button>
-        {task?.report && (
-          <Button asChild variant="default">
-            <a
-              className="button button-primary"
-              href={`#/reports/${encodeURIComponent(id)}`}
-            >
-              查看验证报告
-            </a>
-          </Button>
-        )}
-        {task &&
-          (!task.definition.steps || task.definition.caseV2Definition) && (
-            <TaskRerun
-              key={id}
-              api={api}
-              id={id}
-              paired={!!task.definition.comparison}
-              caseId={task.definition.caseV2Definition?.caseId}
-            />
-          )}
-        {task && !paired && ['QUEUED', 'RUNNING'].includes(task.state) && (
-          <Button
-            variant="outline"
-            className="button button-secondary"
-            onClick={(event) => {
-              event.currentTarget.focus();
-              setConfirmCancel(true);
-            }}
-          >
-            取消任务
-          </Button>
-        )}
       </PageHeader>
-      <RequestMemberships api={api} taskId={id} />
-      {!paired && <RefreshBar {...resource} />}
       <ErrorNotice message={resource.error} />
-      <ErrorNotice message={error} />
-      {confirmCancel && (
-        <Modal
-          title="取消任务"
-          close={() => setConfirmCancel(false)}
-          busy={pending}
-        >
-          <ErrorNotice message={error} />
-          <p>
-            取消后将停止后续操作并请求关闭浏览器。已经发生的业务操作不会被撤销。
-          </p>
-          <div className="page-actions">
-            <Button
-              variant="default"
-              className="button button-primary"
-              disabled={pending}
-              onClick={() => void cancel()}
-            >
-              {pending ? '取消中…' : '确认取消'}
-            </Button>
-            <Button
-              variant="outline"
-              className="button button-secondary"
-              disabled={pending}
-              data-dialog-cancel
-              onClick={() => setConfirmCancel(false)}
-            >
-              继续执行
-            </Button>
-          </div>
-        </Modal>
+      {resource.error && (
+        <Button variant="outline" onClick={resource.refresh}>
+          重新读取任务
+        </Button>
       )}
-      {!task ? (
-        <Empty title={resource.loading ? '正在读取任务…' : '无法读取任务'}>
-          {resource.loading ? undefined : '请检查任务 ID、访问凭据和服务连接。'}
-        </Empty>
+      {task ? (
+        <ExecutionView key={task.id} api={api} task={task} />
       ) : (
-        <>
-          <section className="panel task-overview">
-            <div className="section-heading">
-              <h2>{task.definition.objective}</h2>
-              {paired ? (
-                <span className="status">两组独立执行</span>
-              ) : (
-                <TaskExecutionStatus task={task} />
-              )}
-            </div>
-            <dl className="facts">
-              <div>
-                <dt>执行模式</dt>
-                <dd>
-                  {paired
-                    ? '并行对比'
-                    : task.definition.executionMode === 'jev'
-                      ? 'LLM + JEV'
-                      : '纯 LLM'}
-                </dd>
-              </div>
-              <div>
-                <dt>目标地址</dt>
-                <dd className="wrap">{task.definition.target.url}</dd>
-              </div>
-              <div>
-                <dt>验证环境 / 节点池</dt>
-                <dd>
-                  {task.definition.environment.id} /{' '}
-                  {task.definition.environment.nodePool}
-                </dd>
-              </div>
-              <div>
-                <dt>执行预算</dt>
-                <dd>
-                  {task.definition.budget.timeoutMs / 1000} 秒 · 最多{' '}
-                  {task.definition.budget.maxActions} 次动作
-                </dd>
-              </div>
-            </dl>
-          </section>
-          {paired ? (
-            <Comparison api={api} id={id} />
-          ) : (
-            <>
-              <TaskLive api={api} task={task} />
-              <TaskResources task={task} />
-              {task.executions.map((execution) => (
-                <DecisionContext
-                  key={`context-${execution.id}`}
-                  api={api}
-                  executionId={execution.id}
-                  running={
-                    task.state === 'RUNNING' && execution.state === 'RUNNING'
-                  }
-                />
-              ))}
-              <TaskReport api={api} task={task} />
-              <TaskEvidence api={api} task={task} />
-              <TaskDefinition task={task} />
-            </>
-          )}
-        </>
+        <Empty title={resource.loading ? '正在读取执行…' : '无法读取执行'} />
       )}
+    </>
+  );
+}
+
+/** 多次执行分别回放，切换时清除图片与步骤选择，避免混用不同会话。 */
+function ExecutionView({ api, task }: { api: ApiClient; task: TaskDetail }) {
+  const [executionId, setExecutionId] = useState<string>();
+  const execution =
+    task.executions.find((item) => item.id === executionId) ??
+    task.executions[0];
+  if (!execution)
+    return (
+      <Empty title={task.state === 'QUEUED' ? '等待开始执行' : '没有执行记录'}>
+        浏览器开始执行后将在这里显示实时画面。
+      </Empty>
+    );
+  return (
+    <>
+      {task.executions.length > 1 && (
+        <div className="page-actions" aria-label="选择执行记录">
+          {task.executions.map((item, index) => (
+            <Button
+              key={item.id}
+              variant={item.id === execution.id ? 'secondary' : 'ghost'}
+              onClick={() => setExecutionId(item.id)}
+            >
+              执行记录 {task.executions.length - index}
+            </Button>
+          ))}
+        </div>
+      )}
+      <StepPlayback
+        key={execution.id}
+        api={api}
+        task={task}
+        execution={execution}
+      />
     </>
   );
 }

@@ -238,3 +238,9 @@ export type {
   AnalysisCallWrite,
 } from './request-analysis.js';
 export * from './dashboard.js';
+
+import type { ExecutionTimeline } from './generated/execution-timeline.js';
+export type { ExecutionTimeline };
+export const validateExecutionTimeline = ajv.compile<ExecutionTimeline>(
+  readSchema('execution-timeline'),
+);

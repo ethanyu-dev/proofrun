@@ -42,7 +42,9 @@ export function VerificationSummary({
               <th>步骤</th>
               <th>验证项目</th>
               {modes.map((mode) => (
-                <th key={mode}>{mode === 'llm' ? 'LLM' : 'LLM + JEV'}</th>
+                <th key={mode}>
+                  {mode === 'llm' ? 'LLM' : 'LLM + JEV（历史）'}
+                </th>
               ))}
             </tr>
           </thead>

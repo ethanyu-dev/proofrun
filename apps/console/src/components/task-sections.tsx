@@ -18,6 +18,7 @@ import { StepCompletion } from './step-completion';
 import { ReportCriteria } from './report-criteria';
 import { FollowUpCleanup } from './follow-up-cleanup';
 import { executionModeLabel } from '../execution-mode';
+import { taskHref } from '../task-links';
 
 /** 单组结果组件始终接收完整任务，执行、报告和证据不能跨组共享身份。 */
 type TaskSectionProps = { api: ApiClient; task: TaskDetail };
@@ -179,9 +180,11 @@ export function TaskReport({ api, task }: TaskSectionProps) {
             <Button asChild variant="outline">
               <a
                 className="button button-secondary button-small"
-                href={`#/reports/${encodeURIComponent(task.id)}`}
+                href={taskHref('reports', task.id)}
               >
-                打开验证报告
+                {task.definition.comparison
+                  ? '打开历史对照报告'
+                  : '打开验证报告'}
               </a>
             </Button>
           )}
@@ -199,7 +202,10 @@ export function TaskReport({ api, task }: TaskSectionProps) {
           )}
         </div>
         <p className="muted">
-          验证模式：{executionModeLabel(task.definition.executionMode)}
+          验证模式：
+          {executionModeLabel(
+            task.definition.comparison?.arm ?? task.definition.executionMode,
+          )}
         </p>
         {task.archived_at && (
           <p className="error-notice">

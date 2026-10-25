@@ -1,6 +1,7 @@
 import type { ApiClient } from '../api';
 import { useResource } from '../use-resource';
 import { ErrorNotice } from './ui';
+import { sourceRequestId } from '../task-links';
 
 /** 共享执行可以出现在多个请求；从请求进入时保留显式返回入口。 */
 export function RequestMemberships({
@@ -15,10 +16,7 @@ export function RequestMemberships({
     `/v1/tasks/${encodeURIComponent(taskId)}/requests`,
     false,
   );
-  const source =
-    typeof location === 'undefined'
-      ? null
-      : new URLSearchParams(location.hash.split('?')[1] ?? '').get('request');
+  const source = sourceRequestId();
   return (
     <section aria-label="请求归属">
       <ErrorNotice message={resource.error} />

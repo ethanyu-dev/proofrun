@@ -103,7 +103,7 @@ export function LivePage({
   ]);
   return (
     <>
-      <div className="comparison-browser-bar">
+      <div className="live-browser-bar">
         <span className={active ? 'live-dot' : 'live-dot ended'} />
         <span>
           {handoff
@@ -119,7 +119,7 @@ export function LivePage({
         </span>
       </div>
       <div
-        className={`comparison-screen ${!frame && (!active || human) ? 'live-screen-empty' : ''}`}
+        className={`live-screen ${!frame && (!active || human) ? 'live-screen-empty' : ''}`}
       >
         {frame ? (
           <img
@@ -129,7 +129,7 @@ export function LivePage({
             }
           />
         ) : (
-          <div className="comparison-placeholder">
+          <div className="live-placeholder">
             <span aria-hidden="true">▣</span>
             <p>
               {handoff
@@ -143,7 +143,7 @@ export function LivePage({
           </div>
         )}
       </div>
-      <div className="comparison-screen-meta">
+      <div className="live-screen-meta">
         <span>
           已提交 {Math.max(count, execution.action_count)} 次动作 · 接收{' '}
           {frames} 帧
