@@ -51,8 +51,19 @@ export function resolveExecutionPlan(
       'ENVIRONMENT_CONFIG_CONFLICT',
       '访客要求与显式会话或其他准备要求冲突，请拆分 case 或调整 session',
     );
+  // 自动会话只有明确登录需求才进入账号准备；普通页面检查固定使用访客环境。
+  const loginRequired =
+    !!input.session?.external ||
+    !!input.session?.requirements?.length ||
+    input.steps.some((step) =>
+      [
+        step.description,
+        ...step.policy,
+        ...(step.preconditions ?? []).map((check) => check.description),
+      ].some(needsAccount),
+    );
   const mode =
-    explicit === 'guest' || (!explicit && guest.length)
+    explicit === 'guest' || (!explicit && (guest.length || !loginRequired))
       ? 'guest'
       : 'configured';
   const kinds = new Set(evidenceKinds);
@@ -103,19 +114,7 @@ export function resolveExecutionPlan(
     ...(automatic
       ? {
           automatic: {
-            loginRequired:
-              mode !== 'guest' &&
-              (!!input.session?.external ||
-                !!input.session?.requirements?.length ||
-                input.steps.some((step) =>
-                  [
-                    step.description,
-                    ...step.policy,
-                    ...(step.preconditions ?? []).map(
-                      (check) => check.description,
-                    ),
-                  ].some(needsAccount),
-                )),
+            loginRequired: mode !== 'guest' && loginRequired,
           },
         }
       : {}),

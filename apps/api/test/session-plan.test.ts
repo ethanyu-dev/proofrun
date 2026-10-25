@@ -47,7 +47,7 @@ test('默认会话直接编译且不产生本地候选或身份选择', () => {
       { ...INPUT, ...(session ? { session } : {}) },
       PROFILE,
     );
-    assert.equal(task.sessionPlan?.mode, session?.mode ?? 'manual');
+    assert.equal(task.sessionPlan?.mode, session?.mode ?? 'guest');
     assert.deepEqual(task.sessionPlan?.candidates, []);
     assert.equal(task.sessionPlan?.selection, undefined);
     assert.equal(task.sessionPlan?.library, undefined);

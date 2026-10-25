@@ -70,6 +70,8 @@ test('自动会话不会因标题式文案、登录按钮或 expected 获取账�
       false,
       description,
     );
+    assert.equal(task.sessionPlan?.mode, 'guest', description);
+    assert.equal(task.executionPlan?.environment.mode, 'guest', description);
     assert.equal(task.sessionPlan?.external, undefined, description);
     assert.ok(
       validateVerificationTask(task),

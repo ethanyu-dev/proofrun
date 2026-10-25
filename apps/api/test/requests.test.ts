@@ -1502,13 +1502,14 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
           runId: 'identity-inherited',
         });
         assert.equal(inherited.statusCode, 202, inherited.body);
+        // 未显式覆盖的新重跑重新判断需求；原步骤不需要登录，因此不会继承上一轮人工会话。
         assert.equal(
           (
             await sql.query(
               "SELECT definition#>>'{sessionPlan,mode}' mode FROM pr_tasks WHERE id='case-run-identity-inherited'",
             )
           ).rows[0].mode,
-          'manual',
+          'guest',
         );
         assert.deepEqual(
           (
