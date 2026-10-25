@@ -142,7 +142,7 @@ test('人工页面没有首帧时仍可导航，超时可重连且不重放操�
     );
     assert.doesNotMatch(container.textContent!, /浏览器画面加载超时/);
     await act(async () =>
-      sockets[2]!.receive({
+      sockets[3]!.receive({
         type: 'frame',
         data: 'fixture',
         width: 1280,
@@ -154,6 +154,47 @@ test('人工页面没有首帧时仍可导航，超时可重连且不重放操�
     assert.doesNotMatch(container.textContent!, /浏览器画面加载超时/);
     await act(async () => sockets[2]!.close());
     assert.equal(button('前往').disabled, true);
+    // 范围：保留旧帧但禁止坐标和文字输入，新一轮媒体首帧到达后才恢复；不验证真实 JPEG 解码。
+    assert.ok(container.querySelector('img.hitl-screen'));
+    assert.equal(
+      container.querySelector('img.hitl-screen')!.getAttribute('aria-disabled'),
+      'true',
+    );
+    assert.match(container.textContent!, /上次画面/);
+    assert.equal(button('Enter').disabled, true);
+    await act(async () => context.mock.timers.tick(1000));
+    await act(async () => {
+      sockets[4]!.onopen?.();
+      sockets[4]!.receive(state('HUMAN'));
+    });
+    assert.equal(button('Enter').disabled, true);
+    await act(async () =>
+      sockets[5]!.receive({
+        type: 'frame',
+        data: 'fresh',
+        width: 1280,
+        height: 720,
+      }),
+    );
+    assert.equal(button('Enter').disabled, false);
+    assert.doesNotMatch(container.textContent!, /上次画面/);
+    assert.equal(
+      sockets[4]!.sent.filter((m) => m.type === 'command').length,
+      0,
+    );
+    // 范围：交接应答超时后忙碌标记释放，人工可以重新查询；不证明服务端是否已完成交接。
+    await act(async () => button('完成，继续任务').click());
+    await act(async () => context.mock.timers.tick(150000));
+    assert.equal(button('重新连接').disabled, false);
+    assert.match(container.textContent!, /交接结果未确认/);
+    assert.equal(
+      container.querySelector('img.hitl-screen')!.getAttribute('aria-disabled'),
+      'true',
+    );
+    assert.equal(
+      sockets[4]!.sent.filter((m) => m.type === 'complete').length,
+      1,
+    );
   } finally {
     await act(async () => root.unmount());
     context.mock.timers.reset();

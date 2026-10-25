@@ -1,4 +1,4 @@
-import { HitlConnection } from './hitl-connection';
+import { HitlConnection, type ConnectionState } from './hitl-connection';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Textarea } from '../components/ui/textarea';
@@ -68,8 +68,19 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
   }>();
   const [error, setError] = useState('');
   const [connected, setConnected] = useState(false);
+  const [connectionState, setConnectionState] =
+    useState<ConnectionState>('connecting');
+  // 重连期间保留最后一帧供核对，但只有本轮新帧才能恢复坐标输入。
+  const [freshFrame, setFreshFrame] = useState(false);
   const [frameTimedOut, setFrameTimedOut] = useState(false);
   const [done, setDone] = useState(false);
+  useEffect(() => {
+    setFrame(undefined);
+    setState(undefined);
+    setChecked([]);
+    setDone(false);
+    setUnableResult('');
+  }, [id, token]);
   const [busy, setBusy] = useState(false);
   const [checked, setChecked] = useState<number[]>([]);
   const [text, setText] = useState('');
@@ -100,13 +111,10 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
         return true;
       },
       setBusy,
-      () => {
-        setError(
+      () =>
+        stopForReview(
           '操作结果未确认，已停止后续操作。请重新连接检查页面，不要重复提交。',
-        );
-        setConnected(false);
-        socket.current?.close();
-      },
+        ),
     );
   const completed = useRef(false);
   const completing = useRef(false);
@@ -115,6 +123,22 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
     undefined,
   );
   const [typingPending, setTypingPending] = useState(false);
+  /** 操作或交接结果不明时停止输入并开放手动核查，不能让 busy 锁住恢复入口。 */
+  function stopForReview(message: string) {
+    socket.current?.close();
+    if (input.current!.busy) input.current!.reset();
+    clearTimeout(completionTimer.current);
+    clearTimeout(typingTimer.current);
+    typing.current = '';
+    completing.current = false;
+    setTypingPending(false);
+    setBusy(false);
+    setConnected(false);
+    setFreshFrame(false);
+    setRemoteFocused(false);
+    setConnectionState('closed');
+    setError(message);
+  }
   /** 区分交接、断线和队列繁忙，避免让短暂拥塞看起来像权限丢失。 */
   const enqueue = (
     command: NodeCommand['command'] | NodeCommand['command'][],
@@ -152,7 +176,7 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
     setRemoteFocused(false);
     setBusy(false);
     setError('');
-    setFrame(undefined);
+    setFreshFrame(false);
     const ws = new HitlConnection({
       id: id ?? '',
       token: token ?? '',
@@ -164,13 +188,14 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
             completing.current = true;
             setBusy(true);
           }
-        } else if (message.type === 'frame')
+        } else if (message.type === 'frame') {
+          setFreshFrame(true);
           setFrame({
             data: message.data,
             width: message.width,
             height: message.height,
           });
-        else if (message.type === 'error') {
+        } else if (message.type === 'error') {
           setError(message.message);
           input.current!.reset();
           clearTimeout(completionTimer.current);
@@ -207,7 +232,7 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
       closed: () => {
         const hadPendingInput = input.current!.busy;
         setConnected(false);
-        setFrame(undefined);
+        setFreshFrame(false);
         setRemoteFocused(false);
         setText('');
         clearTimeout(typingTimer.current);
@@ -227,6 +252,7 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
         completing.current = false;
       },
       error: setError,
+      status: setConnectionState,
     });
     socket.current = ws;
     return () => {
@@ -237,7 +263,7 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
       typing.current = '';
     };
   }, [id, token, attempt]);
-  const hasFrame = !!frame;
+  const hasFrame = !!frame && freshFrame;
   useEffect(() => {
     setFrameTimedOut(false);
     if (!connected || state?.mode !== 'HUMAN' || hasFrame || done) return;
@@ -352,12 +378,24 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
                 }}
               />
             ) : (
-              <div className="hitl-placeholder">
-                {state?.mode === 'REQUESTED'
-                  ? 'Agent 正在完成当前操作，请稍候。'
-                  : frameTimedOut
-                    ? '浏览器画面加载超时。可先前往目标网址，或重新连接画面。'
-                    : '等待浏览器画面…'}
+              <div className="hitl-placeholder" role="status">
+                {connectionState === 'reconnecting'
+                  ? '连接已断开，正在重新连接…'
+                  : connectionState === 'closed'
+                    ? '连接已断开，请重新连接。'
+                    : state?.mode === 'REQUESTED'
+                      ? 'Agent 正在完成当前操作，请稍候。'
+                      : frameTimedOut
+                        ? '浏览器画面加载超时。可先前往目标网址，或重新连接画面。'
+                        : '等待浏览器画面…'}
+              </div>
+            )}
+            {frame && !freshFrame && (
+              <div className="hitl-stale" role="status">
+                上次画面 ·{' '}
+                {connectionState === 'closed'
+                  ? '已断开，请重新连接'
+                  : '正在恢复连接'}
               </div>
             )}
           </section>
@@ -370,7 +408,11 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
                   ? '操作处理中'
                   : interactive
                     ? '人工处理中'
-                    : '等待连接'}
+                    : connectionState === 'reconnecting'
+                      ? '正在重连'
+                      : connectionState === 'closed'
+                        ? '已断开'
+                        : '等待连接'}
             </span>
             <span className="hitl-focus-hint" role="status">
               {controlling
@@ -393,13 +435,6 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
           </div>
           <div className="hitl-controls">
             <section className="panel hitl-tools" aria-label="浏览器操作">
-              {state?.targetUrl && (
-                <HitlCookies
-                  targetUrl={state.targetUrl}
-                  disabled={!interactive || busy || typingPending}
-                  submit={enqueue}
-                />
-              )}
               <h2>浏览器操作</h2>
               <HitlNavigation
                 key={state?.targetUrl}
@@ -441,7 +476,7 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
                   输入
                 </Button>
               </form>
-              <div className="page-actions">
+              <div className="page-actions hitl-keys">
                 {['Tab', 'Enter', 'Backspace', 'Escape'].map((key) => (
                   <Button
                     variant="outline"
@@ -462,18 +497,31 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
                 ))}
               </div>
               <p className="muted note">
-                可直接点击画面、输入和滚动；中文可使用下方输入框。输入内容不会显示在操作摘要中。
+                点击画面操作；中文与粘贴可使用输入框。
               </p>
+              {state?.targetUrl && (
+                <details className="hitl-cookie-disclosure">
+                  <summary>通过 Cookie 登录</summary>
+                  <HitlCookies
+                    targetUrl={state.targetUrl}
+                    disabled={!interactive || busy || typingPending}
+                    submit={enqueue}
+                  />
+                </details>
+              )}
             </section>
             <aside className="panel hitl-todo">
-              <p className="eyebrow">当前待办</p>
-              <h1>{state?.reason ?? '正在连接处理任务'}</h1>
+              <h1>当前待办</h1>
+              <details className="hitl-reason">
+                <summary>查看介入原因</summary>
+                <p>{state?.reason ?? '正在连接处理任务'}</p>
+              </details>
               {state && (
                 <>
-                  <p className="muted">任务 {state.taskId}</p>
+                  <p className="muted hitl-task-id">任务 {state.taskId}</p>
                   <p className="note">
                     有效至 {new Date(state.expiresAt).toLocaleString()}
-                    ，业务步骤的人工等待不计时，完成后继续执行；后续清理仍受三分钟期限约束。
+                    。完成后继续执行任务。
                     <strong
                       className={
                         Date.parse(state.expiresAt) - now <= 60000
@@ -504,12 +552,14 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
                   </div>
                 </>
               )}
-              <p role="status">
+              <p role="status" className="hitl-connection-status">
                 {connected
                   ? state?.mode === 'HUMAN'
                     ? '人工处理中'
                     : '正在等待 Agent 完成交接…'
-                  : '未连接'}
+                  : connectionState === 'reconnecting'
+                    ? '正在自动重连…'
+                    : '未连接'}
               </p>
               {error && (
                 <p role="alert" className="error-notice">
@@ -526,54 +576,54 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
                   重新连接
                 </Button>
               )}
-              <Button
-                variant="default"
-                className="button button-primary"
-                disabled={
-                  !interactive ||
-                  busy ||
-                  typingPending ||
-                  checked.length !== state?.items.length
-                }
-                onClick={() => {
-                  completing.current = true;
-                  setBusy(true);
-                  socket.current?.send(
-                    JSON.stringify({
-                      type: 'complete',
-                      confirmedItems: checked,
-                      ...(state?.conditionKeys
-                        ? {
-                            confirmedConditionKeys: checked.map(
-                              (index) => state.conditionKeys![index]!,
-                            ),
-                          }
-                        : {}),
-                    }),
-                  );
-                  completionTimer.current = setTimeout(() => {
-                    setError('交接结果未确认，请重新连接查看处理状态。');
-                    setConnected(false);
-                    socket.current?.close();
-                  }, COMPLETION_ACK_MS);
-                }}
-              >
-                完成，继续任务
-              </Button>
-              <Button
-                variant="outline"
-                className="button button-secondary"
-                disabled={
-                  !connected ||
-                  state?.mode !== 'HUMAN' ||
-                  busy ||
-                  typingPending ||
-                  expired
-                }
-                onClick={() => setUnable((value) => !value)}
-              >
-                无法处理
-              </Button>
+              <div className="hitl-finish-actions">
+                <Button
+                  variant="default"
+                  className="button button-primary"
+                  disabled={
+                    !interactive ||
+                    busy ||
+                    typingPending ||
+                    checked.length !== state?.items.length
+                  }
+                  onClick={() => {
+                    completing.current = true;
+                    setBusy(true);
+                    socket.current?.send(
+                      JSON.stringify({
+                        type: 'complete',
+                        confirmedItems: checked,
+                        ...(state?.conditionKeys
+                          ? {
+                              confirmedConditionKeys: checked.map(
+                                (index) => state.conditionKeys![index]!,
+                              ),
+                            }
+                          : {}),
+                      }),
+                    );
+                    completionTimer.current = setTimeout(() => {
+                      stopForReview('交接结果未确认，请重新连接查看处理状态。');
+                    }, COMPLETION_ACK_MS);
+                  }}
+                >
+                  完成，继续任务
+                </Button>
+                <Button
+                  variant="outline"
+                  className="button button-secondary"
+                  disabled={
+                    !connected ||
+                    state?.mode !== 'HUMAN' ||
+                    busy ||
+                    typingPending ||
+                    expired
+                  }
+                  onClick={() => setUnable((value) => !value)}
+                >
+                  无法处理
+                </Button>
+              </div>
               {unable && (
                 <div className="identity-field">
                   <label htmlFor="unable-reason">无法处理的具体原因</label>
@@ -607,9 +657,9 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
                         }),
                       );
                       completionTimer.current = setTimeout(() => {
-                        setError('结果未确认，请重新连接核查人工处理结果。');
-                        setConnected(false);
-                        socket.current?.close();
+                        stopForReview(
+                          '结果未确认，请重新连接核查人工处理结果。',
+                        );
                       }, COMPLETION_ACK_MS);
                     }}
                   >
@@ -618,7 +668,8 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
                 </div>
               )}
               <p className="muted note">
-                完成后自动关闭此页。直接离开只会断开画面，任务继续等待人工处理。链接过期后请从执行过程页重新打开处理页。
+                完成后自动关闭。离开页面不会恢复
+                Agent；到期后请从任务页重新打开。
               </p>
             </aside>
           </div>
