@@ -13,7 +13,11 @@ import { interventionToken } from '../scheduling/hitl-token.js';
 import { Coordinator } from '../scheduling/coordinator.js';
 import { NodeGateway } from '../nodes/gateway.js';
 import { validateHitlNavigation } from './navigation.js';
-import { discardHitlFrame, sendHitlMessage } from './transport.js';
+import {
+  discardFrame,
+  sendStreamMessage,
+  trackStreamSocket,
+} from './transport.js';
 
 /** 画面独立于持久命令，丢弃慢客户端旧帧；输入严格串行且不自动重试。 */
 const FRAME_LIMIT = 2 * 1024 * 1024;
@@ -147,10 +151,10 @@ export class HitlService {
     };
   }
   private send(socket: WebSocket, value: HitlServer): void {
-    sendHitlMessage(socket, value);
+    sendStreamMessage(socket, value);
   }
   private end(viewer: Viewer): void {
-    discardHitlFrame(viewer.socket);
+    discardFrame(viewer.socket);
     clearInterval(viewer.timer);
     if (this.viewers.get(viewer.grant.id) === viewer)
       this.viewers.delete(viewer.grant.id);
@@ -159,11 +163,6 @@ export class HitlService {
     delete viewer.relay;
     relay?.terminate();
     viewer.socket.close(1000);
-  }
-  private tracked(socket: WebSocket): void {
-    this.sockets.add(socket);
-    socket.on('error', () => socket.terminate());
-    socket.on('close', () => this.sockets.delete(socket));
   }
   private error(socket: WebSocket, error: unknown) {
     this.send(socket, {
@@ -177,7 +176,7 @@ export class HitlService {
   }
   /** 首条消息认证，凭据不进入 URL、代理日志或节点；单一处理者占有当前连接。 */
   accept(socket: WebSocket): void {
-    this.tracked(socket);
+    trackStreamSocket(this.sockets, socket);
     let viewer: Viewer | undefined;
     let queued = 0;
     let chain = Promise.resolve();
@@ -504,7 +503,7 @@ export class HitlService {
   }
   /** 节点身份由网关路由先认证；仅中转当前授权的 JPEG 画面，绝不暴露原生调试接口。 */
   relay(socket: WebSocket, nodeId: string): void {
-    this.tracked(socket);
+    trackStreamSocket(this.sockets, socket);
     let viewer: Viewer | undefined;
     const timer = setTimeout(() => socket.close(4001), AUTH_MS);
     socket.on('close', () => {

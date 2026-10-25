@@ -956,6 +956,92 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
         assert.equal(recovered.usage.cumulative.calls, 0);
       },
     );
+    // 范围：真实数据库与两条 HTTP 读取入口保持同一异常步骤投影；证据和进度由夹具注入，不代表浏览器验收。
+    await suite.test(
+      'Case 与请求详情保留相同的异常现场和部分结论',
+      async () => {
+        const input = example('projection-consistency');
+        input.steps.push({
+          ...input.steps[0]!,
+          stepId: 'later',
+          exec_order: 2,
+        });
+        const submitted = await app.inject({
+          method: 'POST',
+          url: '/v2/cases',
+          headers: { authorization: `Bearer ${ADMIN}` },
+          payload: { requestId: 'projection-consistency', cases: [input] },
+        });
+        assert.equal(submitted.statusCode, 202, submitted.body);
+        const taskId = 'case-v2-projection-consistency';
+        const definition = (
+          await sql.query('SELECT definition FROM pr_tasks WHERE id=$1', [
+            taskId,
+          ])
+        ).rows[0].definition;
+        const snapshot = definition.steps.map(
+          (step: { stepId: string }, index: number) => ({
+            stepId: step.stepId,
+            groupId: 'group-1',
+            phase: 'VERIFYING',
+            status: index === 0 ? 'RUNNING' : 'PENDING',
+            summary: '夹具已记录的进度',
+            evidenceRefs: index === 0 ? ['observed-dom'] : [],
+            criteria:
+              index === 0
+                ? [
+                    {
+                      criterionId: definition.acceptanceCriteria[0].id,
+                      verdict: 'PASSED',
+                      summary: '已记录部分结论',
+                      evidenceRefs: ['observed-dom'],
+                    },
+                  ]
+                : [],
+            startedAt: index === 0 ? new Date().toISOString() : null,
+            finishedAt: null,
+          }),
+        );
+        for (const state of ['RUNNING', 'ERROR', 'CANCELLED', 'TIMED_OUT']) {
+          await sql.query(
+            'UPDATE pr_tasks SET state=$2,step_results=$3 WHERE id=$1',
+            [taskId, state, JSON.stringify(snapshot)],
+          );
+          const direct = await call('/v2/cases/projection-consistency');
+          const request = await call('/v2/requests/projection-consistency');
+          assert.equal(direct.statusCode, 200, direct.body);
+          assert.equal(request.statusCode, 200, request.body);
+          assert.ok(
+            validateRequestResultV2(request.json()),
+            JSON.stringify(validateRequestResultV2.errors),
+          );
+          const result = direct.json();
+          assert.deepEqual(request.json().cases[0].arms[0].result, result);
+          assert.equal(
+            result.steps[0].status,
+            state === 'RUNNING' ? 'RUNNING' : 'ERROR',
+          );
+          assert.equal(
+            result.steps[1].status,
+            state === 'RUNNING' ? 'PENDING' : 'SKIPPED',
+          );
+          assert.deepEqual(result.steps[0].evidenceRefs, ['observed-dom']);
+          assert.deepEqual(result.steps[0].criteria, snapshot[0].criteria);
+          assert.equal(result.steps[0].groupId, 'group-1');
+          assert.equal(result.steps[0].phase, 'VERIFYING');
+          assert.equal(result.result, null);
+          assert.equal(result.reportStatus, null);
+          assert.deepEqual(
+            (
+              await sql.query('SELECT step_results FROM pr_tasks WHERE id=$1', [
+                taskId,
+              ])
+            ).rows[0].step_results,
+            snapshot,
+          );
+        }
+      },
+    );
     // 范围：真实 HTTP 创建、共享、原子重跑后的全部摘要字段与详情一致；不代表真实模型判定准确性。
     await suite.test(
       '所有已提交及重跑请求的列表摘要与详情逐字段一致',

@@ -1,8 +1,8 @@
+import { projectCase } from '../cases/projection.js';
 import { requestMetrics } from '../reports/request-metrics.js';
 import { taskOutcomes } from '../tasks/outcome.js';
 import type { PoolClient } from 'pg';
 import {
-  summarizeReport,
   summarizeRequest,
   summarizeRequestCase,
   type RequestResultV2,
@@ -78,34 +78,6 @@ export class RequestProjector {
     /** 仅详情构造公开证据链接；摘要不保留链接或证据正文。 */
     private readonly publicUrl: string,
   ) {}
-  /** 只转换已存档事实；证据继续使用认证且校验 case 归属的原入口。 */
-  private report(
-    caseId: string,
-    report: VerificationReport | null,
-    runId: string,
-  ): CaseResultV2['result'] {
-    return report
-      ? {
-          outcome:
-            report.executionDisposition === 'EXECUTED'
-              ? report.verdict!
-              : report.executionDisposition,
-          summary: report.summary ?? '',
-          criteria: report.criteria.map((c) => ({
-            ...c,
-            summary: c.summary ?? '',
-            evidenceRefs: c.evidenceRefs ?? [],
-          })),
-          evidence: (report.artifacts ?? []).map((a) => ({
-            id: a.id,
-            kind: a.kind,
-            sha256: a.sha256,
-            url: `${this.publicUrl}/v2/cases/${encodeURIComponent(caseId)}/evidence/${encodeURIComponent(a.id)}?runId=${encodeURIComponent(runId)}`,
-          })),
-        }
-      : null;
-  }
-
   /** 列表只读结论事实；详情才读取完整步骤、摘要和证据引用。 */
   async project(
     client: PoolClient,
@@ -185,67 +157,22 @@ export class RequestProjector {
               : arm.definition.cleanupStepIds !== undefined
                 ? inlineCleanup(arm)
                 : arm.legacy_cleanup;
-            const terminal = !['QUEUED', 'RUNNING'].includes(arm.state);
-            const recorded = arm.report?.steps ?? arm.stepResults ?? [];
-            const steps: StepResult[] = detail
-              ? (arm.definition.steps ?? []).map((step) => {
-                  const saved = recorded.find((s) => s.stepId === step.stepId);
-                  if (
-                    saved &&
-                    (!terminal ||
-                      !['PENDING', 'RUNNING'].includes(saved.status))
-                  )
-                    return saved;
-                  return {
-                    stepId: step.stepId!,
-                    status: terminal
-                      ? saved?.status === 'RUNNING'
-                        ? 'ERROR'
-                        : 'SKIPPED'
-                      : 'PENDING',
-                    summary: terminal ? '执行已结束，该步骤未完成' : '尚未执行',
-                    evidenceRefs: [],
-                    criteria: [],
-                    startedAt: saved?.startedAt ?? null,
-                    finishedAt: saved?.finishedAt ?? null,
-                  };
-                })
-              : [];
             return {
               taskId: arm.task_id,
               executionMode: arm.execution_mode,
               createdAt: arm.created_at.toISOString(),
               archivedAt: arm.archived_at?.toISOString() ?? null,
-              result: {
-                caseId: arm.case_id,
-                status: arm.state,
-                queueReason: arm.queue_reason ?? null,
-                ...(arm.execution_outcome
-                  ? { executionOutcome: arm.execution_outcome }
-                  : {}),
-                ...summarizeReport(
-                  arm.report,
-                  arm.definition.acceptanceCriteria.map((c) => c.id),
-                  arm.definition,
-                ),
-                result: this.report(
-                  arm.case_id,
-                  arm.report,
-                  arm.definition.comparison?.sourceTaskId ?? arm.task_id,
-                ),
-                steps,
-                cleanup: cleanup
-                  ? {
-                      taskId: cleanup.taskId,
-                      status: cleanup.status,
-                      result: this.report(
-                        arm.case_id,
-                        cleanup.report,
-                        arm.definition.comparison?.sourceTaskId ?? arm.task_id,
-                      ),
-                    }
-                  : null,
-              },
+              result: projectCase(
+                arm.case_id,
+                {
+                  ...arm,
+                  queueReason: arm.queue_reason,
+                  executionOutcome: arm.execution_outcome,
+                },
+                cleanup,
+                this.publicUrl,
+                detail,
+              ),
             };
           }),
         });

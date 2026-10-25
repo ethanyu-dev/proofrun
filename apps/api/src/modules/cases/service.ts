@@ -1,3 +1,4 @@
+import type { TaskReader } from '../tasks/reader.js';
 import {
   summarizeReport,
   validateVerificationCase,
@@ -20,9 +21,10 @@ const CASE_ID = /^[A-Za-z0-9_-]{1,100}$/;
 /** 步骤中的换行归一化，确保内部步骤识别不会把一条业务步骤拆成多条。 */
 const STEP_BREAKS = /[\r\n]+/gu;
 /** 适配层只依赖已有任务端口，便于验证持久化和业务投影的职责边界。 */
-type CaseTasks = Pick<Coordinator, 'submit' | 'task' | 'cancel'>;
+type CaseTasks = Pick<Coordinator, 'submit' | 'cancel'> &
+  Pick<TaskReader, 'task'>;
 /** 内部完整记录只在服务端流转，返回前转换为 CaseResult。 */
-type StoredTask = Awaited<ReturnType<Coordinator['task']>>;
+type StoredTask = Awaited<ReturnType<TaskReader['task']>>;
 
 /** 将业务 case 适配为既有任务；执行、幂等锁和报告校验仍归原控制面管理。 */
 export class CaseService {

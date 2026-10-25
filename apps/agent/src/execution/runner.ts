@@ -2381,11 +2381,9 @@ class Execution {
       this.isSetup()
         ? 'ENVIRONMENT_NOT_READY'
         : login
-          ? this.loginReason() !== 'LOGIN_REQUIRED'
-            ? this.loginReason()
-            : this.identityInterventions.has(this.stepIndex)
-              ? 'IDENTITY_CHECK_UNMET'
-              : 'LOGIN_REQUIRED'
+          ? this.identityInterventions.has(this.stepIndex)
+            ? 'IDENTITY_CHECK_UNMET'
+            : 'LOGIN_REQUIRED'
           : 'GENERAL',
       conditionKeys,
     );
@@ -2674,16 +2672,6 @@ class Execution {
       '已按 exec_order 顺序完成所有步骤，逐项结论见步骤及验收结果',
       null,
     );
-  }
-
-  /** 人工分类只接受封闭集合，节点任意错误字符串不能污染统计维度。 */
-  private loginReason():
-    | 'LOGIN_REQUIRED'
-    | 'LOGIN_RECIPE_MISSING'
-    | 'LOGIN_RECIPE_UNAVAILABLE'
-    | 'LOGIN_FORM_MISMATCH'
-    | 'LOGIN_CHALLENGE_OR_REJECTED' {
-    return 'LOGIN_REQUIRED';
   }
 
   /** 无论正常还是异常都提交一次不可变报告；提交失败交给调用者记录，租约负责最终回收。 */

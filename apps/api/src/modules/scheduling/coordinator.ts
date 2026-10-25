@@ -1,5 +1,5 @@
 import { assertSupportedSession, usesLocalIdentity } from '../sessions/plan.js';
-import { identitySummary } from '../sessions/summary.js';
+import { TaskReader } from '../tasks/reader.js';
 import {
   ExternalAccounts,
   ACCOUNT_CLOSE_MARGIN_MS,
@@ -11,7 +11,6 @@ import {
 } from '../requests/registration.js';
 import { staleRenewal } from './renewal.js';
 import { taskEvidenceKinds } from '@proofrun/contracts';
-import { taskOutcomes } from '../tasks/outcome.js';
 import { authorizeCookieCleanup } from './cookie-cleanup.js';
 import { sessionBudgetMs } from '@proofrun/contracts';
 import { startStepBudget, consumeStepBudget } from './step-budget.js';
@@ -20,22 +19,14 @@ import {
   executionTimeoutCode,
   CLEANUP_EXECUTION_MS,
 } from './execution-time.js';
-import { inlineCleanup } from '../cases/inline-cleanup.js';
-import {
-  summarizeReport,
-  recoverableObservationFailure,
-} from '@proofrun/contracts';
+import { recoverableObservationFailure } from '@proofrun/contracts';
 import { randomUUID } from 'node:crypto';
 import {
   validateVerificationTask,
   validateStepResults,
   type StepResult,
 } from '@proofrun/contracts';
-import {
-  assertCaseExecution,
-  caseArmIds,
-  CASE_TASK_ID,
-} from '../cases/structured.js';
+import { assertCaseExecution, CASE_TASK_ID } from '../cases/structured.js';
 import type { PoolClient } from 'pg';
 import type {
   NodeCommand,
@@ -93,6 +84,8 @@ export class Coordinator {
     private readonly db: Database,
     private readonly config: ApiConfig,
     private readonly artifacts: ArtifactStore,
+    /** 读模型由应用装配共享，调度器只在写入后读取响应。 */
+    private readonly reader: TaskReader,
   ) {
     this.externalAccounts = new ExternalAccounts(db, config.devPass);
   }
@@ -153,7 +146,7 @@ export class Coordinator {
         'This release supports DOM, SCREENSHOT, NETWORK and TRACE evidence',
       );
     await this.enqueue([task], task.taskId);
-    return this.task(task.taskId);
+    return this.reader.task(task.taskId);
   }
 
   /** 同一提交身份跨模式互斥；整批事务回滚，不能在第二组冲突时遗留第一组。 */
@@ -196,40 +189,6 @@ export class Coordinator {
           );
       }
     });
-  }
-
-  /** 兼容旧主任务身份；默认读取最新未删除运行，历史运行必须属于指定 case。 */
-  async caseTask(id: string, runId?: string) {
-    if (
-      typeof id !== 'string' ||
-      !/^[A-Za-z0-9_-]{1,80}$/.test(id) ||
-      (runId !== undefined &&
-        (typeof runId !== 'string' || !/^[A-Za-z0-9_-]{1,160}$/.test(runId)))
-    )
-      throw new ApiError(400, 'INVALID_RUN', '运行身份无效');
-    const row = (
-      await this.db.query<{ run_id: string }>(
-        `SELECT run_id FROM pr_case_runs
-      WHERE case_id=$1 AND deleted_at IS NULL AND ($2::text IS NULL OR run_id=$2)
-      ORDER BY created_at DESC,run_id DESC LIMIT 1`,
-        [id, runId ?? null],
-      )
-    ).rows[0];
-    if (!row)
-      throw new ApiError(404, 'CASE_MISSING', 'Case 不存在或运行已删除');
-    return this.task(row.run_id);
-  }
-
-  /** 历史只返回可见运行，报告和证据通过原任务详情读取。 */
-  async caseRuns(id: string) {
-    return (
-      await this.db.query(
-        `SELECT r.run_id AS "runId",r.run_id AS "taskId",t.state,r.created_at AS "createdAt",
-      t.finished_at AS "finishedAt" FROM pr_case_runs r JOIN pr_tasks t ON t.id=r.run_id
-      WHERE r.case_id=$1 AND r.deleted_at IS NULL ORDER BY r.created_at DESC,r.run_id DESC`,
-        [id],
-      )
-    ).rows;
   }
 
   /** 整批原子入队；锁按身份排序，交叉批次不会因请求顺序形成死锁。 */
@@ -296,50 +255,6 @@ export class Coordinator {
     });
   }
 
-  /** 优先投影同任务收尾；历史独立清理仍从关联表读取。 */
-  async caseCleanup(id: string): Promise<{
-    taskId: string;
-    status:
-      | 'PENDING'
-      | 'QUEUED'
-      | 'SKIPPED'
-      | 'RUNNING'
-      | 'COMPLETED'
-      | 'CANCELLED'
-      | 'TIMED_OUT'
-      | 'ERROR';
-    report: VerificationReport | null;
-  } | null> {
-    const parent = (
-      await this.db.query<{
-        definition: VerificationTask;
-        state: string;
-        report: VerificationReport | null;
-        stepResults: StepResult[] | null;
-      }>(
-        'SELECT definition,state,report,step_results AS "stepResults" FROM pr_tasks WHERE id=$1',
-        [id],
-      )
-    ).rows[0];
-    if (parent?.definition.cleanupStepIds !== undefined)
-      return inlineCleanup(parent);
-    return (
-      (
-        await this.db.query<{
-          taskId: string;
-          status: NonNullable<
-            Awaited<ReturnType<Coordinator['caseCleanup']>>
-          >['status'];
-          report: VerificationReport | null;
-        }>(
-          `SELECT c.task_id AS "taskId",coalesce(t.state,c.state) AS status,t.report
-      FROM pr_case_cleanups c LEFT JOIN pr_tasks t ON t.id=c.task_id WHERE c.parent_task_id=$1`,
-          [id],
-        )
-      ).rows[0] ?? null
-    );
-  }
-
   /** 步骤快照随执行令牌写入；只允许当前执行的证据和完整原步骤集合。 */
   async recordSteps(id: string, token: string, input: unknown) {
     if (!validateStepResults(input))
@@ -394,7 +309,7 @@ export class Coordinator {
   async rerun(sourceId: string, runId: string) {
     if (!/^[A-Za-z0-9_-]{1,100}$/.test(runId) || runId === sourceId)
       throw new ApiError(400, 'INVALID_RERUN', '重跑需要一个新的有效任务身份');
-    const source = await this.task(sourceId);
+    const source = await this.reader.task(sourceId);
     const definition = source.definition as VerificationTask;
     if (definition.steps)
       throw new ApiError(
@@ -418,89 +333,6 @@ export class Coordinator {
       'EXECUTION_MODE_RETIRED',
       '双跑入口已停用，请创建 LLM 运行',
     );
-  }
-
-  /** 组身份由不可变任务定义确定，不允许页面随意拼接另一组执行。 */
-  async comparison(taskId: string) {
-    const task = await this.task(taskId);
-    const group = (task.definition as VerificationTask).comparison;
-    if (!group) return { comparison: null };
-    return {
-      comparison: {
-        id: group.id,
-        sourceTaskId: group.sourceTaskId,
-        arms: await Promise.all(
-          (task.definition.caseV2Definition
-            ? caseArmIds(task.definition)
-            : ['llm', 'jev'].map((arm) => `${group.id}-${arm}`)
-          ).map((id) => this.task(id)),
-        ),
-      },
-    };
-  }
-
-  /** 返回任务与资源清理进度，避免把终态任务误认为浏览器已关闭。 */
-  async task(id: string) {
-    const task = (
-      await this.db.query<{
-        definition: VerificationTask;
-        state:
-          | 'QUEUED'
-          | 'RUNNING'
-          | 'COMPLETED'
-          | 'CANCELLED'
-          | 'TIMED_OUT'
-          | 'ERROR';
-        report: VerificationReport | null;
-        stepResults?: StepResult[] | null;
-        queueReason?: QueueReason | null;
-        [key: string]: unknown;
-      }>(
-        'SELECT id,definition,state,deadline_at,report,error,created_at,finished_at,archived_at,step_results AS "stepResults",queue_reason AS "queueReason" FROM pr_tasks WHERE id=$1',
-        [id],
-      )
-    ).rows[0];
-    if (!task) throw new ApiError(404, 'TASK_MISSING', 'Task not found');
-    const executions = (
-      await this.db.query(
-        `SELECT e.id,e.worker_id,e.state,e.lease_expires_at,s.id AS session_id,s.node_id,s.node_runtime,
-      s.state AS session_state,s.closure_verified,s.close_reason,e.action_count,e.control_mode,e.control_revision,e.control_reason FROM pr_executions e JOIN pr_sessions s ON s.execution_id=e.id WHERE e.task_id=$1`,
-        [id],
-      )
-    ).rows;
-    const cleanup = task.definition.caseV2Definition
-      ? await this.caseCleanup(id)
-      : null;
-    const outcome = (await taskOutcomes(this.db, [id])).get(id);
-    return {
-      ...task,
-      ...(outcome ? { executionOutcome: outcome } : {}),
-      ...(!['RUNNING', 'QUEUED'].includes(task.state) && task.report?.steps
-        ? { stepResults: task.report.steps }
-        : {}),
-      ...summarizeReport(
-        task.report,
-        task.definition.acceptanceCriteria.map((c) => c.id),
-        task.definition,
-      ),
-      executions,
-      ...(task.definition.sessionPlan
-        ? {
-            identity: await identitySummary(
-              this.db,
-              id,
-              task.definition.sessionPlan,
-            ),
-          }
-        : {}),
-      ...(task.definition.caseV2Definition
-        ? {
-            businessCleanup: cleanup
-              ? { taskId: cleanup.taskId, status: cleanup.status }
-              : null,
-          }
-        : {}),
-    };
   }
 
   /** worker 真正领取时才预留浏览器，任务等待期间不占用 Chrome。 */
@@ -755,9 +587,7 @@ export class Coordinator {
                 ...(task.environment.allowIntervention
                   ? { renewable: true }
                   : {}),
-                liveView:
-                  task.environment.allowIntervention === true ||
-                  !!task.comparison,
+                liveView: task.environment.allowIntervention === true,
                 networkEvidence: taskEvidenceKinds(task).includes('NETWORK'),
                 leaseRequestId: heartbeat.leaseRequestId,
                 leaseTtlMs: this.leaseTtl(context, heartbeat),
@@ -800,7 +630,7 @@ export class Coordinator {
         heartbeat.capabilities.environmentProof === true) &&
       (!task.profilePlan || heartbeat.capabilities.profileTabs === true) &&
       (!task.steps || heartbeat.limits.maxSessionMs >= sessionBudgetMs(task)) &&
-      (!(task.environment.allowIntervention || task.comparison) ||
+      (!task.environment.allowIntervention ||
         heartbeat.capabilities.liveView === true) &&
       (!task.environment.allowIntervention ||
         heartbeat.capabilities.renewableSessions === true) &&
@@ -1211,7 +1041,7 @@ export class Coordinator {
           await stopExecution(client, context, 'CANCELLED', 'TASK_CANCELLED');
       }
     });
-    return this.task(id);
+    return this.reader.task(id);
   }
 
   /** 完成报告经过证据归属与标准覆盖校验；提交成功后立即撤销新的操作权限。 */
