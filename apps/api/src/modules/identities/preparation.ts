@@ -37,8 +37,7 @@ export async function authorizePreparation(
     .map((c) => ({ method: c.method, value: c.value }));
   if (
     canonical(operation.checks) !== canonical(automatic) ||
-    operation.saveSnapshot !==
-      (!plan.library && checks.every((c) => c.method !== 'manual'))
+    operation.saveSnapshot !== false
   )
     throw new ApiError(
       403,

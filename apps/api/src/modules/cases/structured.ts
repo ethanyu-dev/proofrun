@@ -173,11 +173,8 @@ export function compileCase(
       (cleanupSteps.length ? stepBudget.cleanup.timeoutMs : 0) >
       CASE_MAX_MS ||
     budget.maxActions + stepBudget.cleanup.maxActions > CASE_MAX_ACTIONS ||
-    (stepBudget.steps.reduce((sum, step) => sum + step.maxModelCalls, 0) +
-      (cleanupSteps.length ? stepBudget.cleanup.maxModelCalls : 0)) *
-      ((profile.executionMode ?? DEFAULT_CASE_EXECUTION_MODE) === 'parallel'
-        ? 2
-        : 1) >
+    stepBudget.steps.reduce((sum, step) => sum + step.maxModelCalls, 0) +
+      (cleanupSteps.length ? stepBudget.cleanup.maxModelCalls : 0) >
       CASE_MAX_MODEL_CALLS
   )
     throw new ApiError(
@@ -198,10 +195,9 @@ export function compileCase(
     objective:
       input.description ?? `${input.platform}：按定义步骤执行并逐项验收`,
     target: { url: input.entry },
-    // 新 v2 缺省开启登录复用和人工辅助；显式关闭与历史冻结快照仍保持原意。
+    // 新 v2 缺省允许人工辅助；不再生成登录复用开关。
     environment: {
       ...structuredClone(profile.environment),
-      reuseAuth: profile.environment.reuseAuth ?? true,
       allowIntervention: profile.environment.allowIntervention ?? true,
     },
     sessionPlan,
@@ -266,32 +262,13 @@ export function caseArmIds(task: VerificationTask): string[] {
     : [primaryId];
 }
 
-/** 仅首次提交拆组；各组共享初始登录快照，但各自的清理锁不能阻塞另一组。 */
+/** 新提交只有 LLM 一组，历史双跑的读取仍由 caseArmIds 处理。 */
 export function expandCaseTasks(task: VerificationTask): VerificationTask[] {
-  if (task.executionMode !== 'parallel') return [task];
-  return (['llm', 'jev'] as const).map((arm) => ({
-    ...structuredClone(task),
-    taskId: arm === 'llm' ? task.taskId : `comparison-${task.taskId}-jev`,
-    executionMode: arm,
-    ...(task.stepBudget
-      ? {
-          stepBudget: {
-            ...structuredClone(task.stepBudget),
-            steps: task.stepBudget.steps.map((step) => ({
-              ...step,
-              maxModelCalls: step.maxModelCalls * (arm === 'jev' ? 2 : 1),
-            })) as NonNullable<VerificationTask['stepBudget']>['steps'],
-            cleanup: {
-              ...task.stepBudget.cleanup,
-              maxModelCalls:
-                task.stepBudget.cleanup.maxModelCalls * (arm === 'jev' ? 2 : 1),
-            },
-          },
-        }
-      : {}),
-    comparison: { id: task.taskId, sourceTaskId: task.taskId, arm },
-    resourceKey: createHash('sha256')
-      .update(`${task.resourceKey}:${arm}`)
-      .digest('hex'),
-  }));
+  if (task.executionMode && task.executionMode !== 'llm')
+    throw new ApiError(
+      422,
+      'EXECUTION_MODE_RETIRED',
+      '新任务只支持 llm，jev 和 parallel 已退出执行',
+    );
+  return [task];
 }

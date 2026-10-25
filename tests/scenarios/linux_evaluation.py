@@ -37,8 +37,7 @@ def collect_routing():
                 body = json.loads(detail.get('request') or '{}')
                 content = body.get('messages', [{}, {}])[1].get('content')
                 context = json.loads(content if isinstance(content, str) else content[0]['text']) if content else {}
-                policy = context.get('executionPolicy') or {}
-                row.update(event=policy.get('event'), selectorUnavailable=policy.get('selectorUnavailable'))
+                row.update(phase=context.get('state', {}).get('phase'), settlement=context.get('state', {}).get('settlement'))
                 response = json.loads(detail.get('response') or '{}')
                 decisions = []
                 for choice in response.get('choices', []):
@@ -66,32 +65,27 @@ class SmokeModel(BaseHTTPRequestHandler):
             content = body['messages'][1]['content']
             ctx = json.loads(content if isinstance(content, str) else content[0]['text'])
             if self.server.wait_started is not None and self.server.wait_recovered_ms is None:
-                assert 'BROWSER_WAIT_NOT_MET' in ctx.get('feedback', '')
+                assert 'BROWSER_WAIT_NOT_MET' in json.dumps(ctx.get('feedback', []))
                 self.server.wait_recovered_ms = int((time.monotonic() - self.server.wait_started) * 1000)
-            observation = ctx['observation']
+            observation = ctx['page']
             text = observation['text']
             refs = [item['artifactId'] for item in observation['artifactRefs']]
-            cleanup = bool(ctx.get('cleanup'))
+            cleanup = ctx['state']['phase'] == 'CLEANUP'
             targets = observation['targets']
             def act(name, action='click', value=None):
                 target = next(t['target'] for t in targets if t['name'] == name and t['role'] == ('textbox' if action == 'fill' else 'button'))
-                decision = {'type': 'browser.act', 'action': action, 'target': target,
-                            'plan': {'goal': '完成当前表单操作并查询实际记录', 'scope': '',
-                                     'terms': [name], 'successCondition': '查询结果可读',
-                                     'allowedActions': ['fill', 'click'], 'maxActions': 4}}
+                decision = {'type': 'browser.act', 'action': action, 'target': target}
                 if value is not None:
                     decision['value'] = value
                 return decision
-            if ctx.get('environmentReview', {}).get('required'):
-                decision = {'type': 'verification.environment', 'mode': 'guest', 'summary': '独立访客测试页面无需登录'}
-            elif cleanup and '记录不存在' not in text:
+            if cleanup and '记录不存在' not in text:
                 decision = act('查询记录' if '已删除' in text else '删除记录')
             elif '记录不存在' in text or '已保存名称 Atlas' in text:
                 decision = {'type': 'verification.finish', 'summary': '依据真实查询结果判断',
                             'criteria': [{'criterionId': c['id'], 'verdict': 'PASSED' if cleanup or '已保存名称 Atlas' in text else 'FAILED',
-                                          'summary': '实际查询结果见引用证据', 'evidenceRefs': refs} for c in ctx['task']['acceptanceCriteria']],
-                            'workflow': {'assessments': [{'stepId': s['id'], 'outcome': 'complete', 'summary': '已完成查询', 'evidenceRefs': refs}
-                                                         for s in ctx.get('workflow', {}).get('steps', [])]}}
+                                          'summary': '实际查询结果见引用证据', 'evidenceRefs': refs} for c in ctx['task']['criteria']],
+                            'progress': {'requirements': [{'id': r['id'], 'status': 'complete', 'summary': '已完成查询', 'evidenceRefs': refs}
+                                                          for r in ctx['task']['requirements']]}}
             elif self.server.wait_recovery and self.server.wait_started is None and (
                     '保存成功' in text or '正在处理' in text):
                 # 范围：故意给出永不出现的条件，验证真实节点提前返回及 Agent 重新观察；不测试模型质量。
@@ -103,6 +97,8 @@ class SmokeModel(BaseHTTPRequestHandler):
                 decision = act('保存')
             else:
                 decision = act('名称', 'fill', 'Atlas')
+            if 'criteria' in decision:
+                decision.setdefault('progress', {})['criteria'] = decision.pop('criteria')
             response = {'choices': [{'finish_reason': 'tool_calls', 'message': {'role': 'assistant', 'tool_calls': [
                 {'type': 'function', 'function': {'name': decision.pop('type').replace('.', '_'), 'arguments': json.dumps(decision)}}]}}],
                         'usage': {'prompt_tokens': 100, 'completion_tokens': 30}}
@@ -125,16 +121,9 @@ def run():
     agent_log = None
     kind = os.environ.get('PROOFRUN_EVAL_MODEL_KIND', 'scripted')
     mode = os.environ.get('PROOFRUN_EVAL_MODE', 'llm')
-    assert kind in ['real', 'scripted'] and mode in ['llm', 'jev']
+    assert kind in ['real', 'scripted'] and mode == 'llm'
     suite = os.environ.get('PROOFRUN_EVAL_SUITE', 'smoke')
     assert kind == 'real' or (mode == 'llm' and suite in ['smoke', 'E01', 'E07', 'E08', 'E12'])
-    if mode == 'jev' and os.environ.get('PROOFRUN_JEV_IMAGES') == 'true':
-        # 请求前验证原生图片库可用，避免把容器依赖缺失后的 LLM 回退称为 JEV 测评。
-        subprocess.run(['node', '--input-type=module', '-e',
-                        'import {createRequire} from "node:module"; '
-                        'const sharp=createRequire(process.cwd()+"/apps/agent/package.json")("sharp"); '
-                        'await sharp({create:{width:280,height:280,channels:3,background:"white"}}).png().toBuffer();'],
-                       check=True)
     try:
         profile = {'environment': {'id': 'isolated-evaluation', 'nodePool': 'internal', 'allowIntervention': True, 'reuseAuth': False},
                    'executionMode': mode, 'budget': {'maxActions': 60}, 'evidenceKinds': ['DOM', 'SCREENSHOT']}
@@ -159,26 +148,20 @@ def run():
                        PROOFRUN_MODEL='local-evaluation-fixture', PROOFRUN_MODEL_VISION='true')
         else:
             assert env.get('PROOFRUN_MODEL_BASE_URL') and env.get('PROOFRUN_MODEL_API_KEY') and env.get('PROOFRUN_MODEL')
-        # 只显式代理外部 JEV；控制面、夹具和主模型继续原路径，避免同时改变两种模式的网络条件。
+        # 代理配置显式传入，避免把出口变化归因于模型效果；凭据只记摘要。
         proxy = env.get('PROOFRUN_EVAL_HTTPS_PROXY')
         if proxy:
             parsed_proxy = urlparse(proxy)
             assert parsed_proxy.scheme in ['http', 'https'] and parsed_proxy.hostname
-            env.update(NODE_USE_ENV_PROXY='1', HTTPS_PROXY=proxy,
-                       NO_PROXY='localhost,127.0.0.1,::1,' + urlparse(env['PROOFRUN_MODEL_BASE_URL']).hostname)
+            env.update(NODE_USE_ENV_PROXY='1', HTTPS_PROXY=proxy, NO_PROXY='localhost,127.0.0.1,::1')
         settings = {key: env.get(key) for key in ['PROOFRUN_MODEL_BASE_URL', 'PROOFRUN_MODEL_MAX_TOKENS',
-                    'PROOFRUN_MODEL_THINKING', 'PROOFRUN_MODEL_REASONING_EFFORT', 'PROOFRUN_MODEL_TOKEN_PARAMETER',
-                    'PROOFRUN_AGENT_EXECUTION_GUIDANCE', 'PROOFRUN_JEV_IMAGES', 'PROOFRUN_JEV_BOX',
-                    'PROOFRUN_JEV_LONG_CONTEXT', 'PROOFRUN_JEV_EXPANDED_ACTIONS']}
+                    'PROOFRUN_MODEL_THINKING', 'PROOFRUN_MODEL_REASONING_EFFORT', 'PROOFRUN_MODEL_TOKEN_PARAMETER']}
         if proxy:
-            settings['jevProxySha256'] = hashlib.sha256(proxy.encode()).hexdigest()
+            settings['proxySha256'] = hashlib.sha256(proxy.encode()).hexdigest()
         environment = {'mode': mode, 'modelKind': kind, 'model': env['PROOFRUN_MODEL'],
-                       'executionPolicy': env.get('PROOFRUN_AGENT_EXECUTION_POLICY', 'planned-v1'),
                        'vision': env.get('PROOFRUN_MODEL_VISION', 'false') == 'true',
+                       'network': 'explicit-env-proxy' if proxy else 'runtime-default',
                        'configSha256': hashlib.sha256(json.dumps({'profile': profile, 'settings': settings}, sort_keys=True).encode()).hexdigest()}
-        if mode == 'jev':
-            environment['jevModel'] = env.get('TYPESAFE_MODEL', 'default')
-        environment['jevNetwork'] = 'explicit-env-proxy' if proxy else 'runtime-default'
         environment_file = OUTPUT / 'environment.json'
         environment_file.write_text(json.dumps(environment))
         agent_log = (harness.root / 'agent.log').open('wb')

@@ -72,10 +72,10 @@ function fixture() {
   };
 }
 
-// 范围：V1 缺省采用 JEV，显式模式及历史幂等语义保留；不连接真实模型或浏览器。
-test('V1 默认 JEV 单组，显式配置与已保存任务不被默认值覆盖', async () => {
+// 范围：V1 缺省采用 LLM，显式模式及历史幂等语义保留；不连接真实模型或浏览器。
+test('V1 默认 LLM 单组，显式配置与已保存任务不被默认值覆盖', async () => {
   const { executionMode: _, ...defaults } = PROFILE;
-  for (const mode of [undefined, 'jev', 'llm', 'parallel'] as const) {
+  for (const mode of [undefined, 'llm'] as const) {
     const { tasks, records } = fixture();
     const profile = mode ? { ...defaults, executionMode: mode } : defaults;
     const service = new CaseService(
@@ -85,10 +85,7 @@ test('V1 默认 JEV 单组，显式配置与已保存任务不被默认值覆盖
     );
     await service.submit(INPUT);
     const task = records.get(`case-${INPUT.caseId}`)!.definition;
-    assert.equal(
-      task.executionMode,
-      mode === 'llm' || mode === 'parallel' ? 'llm' : 'jev',
-    );
+    assert.equal(task.executionMode, 'llm');
     const changed = new CaseService(
       tasks,
       defaults,

@@ -292,7 +292,8 @@ test('逐项保存需明确标准及证据，Cookie 清理不允许模型指定 
     ],
   };
   assert(validateAgentDecision(record));
-  assert(!validateAgentDecision({ ...record, criteria: [] }));
+  // 允许只保存原始要求或读取事实；非空 progress 由 Agent 模型入口校验。
+  assert(validateAgentDecision({ ...record, criteria: [] }));
   assert(
     !validateAgentDecision({
       ...record,

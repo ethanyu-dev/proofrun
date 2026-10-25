@@ -65,7 +65,7 @@ API：
 | `PROOFRUN_PUBLIC_URL`          | Web 的 HTTPS origin，当前生产为 `https://proofrun.ethankit.com`，无路径                   |
 | `PROOFRUN_CONSOLE_URL`         | Console 的 HTTPS origin，当前生产为 `https://proofrun.ethankit.com`                       |
 | `PROOFRUN_CASE_PROFILE_JSON`   | [case-profile.example.json](../case-profile.example.json) 的 JSON，替换环境、节点池与预算 |
-| `PROOFRUN_CASE_EXECUTION_MODE` | 可选；默认 `jev`（LLM + JEV 单组）。`llm` 为纯 LLM 单组，`parallel` 为双组对照            |
+| `PROOFRUN_CASE_EXECUTION_MODE` | 可选；默认且仅支持 `llm`                                                                  |
 
 密钥可分别使用 `openssl rand -hex 32` 生成。不要把密钥写入仓库、Docker build arguments 或 `VITE_*` 变量。
 
@@ -73,11 +73,11 @@ API：
 
 镜像默认监听 `::`，兼容私网 IPv4/IPv6；证据默认写入 `/data/artifacts`。不要把 `PROOFRUN_PUBLIC_URL` 填成 API 私网地址。`PROOFRUN_CONSOLE_URL` 不设置时沿用公开地址，无需额外 CORS 配置。Case profile 的 JSON 与 `PROOFRUN_CASE_PROFILE_FILE` 不能同时设置；未设置 profile 时不会接受新 case。
 
-Railway 的新 case 执行模式以 `PROOFRUN_CASE_EXECUTION_MODE` 为唯一部署选择入口，未设置时使用 `jev`。启动脚本会对 JSON 和文件来源生成私有临时副本，覆盖旧 profile 的 `executionMode`，保留环境、预算和取证配置，不改写原文件。旧配置若为 `parallel` 或 `llm`，启动日志会明确提示覆盖；确实需要这些模式时，须在独立变量中重新指定。非法模式或两种配置来源同时存在会拒绝启动。
+Railway 新 case 只支持 llm，未配置时默认 llm。启动脚本对 JSON 或文件来源生成私有临时副本，保留环境、预算和取证配置，不修改原文件。独立变量或 profile 显式要求 jev/parallel 时拒绝启动，须先完成配置迁移；两种配置来源同时存在也拒绝启动。
 
-该迁移只影响通过 Railway 启动入口创建的新 case；已接收任务及相同请求身份的幂等重提保留冻结的执行模式，不能把已有双组任务变成单组。非 Railway 的 profile 加载和直接任务接口不受此部署默认值影响。合并 PR 不会修改平台变量；修复代码实际部署并启动后才生效。不要为验证默认模式自动重跑生产用例。
+已有任务的冻结模式和历史报告不被覆盖。旧 JEV/双跑任务不能直接领取执行，可创建新的 llm 运行。平台变量需显式更新并重新部署；本地修改不代表线上已经切换。
 
-`node --test tests/railway/api-entry.test.mjs` 通过真实启动脚本与本地替身检查默认值、显式覆盖、配置来源和非法输入；镜像回归另验证遗留 `parallel` 配置经真实 API 只生成一个 JEV 任务。这些测试不证明当前线上部署状态。
+`node --test tests/railway/api-entry.test.mjs` 检查 llm 默认值、配置来源及旧模式拒绝，不证明线上部署状态。
 
 Web：
 
@@ -99,15 +99,12 @@ Agent：
 | `PROOFRUN_MODEL_API_KEY`          | 模型服务密钥                                                                      |
 | `PROOFRUN_MODEL`                  | 实际模型名称                                                                      |
 | `PROOFRUN_MODEL_VISION`           | 模型支持视觉时设为 `true`，否则 `false`                                           |
-| `PROOFRUN_JEV_IMAGES`             | JEV 独立图片输入，默认 `false`；与 LLM 视觉开关分开                               |
-| `PROOFRUN_JEV_EXPANDED_ACTIONS`   | 分组候选及节点声明的额外动作，默认 `false`                                        |
-| `PROOFRUN_JEV_BOX`                | 实验视觉定位，默认 `false`；依赖图片开关和支持画面复核的新版节点                  |
 | `PROOFRUN_MODEL_THINKING`         | 默认 `default`；DeepSeek 显式选择 `enabled` 或 `disabled`                         |
 | `PROOFRUN_MODEL_REASONING_EFFORT` | 默认 `default`；可设 `low` / `high` / `max`，显式关闭思考优先于档位               |
 | `PROOFRUN_AGENT_EVIDENCE_MS`      | 可选，默认 `60000`；观察和 TRACE 完成后等待证据上传及可用确认，仍受任务总期限约束 |
 | `PROOFRUN_AGENT_CONCURRENCY`      | 初始可设为 `2`，同时确认节点容量和供应商配额                                      |
 
-Agent 是后台 worker，启动命令包含 `serve`，不提供 HTTP 健康端点。新建 case 默认使用 JEV 执行模式，需要配置 `TYPESAFE_API_KEY`，`TYPESAFE_MODEL` 默认 `jev-1.14.0`；显式纯 LLM 模式不需要它们。执行策略默认 `planned-v1`，可通过 `PROOFRUN_AGENT_EXECUTION_POLICY=legacy` 显式回退。其它可选参数见根目录 [.env.example](../../.env.example)。
+Agent 是后台 worker，启动命令包含 `serve`，不提供 HTTP 健康端点。只配置上述 LLM；TYPESAFE、JEV 与旧执行策略变量不再使用。其它参数见根目录 [.env.example](../../.env.example)。升级 API、Agent、Node 后，新调度要求节点声明 ephemeralProfiles。
 
 切换到 DeepSeek 时，按 [Agent 配置说明](../../apps/agent/README.md) 设置 `PROOFRUN_MODEL_THINKING=enabled`、`PROOFRUN_MODEL_REASONING_EFFORT=high` 与 `PROOFRUN_MODEL_MAX_TOKENS=8192`，直连官方接口使用 `PROOFRUN_MODEL_TOKEN_PARAMETER=max_tokens`。先部署支持推理参数的 Agent 与 API 版本，再确认变量变更已部署；原来已失败的任务需要另行重试，更新配置不会改变历史报告。输出上限包含推理 token，复杂调用仍可能截断，不能将提高上限视为增加步骤时间。
 

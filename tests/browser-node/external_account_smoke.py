@@ -39,7 +39,7 @@ def run():
     account = {'leaseId': 'fixture-lease', 'materialVersion': 'v1', 'origin': origin, 'ttlMs': 120000}
     try:
         # 范围：真实原生引擎/CDP 注入、path/httpOnly、私密文件及时删除及拒绝共享保存；不使用真实账号。
-        with host(root, None, False, seed=seed, external_account=account) as command:
+        with host(root, seed=seed, external_account=account) as command:
             assert not seed.exists()
             assert command.opened['environmentProof']['initialState'] == 'external'
             assert command.opened['environmentProof']['externalAccount'] == account
@@ -48,10 +48,10 @@ def run():
             assert 'Authenticated' in text and 'HTTP only' in text and 'fixture-private-cookie' not in text
             command(type='browser.act', action='navigate', target=origin + '/outside')
             assert 'Guest' in command(type='browser.observe')['text']
-            assert command.raw(type='browser.auth.save')['Err']['code'] == 'EXTERNAL_ACCOUNT_SAVE_FORBIDDEN'
+            assert command.raw(type='browser.auth.save')['Err']['code'] == 'AUTH_SAVE_RETIRED'
             assert command.raw(type='browser.identity.prepare', url=origin, checks=[], saveSnapshot=False)['Err']['code'] == 'EXTERNAL_ACCOUNT_PREPARATION_FORBIDDEN'
         # 范围：下一个独立浏览器不继承外部 Cookie；不证明部署节点的 cgroup 关闭。
-        with host(root, None, False) as command:
+        with host(root) as command:
             command(type='browser.act', action='navigate', target=origin + '/admin/check')
             assert 'Guest' in command(type='browser.observe')['text']
         print(json.dumps({'passed': ['CDP cookie injection', 'path and httpOnly', 'private seed removal',

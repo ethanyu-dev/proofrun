@@ -51,6 +51,11 @@ export async function executeProfile(
 ): Promise<VerificationReport> {
   const plan = grant.task.profilePlan!;
   const steps = grant.task.steps!;
+  if (plan.environmentGateStepId && !grant.task.executionPlan)
+    throw new AgentFault(
+      'EXECUTION_PLAN_REQUIRED',
+      '共享环境须在接收时冻结，请重新提交历史任务',
+    );
   if (
     plan.environmentGateStepId &&
     (plan.environmentGateStepId !== plan.groups[0]?.stepIds[0] ||
@@ -138,9 +143,6 @@ export async function executeProfile(
     };
     const scoped: ExecutionClient = {
       profileEnvironment: () => sharedEnvironment,
-      declareEnvironment: (mode) => {
-        sharedEnvironment = { mode };
-      },
       view: async (_grant, abortSignal) =>
         project(await client.view(grant, abortSignal), active) as ExecutionView,
       heartbeat: async (_grant, abortSignal) =>

@@ -1,3 +1,4 @@
+import { seedHistoricalPair } from './historical-comparison.js';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -68,19 +69,39 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
       caseProfile: {
         environment: { id: 'fixture', nodePool: 'fixture' },
         budget: { timeoutMs: 60000, maxActions: 20 },
-        executionMode: 'parallel',
+        executionMode: 'llm',
         evidenceKinds: ['DOM'],
       },
     },
     { logger: false },
   );
-  const call = async (path: string, body?: unknown) =>
-    app.inject({
+  const call = async (path: string, body?: unknown) => {
+    const response = await app.inject({
       method: body === undefined ? 'GET' : 'POST',
       url: path,
       headers: { authorization: `Bearer ${ADMIN}` },
       ...(body === undefined ? {} : { payload: body as object }),
     });
+    // 历史聚合夹具显式导入旧双跑记录，新接口本身只产生 LLM。
+    if (
+      path === '/v2/cases' &&
+      response.statusCode === 202 &&
+      body &&
+      !Array.isArray(body)
+    ) {
+      const input = body as { requestId: string; cases: VerificationCaseV2[] };
+      for (const item of input.cases)
+        await seedHistoricalPair(sql, `case-v2-${item.caseId}`);
+      const stored = await app.inject({
+        method: 'GET',
+        url: `/v2/requests/${input.requestId}`,
+        headers: { authorization: `Bearer ${ADMIN}` },
+      });
+      stored.statusCode = 202;
+      return stored;
+    }
+    return response;
+  };
   const submit = async (requestId: string, ids: string[]) => {
     const response = await call('/v2/cases', {
       requestId,
@@ -97,34 +118,38 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
   };
   try {
     // 范围：双跑身份、首次顺序和对象协议；不覆盖真实调度资源。
-    await suite.test('三个 case 六个执行组，只统计三个唯一验收项', async () => {
-      const result = await submit('request-main', ['alpha', 'beta', 'gamma']);
-      assert.equal(result.caseCount, 3);
-      assert.equal(result.executionCounts.total, 6);
-      assert.equal(result.uniqueCriteriaCounts.total, 3);
-      assert.equal(result.uniqueCriteriaCounts.pending, 3);
-      assert.equal(result.reportStatus, null);
-      assert.equal(result.reportPhase, 'PENDING');
-      const replay = await submit('request-main', ['gamma', 'alpha', 'beta']);
-      assert.deepEqual(
-        replay.cases.map((c) => c.caseId),
-        ['alpha', 'beta', 'gamma'],
-      );
-      assert.equal(
-        (await sql.query('SELECT count(*)::int AS n FROM pr_tasks')).rows[0].n,
-        6,
-      );
-      assert.equal(
-        (
-          await call('/v2/cases', {
-            requestId: 'request-main',
-            title: '改变标题',
-            cases: ['alpha', 'beta', 'gamma'].map(example),
-          })
-        ).statusCode,
-        409,
-      );
-    });
+    await suite.test(
+      '历史三个 case 六个执行组，只统计三个唯一验收项',
+      async () => {
+        const result = await submit('request-main', ['alpha', 'beta', 'gamma']);
+        assert.equal(result.caseCount, 3);
+        assert.equal(result.executionCounts.total, 6);
+        assert.equal(result.uniqueCriteriaCounts.total, 3);
+        assert.equal(result.uniqueCriteriaCounts.pending, 3);
+        assert.equal(result.reportStatus, null);
+        assert.equal(result.reportPhase, 'PENDING');
+        const replay = await submit('request-main', ['gamma', 'alpha', 'beta']);
+        assert.deepEqual(
+          replay.cases.map((c) => c.caseId),
+          ['alpha', 'beta', 'gamma'],
+        );
+        assert.equal(
+          (await sql.query('SELECT count(*)::int AS n FROM pr_tasks')).rows[0]
+            .n,
+          6,
+        );
+        assert.equal(
+          (
+            await call('/v2/cases', {
+              requestId: 'request-main',
+              title: '改变标题',
+              cases: ['alpha', 'beta', 'gamma'].map(example),
+            })
+          ).statusCode,
+          409,
+        );
+      },
+    );
     // 范围：交叉批次锁与幂等事务；不覆盖多主数据库部署。
     await suite.test(
       '并发同请求与交叉请求不会重复创建，共享成员保留来源',
@@ -721,7 +746,7 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
         const result = response.json<RequestResultV2>();
         assert.ok(validateRequestResultV2(result));
         assert.equal(result.sourceRequestId, 'request-main');
-        assert.equal(result.executionCounts.total, 6);
+        assert.equal(result.executionCounts.total, 3);
         assert.equal(result.cases[0]!.sourceCaseId, 'alpha');
         assert.equal(result.cases[0]!.caseId, 'alpha');
         assert.equal(result.cases[0]!.arms[0]!.taskId, 'case-run-rerun-alpha');

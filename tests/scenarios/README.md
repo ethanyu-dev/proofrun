@@ -55,9 +55,9 @@ PROOFRUN_EVAL_MAX_CALLS=1000 PROOFRUN_EVAL_SAMPLE_MS=300000 \
 pnpm test:e2e:linux
 ```
 
-工具不隐式加载 `.proofrun/local.env`。容器只继承模型配置白名单；服务地址必须从容器可达。`PROOFRUN_EVAL_MODE=jev` 另外需要 `TYPESAFE_API_KEY`，可选 `TYPESAFE_MODEL` 及产品现有 JEV 开关。每份结果记录真实/脚本模式、模型、执行策略、配置摘要、源码身份及节点运行时。源码身份不等于声明的远端部署版本。
+工具不隐式加载 `.proofrun/local.env`。容器只继承模型配置白名单，新执行只接受 llm。结果记录模型、视觉配置、源码和节点运行时；这些不代表远端已经部署。
 
-JEV 网络排查应在同一容器运行时对比默认出口与代理，不能用宿主机连通性代替容器结果。需要代理时显式设置 `PROOFRUN_EVAL_HTTPS_PROXY`（例如 Docker Desktop 可访问的 `http://host.docker.internal:8234`），驱动为 Agent 启用 Node 24 的环境代理，并让本地控制面、夹具及主模型域名走原路径。不会自动继承宿主机系统代理。结果记录 `jevNetwork`，配置摘要包含代理配置的哈希，不导出代理凭据。变更网络路径的批次应单独标注，不归因于模型或提示词改进。
+网络代理通过 `PROOFRUN_EVAL_HTTPS_PROXY` 显式传入，仅本机控制面和夹具直连；摘要记录代理哈希，不导出凭据。网络变更的批次应单独标注。
 
 请求诊断区分 `TRANSPORT_CONNECT_TIMEOUT`（建立连接超时）、`TRANSPORT_REQUEST_TIMEOUT`（配置的整体期限）、`TRANSPORT_RESPONSE_TIMEOUT`（运行时响应等待期限）、`TRANSPORT_DNS_ERROR` 与 `TRANSPORT_CONNECTION_RESET`；其他连接故障保留 `TRANSPORT_ERROR`。这些分类不包含原始异常或凭据，仍遵循原有回退和调用额度。连接超时能定位到连接阶段，不能单凭该码区分本地链路、代理出口或远端网络故障；历史通用错误码也不能事后认定成因。
 
@@ -80,21 +80,21 @@ pnpm eval:e2e --output /private/eval-run --environment /private/environment.json
 pnpm eval:e2e --output /private/eval-run --environment /private/environment.json --resume
 ```
 
-`environment.json` 至少包含 `{"mode":"llm","modelKind":"real","model":"your-model"}`，可选 `jevModel`、`executionPolicy`、`vision`、`agentCommit`、`apiCommit`、`configSha256`；不得放入密钥。该声明由调用者负责与实际部署一致；Linux 入口自动从自己启动的配置生成。API 的 Case profile 必须匹配单一执行模式、允许必要的人工介入、包含 DOM/SCREENSHOT，并使用专属节点池。
+`environment.json` 至少包含 `{"mode":"llm","modelKind":"real","model":"your-model"}`，可选 `vision`、`network`、`agentCommit`、`apiCommit`、`configSha256`；`network` 仅接受 `runtime-default` 或 `explicit-env-proxy`，记录出口选择，不放代理地址或密钥。该声明由调用者负责与实际部署一致；Linux 入口自动从自己启动的配置生成。API 的 Case profile 必须匹配单一执行模式、允许必要的人工介入、包含 DOM/SCREENSHOT，并使用专属节点池。
 
 恢复先查原请求 ID，不生成新任务。取消请求丢回执时查询原任务再幂等重送取消；不会重放业务操作。场景版本、环境、页面 origin 变化将拒绝恢复。输出目录有排他锁；强制杀进程后，先确认原进程确已退出，再删除该目录的 `runner.lock`。清单保留中断时间，崩溃间隔保守计入总时间额度。
 
 ## 输出、判定和比较
 
-`run/manifest.json` 固定样本全集、种子、版本、配置和额度；每个样本有 `sample.json`、`task.json`、`facts.json`、`calls.json`、`evidence.json` 与证据二进制。`summary.json` 保留计划、启动、完成、通过、未运行及不完整样本。Linux 额外的 `runtime-check.json` 只在实际用户服务已关闭后生成，脚本冒烟的 `recovery-check.json` 记录进程中断前后的同一任务身份。`routing.json` 在测量结束后采集模型路由原因，不保存完整模型正文，也不计入样本耗时；配置为 JEV 不代表每一步实际调用了 JEV，应结合 `calls.json` 核对供应商请求。
+`run/manifest.json` 固定样本全集、种子、版本、配置和额度；每个样本有 `sample.json`、`task.json`、`facts.json`、`calls.json`、`evidence.json` 与证据二进制。`summary.json` 保留计划、启动、完成、通过、未运行及不完整样本。Linux 额外的 `runtime-check.json` 只在实际用户服务已关闭后生成，脚本冒烟的 `recovery-check.json` 记录进程中断前后的同一任务身份。`routing.json` 在测量结束后采集模型路由原因，不保存完整模型正文，也不计入样本耗时；当前只运行 LLM，应结合 `calls.json` 核对实际供应商请求。
 
 人工脚本失败保留具体错误码，取消本样本并收集已有事实；确认会话关闭后才继续其他样本。失败不会自动重放输入或改为通过。此类错误属于测评工具/交接链路异常，不能直接归因为模型业务判断错误。
 
 `activity.json` 保存测量结束后的命令类型、状态和错误码，`routing.json` 同时保留模型决策的动作/等待条件摘要，不保存填写值。脚本模式单独运行 `E07` 会故意等待不存在的文本，验证真实节点在命令截止前返回、Agent 重观察后查询记录且不重复保存；`wait-recovery-check.json` 记录恢复耗时。它只验收恢复链路，不计入真实模型通过率。真实模型稳定性测评可用 `--repeat 3`（Linux 为 `PROOFRUN_EVAL_REPEAT=3`），同一场景每次使用独立样本，全部重复按固定种子排序；应保留逐轮结果和失败，不挑选最好的一轮。
 
-`--max-calls`（Linux 为 `PROOFRUN_EVAL_MAX_CALLS`）按每例的最坏请求额度预留，已完成样本不会释放预留量；它不是只累加已发生的 HTTP 请求。运行完整批次前应按 `callAllowance(definition(...), mode)` 累加所有场景并乘以重复次数。当前 `core` 三轮需要为纯 LLM 预留 1200、JEV+LLM 预留 2400 次；实际请求数仍以 `calls.json` 为准。额度不足导致的未启动样本必须保留，不能当作完整批次比较。
+`--max-calls`（Linux 为 `PROOFRUN_EVAL_MAX_CALLS`）按每例的最坏请求额度预留，已完成样本不会释放预留量；它不是只累加已发生的 HTTP 请求。运行完整批次前应按 `callAllowance(definition(...), mode)` 累加所有场景并乘以重复次数。当前 `core` 三轮需要为 LLM 预留 1200 次；实际请求数仍以 `calls.json` 为准。额度不足导致的未启动样本必须保留，不能当作完整批次比较。
 
-JEV 图片模式启动前会检查原生图片依赖。跨平台挂载工作目录时，测试镜像通过 `NODE_PATH` 提供与 Agent 同版本的 Linux `sharp` 依赖；修改版本后需重新构建镜像。缺失依赖应在请求模型前失败，不能将图片预处理失败后的纯 LLM 回退当作 JEV 实际效果。
+模型视觉输入直接使用已核实的当前截图；测试镜像不再安装 JEV 图片预处理依赖，也不配置额外 `NODE_PATH`。截图证据校验和模型视觉能力配置仍按正常执行路径生效。
 
 分类包括正确结论、错误通过、错误失败、无事实支持、未观察、结论不完整、证据不足、重复验收项。事实未知不能当作产品失败，缺失关闭事实不能当作关闭成功；业务判定和清理判定分别记录。
 

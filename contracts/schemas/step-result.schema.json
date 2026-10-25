@@ -329,6 +329,37 @@
           }
         }
       }
+    },
+    "requirements": {
+      "type": "array",
+      "maxItems": 33,
+      "description": "原始要求完成声明，只是带来源的执行记录，不替代业务验收。",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "status", "evidenceRefs"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "enum": ["pending", "recorded", "incomplete", "blocked"]
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 600
+          },
+          "evidenceRefs": {
+            "type": "array",
+            "maxItems": 24,
+            "uniqueItems": true,
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
     }
   },
   "required": [

@@ -4,7 +4,7 @@
 
 复制 [case-profile.example.json](../deploy/case-profile.example.json) 到部署私有配置目录，替换环境和预算，设置 `PROOFRUN_CASE_PROFILE_FILE=/absolute/path/case-profile.json` 后启动或重启 API。应用不会自动加载 .env。
 
-environment、budget、evidenceKinds 必填；executionMode 可选，V1/V2 默认 jev（LLM + JEV 单组），可显式选择 llm，v2 还支持 parallel 双跑。默认模式需要配置 TYPESAFE_API_KEY。budget.maxActions 和可选 timeoutMs 保留给旧版 `/v1/cases`：未指定时长时按每步五分钟计算，显式时长最多一天。**新建 v2 使用下述逐步策略，旧 profile 总预算不再覆盖 v2 步骤额度。** evidenceKinds 为非空取证类型集合。配置错误时启动失败；未配置时新 case 返回 503 CASE_NOT_CONFIGURED，已有 case 仍可查询、取消和幂等重提。
+environment、budget、evidenceKinds 必填；executionMode 可省略或设为 llm。新任务拒绝 jev 和 parallel，不再需要 TypeSafe 配置。budget.maxActions 和可选 timeoutMs 保留给旧版 `/v1/cases`：未指定时长时按每步五分钟计算，显式时长最多一天。**新建 v2 使用下述逐步策略，旧 profile 总预算不再覆盖 v2 步骤额度。** evidenceKinds 为非空取证类型集合。配置错误时启动失败；未配置时新 case 返回 503 CASE_NOT_CONFIGURED，已有 case 仍可查询、取消和幂等重提。
 
 一套 API 当前绑定一份执行配置；多项目或多账号的上下文选择尚未实现。每次待测入口由 case.url 提供，不在平台配置中设置 target 或默认地址。调用方可以改变待测 URL，但不能覆盖平台环境和登录配置。登录身份、节点能力、视觉 worker 和网络可达性须由部署方准备；配置结构校验不证明真实环境可执行。新版业务步骤的人工等待暂停计时，恢复只补回实际等待时间，模型和动作计数不清零；清理墙钟不暂停。
 
@@ -18,17 +18,17 @@ Schema 与 OpenAPI 通过 `pnpm contracts:generate` 同步，`pnpm contracts:che
 
 ## 结构化 case v2
 
-新版沿用同一平台配置，省略 executionMode 时默认创建 JEV+LLM 单组。显式 parallel 创建纯 LLM 和 JEV+LLM 两组，各自使用完整预算和独立会话；显式 llm 仅运行纯 LLM。新 v2 的 environment.reuseAuth 和 environment.allowIntervention 省略时均为 true，默认复用本站登录状态并允许人工辅助；部署方显式设置 false 时保留关闭。显式 `session.mode: "guest"` 仍按访客会话执行，不恢复登录。旧 `/v1/cases` 继续单组执行，省略模式时使用 jev，显式 parallel 为兼容旧入口仍使用 llm。已有任务幂等重提不受默认值或部署配置变更影响。
+新版使用单一 LLM 与临时 profile，身份来自选定的材料来源；`allowIntervention` 省略时为 true。`reuseAuth` 及旧槽位字段仅保留历史结构，不触发登录恢复或保存。显式 guest 从空白会话开始，环境意图在接收时冻结。旧报告和相同 caseId 的幂等读取保留；新重跑使用 LLM。
 
 新 v2 在接收时冻结 `stepBudget.version = 1`，API 与 Agent 使用相同额度：
 
-| 阶段                        | 时间                 | 自动动作   | 实际模型请求        |
-| --------------------------- | -------------------- | ---------- | ------------------- |
-| setup                       | 五分钟               | 10         | LLM 20 / JEV+LLM 40 |
-| verification                | 五分钟               | A          | LLM 2A / JEV+LLM 4A |
-| 非 setup 且无验收项的纯等待 | 指定时长 + 30 秒取证 | 0          | 0                   |
-| setup 或带验收项的等待      | 指定时长 + 五分钟    | 按步骤类型 | 按步骤类型          |
-| 整段后续清理                | 三分钟墙钟，共享     | 10         | LLM 20 / JEV+LLM 40 |
+| 阶段                        | 时间                 | 自动动作   | 实际模型请求 |
+| --------------------------- | -------------------- | ---------- | ------------ |
+| setup                       | 五分钟               | 10         | 20           |
+| verification                | 五分钟               | A          | 2A           |
+| 非 setup 且无验收项的纯等待 | 指定时长 + 30 秒取证 | 0          | 0            |
+| setup 或带验收项的等待      | 指定时长 + 五分钟    | 按步骤类型 | 按步骤类型   |
+| 整段后续清理                | 三分钟墙钟，共享     | 10         | 20           |
 
 verification 的 A = min(30, 12 + 2 × max(0, expected 项数 − 1))。其中两次基础动作供定位后选择、提交或查询使用，仍计入同一份冻结额度；例如 4 项验收为 18 次动作、LLM 36 次模型请求。按结构化项数分配，不根据模型自报复杂度增加额度。已有任务不自动扩容，沿用创建时的冻结值。
 
@@ -38,4 +38,4 @@ verification 的 A = min(30, 12 + 2 × max(0, expected 项数 − 1))。其中�
 
 业务预算耗尽不会撤销整个 case。取消、租约丢失、节点断开或浏览器效果未知仍终止执行。清理失败或三分钟到期停止后续清理，清理结果不参与最终业务判定。
 
-升级需一起更新 API、Agent、Console，并执行 API 启动迁移。只有声明 stepBudgetVersion=1 的 worker 能领取新任务，Node 协议未变化。历史运行中任务及相同 caseId 重提保持冻结快照；新身份重跑默认采用当前策略，`budgetMode: "original"` 可复现原预算。两组各自独立，JEV 需要 TYPESAFE_API_KEY。完整说明见 [v2 协议](public-api-v2.md)。
+升级需一起更新 API、Agent、Console，并执行 API 启动迁移。只有声明 stepBudgetVersion=1 的 worker 能领取新任务，节点须声明 ephemeralProfiles。历史运行中任务及相同 caseId 重提保持冻结快照；新身份重跑默认采用当前策略，`budgetMode: "original"` 可复现原预算。旧 JEV/双跑不能按 original 预算复现，需按当前策略创建新运行。完整说明见 [v2 协议](public-api-v2.md)。

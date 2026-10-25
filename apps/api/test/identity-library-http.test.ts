@@ -18,9 +18,9 @@ import { SimulatedNode, SimulatedWorker, until } from './fixture.js';
 const ADMIN = 'library-http-admin-fixture-credential';
 const WORKER = 'library-http-worker-fixture-credential';
 
-// 范围：真实 HTTP、WebSocket、数据库的默认选取、私密投递、人工发布和无法执行；模型及磁盘复制由其他测试覆盖。
+// 范围：真实 HTTP、WebSocket、数据库的默认选取、私密投递、人工交还和无法执行；模型及磁盘复制由其他测试覆盖。
 test(
-  '身份库默认流程贯通选择、HITL 成功发布与整例无法执行',
+  '身份库默认流程贯通选择、HITL 仅恢复当前会话与整例无法执行',
   { timeout: 30_000 },
   async () => {
     assert.ok(process.env.PROOFRUN_TEST_DATABASE_URL);
@@ -51,7 +51,7 @@ test(
           allowIntervention: true,
         },
         budget: { timeoutMs: 60_000, maxActions: 20 },
-        executionMode: 'parallel' as const,
+        executionMode: 'llm' as const,
         evidenceKinds: ['DOM' as const],
       },
     };
@@ -153,7 +153,7 @@ test(
         null,
       );
       const executions: any[] = [];
-      for (let index = 0; index < 2; index++) {
+      for (let index = 0; index < 1; index++) {
         const { execution } = await until(claim, (value) => !!value.execution);
         executions.push(execution);
         workers.push(new SimulatedWorker(base, execution));
@@ -171,7 +171,7 @@ test(
         const open = node.sessions.get(execution.sessionId)!.command;
         assert.equal(open.type, 'session.open');
         if (open.type === 'session.open') {
-          assert.equal(open.authState?.fullProfile, true);
+          assert.equal(open.authState, undefined);
           assert.equal(
             open.identitySeed?.cookies[0]?.value,
             'http-fixture-secret',
@@ -210,10 +210,10 @@ test(
         );
         return { socket, messages };
       };
-      const intervene = async (execution: any) => {
+      const intervene = async (execution: any, revision = 0) => {
         await api(`/v1/admin/executions/${execution.id}/intervene`, {
           type: 'execution.intervene',
-          controlRevision: 0,
+          controlRevision: revision,
           reason: '确认成员权限',
           items: ['使用指定团队成员账号'],
         });
@@ -222,7 +222,7 @@ test(
           {
             type: 'execution.control',
             action: 'acknowledge',
-            controlRevision: 1,
+            controlRevision: revision + 1,
           },
           execution.leaseToken,
         );
@@ -240,9 +240,9 @@ test(
       first.socket.send(
         JSON.stringify({ type: 'complete', confirmedItems: [0] }),
       );
-      await until(
-        () => api('/v1/admin/identity-library'),
-        (data) => data.identities[0].baselineReady,
+      assert.equal(
+        (await api('/v1/admin/identity-library')).identities[0].baselineReady,
+        false,
       );
       await until(
         async () => first.messages,
@@ -254,9 +254,9 @@ test(
             "SELECT count(*)::int n FROM pr_commands WHERE kind='browser.auth.save'",
           )
         ).rows[0].n,
-        1,
+        0,
       );
-      const second = await intervene(executions[1]);
+      const second = await intervene(executions[0], 2);
       const reason = '团队没有可用成员席位，无法执行此 case';
       // 无法处理会同时结束两组执行；先停止夹具续租，避免预期的租约撤销被误报为后台故障。
       // 此处验证人工终止协议，真实 Agent 对租约撤销的响应由 Agent 测试覆盖。
@@ -284,7 +284,7 @@ test(
       );
       assert.ok(JSON.stringify(result).includes(reason));
       const tasks = (await sql.query('SELECT report FROM pr_tasks')).rows;
-      assert.equal(tasks.length, 2);
+      assert.equal(tasks.length, 1);
       for (const row of tasks)
         assert.ok(
           validateVerificationReport(row.report),
@@ -299,7 +299,7 @@ test(
             "SELECT count(*)::int n FROM pr_commands WHERE kind='browser.auth.save'",
           )
         ).rows[0].n,
-        1,
+        0,
       );
       const reconnect = await connect(second.intervention);
       await until(

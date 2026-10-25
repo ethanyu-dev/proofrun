@@ -31,7 +31,7 @@ use tokio_util::{
     sync::CancellationToken,
 };
 
-/// profile 恢复与浏览器初始化最多等待两分钟；续租不能延长此独立启动上限。
+/// 临时 profile 创建与浏览器初始化最多等待两分钟；续租不能延长此独立启动上限。
 const HOST_STARTUP_LIMIT_MS: u64 = 120_000;
 /// 定期检测 systemd-run 包装进程是否意外退出。
 const HOST_HEALTH_INTERVAL: Duration = Duration::from_secs(1);
@@ -61,21 +61,10 @@ pub struct Session {
     pub deadline: AtomicU64,
     /// 普通会话总时限；人工可续期也不能越过外部账号硬期限，始终受短租约限制。
     pub hard_deadline: u64,
-    /// 登录槽与网络采集只在创建时绑定，恢复不复用旧会话。
-    auth_state: Option<std::path::PathBuf>,
     /// 控制面私有种子只在节点内存与会话目录中使用。
     identity_seed: Option<serde_json::Value>,
     /// 外部账号元数据仅绑定当前会话，不允许保存为共享 profile。
     external_account: Option<serde_json::Value>,
-    /// 新身份任务复制完整 profile，历史任务保留存储状态语义。
-    full_profile: bool,
-    /// Console 模板维护使用节点保留槽位，保存后由控制面关闭会话。
-    node_template: bool,
-    restore_auth: bool,
-    /// 首次自动复用允许无快照，显式恢复仍要求文件存在。
-    restore_auth_if_present: bool,
-    /// 两组会话共用轮次身份，仅共享初始快照，不共享 profile。
-    auth_snapshot_id: Option<String>,
     network_evidence: bool,
     /// 本次任务是否允许人工画面访问。
     live_view: bool,
@@ -239,41 +228,16 @@ impl Sessions {
             fence,
             node_epoch: self.node_epoch.clone(),
         };
-        let (
-            auth_state,
-            restore_auth,
-            restore_auth_if_present,
-            auth_snapshot_id,
-            network_evidence,
-            live_view,
-        ) = match &command.command {
+        let (network_evidence, live_view) = match &command.command {
             BrowserCommand::SessionOpen {
-                auth_state,
                 network_evidence,
                 live_view,
                 ..
             } => (
-                auth_state
-                    .as_ref()
-                    .map(|auth| crate::auth::state_path(&self.config.home, &auth.state_id))
-                    .transpose()
-                    .map_err(|_| {
-                        Fault::rejected(
-                            "INVALID_AUTH_STATE",
-                            "invalid authentication state identity",
-                        )
-                    })?,
-                auth_state.as_ref().is_some_and(|auth| auth.restore),
-                auth_state
-                    .as_ref()
-                    .is_some_and(|auth| auth.restore_if_present.unwrap_or(false)),
-                auth_state
-                    .as_ref()
-                    .and_then(|auth| auth.snapshot_id.as_ref().map(|id| id.to_string())),
                 network_evidence.unwrap_or(false),
                 live_view.unwrap_or(false),
             ),
-            _ => (None, false, false, None, false, false),
+            _ => (false, false),
         };
         // 可续期会话只取消初始总时长；父进程和 host 的短租约看门狗仍各自撤权。
         let renewable = matches!(
@@ -295,7 +259,7 @@ impl Sessions {
         let raw = serde_json::to_value(&command.command).unwrap();
         let external_account = raw.get("externalAccount").cloned();
         if external_account.is_some()
-            && (auth_state.is_some()
+            && (raw.get("authState").is_some()
                 || raw.get("identitySeed").is_some()
                 || raw.get("externalCookies").is_none()
                 || hard_deadline <= process::boot_ms())
@@ -311,14 +275,10 @@ impl Sessions {
                 "外部 Cookie 缺少租约绑定",
             ));
         }
-        let node_template = raw["authState"]["nodeTemplate"] == true;
-        if node_template
-            && (raw["authState"]["fullProfile"] != true
-                || raw["authState"]["stateId"] != crate::profile_snapshots::NODE_TEMPLATE_ID)
-        {
+        if raw.get("authState").is_some() {
             return Err(Fault::rejected(
-                "INVALID_NODE_TEMPLATE",
-                "节点模板必须使用完整 profile 保留槽位",
+                "AUTH_RESTORE_RETIRED",
+                "会话不再接受持久身份槽位",
             ));
         }
         let session = Arc::new(Session {
@@ -332,12 +292,6 @@ impl Sessions {
                 raw.get("identitySeed").cloned()
             },
             external_account,
-            full_profile: raw["authState"]["fullProfile"] == true,
-            node_template,
-            auth_state,
-            restore_auth,
-            restore_auth_if_present,
-            auth_snapshot_id,
             network_evidence,
             live_view,
             cancel: CancellationToken::new(),
@@ -494,20 +448,17 @@ async fn start(
             },
             external_account: session.external_account.clone(),
             identity_seed_file: seed_path,
-            full_profile: session.full_profile,
-            node_template: session.node_template,
-            template_state: Some(crate::auth::state_path(
-                &config.home,
-                crate::profile_snapshots::NODE_TEMPLATE_ID,
-            )?),
-            base_profile_directory: config.base_profile_directory.clone(),
+            full_profile: false,
+            node_template: false,
+            template_state: None,
+            base_profile_directory: None,
             session: record.launch_id.clone(),
             directory,
             allow_unverified_writes: config.allow_unverified_writes,
-            auth_state: session.auth_state.clone(),
-            restore_auth: session.restore_auth,
-            restore_auth_if_present: session.restore_auth_if_present,
-            auth_snapshot_id: session.auth_snapshot_id.clone(),
+            auth_state: None,
+            restore_auth: false,
+            restore_auth_if_present: false,
+            auth_snapshot_id: None,
             network_evidence: session.network_evidence,
             live_view: session.live_view,
         },
@@ -813,14 +764,8 @@ mod external_tests {
             fence: 1,
             deadline: AtomicU64::new(now + 1_000),
             hard_deadline: now + 10_000,
-            auth_state: None,
             identity_seed: None,
             external_account: Some(json!({"leaseId":"fixture"})),
-            full_profile: false,
-            node_template: false,
-            restore_auth: false,
-            restore_auth_if_present: false,
-            auth_snapshot_id: None,
             network_evidence: false,
             live_view: true,
             cancel: CancellationToken::new(),

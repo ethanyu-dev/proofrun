@@ -271,46 +271,6 @@ export function IdentityCatalogEditor({
                 ＋ 添加核验条件
               </button>
             </div>
-            <details>
-              <summary>已有登录快照（可选）</summary>
-              <div className="identity-form-grid">
-                <IdentityField label="节点 ID">
-                  <input
-                    value={identity.nodeId ?? ''}
-                    onChange={(e) => {
-                      const next = { ...identity };
-                      if (e.target.value) next.nodeId = e.target.value;
-                      else delete next.nodeId;
-                      change({
-                        ...catalog,
-                        identities: catalog.identities.map((v, i) =>
-                          i === index ? next : v,
-                        ),
-                      });
-                    }}
-                  />
-                </IdentityField>
-                <IdentityField label="快照 ID">
-                  <input
-                    value={identity.stateId ?? ''}
-                    onChange={(e) => {
-                      const next = { ...identity };
-                      if (e.target.value) next.stateId = e.target.value;
-                      else delete next.stateId;
-                      change({
-                        ...catalog,
-                        identities: catalog.identities.map((v, i) =>
-                          i === index ? next : v,
-                        ),
-                      });
-                    }}
-                  />
-                </IdentityField>
-              </div>
-              <p className="muted note">
-                节点 ID 与快照 ID 必须同时填写。省略时使用身份专属登录槽。
-              </p>
-            </details>
             <button
               type="button"
               className="text-button"

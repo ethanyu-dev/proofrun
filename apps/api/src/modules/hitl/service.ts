@@ -1,4 +1,3 @@
-import type { IdentityLibrary } from '../identities/library.js';
 import { randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
 import {
@@ -8,7 +7,6 @@ import {
 } from '@proofrun/contracts';
 import { Database } from '../../db.js';
 import { ApiError, digest, requireToken } from '../../domain.js';
-import type { NodeProfiles } from '../nodes/profiles.js';
 import type { ApiConfig } from '../../config.js';
 import { ExecutionControl } from '../scheduling/control.js';
 import { interventionToken } from '../scheduling/hitl-token.js';
@@ -22,8 +20,6 @@ const FRAME_LIMIT = 2 * 1024 * 1024;
 const AUTH_MS = 5000;
 const CHECK_MS = 500;
 const COMMAND_MS = 15000;
-/** 完整 profile 的关闭、落盘、复制和重启拥有独立的人工交还期限。 */
-const PROFILE_SAVE_MS = 120_000;
 const INPUT_LIMIT = 8;
 /** 允许 4096 字符的 JSON 转义文本；画面仍使用独立的单帧上限。 */
 const INPUT_MESSAGE_BYTES = 32 * 1024;
@@ -58,8 +54,6 @@ interface Grant {
   session_id: string;
   lease_id: string;
   fence: string;
-  /** 会话实际使用的登录槽位，包含自动分配槽位。 */
-  auth: unknown;
   /** 外部账号硬期限不随人工等待暂停。 */
   external_expires_at?: Date | null;
   /** 仅用于人工确认 Cookie 所属站点。 */
@@ -76,7 +70,7 @@ interface Viewer {
   relay?: WebSocket;
   pending: number;
   checking: boolean;
-  /** 完整 profile 发布会重启浏览器，期间画面断开不代表交还失败。 */
+  /** 交还事务期间不接受并发输入，断线不重复执行浏览器动作。 */
   finalizing: boolean;
   timer: ReturnType<typeof setInterval>;
 }
@@ -92,8 +86,6 @@ export class HitlService {
     private readonly control: ExecutionControl,
     private readonly coordinator: Coordinator,
     private readonly gateway: NodeGateway,
-    private readonly library?: IdentityLibrary,
-    private readonly nodeProfiles?: NodeProfiles,
   ) {}
 
   private async grant(id: string): Promise<Grant> {
@@ -101,7 +93,7 @@ export class HitlService {
       await this.db.query<Grant>(
         `SELECT h.*,e.control_mode,e.control_revision,e.control_reason,
       t.definition->'profilePlan' AS profile_plan,t.definition->'target'->>'url' AS target_url,e.state AS execution_state,e.lease_expires_at,e.human_deadline_at,t.id AS task_id,t.state AS task_state,t.deadline_at,
-      s.external_expires_at,s.auth_state AS auth,s.id AS session_id,s.node_id,s.node_epoch,s.lease_id,s.fence,s.state AS session_state,
+      s.external_expires_at,s.id AS session_id,s.node_id,s.node_epoch,s.lease_id,s.fence,s.state AS session_state,
       EXISTS(SELECT 1 FROM pr_node_profiles p WHERE p.id=h.id) AS node_profile
       FROM pr_interventions h JOIN pr_executions e ON e.id=h.execution_id JOIN pr_tasks t ON t.id=e.task_id
       JOIN pr_sessions s ON s.execution_id=e.id WHERE h.id=$1`,
@@ -227,38 +219,12 @@ export class HitlService {
                 'HITL_OCCUPIED',
                 '此任务已在另一个处理页打开',
               );
-            if (consoleProfile && grant.task_state !== 'RUNNING') {
-              const authStatus = await this.nodeProfiles!.waitClosed(grant.id);
-              this.send(socket, {
-                type: 'completed',
-                ...(authStatus ? { authStatus } : {}),
-              });
-              socket.close();
-              return;
-            }
-            // 模板发布后浏览器已退出；重连必须先恢复原保存命令，不能等待已不存在的画面。
-            if (consoleProfile) {
-              const previous = (
-                await this.db.query(
-                  'SELECT result FROM pr_commands WHERE execution_id=$1 AND id LIKE $2 ORDER BY created_at DESC LIMIT 1',
-                  [grant.execution_id, `auth-complete-${grant.id}-%`],
-                )
-              ).rows[0];
-              if (
-                previous &&
-                !(
-                  previous.result?.operationStatus === 'FAILED' &&
-                  previous.result.effect === 'NOT_STARTED'
-                )
-              ) {
-                this.active(grant);
-                const authStatus = await this.saveAuth(grant, socket);
-                await this.nodeProfiles!.finish(grant.id, authStatus);
-                this.send(socket, { type: 'completed', authStatus });
-                socket.close();
-                return;
-              }
-            }
+            if (consoleProfile || grant.node_profile)
+              throw new ApiError(
+                410,
+                'NODE_PROFILE_RETIRED',
+                '节点默认模板维护已停用',
+              );
             if (grant.unable_reason) {
               this.send(socket, {
                 type: 'unable',
@@ -274,7 +240,7 @@ export class HitlService {
             }
             this.active(grant);
             if (socket.readyState !== WebSocket.OPEN) return;
-            // 模板恢复路径有异步回执查询，登记前再核对占用，避免两个新连接同时获得输入权。
+            // 登记前再核对占用，避免两个新连接同时获得输入权。
             if (this.viewers.has(grant.id))
               throw new ApiError(
                 409,
@@ -301,20 +267,6 @@ export class HitlService {
           if (grant.control_mode !== 'HUMAN')
             throw new ApiError(409, 'HITL_WAIT', '正在等待 Agent 完成交接');
           if (message.type === 'unable') {
-            if (grant.node_profile) {
-              viewer.finalizing = true;
-              try {
-                await this.nodeProfiles!.finish(grant.id);
-                this.send(socket, {
-                  type: 'completed',
-                  authStatus: 'disabled',
-                });
-                this.end(viewer);
-              } finally {
-                viewer.finalizing = false;
-              }
-              return;
-            }
             const result = await this.control.unable(
               grant.execution_id,
               grant.revision,
@@ -354,24 +306,8 @@ export class HitlService {
 
             viewer.finalizing = true;
             try {
-              const authStatus = grant.auth
-                ? await this.saveAuth(grant, socket)
-                : 'disabled';
-              if (grant.node_profile) {
-                if (authStatus === 'disabled')
-                  throw new ApiError(
-                    409,
-                    'AUTH_STATE_MISSING',
-                    '节点模板未绑定',
-                  );
-                await this.nodeProfiles!.finish(grant.id, authStatus);
-                this.send(socket, { type: 'completed', authStatus });
-                this.end(viewer);
-                return;
-              }
-              if (authStatus === 'saved' || authStatus === 'newer')
-                await this.library?.published(grant.task_id, grant.node_id);
-              // 保存有确定回执后才恢复；失败或断线保留人工控制权。
+              const authStatus = 'disabled' as const;
+              // 逐项确认后直接交还现有浏览器，控制代次仍使在途决定失效。
               if (socket.readyState !== WebSocket.OPEN) return;
               await this.control.change(
                 grant.execution_id,
@@ -397,8 +333,7 @@ export class HitlService {
             if (
               !['browser.input', 'browser.cookies.set', 'browser.act'].includes(
                 operation.type,
-              ) ||
-              (operation.type === 'browser.auth.save' && !grant.auth)
+              )
             )
               throw new ApiError(403, 'HITL_COMMAND', '此处理页不允许该操作');
             if (operation.type === 'browser.act')
@@ -465,62 +400,6 @@ export class HitlService {
         });
     });
   }
-  /** 完成操作使用稳定命令身份；断线重连只查询原回执，不重复导出或覆盖登录。 */
-  private async saveAuth(
-    grant: Grant,
-    socket: WebSocket,
-  ): Promise<'saved' | 'newer'> {
-    const prefix = `auth-complete-${grant.id}-`;
-    const previous = (
-      await this.db.query(
-        'SELECT id,result FROM pr_commands WHERE execution_id=$1 AND id LIKE $2 ORDER BY created_at DESC LIMIT 1',
-        [grant.execution_id, `${prefix}%`],
-      )
-    ).rows[0];
-    // 确定未保存的失败允许人工再次尝试；回执未知时只能追踪原命令。
-    const retryable =
-      previous?.result?.operationStatus === 'FAILED' &&
-      previous.result.effect === 'NOT_STARTED';
-    const commandId =
-      previous && !retryable ? previous.id : `${prefix}${randomUUID()}`;
-    const receipt = await this.coordinator.command(
-      grant.execution_id,
-      null,
-      commandId,
-      PROFILE_SAVE_MS,
-      { type: 'browser.auth.save' },
-      grant.revision,
-      undefined,
-      true,
-    );
-    let result = receipt.result;
-    const deadline = Date.now() + PROFILE_SAVE_MS + 5000;
-    while (
-      !result &&
-      Date.now() < deadline &&
-      socket.readyState === WebSocket.OPEN
-    ) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      result = (
-        await this.db.query(
-          'SELECT result FROM pr_commands WHERE id=$1 AND execution_id=$2',
-          [commandId, grant.execution_id],
-        )
-      ).rows[0]?.result;
-    }
-    if (
-      result?.operationStatus !== 'SUCCEEDED' ||
-      (result.data?.saved !== true &&
-        result.data?.reason !== 'NEWER_STATE_PRESERVED')
-    )
-      throw new ApiError(
-        409,
-        'AUTH_SAVE_FAILED',
-        '登录状态未确认保存，任务仍等待人工处理；请检查节点后重新连接。',
-      );
-    return result.data.saved === true ? 'saved' : 'newer';
-  }
-
   private validateInput(
     operation: Extract<NodeCommand['command'], { type: 'browser.input' }>,
   ): void {
@@ -591,7 +470,7 @@ export class HitlService {
           : {}),
         mode: grant.control_mode as 'REQUESTED' | 'HUMAN',
         expiresAt: grant.expires_at.toISOString(),
-        canSaveAuth: !!grant.auth,
+        canSaveAuth: false,
         targetUrl: grant.target_url,
       });
       if (grant.control_mode === 'HUMAN' && !viewer.streamId) {

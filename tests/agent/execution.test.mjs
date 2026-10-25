@@ -73,7 +73,7 @@ test('定向 press 绑定当前观察，并区分请求目标与节点确认焦�
         );
         assert.deepEqual(
           pressRule.then.properties.target.enum,
-          context.observation.targets.map((target) => target.target),
+          context.page.targets.map((target) => target.target),
         );
         return {
           type: 'browser.act',
@@ -82,7 +82,7 @@ test('定向 press 绑定当前观察，并区分请求目标与节点确认焦�
           value: 'Tab',
         };
       }
-      const press = context.recentOperations.find(
+      const press = context.history.commands.find(
         (op) => op.action === 'press',
       );
       assert.equal(press.requestedTargetName, '名称');
@@ -92,7 +92,7 @@ test('定向 press 绑定当前观察，并区分请求目标与节点确认焦�
         focusVerified: true,
       });
       assert.deepEqual(
-        context.actionMemory.items.find((op) => op.action === 'press').keyboard,
+        context.history.commands.find((op) => op.action === 'press').keyboard,
         press.keyboard,
       );
       return finish(context);
@@ -147,12 +147,12 @@ test('旧节点与虚构目标不能静默执行定向 press，全局按键保�
         }
         if (turn === 2) {
           assert.match(
-            context.feedback,
+            context.feedback.map((item) => item.message ?? item.code).join(' '),
             supported ? /目标不属于当前观察/ : /不支持定向 press/,
           );
           return { type: 'browser.act', action: 'press', value: 'Escape' };
         }
-        const press = context.recentOperations.find(
+        const press = context.history.commands.find(
           (op) => op.action === 'press',
         );
         assert.equal(press.targetName, undefined);
@@ -248,7 +248,7 @@ test('填写、提交、观察成功文本并生成可追溯报告', async () =>
         };
       if (turn === 2)
         return { type: 'browser.act', action: 'click', target: '@e2' };
-      assert.equal(context.observation.text, '已提交 Alice');
+      assert.equal(context.page.text, '已提交 Alice');
       return finish(context);
     },
   );
@@ -296,12 +296,16 @@ test('拒绝虚构目标和证据，修复前不发动作', async () => {
     if (turn === 1)
       return { type: 'browser.act', action: 'click', target: '@unknown' };
     if (turn === 2) {
-      assert.ok(context.feedback);
+      assert.ok(
+        context.feedback.map((item) => item.message ?? item.code).join(' '),
+      );
       const value = finish(context);
       value.criteria[0].evidenceRefs = ['foreign'];
       return value;
     }
-    assert.ok(context.feedback);
+    assert.ok(
+      context.feedback.map((item) => item.message ?? item.code).join(' '),
+    );
     return finish(context);
   });
   assert.equal(report.verdict, 'PASSED');
@@ -326,10 +330,26 @@ test('模型格式反馈指出缺失字段且不回显未知字段内容', async
   const { report, client } = await run((context, turn) => {
     if (turn === 1)
       return { type: 'browser.act', secretField: 'private-value' };
-    assert.match(context.feedback, /required property 'action'/);
-    assert.match(context.feedback, /additional properties/);
-    assert.ok(!context.feedback.includes('secretField'));
-    assert.ok(!context.feedback.includes('private-value'));
+    assert.match(
+      context.feedback.map((item) => item.message ?? item.code).join(' '),
+      /required property 'action'/,
+    );
+    assert.match(
+      context.feedback.map((item) => item.message ?? item.code).join(' '),
+      /additional properties/,
+    );
+    assert.ok(
+      !context.feedback
+        .map((item) => item.message ?? item.code)
+        .join(' ')
+        .includes('secretField'),
+    );
+    assert.ok(
+      !context.feedback
+        .map((item) => item.message ?? item.code)
+        .join(' ')
+        .includes('private-value'),
+    );
     return finish(context);
   });
   assert.equal(report.verdict, 'PASSED');
@@ -365,7 +385,10 @@ test('拒绝工具参数覆盖工具名对应的动作类型', async () => {
           ],
         },
       };
-    assert.match(context.feedback, /不接受 type/);
+    assert.match(
+      context.feedback.map((item) => item.message ?? item.code).join(' '),
+      /不接受 type/,
+    );
     return finish(context);
   });
   assert.equal(report.verdict, 'PASSED');
@@ -381,8 +404,8 @@ test('切换页面后保留历史正文但不接受旧元素身份', async () =>
     (context, turn) => {
       if (turn === 1)
         return { type: 'browser.act', action: 'click', target: '@e2' };
-      assert.equal(context.observation.text, '已提交 ');
-      const prior = context.previousObservations[0];
+      assert.equal(context.page.text, '已提交 ');
+      const prior = context.history.excerpts[0];
       assert.equal(prior.text, '名称和提交表单');
       assert.equal(prior.truncated, false);
       assert.equal(prior.targets, undefined);
@@ -391,7 +414,10 @@ test('切换页面后保留历史正文但不接受旧元素身份', async () =>
       );
       if (turn === 2)
         return { type: 'browser.act', action: 'click', target: '@e2' };
-      assert.match(context.feedback, /目标不属于当前观察/);
+      assert.match(
+        context.feedback.map((item) => item.message ?? item.code).join(' '),
+        /目标不属于当前观察/,
+      );
       return finish(context);
     },
     (client) => {
@@ -418,9 +444,9 @@ test('历史正文移除可复用的元素编号', async () => {
   await run(
     (context, turn) => {
       if (turn === 1) return { type: 'browser.observe' };
-      assert.ok(!context.previousObservations[0].text.includes('element-9'));
-      assert.ok(!context.previousObservations[0].text.includes('ref=e9'));
-      assert.ok(context.previousObservations[0].text.includes('历史价格'));
+      assert.ok(!context.history.excerpts[0].text.includes('element-9'));
+      assert.ok(!context.history.excerpts[0].text.includes('ref=e9'));
+      assert.ok(context.history.excerpts[0].text.includes('历史价格'));
       return finish(context);
     },
     (client) => {
@@ -491,11 +517,8 @@ test('长页面被裁剪且不会改写任务标准', async () => {
   const { report } = await run(
     (context, _turn, body) => {
       assert.ok(body.messages[1].content.length <= 4000);
-      assert.equal(context.truncated, true);
-      assert.equal(
-        context.task.acceptanceCriteria[0].expectedResult,
-        '出现已提交 Alice',
-      );
+      assert.equal(context.page.coverage.text.truncated, true);
+      assert.equal(context.task.criteria[0].expectedResult, '出现已提交 Alice');
       return { type: 'verification.block', summary: '需要更多页面上下文' };
     },
     (client) => {
@@ -510,8 +533,8 @@ test('长页面被裁剪且不会改写任务标准', async () => {
 test('执行器裁剪保留长页尾部任务证据', async () => {
   const { report } = await run(
     (context) => {
-      assert.ok(context.observation.text.includes('页尾 Alice 已提交'));
-      assert.equal(context.truncated, true);
+      assert.ok(context.page.text.includes('页尾 Alice 已提交'));
+      assert.equal(context.page.coverage.text.truncated, true);
       return { type: 'verification.block', summary: '仅验证证据保留' };
     },
     (client) => {
@@ -765,10 +788,10 @@ test('人工处理后丢弃旧模型决定并刷新观察', async () => {
         };
       }
       const context = JSON.parse(input.text);
-      assert.match(context.observation.text, /Human/);
+      assert.match(context.page.text, /Human/);
       // 模拟升级后服务端剔除人工计数，本地不能保留等待时看到的虚高值。
       assert.equal(
-        context.budgetRemaining.actions,
+        context.budget.actions,
         execution.task.budget.maxActions - 1,
       );
       return {
@@ -962,8 +985,8 @@ test('报告提交遇到人工暂停再取消会交付故障报告', async () =>
   assert.equal(report.executionDetails.reasonCode, 'EXECUTION_ENDED');
 });
 
-// 范围：混合策略每个子请求均受模型总预算约束；不调用真实提供者或浏览器。
-test('混合策略子请求不能突破模型调用预算', async () => {
+// 范围：适配器每次请求均受模型总预算约束；不调用真实提供者或浏览器。
+test('适配器重复请求不能突破模型调用预算', async () => {
   const client = new FakeControl();
   let secondRequestStarted = false;
   const report = await execute(
@@ -971,7 +994,7 @@ test('混合策略子请求不能突破模型调用预算', async () => {
     client,
     {
       decide: async (input) => {
-        input.recordRequest('jev-test');
+        input.recordRequest('fixture-model');
         input.recordRequest('text-test');
         secondRequestStarted = true;
         return {
@@ -987,30 +1010,8 @@ test('混合策略子请求不能突破模型调用预算', async () => {
   assert.equal(report.executionDetails.modelCalls, 1);
   assert.equal(report.executionDetails.reasonCode, 'MODEL_BUDGET_EXCEEDED');
   assert.deepEqual(report.executionDetails.modelUsage, [
-    { model: 'jev-test', calls: 1, promptTokens: 0, completionTokens: 0 },
+    { model: 'fixture-model', calls: 1, promptTokens: 0, completionTokens: 0 },
   ]);
-});
-
-// 范围：JEV 候选契约必须拒绝身份混淆、缺失概率和异常数值；不评估模型语义准确率。
-test('JEV 严格校验当前候选和概率', async () => {
-  const { jevChoice } = await import('../../apps/agent/dist/model/jev.js');
-  const candidates = { a: 'A', b: 'B' };
-  assert.equal(
-    jevChoice(
-      { choice: 'a', confidence: 0.8, probabilities: { a: 0.8, b: 0.2 } },
-      candidates,
-    ).choice,
-    'a',
-  );
-  for (const answer of [
-    { choice: 'old', confidence: 1, probabilities: { a: 1, b: 0 } },
-    { choice: 'a', confidence: 1, probabilities: { a: 1 } },
-    { choice: 'a', confidence: 1, probabilities: { a: 0.2, b: 0.8 } },
-    { choice: 'a', confidence: NaN, probabilities: { a: 1, b: 0 } },
-  ])
-    assert.throws(() => jevChoice(answer, candidates), {
-      code: 'INVALID_MODEL_DECISION',
-    });
 });
 
 // 范围：确定未派发的遮挡触发新观察与模型规划；不证明真实模型会选对遮挡处理动作。
@@ -1019,8 +1020,11 @@ test('目标遮挡后重新观察规划，不自动重放点击', async () => {
     (context, turn) => {
       if (turn === 1)
         return { type: 'browser.act', action: 'click', target: '@e2' };
-      assert.match(context.feedback, /遮挡/);
-      assert.equal(context.recentOperations.at(-2).effect, 'NOT_STARTED');
+      assert.match(
+        context.feedback.map((item) => item.message ?? item.code).join(' '),
+        /遮挡/,
+      );
+      assert.equal(context.history.commands.at(-2).effect, 'NOT_STARTED');
       return finish(context);
     },
     (client) => {
@@ -1074,265 +1078,8 @@ test('连续目标遮挡有界退出', async () => {
   );
 });
 
-/** 为 JEV 适配器测试构造实际观察形状；不是浏览器采集结果。 */
-function jevInput(id, text = '内容 [target=element-1]', actions = 100) {
-  return {
-    text: JSON.stringify({
-      task: { ...grant().task, objective: '查找 GLM 定价' },
-      observation: {
-        observationId: id,
-        url: 'https://example.test/pricing',
-        title: '价格',
-        text,
-        targets: [{ target: 'element-1', role: 'button', name: '模型栏目' }],
-        artifactRefs: [
-          { artifactId: `evidence-${id}`, kind: 'DOM', sha256: 'a'.repeat(64) },
-        ],
-        atomic: false,
-      },
-      evidence: [],
-      previousObservations: [],
-      recentOperations: [],
-      feedback: null,
-      budgetRemaining: { actions },
-    }),
-  };
-}
-/** 返回完整概率分布以验证客户端契约；不模拟真实供应商推理质量。 */
-function jevAnswer(body, choice = 'SCROLL_DOWN') {
-  return {
-    answers: {
-      next: {
-        choice,
-        confidence: 1,
-        probabilities: Object.fromEntries(
-          Object.keys(body.questions.next.criteria).map((k) => [
-            k,
-            k === choice ? 1 : 0,
-          ]),
-        ),
-      },
-    },
-    usage: { input_tokens: 3, output_tokens: 2 },
-  };
-}
-
-// 范围：同一决策内 JEV 候选与填写子请求分别记录实际正文，异常记录稳定错误码；不访问真实供应商。
-test('JEV 子请求的上下文与失败回执分别记录', async () => {
-  const { JevModel } = await import('../../apps/agent/dist/model/jev.js');
-  const input = jevInput('trace');
-  const context = JSON.parse(input.text);
-  context.observation.targets = [
-    { target: 'element-1', role: 'textbox', name: '名称' },
-  ];
-  input.text = JSON.stringify(context);
-  const records = [];
-  const bodies = [];
-  input.traceRequest = async (record) => {
-    const entry = { record, receipt: null };
-    records.push(entry);
-    return async (result) => {
-      entry.receipt = result;
-    };
-  };
-  const model = new JevModel(
-    { ...config, thinking: 'disabled' },
-    'fixture',
-    'jev-test',
-    async (_url, _key, _method, body) => {
-      bodies.push(body);
-      if (body.questions) return jevAnswer(body, 'A1');
-      throw new AgentFault('HTTP_ERROR', '夹具原始错误不应存档', 401);
-    },
-  );
-  await assert.rejects(model.decide(input, new AbortController().signal), {
-    code: 'HTTP_ERROR',
-  });
-  assert.deepEqual(
-    records.map((entry) => entry.record.purpose),
-    ['JEV_SELECTION', 'FIELD_VALUE'],
-  );
-  records.forEach((entry, index) =>
-    assert.deepEqual(
-      JSON.parse(entry.record.request),
-      JSON.parse(JSON.stringify(bodies[index])),
-    ),
-  );
-  // 思考配置只传给文本模型，不能泄漏到 TypeSafe 候选协议。
-  assert.equal(Object.hasOwn(bodies[0], 'thinking'), false);
-  assert.deepEqual(bodies[1].thinking, { type: 'disabled' });
-  assert.equal(records[0].receipt.status, 'RECEIVED');
-  assert.equal(records[0].receipt.promptTokens, 3);
-  assert.equal(records[1].receipt.status, 'ERROR');
-  assert.equal(records[1].receipt.error, 'HTTP_ERROR');
-  assert.equal(records[1].receipt.promptTokens, null);
-  assert.equal(records[1].receipt.response, null);
-});
-
-// 范围：长正文的尾部业务证据和单一联合候选确实进入请求；不调用真实 JEV。
-test('JEV 检索两万字符后的相关正文并限制总请求大小', async () => {
-  const { JevModel } = await import('../../apps/agent/dist/model/jev.js');
-  const calls = [];
-  const model = new JevModel(
-    { ...config, maxContextChars: 256000 },
-    'fixture',
-    'jev-test',
-    async (_url, _key, _method, body) => {
-      calls.push(body);
-      return jevAnswer(body, 'A1');
-    },
-  );
-  const text = '无关正文\n'.repeat(6000) + 'GLM 定价 $1';
-  const output = await model.decide(
-    jevInput('long', text),
-    new AbortController().signal,
-  );
-  assert.ok(calls[0].state.observation.text.includes('GLM 定价 $1'));
-  assert.ok(JSON.stringify(calls[0]).length <= 32000);
-  assert.equal(calls[0].state.observation.textTruncated, true);
-  assert.deepEqual(Object.keys(calls[0].questions), ['next']);
-  assert.equal(output.decision.target, 'element-1');
-});
-
-// 范围：变更元素编号不算新页面，停滞转交审查，原证据来源保留；不证明真实模型会正确收尾。
-test('JEV 重复正文触发 LLM 纠偏并保留跨页证据', async () => {
-  const { JevModel } = await import('../../apps/agent/dist/model/jev.js');
-  let jevCalls = 0;
-  const reviews = [];
-  const reviewer = {
-    async decide(input) {
-      reviews.push(JSON.parse(input.text));
-      return {
-        decision: { type: 'browser.observe' },
-        promptTokens: 5,
-        completionTokens: 2,
-      };
-    },
-  };
-  const model = new JevModel(
-    { ...config, maxContextChars: 256000 },
-    'fixture',
-    'jev-test',
-    async (_u, _k, _m, body) => {
-      jevCalls++;
-      return jevAnswer(body);
-    },
-    reviewer,
-  );
-  for (let i = 0; i < 3; i++)
-    await model.decide(
-      jevInput(`repeat-${i}`, `GLM 已读取 [target=element-${i}]`),
-      new AbortController().signal,
-    );
-  assert.equal(jevCalls, 2);
-  assert.equal(reviews.length, 1);
-  assert.match(reviews[0].feedback, /连续两次/);
-  assert.equal(
-    reviews[0].previousObservations[0].artifactRefs[0].artifactId,
-    'evidence-repeat-2',
-  );
-  assert.ok(!reviews[0].previousObservations[0].text.includes('[target='));
-});
-
-// 范围：低动作预算直接进入审查，仍使用请求计数钩子；不提高预算、不自动判通过。
-test('JEV 在动作耗尽前交接验收', async () => {
-  const { JevModel } = await import('../../apps/agent/dist/model/jev.js');
-  let jevCalls = 0;
-  let reviewCalls = 0;
-  const model = new JevModel(
-    config,
-    'fixture',
-    'jev-test',
-    async () => {
-      jevCalls++;
-      throw new Error('不应请求');
-    },
-    {
-      async decide(input) {
-        reviewCalls++;
-        assert.match(JSON.parse(input.text).feedback, /预算/);
-        return {
-          decision: { type: 'verification.block', summary: '证据不足' },
-          promptTokens: 1,
-          completionTokens: 1,
-        };
-      },
-    },
-  );
-  await model.decide(
-    jevInput('budget', '已采集', 3),
-    new AbortController().signal,
-  );
-  assert.equal(jevCalls, 0);
-  assert.equal(reviewCalls, 1);
-});
-
-// 范围：历史片段检索覆盖长页业务位置、保留长度边界；不能证明片段涵盖全页面。
-test('JEV 历史长页保留任务相关段落', async () => {
-  const { evidenceExcerpt, JevProgress } =
-    await import('../../apps/agent/dist/model/jev-progress.js');
-  const text =
-    '其他模型\n'.repeat(6000) +
-    '\nGLM 输入价格 $1 输出价格 $2\n' +
-    '无关页尾\n'.repeat(6000);
-  const excerpt = evidenceExcerpt(text, '收集 GLM 输入和输出价格');
-  assert.ok(excerpt.includes('GLM 输入价格'));
-  assert.ok(excerpt.length <= 16000);
-  const progress = new JevProgress();
-  for (let i = 0; i < 6; i++)
-    progress.observe(
-      JSON.parse(jevInput('unique-' + i, '页面' + i).text).observation,
-      '目标',
-    );
-  // 持续出现新事实时不再仅按固定轮数调用文本审查。
-  assert.equal(progress.reviewReason(90), undefined);
-  assert.equal(progress.history().length, 6);
-});
-
-// 范围：供应商上下文拒绝明确转交完整证据审查，不扩大浏览器权限；服务与审查输出为夹具。
-test('JEV 上下文拒绝转交 LLM，其他 HTTP 错误保持失败', async () => {
-  const { JevModel } = await import('../../apps/agent/dist/model/jev.js');
-  let reviews = 0;
-  const reviewer = {
-    async decide(input) {
-      reviews++;
-      assert.match(JSON.parse(input.text).feedback, /上下文长度/);
-      return {
-        decision: { type: 'browser.observe' },
-        promptTokens: 0,
-        completionTokens: 0,
-      };
-    },
-  };
-  const model = new JevModel(
-    config,
-    'fixture',
-    'jev-test',
-    async () => {
-      throw new AgentFault('MODEL_CONTEXT_TOO_LARGE', 'fixture', 400);
-    },
-    reviewer,
-  );
-  await model.decide(jevInput('limit'), new AbortController().signal);
-  assert.equal(reviews, 1);
-  const other = new JevModel(
-    config,
-    'fixture',
-    'jev-test',
-    async () => {
-      throw new AgentFault('HTTP_ERROR', 'fixture', 401);
-    },
-    reviewer,
-  );
-  await assert.rejects(
-    other.decide(jevInput('auth'), new AbortController().signal),
-    { code: 'HTTP_ERROR' },
-  );
-  assert.equal(reviews, 1);
-});
-
 // 范围：格式失败前已返回的子请求用量仍计入，成功回复不会双计；模型和浏览器均为夹具。
-test('混合请求失败后总 token 与分项保持一致', async () => {
+test('协议失败后总 token 与分项保持一致', async () => {
   const client = new FakeControl();
   let turn = 0;
   const report = await execute(
@@ -1340,8 +1087,8 @@ test('混合请求失败后总 token 与分项保持一致', async () => {
     client,
     {
       async decide(input) {
-        input.recordRequest('fixture-jev');
-        input.recordUsage('fixture-jev', 10, 2);
+        input.recordRequest('fixture-model');
+        input.recordUsage('fixture-model', 10, 2);
         if (++turn === 1)
           throw new AgentFault('INVALID_MODEL_DECISION', 'fixture');
         return {
@@ -1505,38 +1252,27 @@ test('新增元素动作绑定当前观察，纯文本模型不能执行视觉�
   assert.ok(!client.calls.some((c) => c.operation.action === 'visual.click'));
 });
 
-// 范围：worker 使用的策略选择覆盖新单组和历史对照定义；不代表真实 JEV/LLM 推理验收。
-test('显式执行模式选择模型，历史组标识兼容且未拆分并行拒绝执行', async () => {
+// 范围：所有执行入口只允许 LLM，历史模式明确拒绝；不调用实际模型。
+test('显式旧模式与历史对照均不能进入新执行', async () => {
   const { executionStrategy } =
     await import('../../apps/agent/dist/model/strategy.js');
   const task = grant().task;
   assert.equal(executionStrategy(task), 'llm');
-  assert.equal(executionStrategy({ ...task, executionMode: 'jev' }), 'jev');
   assert.equal(executionStrategy({ ...task, executionMode: 'llm' }), 'llm');
-  assert.equal(
-    executionStrategy({
-      ...task,
-      comparison: { id: 'pair', arm: 'jev', sourceTaskId: 'source' },
-    }),
-    'jev',
-  );
-  assert.equal(
-    executionStrategy({
-      ...task,
-      executionMode: 'llm',
-      comparison: { id: 'pair', arm: 'jev', sourceTaskId: 'source' },
-    }),
-    'llm',
-  );
+  for (const mode of ['jev', 'parallel'])
+    assert.throws(() => executionStrategy({ ...task, executionMode: mode }), {
+      code: 'EXECUTION_MODE_RETIRED',
+    });
   assert.throws(
-    () => executionStrategy({ ...task, executionMode: 'parallel' }),
-    { code: 'UNEXPANDED_PARALLEL_TASK' },
+    () =>
+      executionStrategy({
+        ...task,
+        comparison: { id: 'old', arm: 'llm', sourceTaskId: 'source' },
+      }),
+    { code: 'EXECUTION_MODE_RETIRED' },
   );
 });
-
-import { JevModel } from '../../apps/agent/dist/model/jev.js';
 import { ObservationTracker } from '../../apps/agent/dist/evidence/changes.js';
-import { candidates } from '../../apps/agent/dist/model/candidates.js';
 
 /** 使用显式比较键模拟采集结果；真实节点身份稳定性另由 Chromium 用例验证。 */
 function deltaPage(targets, text = '表单', extra = {}) {
@@ -1588,73 +1324,17 @@ test('差分使用节点比较键，并将当前变化控件提前', () => {
   assert.equal(result.removedCount, null);
 });
 
-// 范围：根据采集能力生成填写、选择和容器滚动候选，排除隐藏与禁用项；不模拟浏览器遮挡。
-test('候选只提供当前可用能力，变化控件不被普通元素淹没', () => {
-  const list = candidates(
-    [
-      ...Array.from({ length: 300 }, (_, i) => ({
-        target: `noise-${i}`,
-        role: 'element',
-        name: '图标',
-      })),
-      { target: 'hidden', role: 'button', name: '隐藏', visible: false },
-      { target: 'disabled', role: 'button', name: '禁用', disabled: true },
-      { target: 'static', role: 'button', name: '普通' },
-      {
-        target: 'new',
-        role: 'combobox',
-        name: '白名单',
-        change: 'added',
-        operations: ['click', 'fill'],
-      },
-      {
-        target: 'select',
-        role: 'combobox',
-        name: '选项',
-        operations: ['select'],
-        options: [
-          { value: 'a', label: '已有', selected: true },
-          { value: 'b', label: '新增' },
-          { value: 'c', label: '禁用', disabled: true },
-        ],
-      },
-      {
-        target: 'scroll',
-        role: 'element',
-        name: '选项列表',
-        operations: ['scroll'],
-        scroll: {
-          x: 0,
-          y: 0,
-          width: 200,
-          height: 100,
-          scrollWidth: 200,
-          scrollHeight: 500,
-        },
-      },
-    ],
-    '白名单',
-  );
-  assert.deepEqual(
-    list.map((c) => [c.target, c.operation]),
-    [
-      ['new', 'CLICK'],
-      ['new', 'TYPE_TEXT'],
-      ['static', 'CLICK'],
-      ['select', 'SELECT'],
-      ['scroll', 'SCROLL_DOWN'],
-    ],
-  );
-  assert.equal(list.find((c) => c.operation === 'SELECT').value, 'b');
-});
-
 // 范围：通过完整执行循环验证两类模型共用的停滞止损；页面与模型均为夹具，不代表业务成功率。
 test('连续无变化的观察在公共执行器有界停止', async () => {
   const { report, requests } = await run(
     (context, turn, body) => {
       if (turn >= 3)
         assert(!body.tools.some((t) => t.function.name === 'browser_observe'));
-      if (turn >= 4) assert.match(context.feedback, /连续观察没有新增事实/);
+      if (turn >= 4)
+        assert.match(
+          context.feedback.map((item) => item.message ?? item.code).join(' '),
+          /连续观察没有新增事实/,
+        );
       return { type: 'browser.observe' };
     },
     (_client, execution) => {
@@ -1665,89 +1345,6 @@ test('连续无变化的观察在公共执行器有界停止', async () => {
   assert.equal(report.executionDisposition, 'BLOCKED');
   assert.equal(report.executionDetails.reasonCode, 'NO_PROGRESS');
   assert.equal(requests.length, 5);
-});
-
-// 范围：模拟 JEV HTTP 回包，验证放宽后仍保留截断说明且新增尾部按钮进入候选；不验证供应商质量。
-test('JEV 放宽动作数量并显式传递候选缺口', async () => {
-  const input = JSON.parse(jevInput('wide').text);
-  input.observation.targets = Array.from({ length: 260 }, (_, i) => ({
-    target: `button-${i}`,
-    role: 'button',
-    name: `操作 ${i}`,
-    operations: ['click'],
-  }));
-  input.observation.targets[259].change = 'added';
-  let seen;
-  const model = new JevModel(
-    { ...config, maxContextChars: 64000 },
-    'fixture',
-    'jev-fixture',
-    async (_url, _key, _method, body) => {
-      seen = body;
-      return jevAnswer(seen, 'A1');
-    },
-  );
-  const output = await model.decide(
-    { text: JSON.stringify(input) },
-    new AbortController().signal,
-  );
-  assert.equal(output.decision.target, 'button-259');
-  assert.equal(seen.state.candidateCoverage.totalActions, 260);
-  assert.ok(seen.state.candidateCoverage.returnedActions > 80);
-  assert.ok(seen.state.candidateCoverage.omittedActions > 0);
-  assert.ok(Object.keys(seen.questions.next.criteria).length <= 255);
-});
-
-// 范围：长差分也受执行器预算约束，并保留当前动作目标；模拟正文更新，不证明实际网页异步等待。
-test('长变化正文不会挤掉全部当前控件或突破上下文预算', async () => {
-  const { report } = await run(
-    (context, turn) => {
-      assert.ok(JSON.stringify(context).length <= 4000);
-      if (turn === 1)
-        return {
-          type: 'browser.act',
-          action: 'fill',
-          target: '@e1',
-          value: 'Alice',
-        };
-      assert.equal(context.changes.textTruncated, true);
-      assert.ok(context.observation.targets.length > 0);
-      return finish(context);
-    },
-    (client) => {
-      const original = client.command.bind(client);
-      client.command = async (...args) => {
-        if (args[2].action === 'fill')
-          client.pageText = '新增变化内容'.repeat(4000);
-        return original(...args);
-      };
-    },
-    { maxContextChars: 4000 },
-  );
-  assert.equal(report.verdict, 'PASSED');
-});
-
-// 范围：JEV 的停滞判断计入控件展开状态，不能仅依赖正文；输入状态为夹具。
-test('正文不变但控件展开时 JEV 不误触发停滞纠偏', async () => {
-  const { JevProgress } =
-    await import('../../apps/agent/dist/model/jev-progress.js');
-  const progress = new JevProgress();
-  for (let i = 0; i < 3; i++)
-    progress.observe(
-      {
-        ...deltaPage([
-          {
-            target: 'button',
-            role: 'combobox',
-            name: '展开',
-            expanded: i % 2 === 0,
-          },
-        ]),
-        observationId: `state-${i}`,
-      },
-      '展开下拉',
-    );
-  assert.equal(progress.reviewReason(100), undefined);
 });
 
 // 范围：原始编号要求、证据归属与更新原子性；不证明模型对证据业务含义的判断正确。
@@ -1798,73 +1395,34 @@ test('通用 workflow 不允许改写要求或用虚构证据跳过步骤', asyn
     },
     new Set(['real']),
   );
-  assert.equal(workflow.view().activeStep, 'step-2');
+  assert.equal(workflow.view().steps[1].status, 'pending');
   assert.throws(() => workflow.assertFinish({ type: 'verification.finish' }), {
     code: 'WORKFLOW_INCOMPLETE',
   });
   assert.equal(workflow.view().steps[2].requirement, '关闭详情');
 });
 
-// 范围：恢复计划跨轮保留、有界扣减、人工恢复失效；不执行实际浏览器恢复动作。
-test('恢复计划不因观察而清空，成功动作消耗预算', async () => {
-  const { Workflow } =
-    await import('../../apps/agent/dist/execution/workflow.js');
-  const workflow = new Workflow('查找商品价格');
-  workflow.apply(
-    {
-      recovery: {
-        goal: '展开筛选',
-        scope: '搜索区域',
-        terms: ['筛选'],
-        successCondition: '筛选选项可见',
-        maxActions: 2,
-      },
-    },
-    new Set(),
-  );
-  assert.equal(workflow.view().recovery.remaining, 2);
-  workflow.acted();
-  workflow.acted();
-  workflow.acted();
-  assert.equal(workflow.view().recovery.remaining, 0);
-  workflow.invalidateRecovery();
-  assert.equal(workflow.view().recovery, null);
-  assert.throws(
-    () =>
-      workflow.apply(
-        {
-          recovery: {
-            goal: '查找',
-            scope: '',
-            terms: [],
-            successCondition: '找到',
-            maxActions: 999,
-          },
-        },
-        new Set(),
-      ),
-    { code: 'INVALID_MODEL_DECISION' },
-  );
-});
-
 // 范围：真实本地模型 HTTP 与执行器共同阻止部分标准提前结束；页面与证据内容是夹具。
 test('LLM 必须记录显式任务各步骤，不能只按唯一 criterion 提前结束', async () => {
   const { report, requests } = await run(
     (context, turn, body) => {
-      assert.ok(body.tools[0].function.parameters.properties.workflow);
+      assert.ok(body.tools[0].function.parameters.properties.progress);
       if (turn === 1) return finish(context);
       if (turn === 2) {
-        assert.match(context.feedback, /未完成步骤/);
+        assert.match(
+          context.feedback.map((item) => item.message ?? item.code).join(' '),
+          /未完成步骤/,
+        );
         return { type: 'browser.act', action: 'click', target: '@e2' };
       }
       return {
         ...finish(context),
         workflow: {
-          assessments: context.workflow.steps.map((s) => ({
+          assessments: context.state.requirements.map((s) => ({
             stepId: s.id,
             outcome: 'complete',
             summary: '当前夹具展示已提交状态',
-            evidenceRefs: [context.observation.artifactRefs[0].artifactId],
+            evidenceRefs: [context.page.artifactRefs[0].artifactId],
           })),
         },
       };
@@ -1875,100 +1433,6 @@ test('LLM 必须记录显式任务各步骤，不能只按唯一 criterion 提�
   );
   assert.equal(report.verdict, 'PASSED');
   assert.equal(requests.length, 3);
-});
-
-// 范围：步骤相关性与区域排序优先于无关新增控件；未知 portal、全局导航和退出入口仍可恢复。
-test('当前阶段优先且不硬删除其他区域候选', async () => {
-  const { candidates } =
-    await import('../../apps/agent/dist/model/candidates.js');
-  const targets = [
-    {
-      target: 'later',
-      role: 'button',
-      name: '新增商品',
-      change: 'added',
-      region: { key: 'main', role: 'main', name: '主区' },
-    },
-    {
-      target: 'search',
-      role: 'combobox',
-      name: '类型',
-      operations: ['click'],
-      region: { key: 'search', role: 'form', name: '搜索区域' },
-    },
-    {
-      target: 'dialog',
-      role: 'combobox',
-      name: '类型',
-      operations: ['click'],
-      region: { key: 'dialog', role: 'dialog', name: '新增弹窗' },
-    },
-    { target: 'portal', role: 'option', name: '所有类别' },
-    { target: 'close', role: 'button', name: 'Close' },
-    { target: 'nav', role: 'link', name: '首页' },
-  ];
-  const result = candidates(targets, '检查类型', { scope: '搜索区域' });
-  assert.equal(result[0].target, 'search');
-  assert.equal(
-    result.find((c) => c.target === 'dialog').field.region.name,
-    '新增弹窗',
-  );
-  assert.deepEqual(
-    new Set(result.map((c) => c.target)),
-    new Set(targets.map((t) => t.target)),
-  );
-});
-
-// 范围：JEV 与 LLM 审查之间传递同一份阶段和恢复元数据；不调用真实模型或推断其选择质量。
-test('JEV 审查输出的计划沿用到下一轮并保留完成元数据', async () => {
-  const { Workflow } =
-    await import('../../apps/agent/dist/execution/workflow.js');
-  const workflow = new Workflow('1. 查看目录\n2. 检查详情');
-  const update = {
-    recovery: {
-      goal: '定位目录',
-      scope: '目录',
-      terms: ['目录'],
-      successCondition: '目录可见',
-      maxActions: 3,
-    },
-  };
-  let calls = 0;
-  const model = new JevModel(
-    { ...config, maxContextChars: 64000 },
-    'fixture',
-    'jev-fixture',
-    async (_u, _k, _m, body) => {
-      calls++;
-      assert.equal(body.state.workflow.activeStep, 'step-1');
-      if (calls === 1) return jevAnswer(body, 'REPLAN');
-      assert.equal(body.state.workflow.recovery.remaining, 3);
-      return jevAnswer(body, 'A1');
-    },
-    {
-      async decide() {
-        return {
-          decision: { type: 'browser.observe' },
-          workflow: update,
-          promptTokens: 1,
-          completionTokens: 1,
-        };
-      },
-    },
-  );
-  const input = jevInput('plan');
-  let ctx = JSON.parse(input.text);
-  ctx.workflow = workflow.view();
-  input.text = JSON.stringify(ctx);
-  const output = await model.decide(input, new AbortController().signal);
-  assert.deepEqual(output.workflow, update);
-  workflow.apply(output.workflow, new Set());
-  ctx.workflow = workflow.view();
-  ctx.observation.observationId = 'plan-2';
-  ctx.observation.text = '目录已显示';
-  input.text = JSON.stringify(ctx);
-  await model.decide(input, new AbortController().signal);
-  assert.equal(calls, 2);
 });
 
 // 范围：公共执行器识别 ABAB 循环且两种模型端口一致；不将页面变化模拟为真实业务完成。
@@ -2034,164 +1498,6 @@ test('任务拆分保留延续行，简单任务无需单独规划请求', async
   assert.match(multi.view().steps[1].requirement, /不提交变更/);
 });
 
-// 范围：重复计划不续费、局部计划执行期不触发周期审查、被动观察不清除循环；不测试供应商推理。
-test('恢复预算和循环记录不能被重规划或被动等待绕过', async () => {
-  const { Workflow } =
-    await import('../../apps/agent/dist/execution/workflow.js');
-  const { JevProgress } =
-    await import('../../apps/agent/dist/model/jev-progress.js');
-  const { ObservationTracker } =
-    await import('../../apps/agent/dist/evidence/changes.js');
-  const workflow = new Workflow('查看详情');
-  const recovery = {
-    goal: '展开',
-    scope: '',
-    terms: [],
-    successCondition: '详情可见',
-    maxActions: 1,
-  };
-  workflow.apply({ recovery }, new Set());
-  workflow.acted();
-  workflow.apply({ recovery: { ...recovery, maxActions: 6 } }, new Set());
-  assert.equal(workflow.view().recovery.remaining, 0);
-  assert.throws(
-    () => workflow.assertAction({ type: 'browser.act', action: 'click' }),
-    { code: 'WORKFLOW_RECOVERY_EXHAUSTED' },
-  );
-  // 切换策略后返回耗尽计划、改预算或词序也不能续费；人工交接后才允许新恢复。
-  workflow.apply({ recovery: { ...recovery, goal: '滚动定位' } }, new Set());
-  assert.equal(workflow.view().recovery.remaining, 1);
-  workflow.apply(
-    { recovery: { ...recovery, goal: ' 展开 ', maxActions: 6 } },
-    new Set(),
-  );
-  assert.equal(workflow.view().recovery.remaining, 0);
-  workflow.invalidateRecovery();
-  workflow.apply({ recovery }, new Set());
-  assert.equal(workflow.view().recovery.remaining, 1);
-  const progress = new JevProgress();
-  for (let i = 0; i < 3; i++)
-    progress.observe(
-      JSON.parse(jevInput('cooldown-' + i).text).observation,
-      '目标',
-    );
-  assert.equal(progress.reviewReason(90, true), undefined);
-  assert.match(progress.reviewReason(3, true), /预算/);
-  const tracker = new ObservationTracker();
-  const page = (text) =>
-    JSON.parse(jevInput('cycle-' + text, text).text).observation;
-  tracker.observe(page('A'));
-  tracker.observe(page('B'));
-  tracker.observe(page('A'));
-  tracker.observe(page('A'), false);
-  tracker.reset(true);
-  tracker.observe(page('B'));
-  assert.equal(tracker.observe(page('A')).repeatedStateVisits, 3);
-});
-
-// 范围：允许探索任务调整访问顺序，但未访问的原要求不能被删除；不验证真实页面分支。
-test('调整阶段顺序不等于完成或丢弃其余要求', async () => {
-  const { Workflow } =
-    await import('../../apps/agent/dist/execution/workflow.js');
-  const workflow = new Workflow('1. 检查目录\n2. 查看详情');
-  workflow.apply({ activeStep: 'step-2' }, new Set());
-  assert.equal(workflow.view().steps[0].status, 'pending');
-  workflow.apply(
-    {
-      assessments: [
-        {
-          stepId: 'step-2',
-          outcome: 'complete',
-          summary: '详情可见',
-          evidenceRefs: ['fact'],
-        },
-      ],
-    },
-    new Set(['fact']),
-  );
-  assert.equal(workflow.view().activeStep, 'step-1');
-  assert.throws(() => workflow.assertFinish({ type: 'verification.finish' }), {
-    code: 'WORKFLOW_INCOMPLETE',
-  });
-});
-
-// 范围：阶段证据齐全时直接审查，不额外付一次 JEV 选择；最终业务判定仍由文本模型和执行器承担。
-test('JEV 已完成全部阶段时直接进入最终审查', async () => {
-  const input = jevInput('all-done');
-  const context = JSON.parse(input.text);
-  context.workflow = {
-    steps: [],
-    activeStep: null,
-    recovery: null,
-    revision: 1,
-  };
-  input.text = JSON.stringify(context);
-  let reviews = 0;
-  const model = new JevModel(
-    config,
-    'fixture',
-    'jev-fixture',
-    async () => {
-      throw new Error('不应再选择动作');
-    },
-    {
-      async decide(i) {
-        reviews++;
-        assert.match(JSON.parse(i.text).feedback, /全部原始步骤/);
-        return {
-          decision: { type: 'verification.block', summary: '夹具仅验证路由' },
-          promptTokens: 0,
-          completionTokens: 0,
-        };
-      },
-    },
-  );
-  await model.decide(input, new AbortController().signal);
-  assert.equal(reviews, 1);
-});
-
-// 范围：JEV 选择、本地 HTTP 文本审查、进度元数据和公共完成门槛贯通；所有业务页面和推理选择均为夹具。
-test('混合执行端到端保留完成声明且不增加独立规划请求', async () => {
-  const server = await modelServer((context) => ({
-    ...finish(context),
-    workflow: {
-      assessments: context.workflow.steps.map((s) => ({
-        stepId: s.id,
-        outcome: 'complete',
-        summary: '提交动作后观察到结果',
-        evidenceRefs: [context.observation.artifactRefs[0].artifactId],
-      })),
-    },
-  }));
-  const execution = grant();
-  execution.task.objective = '1. 提交表单\n2. 核对提交结果';
-  const settings = { ...config, modelUrl: server.url, thinking: 'disabled' };
-  let selections = 0;
-  const model = new JevModel(
-    settings,
-    'fixture',
-    'jev-fixture',
-    async (_u, _k, _m, body) => {
-      selections++;
-      const selected = Object.entries(body.questions.next.criteria).find(
-        ([, c]) => c.operation === 'CLICK' && c.field.name === '提交',
-      )?.[0];
-      return jevAnswer(body, selections === 1 ? selected : 'VERIFY');
-    },
-  );
-  try {
-    const report = await execute(settings, new FakeControl(), model, execution);
-    assert.equal(report.verdict, 'PASSED');
-    assert.equal(report.executionDetails.modelCalls, 3);
-    assert.equal(selections, 2);
-    assert.equal(server.requests.length, 1);
-    assert.deepEqual(server.requests[0].thinking, { type: 'disabled' });
-    assert.deepEqual(server.errors, []);
-  } finally {
-    await server.close();
-  }
-});
-
 // 范围：区域语义变化影响差分，临时路径变化不算进展；使用同一节点夹具，不验证真实重挂载布局。
 test('同名控件移动到不同语义区域时产生变化', () => {
   const tracker = new ObservationTracker();
@@ -2216,56 +1522,6 @@ test('同名控件移动到不同语义区域时产生变化', () => {
   );
 });
 
-// 范围：重新进入已完成入口、撤销不充分声明和重新补证；不自动判断自然语言证据的业务含义。
-test('步骤可重新进入并降级，重复补证不能清空循环预算', async () => {
-  const { Workflow } =
-    await import('../../apps/agent/dist/execution/workflow.js');
-  const flow = new Workflow('1. 打开弹窗\n2. 检查所有选项\n3. 关闭弹窗');
-  const assess = (stepId, outcome) => ({
-    stepId,
-    outcome,
-    summary: '夹具评估',
-    evidenceRefs: outcome === 'complete' ? ['real'] : [],
-  });
-  flow.apply(
-    {
-      assessments: [
-        assess('step-1', 'complete'),
-        assess('step-2', 'incomplete'),
-      ],
-      activeStep: 'step-3',
-    },
-    new Set(['real']),
-  );
-  flow.apply({ activeStep: 'step-1' }, new Set());
-  assert.equal(flow.view().activeStep, 'step-1');
-  flow.apply(
-    {
-      recovery: {
-        goal: '重新打开',
-        scope: '详情',
-        terms: [],
-        successCondition: '弹窗可见',
-        maxActions: 1,
-      },
-    },
-    new Set(),
-  );
-  assert.equal(flow.view().activeStep, 'step-1');
-  assert.equal(flow.view().steps[1].status, 'incomplete');
-  flow.apply({ assessments: [assess('step-1', 'blocked')] }, new Set());
-  assert.equal(flow.view().steps[0].status, 'blocked');
-  assert.throws(() => flow.assertFinish({ type: 'verification.finish' }), {
-    code: 'WORKFLOW_INCOMPLETE',
-  });
-  flow.apply(
-    { assessments: [assess('step-1', 'complete')] },
-    new Set(['real']),
-  );
-  assert.equal(flow.view().revision, 1);
-  assert.equal(flow.view().activeStep, 'step-2');
-});
-
 // 范围：部分取证被拒绝后有界交付阻塞报告，不能升级为模型协议错误；页面为夹具。
 test('连续提前结束返回 BLOCKED 并保留未完成原因', async () => {
   const { report, requests } = await run(
@@ -2278,35 +1534,6 @@ test('连续提前结束返回 BLOCKED 并保留未完成原因', async () => {
   assert.equal(report.executionDisposition, 'BLOCKED');
   assert.equal(report.verdict, null);
   assert.match(JSON.stringify(report), /WORKFLOW_INCOMPLETE/);
-});
-
-// 范围：公共执行器的未完成反馈直接进入 LLM 恢复，不能再让 JEV 选择无关动作；不请求远端模型。
-test('JEV 收到工作流恢复反馈时直接交接审查', async () => {
-  const { JevModel } = await import('../../apps/agent/dist/model/jev.js');
-  let reviews = 0;
-  const model = new JevModel(
-    config,
-    'fixture',
-    'jev-test',
-    async () => {
-      throw new Error('不应请求 JEV');
-    },
-    {
-      async decide(input) {
-        reviews++;
-        assert.match(JSON.parse(input.text).feedback, /WORKFLOW_INCOMPLETE/);
-        return { decision: { type: 'browser.observe' } };
-      },
-    },
-  );
-  const input = jevInput('recovery-feedback', '测试页面');
-  const context = JSON.parse(input.text);
-  context.feedback = 'WORKFLOW_INCOMPLETE: 未完成步骤 step-2';
-  await model.decide(
-    { ...input, text: JSON.stringify(context) },
-    new AbortController().signal,
-  );
-  assert.equal(reviews, 1);
 });
 
 /** 创建已由服务端排序的步骤夹具；只检验执行器，不模拟网页业务成功。 */
@@ -2339,15 +1566,15 @@ test('结构化步骤逐个执行并独立保存结果，不向模型暴露后�
   const seen = [];
   const { report, client } = await run(
     (context) => {
-      seen.push(context.executionStep.stepId);
+      seen.push(context.task.stepId);
       assert.equal(context.task.steps, undefined);
       assert.deepEqual(
-        context.executionStep.policy,
+        context.task.policy,
         seen.length === 1 ? ['整数范围 500～10000'] : [],
       );
       return {
         ...finish(context),
-        evidenceRefs: context.observation.artifactRefs.map((a) => a.artifactId),
+        evidenceRefs: context.page.artifactRefs.map((a) => a.artifactId),
       };
     },
     (client, execution) => {
@@ -2379,7 +1606,7 @@ test('结构化步骤逐个执行并独立保存结果，不向模型暴露后�
 test('setup 验收不通过时拦截后续业务', async () => {
   const { report, client } = await run(
     (context) => {
-      assert.equal(context.executionStep.stepId, 'step-1');
+      assert.equal(context.task.stepId, 'step-1');
       const result = finish(context);
       result.criteria[0].verdict = 'FAILED';
       return result;
@@ -2407,7 +1634,7 @@ test('setup 验收不通过时拦截后续业务', async () => {
 test('后续步骤受阻仍保留前面通过的验收', async () => {
   const { report } = await run(
     (context) =>
-      context.executionStep.stepId === 'step-1'
+      context.task.stepId === 'step-1'
         ? finish(context)
         : { type: 'verification.block', summary: '缺少必要数据' },
     (_client, execution) => structuredGrant(execution, [{}, {}]),
@@ -2489,37 +1716,6 @@ test('setup 空标准不能在没有证据时直接完成', async () => {
   assert.equal(report.executionDisposition, 'ERROR');
   assert.equal(report.steps[0].status, 'ERROR');
   assert.equal(report.steps[1].status, 'SKIPPED');
-});
-
-// 范围：结构化步骤切换重置 JEV 局部停滞，模型总调用仍累计；不调用真实供应商。
-test('JEV 按结构化步骤独立检查相同页面，不跨步骤累加停滞', async () => {
-  const phases = [];
-  const server = await modelServer((context) => {
-    phases.push(context.executionStep.stepId);
-    assert.equal(context.jevProgress.unchangedObservations, 0);
-    return {
-      ...finish(context),
-      evidenceRefs: context.observation.artifactRefs.map((a) => a.artifactId),
-    };
-  });
-  const execution = grant();
-  structuredGrant(execution, [{ type: 'setup', expected: [] }, {}]);
-  const settings = { ...config, modelUrl: server.url, maxContextChars: 20000 };
-  const model = new JevModel(
-    settings,
-    'fixture',
-    'jev-fixture',
-    async (_url, _key, _method, body) => jevAnswer(body, 'VERIFY'),
-  );
-  try {
-    const report = await execute(settings, new FakeControl(), model, execution);
-    assert.equal(report.verdict, 'PASSED');
-    assert.deepEqual(phases, ['step-1', 'step-2']);
-    assert.equal(report.executionDetails.modelCalls, 4);
-    assert.deepEqual(server.errors, []);
-  } finally {
-    await server.close();
-  }
 });
 
 // 范围：截图与 TRACE 延迟超过浏览器命令预算后仍可交付；浏览器、模型和上传均为夹具。
@@ -2870,11 +2066,11 @@ test('cleanup 在原任务末尾串行执行，只提交一次报告', async () 
   const seen = [];
   const { report, client } = await run(
     (context) => {
-      seen.push(context.executionStep.stepId);
+      seen.push(context.task.stepId);
       assert.equal(context.task.cleanupStepIds, undefined);
       return {
         ...finish(context),
-        evidenceRefs: context.observation.artifactRefs.map((a) => a.artifactId),
+        evidenceRefs: context.page.artifactRefs.map((a) => a.artifactId),
       };
     },
     (_client, execution) => {
@@ -2901,8 +2097,8 @@ test('业务失败或阻塞后继续后续业务和清理，保留原结论', as
     const seen = [];
     const { report, client } = await run(
       (context) => {
-        seen.push(context.executionStep.stepId);
-        if (context.executionStep.stepId === 'step-1') {
+        seen.push(context.task.stepId);
+        if (context.task.stepId === 'step-1') {
           if (mode === 'blocked')
             return { type: 'verification.block', summary: '夹具阻塞' };
           const result = finish(context);
@@ -2911,9 +2107,7 @@ test('业务失败或阻塞后继续后续业务和清理，保留原结论', as
         }
         return {
           ...finish(context),
-          evidenceRefs: context.observation.artifactRefs.map(
-            (a) => a.artifactId,
-          ),
+          evidenceRefs: context.page.artifactRefs.map((a) => a.artifactId),
         };
       },
       (_client, execution) => {
@@ -2943,7 +2137,7 @@ test('清理自身阻塞后继续后续清理，保留业务验收', async () =>
   const seen = [];
   const { report } = await run(
     (context) => {
-      seen.push(context.executionStep.stepId);
+      seen.push(context.task.stepId);
       return seen.length === 1
         ? finish(context)
         : { type: 'verification.block', summary: '夹具清理受阻' };
@@ -2999,56 +2193,11 @@ test('取消原任务后不会进入 cleanup', async () => {
   );
 });
 
-// 范围：结构化第二步与自定义身份贯通模型 workflow，说明中的编号不再次拆步；不调用真实模型。
-test('结构化 workflow 使用当前 stepId，避免第二步被误判非法', async () => {
-  const seen = [];
-  const { report } = await run(
-    (context) => {
-      const id = context.executionStep.stepId;
-      seen.push(id);
-      assert.equal(context.workflow.activeStep, id);
-      assert.deepEqual(
-        context.workflow.steps.map((s) => s.id),
-        [id],
-      );
-      return {
-        ...finish(context),
-        workflow: {
-          activeStep: id,
-          assessments: [
-            {
-              stepId: id,
-              outcome: 'complete',
-              summary: '本步已有证据',
-              evidenceRefs: context.observation.artifactRefs.map(
-                (a) => a.artifactId,
-              ),
-            },
-          ],
-        },
-      };
-    },
-    (_client, execution) => {
-      structuredGrant(execution, [
-        {},
-        { description: '1. 检查提示\n2. 检查奖励' },
-      ]);
-    },
-  );
-  assert.deepEqual(seen, ['step-1', 'step-2']);
-  assert.equal(report.verdict, 'PASSED');
-  const workflow = new Workflow('1. 内容\n2. 内容', 'custom-check');
-  assert.deepEqual(
-    workflow.view().steps.map((s) => s.id),
-    ['custom-check'],
-  );
-});
-
 // 范围：局部模型错误耗尽重试后仍尝试下一业务步骤，保存错误证据和成功项；取消/租约另有测试，不模拟真实供应商故障。
 test('一个步骤模型错误不会跳过后续独立业务步骤', async () => {
   const { report, client } = await run(
     (context) =>
-      context.executionStep.stepId === 'step-1'
+      context.task.stepId === 'step-1'
         ? { type: 'browser.act', action: 'click', target: 'not-registered' }
         : finish(context),
     (_client, execution) => structuredGrant(execution, [{}, {}]),
@@ -3163,10 +2312,10 @@ test('DOM 观察持续失败有上限，并保留后续独立步骤与清理机�
   const seen = [];
   const { report, client } = await run(
     (context) => {
-      seen.push(context.executionStep.stepId);
+      seen.push(context.task.stepId);
       return {
         ...finish(context),
-        evidenceRefs: context.observation.artifactRefs.map((a) => a.artifactId),
+        evidenceRefs: context.page.artifactRefs.map((a) => a.artifactId),
       };
     },
     (client, execution) => {
@@ -3247,7 +2396,7 @@ for (const kind of ['model', 'action', 'time']) {
     const seen = [];
     const { report, client } = await run(
       async (context) => {
-        const id = context.executionStep.stepId;
+        const id = context.task.stepId;
         seen.push(id);
         if (id === 'step-1') {
           if (kind === 'time') await pause(300);
@@ -3259,19 +2408,11 @@ for (const kind of ['model', 'action', 'time']) {
           };
         }
         // 验证步有收尾额度，清理仍使用独立的原始十次动作上限。
-        assert.equal(
-          context.budgetRemaining.modelCalls,
-          id === 'step-2' ? 24 : 20,
-        );
-        assert.equal(
-          context.budgetRemaining.actions,
-          id === 'step-2' ? 12 : 10,
-        );
+        assert.equal(context.budget.modelCalls, id === 'step-2' ? 24 : 20);
+        assert.equal(context.budget.actions, id === 'step-2' ? 12 : 10);
         return {
           ...finish(context),
-          evidenceRefs: context.observation.artifactRefs.map(
-            (a) => a.artifactId,
-          ),
+          evidenceRefs: context.page.artifactRefs.map((a) => a.artifactId),
         };
       },
       (_client, execution) => {
@@ -3293,7 +2434,9 @@ for (const kind of ['model', 'action', 'time']) {
     );
     assert.equal(
       report.steps[0].reasonCode,
-      `STEP_${{ model: 'MODEL', action: 'ACTION', time: 'TIME' }[kind]}_BUDGET_EXCEEDED`,
+      kind === 'model'
+        ? 'EVIDENCE_INCOMPLETE'
+        : `STEP_${{ action: 'ACTION', time: 'TIME' }[kind]}_BUDGET_EXCEEDED`,
     );
     assert.equal(report.steps[0].budgetUsage.modelCalls, 1);
     assert.equal(report.steps[1].budgetUsage.modelCalls, 1);
@@ -3310,7 +2453,7 @@ test('整段清理共享独立模型预算，不能每条清理重新充值', as
   const { report } = await run(
     (context) => ({
       ...finish(context),
-      evidenceRefs: context.observation.artifactRefs.map((a) => a.artifactId),
+      evidenceRefs: context.page.artifactRefs.map((a) => a.artifactId),
     }),
     (_client, execution) => {
       structuredGrant(execution, [
@@ -3398,10 +2541,15 @@ test('业务人工等待暂停剩余时间，清理不暂停，旧步骤快照�
 test('新预算保留无进展保护与后续步骤前置条件检查', async () => {
   const { report } = await run(
     (context) => {
-      if (context.executionStep.stepId === 'step-1')
-        return { type: 'browser.observe' };
-      assert.match(context.task.objective, /前序异常：step-1/);
-      assert.match(context.task.objective, /核实本步必要条件/);
+      if (context.task.stepId === 'step-1') return { type: 'browser.observe' };
+      assert.match(
+        context.feedback.map((item) => item.message ?? item.code).join(' '),
+        /前序异常：step-1/,
+      );
+      assert.match(
+        context.feedback.map((item) => item.message ?? item.code).join(' '),
+        /核实本步必要条件/,
+      );
       return {
         type: 'verification.block',
         summary: '本步必要的访客状态尚未建立，不能判通过',
@@ -3424,7 +2572,7 @@ test('步骤时间到期不中断在途动作，确认结果后继续下一步',
   let settled = false;
   const { report } = await run(
     (context) => {
-      if (context.executionStep.stepId === 'step-1')
+      if (context.task.stepId === 'step-1')
         return {
           type: 'browser.act',
           action: 'fill',
@@ -3461,10 +2609,10 @@ test('setup 身份缺失禁止执行后续业务及清理', async () => {
   const seen = [];
   const { report } = await run(
     (context) => {
-      seen.push(context.executionStep.stepId);
+      seen.push(context.task.stepId);
       return {
         ...finish(context),
-        evidenceRefs: context.observation.artifactRefs.map((a) => a.artifactId),
+        evidenceRefs: context.page.artifactRefs.map((a) => a.artifactId),
       };
     },
     (_client, execution) => {
@@ -3498,7 +2646,7 @@ test('自动登录仅准备一次且不占业务动作额度', async () => {
   const { report, client } = await run(
     (context) => ({
       ...finish(context),
-      evidenceRefs: context.observation.artifactRefs.map((a) => a.artifactId),
+      evidenceRefs: context.page.artifactRefs.map((a) => a.artifactId),
     }),
     (client, execution) => {
       structuredGrant(execution, [{}, {}]);
@@ -3643,9 +2791,7 @@ test('结构化登录和角色确认共用一次环境准备人工请求', async
           workflow,
           decision: {
             ...decision,
-            evidenceRefs: context.observation.artifactRefs.map(
-              (a) => a.artifactId,
-            ),
+            evidenceRefs: context.page.artifactRefs.map((a) => a.artifactId),
           },
           promptTokens: 0,
           completionTokens: 0,
@@ -3703,18 +2849,57 @@ test('本步未声明条件时仍向模型提供有效的准备人工确认', as
     {
       async decide(input) {
         const context = JSON.parse(input.text);
-        if (context.executionStep.type === 'setup' && requests > 0) {
-          assert.match(context.feedback, /人工已交还/);
-          assert.match(context.feedback, /未确认、失效或冲突/);
-          assert.equal(context.preconditions[0].status, 'SATISFIED');
+        if (
+          ['PREPARING', 'CHECKING'].includes(context.state.phase) &&
+          requests > 0
+        ) {
+          assert.match(
+            context.feedback.map((item) => item.message ?? item.code).join(' '),
+            /人工已交还/,
+          );
+          assert.match(
+            context.feedback.map((item) => item.message ?? item.code).join(' '),
+            /未确认、失效或冲突/,
+          );
+          assert.equal(
+            context.state.conditions
+              .filter((item) => item.scope === 'current')
+              .map(({ scope: _scope, ...item }) => item)[0].status,
+            'SATISFIED',
+          );
         }
-        if (context.executionStep.type === 'verification') {
+        if (context.state.phase === 'VERIFYING') {
           seen = true;
-          assert.deepEqual(context.preconditions, []);
-          assert.equal(context.sessionPreconditions.length, 1);
-          assert.equal(context.sessionPreconditions[0].id, 'account');
-          assert.equal(context.sessionPreconditions[0].source, 'human');
-          assert.equal(context.sessionPreconditions[0].status, 'SATISFIED');
+          assert.deepEqual(
+            context.state.conditions
+              .filter((item) => item.scope === 'current')
+              .map(({ scope: _scope, ...item }) => item),
+            [],
+          );
+          assert.equal(
+            context.state.conditions
+              .filter((item) => item.scope === 'preparation')
+              .map(({ scope: _scope, ...item }) => item).length,
+            1,
+          );
+          assert.equal(
+            context.state.conditions
+              .filter((item) => item.scope === 'preparation')
+              .map(({ scope: _scope, ...item }) => item)[0].id,
+            'account',
+          );
+          assert.equal(
+            context.state.conditions
+              .filter((item) => item.scope === 'preparation')
+              .map(({ scope: _scope, ...item }) => item)[0].source,
+            'human',
+          );
+          assert.equal(
+            context.state.conditions
+              .filter((item) => item.scope === 'preparation')
+              .map(({ scope: _scope, ...item }) => item)[0].status,
+            'SATISFIED',
+          );
         }
         const { workflow, ...decision } = finish(context);
         return { workflow, decision, promptTokens: 0, completionTokens: 0 };
@@ -3726,85 +2911,3 @@ test('本步未声明条件时仍向模型提供有效的准备人工确认', as
   assert.equal(requests, 1);
   assert.equal(report.verdict, 'PASSED');
 });
-
-// 范围：JEV 分组实例并发时页面历史互不混入；请求为内存夹具，不调用真实供应商。
-test('JEV profile tab 实例隔离跨轮历史', async () => {
-  const { JevModel } = await import('../../apps/agent/dist/model/jev.js');
-  const calls = [];
-  const root = new JevModel(
-    config,
-    'fixture',
-    'jev-test',
-    async (_url, _key, _method, body) => {
-      calls.push(body);
-      return jevAnswer(body, 'A1');
-    },
-  );
-  const a = root.fork();
-  const b = root.fork();
-  const signal = new AbortController().signal;
-  await Promise.all([
-    a.decide(jevInput('a', '甲组独有页面'), signal),
-    b.decide(jevInput('b', '乙组独有页面'), signal),
-  ]);
-  await a.decide(jevInput('a2', '甲组后续页面'), signal);
-  assert.equal(calls.length, 3);
-  for (const call of calls) {
-    const history = JSON.stringify(call.state.previousObservations);
-    if (call.state.observation.text.includes('甲组'))
-      assert(!history.includes('乙组'));
-    else assert(!history.includes('甲组'));
-  }
-});
-
-// 范围：JEV 不能绕过共享环境声明、面板读取或失败恢复审查；模型端口均为夹具。
-for (const kind of [
-  'environment',
-  'reading',
-  'recovery',
-  'preparation',
-  'criteria',
-])
-  test(`JEV 将 ${kind} 交由文本模型核实`, async () => {
-    const { JevModel } = await import('../../apps/agent/dist/model/jev.js');
-    let reviews = 0;
-    const model = new JevModel(
-      config,
-      'fixture',
-      'jev-test',
-      async () => {
-        throw new Error('此阶段不应提出新的 JEV 动作');
-      },
-      {
-        async decide(input) {
-          reviews++;
-          if (kind === 'reading')
-            assert.match(JSON.parse(input.text).feedback, /workflow.readings/);
-          if (kind === 'preparation')
-            assert.match(JSON.parse(input.text).feedback, /PREPARATION_REVIEW/);
-          if (kind === 'criteria')
-            assert.match(
-              JSON.parse(input.text).feedback,
-              /verification_record/,
-            );
-          return { decision: { type: 'browser.observe' } };
-        },
-      },
-    );
-    const input = jevInput('policy-review');
-    const context = JSON.parse(input.text);
-    if (kind === 'environment') context.environmentReview = { required: true };
-    if (kind === 'reading')
-      context.interactionProgress = { items: [{ status: 'observed' }] };
-    if (kind === 'recovery')
-      context.feedback = 'INTERACTION_RECOVERY_REQUIRED: 遮挡条件未改变';
-    if (kind === 'preparation')
-      context.feedback = 'PREPARATION_REVIEW: 复核指定语言准备操作';
-    if (kind === 'criteria')
-      context.verificationReview = { pendingCriterionIds: ['submitted'] };
-    await model.decide(
-      { text: JSON.stringify(context) },
-      new AbortController().signal,
-    );
-    assert.equal(reviews, 1);
-  });

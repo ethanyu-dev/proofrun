@@ -1,3 +1,4 @@
+import { seedHistoricalPair } from './historical-comparison.js';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
@@ -18,7 +19,7 @@ const ADMIN = 'case-run-admin-fixture';
 const PROFILE: CaseProfile = {
   environment: { id: 'fixture', nodePool: 'fixture' },
   budget: { timeoutMs: 60000, maxActions: 20 },
-  executionMode: 'parallel' as const,
+  executionMode: 'llm' as const,
   evidenceKinds: ['DOM' as const],
 };
 /** 固定业务定义用于确认重跑不会复制出新的业务 case。 */
@@ -106,6 +107,7 @@ test('稳定 case 运行历史与软删除集成', { timeout: 60_000 }, async (s
   const submit = async (requestId: string, cases: string[]) => {
     const r = await call('/v2/cases', { requestId, cases: cases.map(example) });
     assert.equal(r.statusCode, 202, r.body);
+    for (const id of cases) await seedHistoricalPair(sql, `case-v2-${id}`);
     return r.json();
   };
   /** 报告结果与历史汇总用量为测试输入，只验证数据库过滤和聚合。 */
@@ -436,21 +438,27 @@ test('稳定 case 运行历史与软删除集成', { timeout: 60_000 }, async (s
       );
     });
     // 范围：旧普通任务的 sourceTaskId 是溯源身份，删除仅按 comparison.id 成组；不执行真实对比。
-    await suite.test('普通对照运行删除不追溯删除来源任务', async () => {
+    await suite.test('历史对照运行删除同时移除两组', async () => {
       const original = { ...task('fixture'), taskId: 'ordinary-source' };
       assert.equal((await call('/v1/tasks', original)).statusCode, 202);
-      const paired = await call('/v1/tasks/ordinary-source/compare', {
-        comparisonId: 'ordinary-pair',
-      });
-      assert.equal(paired.statusCode, 200, paired.body);
-      await sql.query(
-        "UPDATE pr_tasks SET state='COMPLETED',finished_at=clock_timestamp() WHERE id IN ('ordinary-source','ordinary-pair-llm','ordinary-pair-jev')",
+      // 历史比较直接导入，退役入口不会再生成双跑。
+      assert.equal(
+        (await call('/v1/tasks', { ...original, taskId: 'historical-pair' }))
+          .statusCode,
+        202,
       );
-      const removed = await call('/v1/tasks/ordinary-pair-jev/delete', {});
+      await seedHistoricalPair(sql, 'historical-pair', 'ordinary-source');
+      await sql.query(
+        "UPDATE pr_tasks SET state='COMPLETED',finished_at=clock_timestamp() WHERE id IN ('ordinary-source','historical-pair','comparison-historical-pair-jev')",
+      );
+      const removed = await call(
+        '/v1/tasks/comparison-historical-pair-jev/delete',
+        {},
+      );
       assert.equal(removed.statusCode, 200, removed.body);
       assert.deepEqual(
         new Set(removed.json().deletedTaskIds),
-        new Set(['ordinary-pair-llm', 'ordinary-pair-jev']),
+        new Set(['historical-pair', 'comparison-historical-pair-jev']),
       );
       assert.equal((await call('/v1/tasks/ordinary-source')).statusCode, 200);
     });

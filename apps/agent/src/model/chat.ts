@@ -1,8 +1,6 @@
 import type { DecisionContextData } from '../execution/context.js';
 import { decisionTools, type DecisionTool } from './tools.js';
-import { compactDecisionText, requestContext } from './decision-view.js';
-import { CONCLUSION_RULES, SETTLEMENT_RULES } from '../prompts/settlement.js';
-import { SYSTEM_PROMPT } from '../prompts/decision.js';
+import { decisionPrompt } from '../prompts/decision.js';
 import {
   agentDecisionSchema,
   validateAgentDecision,
@@ -15,8 +13,6 @@ import type { AgentConfig } from '../config.js';
 import { AgentFault, jsonRequest } from '../http.js';
 import { modelRequest } from './request.js';
 import type { WorkflowUpdate } from '../execution/workflow.js';
-import type { Observation } from '../evidence/observation.js';
-import { PLANNED_RULES } from '../prompts/planned.js';
 import { reasoningParameters, toolChoice } from './reasoning.js';
 
 /** 将封闭协议的各分支映射成独立工具，避免供应商遗漏嵌套联合对象的外层字段。 */
@@ -54,7 +50,7 @@ export interface DecisionInput {
       result: Extract<ModelCallWrite, { phase: 'finish' }>['result'],
     ) => Promise<void>
   >;
-  /** 每次真实 HTTP 模型请求前扣预算；混合策略的子请求也必须登记。 */
+  /** 每次真实 HTTP 模型请求前扣预算。 */
   recordRequest?: (model: string) => void;
   /** 只登记服务实际返回的用量，异常或缺失 usage 不推算。 */
   recordUsage?: (model: string, input: number, output: number) => void;
@@ -64,26 +60,18 @@ export interface DecisionInput {
   modelDeadline?: number;
   /** 同一裁剪快照的类型化副本；旧调用端只提供 text 时仍兼容。 */
   context?: DecisionContextData;
-  /** 复核添加诊断后仍使用同一字符上限。 */
-  contextLimit?: number;
   /** 可选的一张当前截图，已经核实归属、格式与 SHA-256。 */
   image?: string;
-  /** 执行器保留的原始观察副本，供专用适配器独立裁剪；不直接发送给文本模型。 */
-  observation?: Observation;
 }
 /** 一次模型调用的结构化结果，token 数仅来自服务回复。 */
 export interface DecisionOutput {
   decision: AgentDecision;
-  /** 可选的证据进度与恢复计划，由公共执行器验证并保存。 */
+  /** 可选的证据进度，由公共执行器验证并保存。 */
   workflow?: WorkflowUpdate;
   /** 仅引用本轮动作前已有证据，公共执行器先保存再执行下一动作。 */
   conclusions?: VerificationReport['criteria'];
   promptTokens: number;
   completionTokens: number;
-  /** 统一路由声明本轮已由文本模型复核；只有执行器接受结果后才消费检查点。 */
-  reviewed?: boolean;
-  /** 供应商故障降级在当前步骤内生效，避免重复消耗相同失败请求。 */
-  selectorUnavailable?: string;
 }
 /** 类型化快照是唯一输入；旧调用端只有文本时在边界解析一次。 */
 export function decisionData(input: DecisionInput): DecisionContextData {
@@ -104,9 +92,8 @@ export class ChatModel implements DecisionModel {
     signal: AbortSignal,
   ): Promise<DecisionOutput> {
     const context = decisionData(input);
-    const text = compactDecisionText(JSON.stringify(requestContext(context)));
+    const text = JSON.stringify(context);
     const availableTools = decisionTools(context, MODEL_TOOLS);
-    const hasWorkflow = !!context.workflow;
     const content =
       this.config.vision && input.image
         ? [
@@ -114,7 +101,7 @@ export class ChatModel implements DecisionModel {
             { type: 'image_url', image_url: { url: input.image } },
           ]
         : text;
-    // JEV 独立启用图片时，文本审查仍不得获得自己不支持的视觉点击工具。
+    // 未交付当前截图时不得开放视觉点击工具。
     if (!this.config.vision || !input.image) {
       const act = availableTools.find((tool) => tool.type === 'browser.act');
       if (act) {
@@ -135,16 +122,7 @@ export class ChatModel implements DecisionModel {
       messages: [
         {
           role: 'system',
-          content:
-            context.verificationReview?.reason === 'budget'
-              ? SETTLEMENT_RULES
-              : SYSTEM_PROMPT +
-                (context.executionGuidance || context.executionPolicy
-                  ? '\n' + CONCLUSION_RULES
-                  : '') +
-                (context.executionPolicy?.version === 'planned-v1'
-                  ? '\n' + PLANNED_RULES
-                  : ''),
+          content: decisionPrompt(context),
         },
         { role: 'user', content },
       ],
@@ -200,11 +178,17 @@ export class ChatModel implements DecisionModel {
     const calls = choice?.message?.tool_calls;
     if (
       calls?.length === 1 &&
+      calls[0]?.function?.name === 'verification_intervene' &&
+      !context.task.permissions.allowIntervention
+    )
+      throw new AgentFault('INTERVENTION_DISABLED', '当前任务未授权人工介入');
+    if (
+      calls?.length === 1 &&
       calls[0]?.function?.name === 'browser_act' &&
-      context.budgetRemaining?.actions === 0
+      context.budget?.actions === 0
     )
       throw new AgentFault(
-        context.executionStep
+        context.task.stepId
           ? 'STEP_ACTION_BUDGET_EXCEEDED'
           : 'ACTION_BUDGET_EXCEEDED',
         '动作预算已耗尽，只能保存已有证据或明确阻塞，不能继续浏览器动作',
@@ -250,80 +234,105 @@ export class ChatModel implements DecisionModel {
         'INVALID_MODEL_DECISION',
         '工具参数不接受 type 字段，动作类型由工具名称决定',
       );
-    let { workflow, conclusions, plan, ...args } = parsed as Record<
+    const { progress, revisitReason, ...args } = parsed as Record<
       string,
       unknown
     >;
-    if (plan !== undefined) {
-      if (
-        context.executionPolicy?.version !== 'planned-v1' ||
-        !('plan' in (tool.parameters as { properties: object }).properties) ||
-        (workflow !== undefined &&
-          (!workflow ||
-            typeof workflow !== 'object' ||
-            Array.isArray(workflow))) ||
-        (workflow && 'recovery' in (workflow as object))
-      )
-        throw new AgentFault(
-          'INVALID_MODEL_DECISION',
-          'plan 只能在统一执行策略中声明一次',
-        );
-      workflow = { ...(workflow as object | undefined), recovery: plan };
-    } else if (
-      context.executionPolicy?.version === 'planned-v1' &&
-      workflow &&
-      typeof workflow === 'object' &&
-      'recovery' in workflow
+    if (
+      ['plan', 'workflow', 'conclusions', 'criteria'].some((key) => key in args)
     )
       throw new AgentFault(
         'INVALID_MODEL_DECISION',
-        '统一执行策略使用顶层 plan，不接受 workflow.recovery',
+        '进度只接受 progress，不接受旧计划或重复结论入口',
       );
-    // 完成工具的裸声明数组与 assessments 容器语义唯一；只补容器，条目仍由公共工作流严格校验。
+    const object = (value: unknown): value is Record<string, unknown> =>
+      !!value && typeof value === 'object' && !Array.isArray(value);
     if (
-      (context.executionGuidance || context.executionPolicy) &&
-      tool.type === 'verification.finish' &&
-      Array.isArray(workflow)
-    )
-      workflow = { assessments: workflow };
-    // 部分模型把证据元数据放入已有 workflow 容器；只兼容明确的同名字段，不猜测其他未知结构。
-    if (
-      workflow &&
-      typeof workflow === 'object' &&
-      !Array.isArray(workflow) &&
-      'conclusions' in workflow
-    ) {
-      if (conclusions !== undefined)
-        throw new AgentFault(
-          'INVALID_MODEL_DECISION',
-          'conclusions 只能声明一份，不能同时出现在工具顶层和 workflow 中',
-        );
-      const { conclusions: nested, ...progress } = workflow as Record<
-        string,
-        unknown
-      >;
-      conclusions = nested;
-      workflow = Object.keys(progress).length ? progress : undefined;
-    }
-    if (
-      conclusions !== undefined &&
-      (!(context.executionGuidance || context.executionPolicy) ||
-        context.executionStep?.type === 'setup' ||
-        context.cleanup ||
-        !(
-          Array.isArray(conclusions) &&
-          (conclusions.length === 0 ||
-            validateAgentDecision({
-              type: 'verification.record',
-              summary: '随本轮决定保存已有证据结论',
-              criteria: conclusions,
-            }))
+      progress !== undefined &&
+      (!object(progress) ||
+        Object.keys(progress).some(
+          (key) => !['requirements', 'criteria', 'readings'].includes(key),
         ))
     )
       throw new AgentFault(
         'INVALID_MODEL_DECISION',
-        'conclusions 必须是当前业务步骤的合法验收结论数组',
+        'progress 只接受 requirements、criteria 和 readings',
       );
+    const saved = progress as Record<string, unknown> | undefined;
+    if (saved && Object.values(saved).some((value) => !Array.isArray(value)))
+      throw new AgentFault('INVALID_MODEL_DECISION', 'progress 各项必须是数组');
+    const conclusions = saved?.criteria as
+      VerificationReport['criteria'] | undefined;
+    // setup 误填 stepId 时优先给出任务语义反馈，避免模型反复修补无关证据字段。
+    if (
+      tool.type === 'verification.finish' &&
+      context.task?.criteria?.length === 0 &&
+      Array.isArray(conclusions) &&
+      conclusions.length
+    )
+      throw new AgentFault(
+        'INVALID_MODEL_DECISION',
+        '当前 setup 没有独立验收项，progress.criteria 必须为空；stepId 不是 criterionId。用 summary 和本步 evidenceRefs 提交执行结果。',
+      );
+    if (
+      conclusions?.length &&
+      !validateAgentDecision({
+        type: 'verification.record',
+        summary: '保存当前证据结论',
+        criteria: conclusions,
+      })
+    )
+      throw new AgentFault(
+        'INVALID_MODEL_DECISION',
+        'progress.criteria 不符合验收协议',
+      );
+    const requirements = saved?.requirements as unknown[] | undefined;
+    const assessments = requirements?.map((item) => {
+      if (
+        !object(item) ||
+        Object.keys(item).some(
+          (key) => !['id', 'status', 'summary', 'evidenceRefs'].includes(key),
+        )
+      )
+        throw new AgentFault(
+          'INVALID_MODEL_DECISION',
+          'progress.requirements 条目无效',
+        );
+      return {
+        stepId: item.id,
+        outcome: item.status,
+        summary: item.summary,
+        evidenceRefs: item.evidenceRefs,
+      };
+    });
+    if (
+      revisitReason !== undefined &&
+      (tool.type !== 'browser.act' ||
+        typeof revisitReason !== 'string' ||
+        !revisitReason.trim() ||
+        revisitReason.length > 600)
+    )
+      throw new AgentFault(
+        'INVALID_MODEL_DECISION',
+        '重访原因只能随浏览器动作提交',
+      );
+    const workflow = {
+      ...(assessments ? { assessments } : {}),
+      ...(saved?.readings ? { readings: saved.readings } : {}),
+      ...(revisitReason ? { revisitReason } : {}),
+    } as WorkflowUpdate;
+    if (
+      tool.type === 'verification.record' &&
+      !Object.values(saved ?? {}).some(
+        (value) => Array.isArray(value) && value.length,
+      )
+    )
+      throw new AgentFault(
+        'INVALID_MODEL_DECISION',
+        'record 必须提供可保存的 progress',
+      );
+    if (['verification.record', 'verification.finish'].includes(tool.type))
+      args.criteria = conclusions ?? [];
     const decision = { ...args, type: tool.type };
     if (
       decision.type === 'browser.act' &&
@@ -333,22 +342,6 @@ export class ChatModel implements DecisionModel {
       throw new AgentFault(
         'INVALID_MODEL_DECISION',
         '文本模型未收到当前截图，不能执行视觉点击',
-      );
-    if (workflow !== undefined && !hasWorkflow)
-      throw new AgentFault(
-        'INVALID_MODEL_DECISION',
-        '当前执行未启用 workflow 元数据',
-      );
-    // setup 误填 stepId 时优先给出任务语义反馈，避免模型反复修补无关证据字段。
-    if (
-      decision.type === 'verification.finish' &&
-      context.task?.acceptanceCriteria?.length === 0 &&
-      Array.isArray(args.criteria) &&
-      args.criteria.length
-    )
-      throw new AgentFault(
-        'INVALID_MODEL_DECISION',
-        '当前 setup 没有独立验收项，criteria 必须是 []；stepId 不是 criterionId。用 summary 和本步 evidenceRefs 提交执行结果。',
       );
     if (!validateAgentDecision(decision)) {
       // 只反馈匹配分支的静态约束，不回显模型内容、未知字段名或整份原始回复。
@@ -366,11 +359,7 @@ export class ChatModel implements DecisionModel {
         .map((error) => `${error.schemaPath}: ${error.message}`)
         .join('; ');
       // 已有结论与下一动作分别校验：动作参数无效时只保存合法结论，绝不派发或修补该动作。
-      if (
-        Array.isArray(conclusions) &&
-        conclusions.length &&
-        (context.executionGuidance || context.executionPolicy)
-      ) {
+      if (Array.isArray(conclusions) && conclusions.length) {
         return {
           decision: {
             type: 'verification.record',
@@ -391,10 +380,11 @@ export class ChatModel implements DecisionModel {
     }
     return {
       decision,
-      ...(workflow !== undefined
+      ...(Object.keys(workflow).length > 0
         ? { workflow: workflow as WorkflowUpdate }
         : {}),
-      ...(conclusions !== undefined
+      ...(conclusions !== undefined &&
+      !['verification.record', 'verification.finish'].includes(decision.type)
         ? { conclusions: conclusions as VerificationReport['criteria'] }
         : {}),
       promptTokens: tokens(raw.usage?.prompt_tokens),

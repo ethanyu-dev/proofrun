@@ -8,14 +8,12 @@ import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { once } from 'node:events';
-import { PlannedModel } from '../../apps/agent/dist/execution/model-router.js';
-import { JevSelector } from '../../apps/agent/dist/model/jev-selector.js';
 import { ChatModel } from '../../apps/agent/dist/model/chat.js';
 import { execute } from '../../apps/agent/dist/execution/runner.js';
 import { config, grant, FakeControl, finish, modelServer } from './fixture.mjs';
 
 /** 仅本机 HTTP 夹具记录真实提交次数；没有账号、密码或外部服务。 */
-const HTML = `<!doctype html><html><head><meta charset="utf-8"><title>计划表单</title></head><body>
+const HTML = `<!doctype html><html><head><meta charset="utf-8"><title>循环表单</title></head><body>
 <form><label>Name <input name="name"></label><label>City <input name="city"></label><button>Save</button></form>
 <p role="status">Ready</p><script>
 document.querySelector('form').onsubmit = async event => {
@@ -55,7 +53,7 @@ class BrowserControl extends FakeControl {
 
 /** 只启动独立临时会话，不使用用户已有 Chrome profile。 */
 async function sessionHost() {
-  const root = await mkdtemp(join(tmpdir(), 'proofrun-planned-'));
+  const root = await mkdtemp(join(tmpdir(), 'proofrun-loop-'));
   const binary = resolve(
     process.env.PROOFRUN_TEST_BINARY ?? 'target/debug/proofrun-node',
   );
@@ -126,6 +124,7 @@ async function sessionHost() {
         allow_unverified_writes: true,
       },
       deadline_ms: Math.floor(boot + 120000),
+      startup_deadline_ms: Math.floor(boot + 30000),
     });
     const initialized = await receive();
     assert('Ok' in initialized.result, JSON.stringify(initialized));
@@ -138,7 +137,7 @@ async function sessionHost() {
 
 // 范围：真实 Node/Chrome 的填写、提交、重新观察和独立 HTTP 写入计数；不覆盖真实模型质量或控制面上传。
 test(
-  '统一计划在真实浏览器连续填写且只提交一次',
+  '单一 LLM 循环在真实浏览器连续填写且只提交一次',
   {
     timeout: 90_000,
     skip:
@@ -169,7 +168,7 @@ test(
         '填写 Name 为 Alice，City 为 Hangzhou，然后提交并核对成功提示';
       execution.task.acceptanceCriteria[0].expectedResult =
         'Saved Alice Hangzhou';
-      execution.task.executionMode = 'jev';
+      execution.task.executionMode = 'llm';
       execution.task.budget = { timeoutMs: 120000, maxActions: 8 };
       execution.taskDeadlineAt = new Date(Date.now() + 120000).toISOString();
       server = await modelServer((context, count) => {
@@ -177,76 +176,39 @@ test(
           return {
             type: 'browser.act',
             action: 'fill',
-            target: context.observation.targets.find((t) => t.name === 'Name')
-              .target,
+            target: context.page.targets.find((t) => t.name === 'Name').target,
             value: 'Alice',
-            plan: {
-              goal: '填写并提交表单',
-              scope: '',
-              terms: ['Name', 'City', 'Save'],
-              successCondition: 'Saved Alice Hangzhou',
-              allowedActions: ['fill', 'click'],
-              maxActions: 4,
-              checkpoints: ['after-click'],
-              inputs: [
-                {
-                  key: context.inputFields.find((f) => f.name === 'City').key,
-                  value: 'Hangzhou',
-                },
-              ],
-            },
           };
-        assert(count <= 4, '异步提交最多等待有限次观察');
-        if (!context.observation.text.includes('Saved Alice Hangzhou'))
+        if (count === 2)
+          return {
+            type: 'browser.act',
+            action: 'fill',
+            target: context.page.targets.find((t) => t.name === 'City').target,
+            value: 'Hangzhou',
+          };
+        if (count === 3)
+          return {
+            type: 'browser.act',
+            action: 'click',
+            target: context.page.targets.find((t) => t.name === 'Save').target,
+          };
+        assert(count <= 6, '异步提交最多等待有限次观察');
+        if (!context.page.text.includes('Saved Alice Hangzhou'))
           return { type: 'browser.observe' };
         return finish(context);
       });
       const settings = {
         ...config,
-        executionPolicy: 'planned-v1',
         modelUrl: server.url,
         maxTurns: 12,
         maxContextChars: 64000,
         commandMs: 15000,
       };
-      let selections = 0;
-      const selector = new JevSelector(
-        settings,
-        'fixture',
-        'jev-test',
-        async (_u, _k, _m, body) => {
-          selections++;
-          const entries = Object.entries(body.questions.next.criteria);
-          const choice =
-            selections === 1
-              ? entries.find(
-                  ([, c]) =>
-                    c.operation === 'TYPE_TEXT' && c.field.name === 'City',
-                )[0]
-              : selections === 2
-                ? entries.find(
-                    ([, c]) =>
-                      c.operation === 'CLICK' && c.field.name === 'Save',
-                  )[0]
-                : 'VERIFY';
-          return {
-            answers: {
-              next: {
-                choice,
-                confidence: 1,
-                probabilities: Object.fromEntries(
-                  entries.map(([key]) => [key, Number(key === choice)]),
-                ),
-              },
-            },
-          };
-        },
-      );
       const control = new BrowserControl(host);
       const report = await execute(
         settings,
         control,
-        new PlannedModel(new ChatModel(settings), selector),
+        new ChatModel(settings),
         execution,
       );
       assert.deepEqual(server.errors, []);

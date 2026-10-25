@@ -3,25 +3,6 @@ import type { VerificationTask } from '@proofrun/contracts';
 /** 当前服务支持的证据类型，截图与网络证据还需执行节点具备对应能力。 */
 const EVIDENCE = ['DOM', 'SCREENSHOT', 'NETWORK', 'TRACE'] as const;
 
-/** 三种模式都写入同一任务定义；并行预算按每组计算，不暗示共享浏览器会话。 */
-const EXECUTION_MODES = [
-  {
-    value: 'parallel',
-    title: '并行对比',
-    description: '纯 LLM 与 LLM + JEV 各运行一组，独立会话与预算。',
-  },
-  {
-    value: 'llm',
-    title: '纯 LLM',
-    description: '仅运行一组，由 LLM 选择操作、填写内容并验收。',
-  },
-  {
-    value: 'jev',
-    title: 'LLM + JEV',
-    description: '仅运行一组，由 JEV 选择动作，LLM 填写、纠偏与验收。',
-  },
-] as const;
-
 /** 编辑完整任务快照；嵌套更新保留 JSON 模式导入的可选配置。 */
 export function TaskFields({
   task,
@@ -45,29 +26,7 @@ export function TaskFields({
     });
   return (
     <div className="task-fields">
-      <fieldset className="execution-mode-picker">
-        <legend>执行模式</legend>
-        <div className="execution-mode-options">
-          {EXECUTION_MODES.map((mode) => (
-            <label className="execution-mode-option" key={mode.value}>
-              <input
-                type="radio"
-                name="execution-mode"
-                value={mode.value}
-                checked={(task.executionMode ?? 'llm') === mode.value}
-                onChange={() => change({ ...task, executionMode: mode.value })}
-              />
-              <span>
-                <strong>{mode.title}</strong>
-                <span>{mode.description}</span>
-              </span>
-            </label>
-          ))}
-        </div>
-        <p className="muted note">
-          并行对比会创建两组任务；实际同时运行取决于节点空闲容量。
-        </p>
-      </fieldset>
+      <p className="muted">由 LLM 执行验证，每个任务使用独立浏览器会话。</p>
       <section className="task-section">
         <h2>验证目标</h2>
         <label>
@@ -275,24 +234,11 @@ export function TaskFields({
           />
           允许人工辅助
         </label>
-        <label className="check-label">
-          <input
-            type="checkbox"
-            checked={
-              !!(
-                task.environment.reuseAuth ?? task.environment.allowIntervention
-              )
-            }
-            disabled={!!task.environment.auth}
-            onChange={(e) => environment({ reuseAuth: e.target.checked })}
-          />
-          自动复用本站登录状态
-        </label>
         <p className="muted note">
-          人工处理完成后保存登录。后续任务优先沿用原节点；路由变更或节点不可用时可能需要重新登录。并行两组使用同一节点的初始快照和独立浏览器。
+          每次任务使用独立临时浏览器；人工辅助仅修改当前会话，不保存登录基准。
         </p>
         <details>
-          <summary>高级设置：任务 ID 与登录状态</summary>
+          <summary>高级设置：任务 ID</summary>
           <label>
             任务 ID
             <input
@@ -303,76 +249,6 @@ export function TaskFields({
               onChange={(e) => change({ ...task, taskId: e.target.value })}
             />
           </label>
-          <label className="check-label">
-            <input
-              type="checkbox"
-              checked={!!task.environment.auth}
-              onChange={(e) => {
-                if (e.target.checked)
-                  environment({
-                    auth: { nodeId: '', stateId: '', restore: true },
-                  });
-                else {
-                  const { auth: _auth, ...rest } = task.environment;
-                  change({ ...task, environment: rest });
-                }
-              }}
-            />
-            使用节点登录状态
-          </label>
-          {task.environment.auth && (
-            <div className="task-form-grid">
-              <label>
-                登录状态所属节点
-                <input
-                  required
-                  pattern="[A-Za-z0-9_-]+"
-                  maxLength={128}
-                  value={task.environment.auth.nodeId}
-                  onChange={(e) =>
-                    environment({
-                      auth: {
-                        ...task.environment.auth!,
-                        nodeId: e.target.value,
-                      },
-                    })
-                  }
-                />
-              </label>
-              <label>
-                登录状态名称
-                <input
-                  required
-                  pattern="[A-Za-z0-9_-]+"
-                  maxLength={128}
-                  value={task.environment.auth.stateId}
-                  onChange={(e) =>
-                    environment({
-                      auth: {
-                        ...task.environment.auth!,
-                        stateId: e.target.value,
-                      },
-                    })
-                  }
-                />
-              </label>
-              <label className="check-label">
-                <input
-                  type="checkbox"
-                  checked={task.environment.auth.restore}
-                  onChange={(e) =>
-                    environment({
-                      auth: {
-                        ...task.environment.auth!,
-                        restore: e.target.checked,
-                      },
-                    })
-                  }
-                />
-                恢复已有登录状态
-              </label>
-            </div>
-          )}
         </details>
       </section>
     </div>

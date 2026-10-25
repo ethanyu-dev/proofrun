@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { compileStepBudget } from '../../contracts/dist/index.js';
 import { SettlementBudget } from '../../apps/agent/dist/execution/settlement-budget.js';
-import { compactDecisionText } from '../../apps/agent/dist/model/decision-view.js';
 import { ChatModel } from '../../apps/agent/dist/model/chat.js';
 import { execute } from '../../apps/agent/dist/execution/runner.js';
 import { config, grant, FakeControl, finish, modelServer } from './fixture.mjs';
@@ -44,7 +43,6 @@ async function run(client, decide, g = execution(), overrides = {}) {
   const settings = {
     ...config,
     modelUrl: server.url,
-    executionGuidance: true,
     maxContextChars: 16000,
     ...overrides,
   };
@@ -117,7 +115,7 @@ test('最后一次模型额度只读收尾，并随 block 保存独立结论', a
   const report = await run(
     client,
     (ctx, _turn, body) => {
-      assert.equal(ctx.verificationReview.reason, 'budget');
+      assert.equal(ctx.state.settlement, 'budget');
       assert(
         body.tools.every((t) => t.function.name.startsWith('verification_')),
       );
@@ -154,43 +152,6 @@ test('预留收尾额度不增加原期限，探索请求不能吃掉预留', ()
   assert.equal(short.reserve(), 400);
 });
 
-// 范围：完全相同正文合并来源；相邻观察的差异与原截断状态原样保留，不推断截图相同。
-test('历史正文仅合并完整重复副本，保留证据来源', () => {
-  const a = {
-    observationId: 'old-a',
-    url: 'a',
-    title: '标题',
-    text: '公共标题\n历史答案',
-    truncated: false,
-    artifactRefs: [{ artifactId: 'a' }],
-  };
-  const result = JSON.parse(
-    compactDecisionText(
-      JSON.stringify({
-        executionGuidance: {},
-        observation: { url: 'a', text: '公共标题\n当前正文' },
-        previousObservations: [
-          a,
-          { ...a, observationId: 'old-b', artifactRefs: [{ artifactId: 'b' }] },
-          { ...a, text: '公共标题\n另一答案' },
-        ],
-      }),
-    ),
-  );
-  assert.equal(result.previousObservations.length, 2);
-  assert.equal(result.previousObservations[0].text, a.text);
-  assert.equal(result.previousObservations[0].truncated, false);
-  assert.deepEqual(result.previousObservations[0].artifactRefs, [
-    { artifactId: 'a' },
-    { artifactId: 'b' },
-  ]);
-  assert.deepEqual(
-    result.previousObservations[0].equivalentTextObservationIds,
-    ['old-a', 'old-b'],
-  );
-  assert.equal(result.previousObservations[1].text, '公共标题\n另一答案');
-});
-
 // 范围：真实 HTTP 慢回复触发原预算内收尾，禁止再次探索；页面与判断内容仍是夹具。
 test('慢文本调用后提前只读整理并保留此前结论', async () => {
   const g = grant();
@@ -217,8 +178,8 @@ test('慢文本调用后提前只读整理并保留此前结论', async () => {
           conclusions: finish(ctx).criteria.slice(0, 1),
         };
       }
-      assert.equal(ctx.verificationReview.reason, 'budget');
-      assert.equal(ctx.recordedCriteria[0].criterionId, 'visible');
+      assert.equal(ctx.state.settlement, 'budget');
+      assert.equal(ctx.state.criteria[0].criterionId, 'visible');
       assert(
         body.tools.every((t) => t.function.name.startsWith('verification_')),
       );
@@ -287,14 +248,23 @@ test('下一动作格式错误仅保存独立结论，不修补或执行动作',
 });
 
 // 范围：整步声明有误不抹掉独立合法结论；不会把工作流完成状态自动补为通过。
-test('finish 的错误工作流元数据不丢合法验收项', async () => {
+test('finish 的错误要求身份不丢合法验收项', async () => {
   const client = new FakeControl();
   const report = await run(client, (ctx, turn) =>
     turn === 1
       ? {
           ...finish(ctx),
           criteria: finish(ctx).criteria.slice(0, 1),
-          workflow: { unknownField: true },
+          workflow: {
+            assessments: [
+              {
+                stepId: 'nonexistent',
+                outcome: 'complete',
+                summary: '无效要求身份',
+                evidenceRefs: [],
+              },
+            ],
+          },
         }
       : { type: 'verification.block', summary: '整步仍不完整' },
   );
@@ -335,90 +305,27 @@ test('一次慢请求不重复放大下一轮和收尾估算', () => {
   assert.equal(b.requestMs(140000, false), 64000);
 });
 
-// 范围：明确同名字段放入 workflow 时仍走原证据校验，兼容层不放宽其他字段或动作权限。
-test('workflow 内同名 conclusions 经校验后先保存再执行', async () => {
-  const client = new FakeControl();
-  const command = client.command.bind(client);
-  client.command = async (...args) => {
-    if (args[2].action === 'fill')
-      assert.equal(
-        client.stepSnapshots.at(-1)[0].criteria[0].criterionId,
-        'title',
-      );
-    return command(...args);
-  };
-  const report = await run(client, (ctx, turn) =>
-    turn === 1
-      ? {
-          type: 'browser.act',
-          action: 'fill',
-          target: '@e1',
-          value: 'Alice',
-          workflow: { recovery, conclusions: finish(ctx).criteria.slice(0, 1) },
-        }
-      : { type: 'verification.block', summary: '后续未执行' },
-  );
-  assert.equal(report.criteria[0].verdict, 'PASSED');
-  assert.equal(
-    client.calls.filter((c) => c.operation.action === 'fill').length,
-    1,
-  );
-});
-
-// 范围：两处声明不能静默覆盖或合并，未知附件依旧不获信任。
-test('双重 conclusions 声明拒绝派发动作', async () => {
-  const client = new FakeControl();
-  await run(client, (ctx) => ({
-    type: 'browser.act',
-    action: 'fill',
-    target: '@e1',
-    value: 'Alice',
-    conclusions: finish(ctx).criteria.slice(0, 1),
-    workflow: { recovery, conclusions: finish(ctx).criteria.slice(1) },
-  }));
-  assert.equal(
-    client.calls.filter((c) => c.operation.action === 'fill').length,
-    0,
-  );
-});
-
 /** 为协议夹具生成当前原步骤的声明；不推断真实网页的业务完成情况。 */
 function assessments(ctx) {
-  return ctx.workflow.steps.map((s) => ({
+  return ctx.state.requirements.map((s) => ({
     stepId: s.id,
     outcome: 'complete',
     summary: '夹具验证完成声明的容器与引用校验',
-    evidenceRefs: ctx.observation.artifactRefs.map((a) => a.artifactId),
+    evidenceRefs: ctx.page.artifactRefs.map((a) => a.artifactId),
   }));
 }
 
 // 范围：任意原步骤的完成数组可无损规范化；没有额外模型调用，不证明实际业务已经完成。
-test('finish 裸数组规范化为 assessments 后通过原工作流校验', async () => {
+test('finish 拒绝裸数组 progress，不猜测字段含义', async () => {
   const client = new FakeControl();
   let turns = 0;
   const report = await run(client, (ctx) => {
     turns++;
     return { ...finish(ctx), workflow: assessments(ctx) };
   });
-  assert.equal(turns, 1);
-  assert.equal(report.steps[0].status, 'COMPLETED');
+  assert.equal(turns, 3);
+  assert.notEqual(report.steps[0].status, 'COMPLETED');
 });
-
-// 范围：补容器不能接受伪造附件、未知步骤或额外字段；已经独立保存的结论不代替步骤完成。
-for (const mutation of ['evidence', 'step', 'field']) {
-  test(`finish 数组规范化仍拒绝非法 ${mutation}`, async () => {
-    const client = new FakeControl();
-    const report = await run(client, (ctx, turn) => {
-      if (turn > 1) return { type: 'verification.block', summary: '夹具停止' };
-      const items = assessments(ctx);
-      if (mutation === 'evidence') items[0].evidenceRefs = ['missing'];
-      if (mutation === 'step') items[0].stepId = 'not-an-original-step';
-      if (mutation === 'field') items[0].unexpected = true;
-      return { ...finish(ctx), workflow: items };
-    });
-    assert.notEqual(report.steps[0].status, 'COMPLETED');
-  });
-}
 
 /** 先用一个有界慢请求消耗原时间，再验证只读阶段；不依赖真实模型延迟。 */
 async function runSettlement(client, decide) {
@@ -436,7 +343,7 @@ async function runSettlement(client, decide) {
           criteria: finish(ctx).criteria,
         };
       }
-      assert.equal(ctx.verificationReview?.reason, 'budget');
+      assert.equal(ctx.state.settlement, 'budget');
       return decide(ctx, turn - 1, body);
     },
     g,
@@ -450,13 +357,29 @@ test('只读收尾协议纠错保留结论，且后续轮次始终没有浏览�
   let turns = 0;
   const report = await runSettlement(client, (ctx, turn, body) => {
     turns = turn;
-    assert.equal(ctx.verificationReview.reason, 'budget');
+    assert.equal(ctx.state.settlement, 'budget');
     assert(
       body.tools.every((t) => t.function.name.startsWith('verification_')),
     );
-    if (turn === 1) return { ...finish(ctx), workflow: { unknownField: true } };
-    assert.match(ctx.feedback, /只读收尾协议纠错/);
-    assert.equal(ctx.recordedCriteria[0].verdict, 'PASSED');
+    if (turn === 1)
+      return {
+        ...finish(ctx),
+        workflow: {
+          assessments: [
+            {
+              stepId: 'nonexistent',
+              outcome: 'complete',
+              summary: '无效要求身份',
+              evidenceRefs: [],
+            },
+          ],
+        },
+      };
+    assert.match(
+      ctx.feedback.map((item) => item.message ?? item.code).join(' '),
+      /只读收尾协议纠错/,
+    );
+    assert.equal(ctx.state.criteria[0].verdict, 'PASSED');
     return {
       ...finish(ctx),
       criteria: [],
@@ -480,7 +403,19 @@ test('只读收尾连续协议错误到原纠错上限即阻塞', async () => {
   let turns = 0;
   const report = await runSettlement(client, (ctx, turn) => {
     turns = turn;
-    return { ...finish(ctx), workflow: { unknownField: true } };
+    return {
+      ...finish(ctx),
+      workflow: {
+        assessments: [
+          {
+            stepId: 'nonexistent',
+            outcome: 'complete',
+            summary: '无效要求身份',
+            evidenceRefs: [],
+          },
+        ],
+      },
+    };
   });
   assert.equal(turns, 3);
   assert.equal(report.executionDisposition, 'BLOCKED');
@@ -495,7 +430,19 @@ test('只读收尾格式错误不能突破原模型次数', async () => {
     client,
     (ctx) => {
       turns++;
-      return { ...finish(ctx), workflow: { unknownField: true } };
+      return {
+        ...finish(ctx),
+        workflow: {
+          assessments: [
+            {
+              stepId: 'nonexistent',
+              outcome: 'complete',
+              summary: '无效要求身份',
+              evidenceRefs: [],
+            },
+          ],
+        },
+      };
     },
     grant(),
     { maxTurns: 1 },
@@ -510,7 +457,19 @@ test('收尾纠错不能重新执行浏览器动作', async () => {
   const client = new FakeControl();
   await runSettlement(client, (ctx, turn) =>
     turn === 1
-      ? { ...finish(ctx), workflow: { unknownField: true } }
+      ? {
+          ...finish(ctx),
+          workflow: {
+            assessments: [
+              {
+                stepId: 'nonexistent',
+                outcome: 'complete',
+                summary: '无效要求身份',
+                evidenceRefs: [],
+              },
+            ],
+          },
+        }
       : { type: 'browser.act', action: 'click', target: '@e2' },
   );
   assert.equal(

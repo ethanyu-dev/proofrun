@@ -1,7 +1,4 @@
-import { validatePlanInputs } from './plan-inputs.js';
-import type { ReviewEvent } from './model-router.js';
-import { ExecutionGuidance } from './execution-guidance.js';
-import { scrollDistance, NavigationMemory } from './navigation-memory.js';
+import { SCROLL_DIRECTIONS, scrollDistance } from './scroll-distance.js';
 import { conditionKey, evaluatePolicyChecks } from './policy-checks.js';
 import { InteractionProgress } from './interaction-progress.js';
 import { executeProfile } from './profile-runner.js';
@@ -19,7 +16,6 @@ import {
 import { stepLimit } from '@proofrun/contracts';
 import { SettlementBudget } from './settlement-budget.js';
 import { StepAllowance } from './step-budget.js';
-import { stepObjective } from '../prompts/step.js';
 import { HANDOFF_REVIEW_FEEDBACK } from '../prompts/action-replay.js';
 import { settlementRepairFeedback } from '../prompts/settlement.js';
 import {
@@ -71,8 +67,6 @@ import {
 
 /** 连续格式错误或暂时模型故障至多修复三次，且计入总模型轮数。 */
 const MAX_DECISION_ERRORS = 3;
-/** 每完成四次动作提醒保存独立结论，仍计入原模型与时间预算。 */
-const CRITERIA_REVIEW_ACTIONS = 4;
 /** 停滞终止前允许一次只读整理，仍保留真实阻塞原因。 */
 const STALLED_SUMMARY = '重复操作未取得新的完成证据，无法确认当前步骤已就绪';
 /** 任务进度不足有独立恢复额度，不归类为模型格式错误。 */
@@ -113,7 +107,6 @@ export type ExecutionClient = Pick<
   /** 只由 profile 编排器共享意图与当前人工确认代次，不暴露认证数据。 */
   profileEnvironment?: () =>
     { mode: 'guest' | 'configured'; confirmedRevision?: number } | undefined;
-  declareEnvironment?: (mode: 'guest' | 'configured') => void;
 };
 
 /** 一个领取结果对应一个执行器；实例不复用，也不恢复已经失去租约的动作。 */
@@ -156,12 +149,6 @@ class Execution {
   private readonly previousObservations: PreviousObservation[] = [];
   private image: string | undefined;
   private feedback: string | null = null;
-  /** 只由执行错误或环境变更设置，不解析模型可见的反馈文案。 */
-  private routingEvent: ReviewEvent | undefined;
-  /** 文本复核已消费的最后动作；不属于新的预算或历史账本。 */
-  private reviewedCommandId: string | undefined;
-  /** 单步供应商故障降级，切步后可重新尝试；不影响浏览器权限。 */
-  private selectorUnavailable: string | undefined;
   /** 人工介入后旧模型回复与旧观察均失效。 */
   private controlRevision = 0;
   /** 新计划的身份确认跟随认证环境；控制权变化仍拒绝旧动作。 */
@@ -172,13 +159,11 @@ class Execution {
   private readonly incompleteFeedback = new Set<number>();
   /** 每步准备仅复核一次 OTHER 阻塞，真实身份问题不延迟交接。 */
   private readonly preparationReviewed = new Set<number>();
-  /** 两次阶段性验收提示之间的动作基线；切步和保存结论后重新计数。 */
-  private lastCriteriaReview = 0;
   /** 人工证明仅绑定当前控制代次；模型不能自行签发。 */
   private readonly confirmedChecks = new Map<string, number>();
   /** 每一步最多一次身份恢复，失败后继续后续独立步骤。 */
   private readonly identityInterventions = new Set<number>();
-  /** 决策轮次与模型调用次数分开，混合策略可以在同一轮派发多个供应商请求。 */
+  /** 记录实际模型请求数；未派发请求的控制权等待和观察不占模型额度。 */
   private decisionIndex = 0;
   /** 每一步最多自动请求一次登录辅助，人工未解决问题时不能无限暂停。 */
   private readonly loginInterventions = new Set<number>();
@@ -188,10 +173,6 @@ class Execution {
   private readinessEvidence = new Set<string>();
   /** 原任务阶段和恢复计划由所有决策模式共享。 */
   private workflow: Workflow;
-  /** 每个 tab 独立的通用规划诊断，不能跨执行共享。 */
-  private readonly guidance = new ExecutionGuidance();
-  /** 新策略仅保留位置索引，循环诊断统一来自 ObservationTracker。 */
-  private navigation = new NavigationMemory();
   /** 新版业务逐步独立计数，整段清理共享另一份额度；旧任务沿用冻结语义。 */
   private allowance: StepAllowance | undefined;
   /** 后续清理之间只切换 stepId，保留整段累计计数。 */
@@ -260,20 +241,13 @@ class Execution {
     private readonly grant: ExecutionGrant,
     stop: AbortSignal,
   ) {
-    if (config.executionPolicy === 'planned-v1')
-      config = this.config = { ...config, executionGuidance: true };
     this.environmentMode = grant.task.executionPlan?.environment.mode;
     this.pendingNavigation =
       grant.task.steps?.[0]?.url ?? grant.task.target.url;
     this.guard = new LeaseGuard(client, grant, stop, (view) =>
       this.allowance?.sync(view),
     );
-    this.workflow = new Workflow(
-      grant.task.objective,
-      undefined,
-      undefined,
-      config.executionGuidance,
-    );
+    this.workflow = new Workflow(grant.task.objective, undefined, undefined);
     this.criteria = new CriteriaLedger(grant.task.acceptanceCriteria);
     this.stepResults = (grant.task.steps ?? []).map((step) => ({
       stepId: step.stepId!,
@@ -303,7 +277,9 @@ class Execution {
         ? error
         : new AgentFault('AGENT_ERROR', '执行器发生异常，未得出业务验收结论');
     return this.report(
-      fault.code.startsWith('STEP_') && fault.code.endsWith('_BUDGET_EXCEEDED')
+      fault.code === 'INTERVENTION_DISABLED' ||
+        (fault.code.startsWith('STEP_') &&
+          fault.code.endsWith('_BUDGET_EXCEEDED'))
         ? 'BLOCKED'
         : 'ERROR',
       fault.message,
@@ -349,11 +325,7 @@ class Execution {
   }
   /** 结构化步骤和新策略保留部分结论；关闭策略的旧任务沿用一次性交付语义。 */
   private faultCriteria(summary: string) {
-    return (
-      this.grant.task.steps || this.config.executionGuidance
-        ? this.criteria
-        : new CriteriaLedger(this.task.acceptanceCriteria)
-    ).complete(summary);
+    return this.criteria.complete(summary);
   }
   /** 所有动作都串行提交，命令身份只生成一次；未知效果直接结束。 */
   private async command(
@@ -512,22 +484,12 @@ class Execution {
       );
     return result;
   }
-  /** 图片采集按当前策略启用；文本模型和 JEV 的图片能力分别配置。 */
+  /** 唯一模型的视觉能力同时约束图片输入和坐标操作。 */
   private screenshots(): boolean {
-    return (
-      this.config.vision ||
-      (executionStrategy(this.grant.task) === 'jev' &&
-        this.config.jevImages === true)
-    );
+    return this.config.vision;
   }
-  /** 视觉执行单独授权；JEV 仅看图选 DOM 目标时不能发坐标点击。 */
   private visualActions(): boolean {
-    return (
-      this.config.vision ||
-      (executionStrategy(this.grant.task) === 'jev' &&
-        this.config.jevImages === true &&
-        this.config.jevBox === true)
-    );
+    return this.config.vision;
   }
   /** 动作与等待之后刷新事实；新观察不能与上一张截图混用。 */
   private async observe(
@@ -555,8 +517,6 @@ class Execution {
       rememberObservation(this.previousObservations, this.current);
     this.changes = this.tracker.observe(current, countProgress);
     this.current = current;
-    if (this.config.executionPolicy === 'planned-v1')
-      this.navigation.observe(current);
     this.interactions.observe(current);
     this.image = undefined;
     for (const ref of current.artifactRefs)
@@ -598,7 +558,6 @@ class Execution {
         await pause(OBSERVATION_RETRY_MS, this.guard.signal);
         // 人工介入、取消或撤权优先于重试；交接后不恢复旧动作或旧观察身份。
         if (await this.checkpoint()) {
-          this.workflow.invalidateRecovery();
           this.tracker.reset();
         }
       }
@@ -636,20 +595,7 @@ class Execution {
             (this.grant.task.executionPlan
               ? this.authRevision
               : this.controlRevision);
-        if (
-          changed ||
-          recheckNeeded ||
-          (authChanged && this.config.executionPolicy === 'planned-v1')
-        ) {
-          if (this.config.executionPolicy === 'planned-v1') {
-            this.workflow.invalidateRecovery();
-            this.recheck?.workflow.invalidateRecovery();
-            this.routingEvent = {
-              code: 'ENVIRONMENT_CHANGED',
-              detail: '控制权或身份代次发生变化，重新核实页面与计划',
-            };
-            this.reviewedCommandId = undefined;
-          }
+        if (changed || recheckNeeded || authChanged) {
           if (
             this.grant.task.profilePlan &&
             this.currentTask &&
@@ -675,27 +621,21 @@ class Execution {
                 this.currentTask.objective,
                 `${setup.stepId}-policy`,
                 setup.policy,
-                this.config.executionGuidance,
               );
               this.stepResults[this.stepIndex]!.phase = 'CHECKING';
               await this.client.recordSteps(this.grant, this.stepResults);
             }
           }
-          this.operations.beginScope();
-          this.navigation = new NavigationMemory();
           if (!this.grant.task.executionPlan || authChanged)
             this.invalidateReadiness();
           // 控制代次变化才表示交还页面；自动身份准备也会推进认证代次，
-          // 此时分组标签页可能尚为空白，不能取消其首次导航。旧观察和计划仍须失效。
+          // 此时分组标签页可能尚为空白，不能取消其首次导航。旧观察仍须失效。
           if (changed) this.pendingNavigation = undefined;
           this.current = undefined;
           this.image = undefined;
           this.settlePending = false;
         }
-        return (
-          changed ||
-          (this.config.executionPolicy === 'planned-v1' && authChanged)
-        );
+        return changed || authChanged;
       }
       this.allowance?.pause();
       if (view.controlMode === 'REQUESTED')
@@ -710,32 +650,9 @@ class Execution {
   /** 在统一安全点取得预算快照并登记有界审查提示；裁剪只影响发给模型的副本。 */
   private context(finalReview = false, settling = false): DecisionInput {
     const savedCriteria = this.criteria.values();
-    const pendingCriterionIds = this.task.acceptanceCriteria
-      .filter(
-        (criterion) =>
-          !savedCriteria.some(
-            (saved) =>
-              saved.criterionId === criterion.id &&
-              ['PASSED', 'FAILED'].includes(saved.verdict),
-          ),
-      )
-      .map((criterion) => criterion.id);
-    const verificationReview =
-      !this.isSetup() &&
-      !this.isCleanup() &&
-      (!!this.grant.task.steps || settling) &&
-      (pendingCriterionIds.length > 0 || settling) &&
-      (finalReview ||
-        (!this.config.executionGuidance &&
-          this.details.actions - this.lastCriteriaReview >=
-            CRITERIA_REVIEW_ACTIONS))
-        ? {
-            pendingCriterionIds,
-            ...(finalReview ? { final: true } : {}),
-            ...(settling ? { reason: 'budget' as const } : {}),
-          }
-        : undefined;
-    if (verificationReview) this.lastCriteriaReview = this.details.actions;
+    const verificationReview = finalReview
+      ? { final: true, ...(settling ? { reason: 'budget' as const } : {}) }
+      : undefined;
     const budgetRemaining = this.allowance?.available(
       this.details.actions,
       this.details.modelCalls,
@@ -744,29 +661,6 @@ class Execution {
       modelCalls: this.config.maxTurns - this.details.modelCalls,
       timeMs: Math.floor(this.guard.remaining()),
     };
-    const progress = {
-      workflow: this.workflow.view().revision,
-      reading: this.interactions.view().revision,
-      criteria: savedCriteria
-        .filter((item) => ['PASSED', 'FAILED'].includes(item.verdict))
-        .map((item) => item.criterionId)
-        .sort(),
-    };
-    const progressKey = JSON.stringify(progress);
-    this.workflow.creditProgress(progress);
-    this.workflow.observeState(this.current!);
-    const executionGuidance =
-      this.config.executionGuidance &&
-      this.config.executionPolicy !== 'planned-v1'
-        ? this.guidance.view({
-            page: this.current!,
-            workflow: this.workflow.view(),
-            pending: pendingCriterionIds,
-            progressKey,
-            scope: `${this.stepIndex}:${this.setupPhase}:${this.controlRevision}`,
-            budget: budgetRemaining,
-          })
-        : undefined;
     const preconditions = [
       ...this.platformChecks(),
       ...evaluateChecks(
@@ -778,33 +672,9 @@ class Execution {
       ),
     ];
     return decisionContext({
-      executionPolicy:
-        this.config.executionPolicy === 'planned-v1'
-          ? {
-              version: 'planned-v1',
-              scope: `${this.grant.sessionId}:${this.grant.task.steps?.[this.stepIndex]?.stepId ?? this.stepIndex}:${this.setupPhase}:${this.controlRevision}:${this.authRevision}`,
-              event: this.routingEvent ?? { code: 'CONTINUE' },
-              reviewedCommandId: this.reviewedCommandId,
-              selectorUnavailable: this.selectorUnavailable,
-            }
-          : undefined,
-      executionGuidance,
-      navigation:
-        this.config.executionPolicy === 'planned-v1'
-          ? this.navigation.hints(
-              this.current!,
-              this.workflow.view().recovery?.terms ?? [],
-            )
-          : undefined,
       task: this.task,
+      background: this.grant.task.objective,
       setupPhase: this.setupPhase,
-      environmentReview: this.needsEnvironmentReview()
-        ? {
-            required: !this.environmentMode,
-            requestedMode: this.grant.task.sessionPlan?.mode ?? 'manual',
-            mode: this.environmentMode,
-          }
-        : undefined,
       executionStep: this.recheck
         ? this.grant.task.steps?.find((step) => step.type === 'setup')
         : this.grant.task.steps?.[this.stepIndex],
@@ -830,9 +700,7 @@ class Execution {
               this.grant.task.executionPlan ? this.authRevision : undefined,
             ),
       workflow: this.workflow.view(),
-      interactionProgress: this.interactions.view(
-        this.config.executionPolicy === 'planned-v1' ? 4000 : 400,
-      ),
+      interactionProgress: this.interactions.view(4000),
       budgetRemaining,
       current: this.current!,
       changes: this.changes,
@@ -840,7 +708,19 @@ class Execution {
       history: this.history,
       actionMemory: this.operations.critical(),
       previousObservations: this.previousObservations,
-      feedback: this.feedback,
+      feedback:
+        [
+          ...this.stepResults
+            .slice(0, this.stepIndex)
+            .filter((step) => ['ERROR', 'BLOCKED'].includes(step.status))
+            .map(
+              (step) =>
+                `前序异常：${step.stepId}（${step.reasonCode ?? step.status}）。继续前核实本步必要条件。`,
+            ),
+          this.feedback,
+        ]
+          .filter(Boolean)
+          .join('\n') || null,
       image: this.image,
       maxContextChars: this.config.maxContextChars,
     });
@@ -857,8 +737,10 @@ class Execution {
       state.criteria = this.criteria.values();
       state.evidenceRefs = [
         ...new Set([
+          ...state.evidenceRefs,
           ...state.criteria.flatMap((c) => c.evidenceRefs),
           ...state.readings.flatMap((item) => item.evidenceRefs),
+          ...(state.requirements ?? []).flatMap((item) => item.evidenceRefs),
         ]),
       ];
       state.summary = summary;
@@ -930,22 +812,14 @@ class Execution {
         'INVALID_MODEL_DECISION',
         '动作参数不完整或目标不属于当前观察',
       );
-    // 历史回执包含节点幅度时，模型可能回传相同格式；只提取合法方向，再按当前观察重算。
+    // 模型意图只有方向；回执的节点像素格式不能作为另一套输入协议。
     if (
       decision.action === 'scroll' &&
-      /^(up|down|left|right):[0-9]{1,4}$/u.test(decision.value ?? '')
-    ) {
-      const [direction, amount] = decision.value!.split(':');
-      if (Number(amount) < 1 || Number(amount) > 1200) throw invalid();
-      decision = { ...decision, value: direction! };
-    }
-    if (
-      decision.action === 'scroll' &&
-      !['up', 'down', 'left', 'right'].includes(decision.value ?? '')
+      !SCROLL_DIRECTIONS.some((direction) => direction === decision.value)
     )
       throw new AgentFault(
         'INVALID_MODEL_DECISION',
-        'scroll.value 只能是 up、down、left、right；不支持 top/bottom。幅度由执行器依据当前视口计算。',
+        'scroll.value 只能是 up、down、left、right；不要附加像素数（如 up:1400），不支持 top/bottom。幅度由执行器依据当前视口计算。',
       );
     if (decision.action === 'press' && decision.target !== undefined) {
       if (
@@ -999,8 +873,6 @@ class Execution {
           'INVALID_MODEL_DECISION',
           `目标 ${decision.target}（${target.role}）不支持 scroll，可用操作：${target.operations?.join('、') ?? '未知'}。请滚动页面（不指定 target）或选择当前观察中的可滚动容器。`,
         );
-      if (!['up', 'down', 'left', 'right'].includes(decision.value ?? ''))
-        throw invalid();
       return {
         ...decision,
         value: this.scrollValue(decision),
@@ -1030,12 +902,7 @@ class Execution {
       )
     ) {
       return decision;
-    } else if (
-      !decision.value ||
-      (decision.action === 'scroll' &&
-        !['up', 'down', 'left', 'right'].includes(decision.value))
-    )
-      throw invalid();
+    } else if (!decision.value) throw invalid();
     if (decision.action === 'scroll')
       return { ...decision, value: this.scrollValue(decision) };
     return decision;
@@ -1046,7 +913,7 @@ class Execution {
   ) {
     const viewport = this.current?.viewport as
       { scrollDistance?: boolean } | undefined;
-    return this.config.executionGuidance && viewport?.scrollDistance === true
+    return viewport?.scrollDistance === true
       ? `${decision.value}:${scrollDistance(this.current!, decision.target, ['left', 'right'].includes(decision.value ?? ''))}`
       : decision.value!;
   }
@@ -1097,16 +964,6 @@ class Execution {
     if (this.recheck) return true;
     return (
       this.grant.task.steps?.[this.stepIndex]?.type === 'setup' &&
-      !this.isCleanup()
-    );
-  }
-
-  /** 首个 setup 在兄弟组启动之前分类共享登录要求，避免并发中途变更认证。 */
-  private needsEnvironmentReview() {
-    return (
-      this.grant.task.profilePlan?.environmentGateStepId !== undefined &&
-      this.grant.task.profilePlan.environmentGateStepId ===
-        this.grant.task.steps?.[this.stepIndex]?.stepId &&
       !this.isCleanup()
     );
   }
@@ -1454,8 +1311,6 @@ class Execution {
   /** 控制权变化时撤销全部准备声明，避免沿用另一账号或旧环境的证据。 */
   private invalidateReadiness() {
     this.interactions = new InteractionProgress();
-    this.operations.beginScope();
-    this.navigation = new NavigationMemory();
     if (!this.isSetup()) return;
     this.workflow.invalidateAssessments();
     this.readinessEvidence = new Set(this.evidence.keys());
@@ -1662,7 +1517,6 @@ class Execution {
       try {
         if (await this.checkpoint()) {
           this.current = undefined;
-          this.workflow.invalidateRecovery();
           this.tracker.reset();
         }
         this.allowance?.assert(
@@ -1856,11 +1710,7 @@ class Execution {
           }
         }
         this.syncPolicyChecks();
-        if (
-          this.config.executionGuidance &&
-          !this.isSetup() &&
-          !this.isCleanup()
-        ) {
+        if (!this.isSetup() && !this.isCleanup()) {
           const available = this.allowance?.available(
             this.details.actions,
             this.details.modelCalls,
@@ -1875,18 +1725,11 @@ class Execution {
           if (settling) finalReview = true;
         }
         const input = this.context(finalReview, settling);
-        if (
-          this.config.executionGuidance &&
-          !this.isSetup() &&
-          !this.isCleanup()
-        )
+        if (!this.isSetup() && !this.isCleanup())
           input.modelDeadline =
             performance.now() +
-            settlement.requestMs(
-              JSON.parse(input.text).budgetRemaining.timeMs,
-              settling,
-            );
-        const remainingActions = JSON.parse(input.text).budgetRemaining.actions;
+            settlement.requestMs(input.context!.budget.timeMs, settling);
+        const remainingActions = input.context!.budget.actions;
         const decisionIndex = ++this.decisionIndex;
         input.traceRequest = async (request) => {
           traced = true;
@@ -1924,11 +1767,7 @@ class Execution {
               throw modelTraceFault(error, 'start');
             });
           return async (result) => {
-            if (
-              request.purpose !== 'JEV_SELECTION' &&
-              result.elapsedMs !== null
-            )
-              settlement.observe(result.elapsedMs);
+            if (result.elapsedMs !== null) settlement.observe(result.elapsedMs);
             await this.client
               .recordModelCall(this.grant, id, { phase: 'finish', result })
               .catch((error) => {
@@ -1938,7 +1777,7 @@ class Execution {
         };
         let counted = false;
         let traced = false;
-        // 混合调用即使后续格式校验失败，供应商已返回的用量也必须进入总计。
+        // 模型调用即使后续格式校验失败，供应商已返回的用量也必须进入总计。
         let usageRecorded = false;
         input.recordRequest = (model) => {
           if (!traced)
@@ -2000,7 +1839,6 @@ class Execution {
         }
         // 模型调用期间可能收到暂停请求；旧决定只能丢弃，不能在人工恢复后执行。
         if (await this.checkpoint()) {
-          this.workflow.invalidateRecovery();
           this.tracker.reset();
           await this.observe();
           continue;
@@ -2031,57 +1869,11 @@ class Execution {
             'OBSERVATION_STALLED',
             '页面连续观察没有新增事实，请保存已验收项目后执行实际动作或明确受阻，不再重复 observe。',
           );
-        if (
-          this.needsEnvironmentReview() &&
-          !this.environmentMode &&
-          decision.type !== 'verification.environment'
-        )
+        if (decision.type === 'verification.environment')
           throw new AgentFault(
             'INVALID_MODEL_DECISION',
-            '并发前必须先声明共享环境意图，不能用 finish 冒充已完成登录状态准备',
+            '环境意图已在会话创建前冻结，不能运行中改写',
           );
-        if (decision.type === 'verification.environment') {
-          if (this.grant.task.executionPlan)
-            throw new AgentFault(
-              'INVALID_MODEL_DECISION',
-              '环境意图已在会话创建前冻结，不能运行中改写',
-            );
-          if (
-            !this.needsEnvironmentReview() ||
-            this.environmentMode ||
-            this.setupPhase !== 'PREPARING'
-          )
-            throw new AgentFault(
-              'INVALID_MODEL_DECISION',
-              '共享环境声明只能在首个 setup 准备开始时提交一次',
-            );
-          // 显式账号选择不能被自然语言推断覆盖；冲突留给人工调整任务定义。
-          if (
-            decision.mode === 'guest' &&
-            ['identity', 'pool', 'external'].includes(
-              this.grant.task.sessionPlan?.mode ?? '',
-            )
-          )
-            return this.blocked(
-              '访客要求与指定账号配置冲突，请拆分 profile 或调整账号配置',
-              'ENVIRONMENT_NOT_READY',
-            );
-          this.environmentMode =
-            this.grant.task.sessionPlan?.mode === 'guest'
-              ? 'guest'
-              : decision.mode;
-          this.client.declareEnvironment?.(this.environmentMode);
-          const blocked = await this.checkIdentity(true);
-          if (blocked) return blocked;
-          this.feedback =
-            this.environmentMode === 'guest'
-              ? '访客准备来源已核实，仍须观察并核对原始 policy；不得把未执行的 Cookie 清理声称为自动操作。'
-              : '共享环境意图已登记，继续按原始要求准备与核实，登录态复用不等于账号资格已满足。';
-          continue;
-        }
-        if (decision.type === 'browser.act') {
-          this.operation(decision);
-        }
         if (
           decision.type === 'verification.block' &&
           decision.reasonCode === 'OTHER' &&
@@ -2092,18 +1884,13 @@ class Execution {
         ) {
           this.preparationReviewed.add(this.stepIndex);
           this.feedback = PREPARATION_BLOCK_REVIEW;
-          this.routingEvent = {
-            code: 'EXECUTION_EXCEPTION',
-            detail: '准备阶段存在可执行目标，复核阻塞原因',
-          };
           continue;
         }
         // 已有结论先校验并保存；后续计划、目标失效或浏览器失败不能抹掉本批结果。
         let savedChanged = false;
         const attached =
           output.conclusions ??
-          (this.config.executionGuidance &&
-          !this.isSetup() &&
+          (!this.isSetup() &&
           !this.isCleanup() &&
           ['verification.record', 'verification.finish'].includes(
             decision.type,
@@ -2118,7 +1905,6 @@ class Execution {
             : undefined);
         if (attached?.length) {
           if (
-            !this.config.executionGuidance ||
             this.isSetup() ||
             this.isCleanup() ||
             !validateAgentDecision({
@@ -2139,8 +1925,6 @@ class Execution {
         const readings = this.interactions.validate(output.workflow?.readings);
         const readingRevision = this.interactions.view().revision;
         const revision = this.workflow.view().revision;
-        if (this.config.executionPolicy === 'planned-v1')
-          validatePlanInputs(output.workflow?.recovery, this.current!);
         this.workflow.apply(
           output.workflow,
           new Set(
@@ -2150,19 +1934,31 @@ class Execution {
                 (!this.stepEvidence.has(id) && !this.readinessEvidence.has(id)),
             ),
           ),
-          remainingActions,
-          new Set(this.task.acceptanceCriteria.map((item) => item.id)),
         );
         this.syncPolicyChecks();
         this.interactions.record(readings);
-        if (output.selectorUnavailable)
-          this.selectorUnavailable = output.selectorUnavailable;
-        if (output.reviewed) {
-          this.reviewedCommandId = this.history.findLast(
-            (op) => op.operation === 'browser.act',
-          )?.commandId;
-          this.routingEvent = undefined;
+        const progressChanged =
+          revision !== this.workflow.view().revision ||
+          readingRevision !== this.interactions.view().revision;
+        const stepState = this.stepResults[this.stepIndex];
+        if (stepState && output.workflow && !this.recheck) {
+          stepState.requirements = this.workflow
+            .view()
+            .steps.map(({ requirement: _text, ...item }) => item);
+          stepState.readings = this.interactions.results();
+          // 阅读与要求进度的来源必须同步到步骤附件集合，否则控制面会拒绝快照。
+          stepState.evidenceRefs = [
+            ...new Set([
+              ...stepState.evidenceRefs,
+              ...stepState.criteria.flatMap((item) => item.evidenceRefs),
+              ...stepState.readings.flatMap((item) => item.evidenceRefs),
+              ...stepState.requirements.flatMap((item) => item.evidenceRefs),
+            ]),
+          ];
+          // 所有合法进度先持久化；失败时不派发下一操作。
+          await this.client.recordSteps(this.grant, this.stepResults);
         }
+
         if (
           revision !== this.workflow.view().revision ||
           readingRevision !== this.interactions.view().revision
@@ -2172,7 +1968,7 @@ class Execution {
           repeatedRecords = 0;
         }
 
-        this.workflow.assertAction(decision);
+        if (decision.type === 'browser.act') this.operation(decision);
         // 本轮登记的引文也参与防重；有明确重查原因时仍保留失败前置检查和原动作预算。
         if (decision.type === 'browser.act' && decision.action === 'click') {
           const target = this.current!.targets.find(
@@ -2218,15 +2014,6 @@ class Execution {
           decision.type === 'verification.finish'
         ) {
           if (
-            decision.type === 'verification.record' &&
-            !this.grant.task.steps &&
-            !this.config.executionGuidance
-          )
-            throw new AgentFault(
-              'INVALID_MODEL_DECISION',
-              '逐项保存需要结构化步骤',
-            );
-          if (
             this.setupPhase === 'PREPARING' &&
             decision.type === 'verification.finish'
           ) {
@@ -2243,7 +2030,6 @@ class Execution {
               this.task.objective,
               `${step.stepId}-policy`,
               step.policy,
-              this.config.executionGuidance,
             );
             this.readinessEvidence = new Set(this.evidence.keys());
             this.current = undefined;
@@ -2313,7 +2099,8 @@ class Execution {
           }
           const changed =
             (await this.saveCriteria(decision.criteria, decision.summary)) ||
-            savedChanged;
+            savedChanged ||
+            progressChanged;
           if (finalReview && decision.type !== 'verification.finish')
             return this.blocked(
               settling
@@ -2323,7 +2110,6 @@ class Execution {
             );
           if (changed) {
             repeatedRecords = 0;
-            this.lastCriteriaReview = this.details.actions;
             this.tracker.reset();
             this.changes = undefined;
           }
@@ -2424,7 +2210,6 @@ class Execution {
           await this.command(operation);
           if (operation.type === 'browser.act') {
             repeatedRecords = 0;
-            this.workflow.acted();
             workflowRecoveries = 0;
           }
           if (
@@ -2439,15 +2224,6 @@ class Execution {
               'forward',
             ].includes(operation.action)
           ) {
-            if (
-              this.config.executionGuidance &&
-              (this.config.executionPolicy !== 'planned-v1' ||
-                ['frame', 'tab.switch', 'tab.new'].includes(operation.action))
-            ) {
-              this.workflow.invalidateRecovery();
-              this.guidance.invalidateNavigation();
-            }
-            this.navigation = new NavigationMemory();
             this.tracker.reset(true);
             this.settlePending = true;
           }
@@ -2455,14 +2231,6 @@ class Execution {
           await this.observe();
         }
       } catch (error) {
-        if (
-          this.config.executionPolicy === 'planned-v1' &&
-          error instanceof AgentFault
-        )
-          this.routingEvent = {
-            code: 'EXECUTION_EXCEPTION',
-            detail: error.code,
-          };
         // 收尾协议错误复用原有纠错上限；只重交声明，不重放动作或增加时间与请求额度。
         if (
           finalReview &&
@@ -2631,7 +2399,6 @@ class Execution {
     });
     this.allowance?.pause();
     await this.checkpoint();
-    this.workflow.invalidateRecovery();
     this.tracker.reset();
     await this.observe();
     // 提示只描述交还边界；是否满足仍由当前代次前置结果和新观察决定。
@@ -2731,11 +2498,7 @@ class Execution {
       await this.checkpoint();
       this.currentTask = {
         ...this.grant.task,
-        objective: stepObjective(
-          this.grant.task,
-          step,
-          this.stepResults.slice(0, this.stepIndex),
-        ),
+        objective: step.description,
         target: { url: step.url },
         acceptanceCriteria: this.grant.task.acceptanceCriteria.filter(
           (c) => c.stepId === step.stepId,
@@ -2757,7 +2520,6 @@ class Execution {
         this.isSetup()
           ? [step.description, ...(this.setupPhase ? [] : step.policy)]
           : undefined,
-        this.config.executionGuidance,
       );
       this.readinessEvidence = new Set(this.evidence.keys());
       this.criteria = new CriteriaLedger(this.currentTask.acceptanceCriteria);
@@ -2766,13 +2528,8 @@ class Execution {
       this.current = undefined;
       this.image = undefined;
       this.feedback = null;
-      this.routingEvent = undefined;
-      this.reviewedCommandId = undefined;
-      this.selectorUnavailable = undefined;
       this.interactions = new InteractionProgress();
       this.operations.beginScope();
-      this.navigation = new NavigationMemory();
-      this.lastCriteriaReview = this.details.actions;
       this.settlePending = false;
       this.tracker.reset();
       this.changes = undefined;
@@ -2964,8 +2721,7 @@ class Execution {
           method: c.method as 'text' | 'absent',
           value: c.value!,
         })),
-      saveSnapshot:
-        !plan!.library && checks.every((c) => c.method !== 'manual'),
+      saveSnapshot: false,
     };
     // 发送前固定已尝试标记；即使回执不明，也不能换一个命令 ID 再次提交。
     this.identityPrepared = true;
@@ -3090,6 +2846,7 @@ export function execute(
   grant: ExecutionGrant,
   stop: AbortSignal = new AbortController().signal,
 ): Promise<VerificationReport> {
+  executionStrategy(grant.task);
   return grant.task.profilePlan
     ? executeProfile(config, client, model, grant, stop, executeSingle)
     : executeSingle(config, client, model, grant, stop);

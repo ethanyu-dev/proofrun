@@ -18,7 +18,7 @@ import {
 function finish(context) {
   return {
     ...fixtureFinish(context),
-    evidenceRefs: context.observation.artifactRefs.map((ref) => ref.artifactId),
+    evidenceRefs: context.page.artifactRefs.map((ref) => ref.artifactId),
   };
 }
 
@@ -75,9 +75,27 @@ async function run(
 ) {
   const execution = profileGrant(ids);
   prepare(execution);
+  if (
+    execution.task.profilePlan.environmentGateStepId &&
+    !execution.task.executionPlan
+  )
+    execution.task.executionPlan = {
+      version: 1,
+      environment: {
+        mode:
+          execution.task.sessionPlan?.mode === 'manual' ||
+          execution.task.sessionPlan?.mode === 'guest'
+            ? 'guest'
+            : 'configured',
+        source: 'explicit',
+        basis: [],
+        resolverVersion: 1,
+      },
+      evidenceKinds: ['DOM'],
+    };
   const seen = [];
   const server = await modelServer(async (context) => {
-    seen.push([context.executionStep.stepId, context.setupPhase]);
+    seen.push([context.task.stepId, context.state.phase]);
     return decide(context, client);
   });
   const settings = { ...config, modelUrl: server.url, maxContextChars: 30000 };
@@ -99,20 +117,20 @@ async function run(
 test('同 profile 分组并发，强制 policy 检查后验证并统一清理', async () => {
   const waiting = [];
   const { report, client, seen } = await run(async (context) => {
-    if (context.setupPhase === 'PREPARING') {
+    if (context.state.phase === 'PREPARING') {
       assert.deepEqual(
-        context.workflow.steps.map((s) => s.requirement),
-        [context.executionStep.description],
+        context.task.requirements.map((s) => s.requirement),
+        [context.task.description],
       );
       await new Promise((resolve) => {
         waiting.push(resolve);
         if (waiting.length === 2) waiting.forEach((done) => done());
       });
     }
-    if (context.setupPhase === 'CHECKING')
+    if (context.state.phase === 'CHECKING')
       assert.deepEqual(
-        context.workflow.steps.map((s) => s.requirement),
-        context.executionStep.policy,
+        context.task.requirements.map((s) => s.requirement),
+        context.task.policy,
       );
     return finish(context);
   });
@@ -162,8 +180,11 @@ test('八组同时启动，第九组等待完成名额且浏览器命令不重�
   const ids = Array.from({ length: 9 }, (_, i) => `case-${i + 1}`);
   const { report, seen } = await run(
     async (context) => {
-      const id = context.executionStep.stepId;
-      if (context.setupPhase === 'PREPARING' && !context.cleanup) {
+      const id = context.task.stepId;
+      if (
+        context.state.phase === 'PREPARING' &&
+        !(context.state.phase === 'CLEANUP')
+      ) {
         prepared.add(id);
         if (id === 'case-9-setup') {
           assert.equal(prepared.size, 9);
@@ -176,8 +197,8 @@ test('八组同时启动，第九组等待完成名额且浏览器命令不重�
           });
         }
       }
-      if (context.executionStep.type === 'verification') verified.add(id);
-      if (context.cleanup) assert.equal(verified.size, 9);
+      if (context.state.phase === 'VERIFYING') verified.add(id);
+      if (context.state.phase === 'CLEANUP') assert.equal(verified.size, 9);
       return finish(context);
     },
     () => {},
@@ -203,7 +224,7 @@ for (const kind of ['NETWORK', 'TRACE']) {
     const visited = [];
     await run(
       (context) => {
-        const id = context.executionStep.stepId;
+        const id = context.task.stepId;
         if (id !== 'cleanup' && visited.at(-1) !== id) visited.push(id);
         return finish(context);
       },
@@ -224,8 +245,7 @@ for (const kind of ['NETWORK', 'TRACE']) {
 // 范围：一个组 policy 失败只跳过本组验证，阻塞证据保留且禁止清理；不验证真实业务权限。
 test('分组不符合环境不阻止兄弟组，并禁止整个 profile 的 cleanup', async () => {
   const { report, client, seen } = await run((context) =>
-    context.executionStep.stepId === 'a-setup' &&
-    context.setupPhase === 'CHECKING'
+    context.task.stepId === 'a-setup' && context.state.phase === 'CHECKING'
       ? { type: 'verification.block', summary: '无法确认甲组资格' }
       : finish(context),
   );
@@ -310,14 +330,14 @@ for (const confirm of [true, false])
     const { report } = await run(
       (context) => {
         if (
-          context.executionStep.stepId === 'a-setup' &&
-          context.setupPhase === 'CHECKING'
+          context.task.stepId === 'a-setup' &&
+          context.state.phase === 'CHECKING'
         ) {
           if (!requested) {
             requested = true;
             return { type: 'verification.block', summary: '需要人工确认资格' };
           }
-          const confirmed = context.workflow.steps.every(
+          const confirmed = context.state.requirements.every(
             (step) => step.status === 'recorded',
           );
           assert.equal(confirmed, confirm);
@@ -358,8 +378,8 @@ test('人工交还后丢弃兄弟 tab 旧决定，重新检查 policy', async ()
   const { report } = await run(
     async (context) => {
       if (
-        context.executionStep.stepId === 'a-setup' &&
-        context.setupPhase === 'CHECKING' &&
+        context.task.stepId === 'a-setup' &&
+        context.state.phase === 'CHECKING' &&
         !asked
       ) {
         await started;
@@ -367,11 +387,11 @@ test('人工交还后丢弃兄弟 tab 旧决定，重新检查 policy', async ()
         return { type: 'verification.block', summary: '人工确认甲组资格' };
       }
       if (
-        context.executionStep.stepId === 'b-setup' &&
-        context.setupPhase === 'CHECKING'
+        context.task.stepId === 'b-setup' &&
+        context.state.phase === 'CHECKING'
       )
         bChecks++;
-      if (context.executionStep.stepId === 'b-verify' && bFirst) {
+      if (context.task.stepId === 'b-verify' && bFirst) {
         bFirst = false;
         verifyStarted();
         await resumed;
@@ -434,8 +454,8 @@ test('profile 身份准备只执行一次，使用原始入口', async () => {
 test('setup 非空 expected 不会变成 policy 检查项目', async () => {
   const { report } = await run(
     (context) => {
-      if (context.setupPhase === 'CHECKING')
-        assert.deepEqual(context.task.acceptanceCriteria, []);
+      if (context.state.phase === 'CHECKING')
+        assert.deepEqual(context.task.criteria, []);
       return finish(context);
     },
     (execution) => {
@@ -465,77 +485,21 @@ test('setup 非空 expected 不会变成 policy 检查项目', async () => {
   );
 });
 
-// 范围：共享访客条件只在并发前请求一次人工确认，未确认时包括清理在内全部跳过；不验证人工声明真实性。
-for (const confirm of [true, false])
-  test(`共享访客门禁：人工${confirm ? '确认' : '仅恢复'}后再调度兄弟组`, async () => {
-    const client = new HumanControl();
-    client.confirm = confirm;
-    let classified = false;
-    const { report, seen } = await run(
-      (context) => {
-        if (context.environmentReview?.required) {
-          classified = true;
-          assert.equal(context.executionStep.stepId, 'a-setup');
-          assert(!client.calls.some((c) => c.operation.tabScope === 'group-2'));
-          return {
-            type: 'verification.environment',
-            mode: 'guest',
-            summary: '原始用例要求未登录访客',
-          };
-        }
-        assert(classified);
-        if (context.executionStep.stepId === 'b-setup') {
-          assert.equal(client.requests.length, 1);
-          assert.equal(client.mode, 'AUTO');
-        }
-        return finish(context);
-      },
-      (execution) => {
-        execution.task.profilePlan.environmentGateStepId = 'a-setup';
-        execution.task.environment.allowIntervention = true;
-        execution.task.sessionPlan = {
-          version: 1,
-          mode: 'manual',
-          candidates: [],
-          requirements: [],
-          preparationMs: 120000,
-        };
-      },
-      client,
-    );
-    assert.equal(client.requests.length, 1);
-    assert(client.requests[0].items.some((i) => i.includes('未登录访客')));
-    assert.equal(
-      report.steps[0].status,
-      confirm ? 'COMPLETED' : 'BLOCKED',
-      report.summary,
-    );
-    if (confirm) {
-      assert.equal(report.verdict, 'PASSED', report.summary);
-      assert.equal(
-        report.steps[2].preconditions.find((c) => c.id === 'profile-guest')
-          .source,
-        'human',
-      );
-    } else {
-      assert(report.steps.slice(1).every((s) => s.status === 'SKIPPED'));
-      assert(!seen.some(([id]) => id === 'b-setup' || id === 'cleanup'));
-      assert(report.steps[0].blockage.conditions.length > 0);
-    }
-  });
-
-// 范围：模型试图跳过声明时不能通过首门禁；不测试模型遵循提示词的成功率。
-test('未经环境意图声明的 finish 不能放行共享 profile', async () => {
-  const { report, client } = await run(finish, (execution) => {
+// 范围：冻结访客必须有当前会话空白来源证明；不以模型声明或人工勾选替代节点事实。
+test('共享访客缺少节点准备证明时不调度兄弟组', async () => {
+  const { report, seen } = await run(finish, (execution) => {
     execution.task.profilePlan.environmentGateStepId = 'a-setup';
+    execution.task.sessionPlan = {
+      version: 1,
+      mode: 'guest',
+      candidates: [],
+      requirements: [],
+      preparationMs: 120000,
+    };
   });
-  assert.notEqual(report.steps[0].status, 'COMPLETED');
+  assert.equal(report.steps[0].reasonCode, 'ENVIRONMENT_PROOF_MISSING');
   assert(report.steps.slice(1).every((s) => s.status === 'SKIPPED'));
-  assert(
-    !client.calls.some((c) =>
-      ['group-2', 'profile-cleanup'].includes(c.operation.tabScope),
-    ),
-  );
+  assert.equal(seen.length, 0);
 });
 
 // 范围：首门禁只串行共享准备，READY 后首组验证与兄弟组准备可重叠；不测物理浏览器吞吐。
@@ -550,9 +514,9 @@ test('首门禁 READY 后恢复分组并发', async () => {
           summary: '无访客要求',
         };
       if (
-        context.executionStep.stepId === 'a-verify' ||
-        (context.executionStep.stepId === 'b-setup' &&
-          context.setupPhase === 'PREPARING')
+        context.task.stepId === 'a-verify' ||
+        (context.task.stepId === 'b-setup' &&
+          context.state.phase === 'PREPARING')
       ) {
         await new Promise((resolve, reject) => {
           const timer = setTimeout(
@@ -577,7 +541,17 @@ test('首门禁 READY 后恢复分组并发', async () => {
 });
 
 // 范围：显式访客配置优先，隔离会话不额外请求人工；真实不恢复认证由节点已有集成测试验证。
-test('显式 guest 不能被模型声明为 configured 覆盖', async () => {
+test('显式 guest 冻结后不提供环境改写工具', async () => {
+  const client = new FakeControl();
+  const view = client.view.bind(client);
+  client.view = async (execution) => ({
+    ...(await view(execution)),
+    environmentProof: {
+      sessionId: execution.sessionId,
+      initialState: 'empty',
+      authRestored: false,
+    },
+  });
   const { report } = await run(
     (context) => {
       if (context.environmentReview?.required)
@@ -600,31 +574,24 @@ test('显式 guest 不能被模型声明为 configured 覆盖', async () => {
         preparationMs: 120000,
       };
     },
+    client,
   );
   assert.equal(report.verdict, 'PASSED', report.summary);
 });
 
-// 范围：已选择账号的任务不能被 guest 推断覆盖；不验证真实身份配方执行。
-test('访客意图和指定账号冲突时阻塞且保留原因', async () => {
+// 范围：旧环境分类工具不再被执行器接受，不能改变冻结身份；不验证真实模型遵从性。
+test('旧环境分类工具不能改写冻结账号意图', async () => {
   const { report } = await run(
     () => ({
       type: 'verification.environment',
       mode: 'guest',
-      summary: '要求访客',
+      summary: '覆盖环境',
     }),
     (execution) => {
       execution.task.profilePlan.environmentGateStepId = 'a-setup';
-      execution.task.sessionPlan = {
-        version: 1,
-        mode: 'identity',
-        candidates: [],
-        requirements: [],
-        preparationMs: 120000,
-      };
     },
   );
-  assert.equal(report.steps[0].reasonCode, 'ENVIRONMENT_NOT_READY');
-  assert.match(report.steps[0].summary, /指定账号配置冲突/);
+  assert.equal(report.steps[0].reasonCode, 'INVALID_MODEL_DECISION');
   assert(report.steps.slice(1).every((s) => s.status === 'SKIPPED'));
 });
 
@@ -655,8 +622,8 @@ for (const completed of [false, true])
     const { report } = await run(
       (context) => {
         if (
-          context.executionStep.stepId === 'a-verify' &&
-          context.interactionProgress.items[0].status !== 'recorded'
+          context.task.stepId === 'a-verify' &&
+          context.state.readings.items[0].status !== 'recorded'
         )
           return {
             type: completed ? 'browser.observe' : 'verification.block',
@@ -664,7 +631,7 @@ for (const completed of [false, true])
             workflow: {
               readings: [
                 {
-                  itemId: context.interactionProgress.items[0].id,
+                  itemId: context.state.readings.items[0].id,
                   quote: '第一条答案已显示',
                 },
               ],
@@ -833,7 +800,7 @@ test('准备阶段可以自行切换指定语言，过早 OTHER 阻塞只复核�
   let blockedOnce = false;
   const { report, seen } = await run(
     (context) => {
-      if (context.setupPhase === 'PREPARING' && !chinese) {
+      if (context.state.phase === 'PREPARING' && !chinese) {
         if (!blockedOnce) {
           blockedOnce = true;
           return {
@@ -842,11 +809,15 @@ test('准备阶段可以自行切换指定语言，过早 OTHER 阻塞只复核�
             summary: '语言不符，担心切换越权',
           };
         }
-        assert.match(context.feedback, /PREPARATION_REVIEW/);
+        assert.match(
+          context.feedback.map((item) => item.message ?? item.code).join(' '),
+          /PREPARATION_REVIEW/,
+        );
         assert(
-          context.preconditions.some(
-            (p) => p.id === 'platform-guest' && p.status === 'SATISFIED',
-          ),
+          context.state.conditions
+            .filter((item) => item.scope === 'current')
+            .map(({ scope: _scope, ...item }) => item)
+            .some((p) => p.id === 'platform-guest' && p.status === 'SATISFIED'),
         );
         reviews++;
         return { type: 'browser.act', action: 'click', target: '@language' };
@@ -932,7 +903,13 @@ for (const available of [true, false])
     let feedbackSeen = false;
     const { report } = await run(
       (context) => {
-        if (context.feedback?.includes('先补充')) feedbackSeen = true;
+        if (
+          context.feedback
+            .map((item) => item.message ?? item.code)
+            .join(' ')
+            ?.includes('先补充')
+        )
+          feedbackSeen = true;
         return finish(context);
       },
       (execution) => planned(execution, true),
@@ -964,7 +941,7 @@ test('新计划第一次缺项 finish 可以修正后通过', async () => {
   const { report } = await run(
     (context) => {
       const result = finish(context);
-      if (context.setupPhase === 'CHECKING' && missing) {
+      if (context.state.phase === 'CHECKING' && missing) {
         missing = false;
         delete result.workflow;
       }
@@ -984,19 +961,19 @@ test('同认证版本的人工确认跨交接保留且待办包含访客复核',
   let calls = 0;
   const { report } = await run(
     (context) => {
-      if (context.setupPhase === 'CHECKING' && calls++ < 2)
+      if (context.state.phase === 'CHECKING' && calls++ < 2)
         return {
           type: 'verification.intervene',
           reason: '请核实资格',
           reasonCode: 'IDENTITY_UNCONFIRMED',
           items: ['确认资格'],
           workflow: {
-            assessments: context.workflow.steps.map((item, index) => ({
+            assessments: context.state.requirements.map((item, index) => ({
               stepId: item.id,
               outcome:
                 index === client.requests.length ? 'blocked' : 'complete',
               summary: '夹具条件',
-              evidenceRefs: context.observation.artifactRefs.map(
+              evidenceRefs: context.page.artifactRefs.map(
                 (ref) => ref.artifactId,
               ),
             })),
@@ -1049,7 +1026,7 @@ test('新计划普通准备阻塞不自动转成人工确认', async () => {
   const client = new PlannedControl();
   const { report } = await run(
     (context) =>
-      context.setupPhase === 'CHECKING'
+      context.state.phase === 'CHECKING'
         ? {
             type: 'verification.block',
             summary: '当前无法取得所需证据',

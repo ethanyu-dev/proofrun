@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { InteractionProgress } from '../../apps/agent/dist/execution/interaction-progress.js';
 import { execute } from '../../apps/agent/dist/execution/runner.js';
-import { JevModel } from '../../apps/agent/dist/model/jev.js';
 import { config, grant, FakeControl, finish } from './fixture.mjs';
 
 /** 用独立面板和悬浮控件构造观察，不代表真实站点 DOM。 */
@@ -52,137 +51,6 @@ function page() {
     ],
   };
 }
-
-// 范围：动作额度耗尽和停滞收尾直接进入文本验收，不调用 JEV 或发起候选动作；供应商与页面均为夹具。
-test('JEV 在动作耗尽或只读收尾时不再派发候选请求', async () => {
-  for (const final of [false, true]) {
-    let reviewed = 0;
-    const model = new JevModel(
-      config,
-      'fixture',
-      'jev-test',
-      async () => {
-        assert.fail('只读收尾不能再请求动作候选');
-      },
-      {
-        async decide(input) {
-          reviewed++;
-          const context = JSON.parse(input.text);
-          assert.match(
-            context.feedback,
-            final ? /最后一次只读验收整理/ : /动作预算已耗尽/,
-          );
-          return {
-            decision: { type: 'verification.block', summary: '剩余项目缺证' },
-            promptTokens: 1,
-            completionTokens: 1,
-          };
-        },
-      },
-    );
-    const output = await model.decide(
-      {
-        text: JSON.stringify({
-          task: grant().task,
-          observation: {
-            ...page(),
-            text: '答案已展开',
-            title: 'FAQ',
-            atomic: false,
-          },
-          recentOperations: [],
-          feedback: null,
-          budgetRemaining: { actions: final ? 5 : 0 },
-          ...(final
-            ? {
-                verificationReview: {
-                  pendingCriterionIds: ['c1'],
-                  final: true,
-                },
-              }
-            : {}),
-          interactionProgress: { items: [{ status: 'observed' }] },
-        }),
-      },
-      new AbortController().signal,
-    );
-    assert.equal(reviewed, 1);
-    assert.equal(output.decision.type, 'verification.block');
-  }
-});
-
-// 范围：无正文关联的悬浮按钮交回审查，普通按钮、关联面板和准备操作不受影响；不识别真实站点的 FAQ 语义。
-test('JEV 不把孤立悬浮按钮直接当作业务面板点击', async () => {
-  for (const mode of ['floating', 'ordinary', 'disclosure', 'setup']) {
-    const target = structuredClone(page().targets[2]);
-    if (mode === 'ordinary') target.context.fixed = false;
-    if (mode === 'disclosure')
-      target.disclosure = structuredClone(page().targets[1].disclosure);
-    let reviews = 0;
-    const model = new JevModel(
-      config,
-      'fixture',
-      'jev-test',
-      async (_url, _key, _method, body) => {
-        const choices = body.questions.next.criteria;
-        const choice = Object.entries(choices).find(
-          ([, item]) => item.operation === 'CLICK',
-        )[0];
-        return {
-          answers: {
-            next: {
-              choice,
-              confidence: 1,
-              probabilities: Object.fromEntries(
-                Object.keys(choices).map((id) => [id, Number(id === choice)]),
-              ),
-            },
-          },
-          usage: { input_tokens: 2, output_tokens: 1 },
-        };
-      },
-      {
-        async decide(input) {
-          reviews++;
-          assert.match(JSON.parse(input.text).feedback, /悬浮控件/);
-          return {
-            decision: { type: 'browser.act', action: 'scroll', value: 'down' },
-            promptTokens: 3,
-            completionTokens: 2,
-          };
-        },
-      },
-    );
-    const output = await model.decide(
-      {
-        text: JSON.stringify({
-          task: grant().task,
-          executionStep: {
-            stepId: 'step-1',
-            type: mode === 'setup' ? 'setup' : 'verification',
-          },
-          observation: {
-            ...page(),
-            targets: [target],
-            text: '当前页面',
-            title: '页面',
-            atomic: false,
-          },
-          recentOperations: [],
-          feedback: null,
-          budgetRemaining: { actions: 10 },
-        }),
-      },
-      new AbortController().signal,
-    );
-    assert.equal(reviews, mode === 'floating' ? 1 : 0);
-    assert.equal(
-      output.decision.action,
-      mode === 'floating' ? 'scroll' : 'click',
-    );
-    assert.equal(output.promptTokens, mode === 'floating' ? 5 : 2);
-  }
-});
 
 // 范围：引用必须来自本面板，隐藏内容/未知 ID 不可登记；不判断语言和业务验收是否通过。
 test('逐项读取必须关联已观察原文，重复登记不推进且关闭后保留证据', () => {
@@ -359,10 +227,10 @@ test('子项进度可裁剪但执行器保留完整报告来源', async () => {
   };
   const context = decisionContext(input);
   assert(context.text.length <= 4000);
-  assert(JSON.parse(context.text).interactionProgress.omittedItems > 0);
-  assert.equal(JSON.parse(context.text).interactionProgress.discovered, 32);
+  assert(JSON.parse(context.text).state.readings.omittedItems > 0);
+  assert.equal(JSON.parse(context.text).state.readings.discovered, 32);
   assert.equal(
-    JSON.parse(context.text).interactionProgress.unreadItemIds.length,
+    JSON.parse(context.text).state.readings.unreadItemIds.length,
     32,
   );
   assert.equal(ledger.results().length, 32);
@@ -447,9 +315,9 @@ test('裁剪保留全部已登记身份且不污染输入进度', async () => {
       maxContextChars: 4000,
     }).text,
   );
-  assert(result.interactionProgress.omittedItems > 0);
+  assert(result.state.readings.omittedItems > 0);
   assert.deepEqual(
-    result.interactionProgress.recordedItemIds,
+    result.state.readings.recordedItemIds,
     before.recordedItemIds,
   );
   assert.deepEqual(progress, before);
@@ -508,7 +376,10 @@ test('执行器阻止已读题重点击，滚动后用新目标继续读取', as
             readings: [{ itemId: 'item-1', quote: '第一个问题的答案' }],
           };
         } else if (turn === 2) {
-          assert.match(context.feedback, /INTERACTION_ALREADY_RECORDED/);
+          assert.match(
+            context.feedback.map((item) => item.message ?? item.code).join(' '),
+            /INTERACTION_ALREADY_RECORDED/,
+          );
           assert.equal(
             client.calls.filter((c) => c.operation.action === 'click').length,
             0,
@@ -516,7 +387,7 @@ test('执行器阻止已读题重点击，滚动后用新目标继续读取', as
           decision = { type: 'browser.act', action: 'scroll', value: 'down' };
         } else if (turn === 3) {
           assert.equal(
-            context.interactionProgress.currentTargets[0].itemId,
+            context.state.readings.currentTargets[0].itemId,
             'item-2',
           );
           decision = { type: 'browser.act', action: 'click', target: '@a' };
@@ -542,135 +413,85 @@ test('执行器阻止已读题重点击，滚动后用新目标继续读取', as
   );
 });
 
-// 范围：JEV 不再暴露已读点击候选，必要重访仍经文本恢复且保留元数据；不调用真实 JEV。
-test('JEV 移除已读题候选，重规划时交回文本模型定位后续内容', async () => {
-  const observation = {
-    ...page(),
-    title: 'FAQ',
-    text: '逐条阅读问题',
-    atomic: false,
-  };
-  observation.targets = [observation.targets[0]];
-  let reviews = 0;
-  const model = new JevModel(
-    config,
-    'fixture',
-    'jev-test',
-    async (_url, _key, _method, body) => {
-      const choices = body.questions.next.criteria;
-      assert(
-        !Object.values(choices).some((item) => item.operation === 'CLICK'),
-      );
-      const choice = 'REPLAN';
-      return {
-        answers: {
-          next: {
-            choice,
-            confidence: 1,
-            probabilities: Object.fromEntries(
-              Object.keys(choices).map((id) => [id, Number(id === choice)]),
-            ),
-          },
-        },
-      };
+// 范围：阅读进度在下一动作前连同步骤附件持久化，模拟控制面的引用包含校验；不证明真实网页业务结果。
+test('同轮保存阅读进度时同步步骤证据，再派发动作', async () => {
+  const execution = grant();
+  execution.task.steps = [
+    {
+      stepId: 'read',
+      type: 'verification',
+      url: execution.task.target.url,
+      exec_order: 1,
+      description: '阅读面板并填写名称',
+      policy: [],
+      expected: ['页面结果可见'],
     },
+  ];
+  execution.task.acceptanceCriteria[0].stepId = 'read';
+  const client = new FakeControl();
+  const command = client.command.bind(client);
+  let persisted = false;
+  client.command = async (...args) => {
+    if (args[2].action === 'fill')
+      assert(persisted, '填写前必须成功保存阅读来源');
+    const result = await command(...args);
+    if (args[2].type === 'browser.observe')
+      result.data.targets[1].disclosure = {
+        relation: 'aria-controls',
+        expanded: true,
+        visible: true,
+        text: '真实面板原文',
+        truncated: false,
+      };
+    return result;
+  };
+  const record = client.recordSteps.bind(client);
+  client.recordSteps = async (g, steps) => {
+    for (const step of steps)
+      for (const reading of step.readings ?? []) {
+        assert(
+          reading.evidenceRefs.every((id) => step.evidenceRefs.includes(id)),
+          '阅读证据必须属于步骤附件集合',
+        );
+        if (reading.status === 'recorded') persisted = true;
+      }
+    return record(g, steps);
+  };
+  let turn = 0;
+  const report = await execute(
+    config,
+    client,
     {
       async decide(input) {
-        reviews++;
-        assert.match(JSON.parse(input.text).feedback, /REPLAN/);
+        const ctx = JSON.parse(input.text);
         return {
-          decision: { type: 'browser.act', action: 'scroll', value: 'down' },
-          workflow: { revisitReason: '原任务另有收起检查，本轮先定位后续题' },
+          decision:
+            ++turn === 1
+              ? {
+                  type: 'browser.act',
+                  action: 'fill',
+                  target: '@e1',
+                  value: 'Alice',
+                }
+              : finish(ctx),
+          ...(turn === 1
+            ? {
+                workflow: {
+                  readings: [{ itemId: 'item-1', quote: '真实面板原文' }],
+                },
+              }
+            : {}),
           promptTokens: 0,
           completionTokens: 0,
         };
       },
     },
+    execution,
   );
-  const output = await model.decide(
-    {
-      text: JSON.stringify({
-        task: grant().task,
-        observation,
-        recentOperations: [],
-        feedback: null,
-        budgetRemaining: { actions: 10 },
-        interactionProgress: {
-          items: [{ status: 'recorded' }],
-          currentTargets: [
-            { target: '@a', itemId: 'item-1', status: 'recorded' },
-          ],
-        },
-      }),
-    },
-    new AbortController().signal,
+  assert(persisted);
+  assert.equal(report.verdict, 'PASSED', JSON.stringify(report));
+  assert.equal(
+    client.calls.filter((call) => call.operation.action === 'fill').length,
+    1,
   );
-  assert.equal(reviews, 1);
-  assert.equal(output.decision.action, 'scroll');
-  assert.match(output.workflow.revisitReason, /收起检查/);
-});
-
-// 范围：排除已读候选后仍保留未读点击与滚动，当前编号对应真实候选；不测试供应商选题质量或实际 DOM。
-test('JEV 在已读与未读题并存时只提供未读题的普通点击', async () => {
-  const observation = {
-    ...page(),
-    title: 'FAQ',
-    text: '第一题已读，第二题未读',
-    atomic: false,
-  };
-  observation.targets = observation.targets.slice(0, 2);
-  observation.targets[0].name = '第一题';
-  observation.targets[1].name = '第二题';
-  const model = new JevModel(
-    config,
-    'fixture',
-    'jev-test',
-    async (_url, _key, _method, body) => {
-      const choices = body.questions.next.criteria;
-      const clicks = Object.entries(choices).filter(
-        ([, candidate]) => candidate.operation === 'CLICK',
-      );
-      assert.equal(clicks.length, 1);
-      assert.equal(clicks[0][1].field.reading.itemId, 'item-2');
-      assert(choices.SCROLL_DOWN);
-      const choice = clicks[0][0];
-      return {
-        answers: {
-          next: {
-            choice,
-            confidence: 1,
-            probabilities: Object.fromEntries(
-              Object.keys(choices).map((id) => [id, Number(id === choice)]),
-            ),
-          },
-        },
-      };
-    },
-    {
-      async decide() {
-        throw new Error('当前存在未读目标，不应反复审查已读题');
-      },
-    },
-  );
-  const output = await model.decide(
-    {
-      text: JSON.stringify({
-        task: grant().task,
-        observation,
-        recentOperations: [],
-        feedback: null,
-        budgetRemaining: { actions: 10 },
-        interactionProgress: {
-          items: [{ status: 'recorded' }, { status: 'pending' }],
-          currentTargets: [
-            { target: '@a', itemId: 'item-1', status: 'recorded' },
-            { target: '@b', itemId: 'item-2', status: 'pending' },
-          ],
-        },
-      }),
-    },
-    new AbortController().signal,
-  );
-  assert.equal(output.decision.action, 'click');
-  assert.equal(output.decision.target, '@b');
 });

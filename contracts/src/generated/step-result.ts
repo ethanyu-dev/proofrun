@@ -128,4 +128,18 @@ export interface StepResult {
     authRevision: number;
     recordedAt: string;
   }[];
+  /**
+   * 原始要求完成声明，只是带来源的执行记录，不替代业务验收。
+   *
+   * @maxItems 33
+   */
+  requirements?: {
+    id: string;
+    status: 'pending' | 'recorded' | 'incomplete' | 'blocked';
+    summary?: string;
+    /**
+     * @maxItems 24
+     */
+    evidenceRefs: string[];
+  }[];
 }

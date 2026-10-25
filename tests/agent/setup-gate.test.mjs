@@ -95,7 +95,7 @@ async function run(decide, prepare = () => {}) {
   prepare(execution, client);
   const seen = [];
   const server = await modelServer((context, turn, body) => {
-    seen.push(context.executionStep.stepId);
+    seen.push(context.task.stepId);
     return decide(context, turn, client, body);
   });
   const settings = { ...config, modelUrl: server.url, maxContextChars: 30000 };
@@ -117,7 +117,7 @@ async function run(decide, prepare = () => {}) {
 function complete(context) {
   return {
     ...finish(context),
-    evidenceRefs: context.observation.artifactRefs.map((a) => a.artifactId),
+    evidenceRefs: context.page.artifactRefs.map((a) => a.artifactId),
   };
 }
 
@@ -145,9 +145,9 @@ for (const partial of [false, true]) {
   test(`setup ${partial ? '部分确认' : '缺少完成声明'} 不能通过门禁`, async () => {
     const { report, client, seen } = await run((context) => {
       const value = complete(context);
-      if (context.executionStep.stepId === 'prepare') {
+      if (context.task.stepId === 'prepare') {
         assert.deepEqual(
-          context.workflow.steps.map((s) => s.requirement),
+          context.task.requirements.map((s) => s.requirement),
           ['准备指定的验证环境', '资格应符合输入中约定的甲类条件'],
         );
         if (partial) value.workflow.assessments.pop();
@@ -178,7 +178,7 @@ test('setup 无法核实立即人工交接，复核通过后才放行业务', as
   const { report, client, seen } = await run(
     (context, turn, control, body) => {
       if (turn === 1) {
-        before = context.observation.artifactRefs[0].artifactId;
+        before = context.page.artifactRefs[0].artifactId;
         assert.ok(
           !body.tools.some((t) => t.function.name === 'verification_record'),
         );
@@ -188,10 +188,12 @@ test('setup 无法核实立即人工交接，复核通过后才放行业务', as
           summary: '甲类资格缺少证明，不能确认准备完成',
         };
       }
-      if (context.executionStep.stepId === 'prepare') {
+      if (context.task.stepId === 'prepare') {
         assert.equal(control.requests.length, 1);
-        assert.ok(context.workflow.steps.every((s) => s.status === 'pending'));
-        assert.notEqual(context.observation.artifactRefs[0].artifactId, before);
+        assert.ok(
+          context.state.requirements.every((s) => s.status === 'pending'),
+        );
+        assert.notEqual(context.page.artifactRefs[0].artifactId, before);
       }
       return complete(context);
     },
@@ -218,7 +220,7 @@ test('setup 无法核实立即人工交接，复核通过后才放行业务', as
 test('人工交还后仍未就绪只交接一次并跳过后续业务', async () => {
   const { report, client, seen } = await run(
     (context) => {
-      if (context.executionStep.stepId !== 'prepare') return complete(context);
+      if (context.task.stepId !== 'prepare') return complete(context);
       const value = complete(context);
       value.workflow.assessments[1].outcome = 'incomplete';
       value.workflow.assessments[1].summary = '账号角色未确认';
@@ -239,9 +241,9 @@ test('拒绝用人工交还前的证据证明环境就绪', async () => {
   let oldRefs;
   const { report, client, seen } = await run(
     (context, turn) => {
-      if (context.executionStep.stepId !== 'prepare') return complete(context);
+      if (context.task.stepId !== 'prepare') return complete(context);
       if (turn === 1) {
-        oldRefs = context.observation.artifactRefs.map((a) => a.artifactId);
+        oldRefs = context.page.artifactRefs.map((a) => a.artifactId);
         return {
           type: 'verification.intervene',
           reason: '请切换到指定账号',
@@ -287,8 +289,7 @@ test('已复用登录态也不能跳过显式账号前置条件', async () => {
 test('环境就绪后业务失败仍归产品验收结论', async () => {
   const { report } = await run((context) => {
     const value = complete(context);
-    if (context.executionStep.stepId === 'verify')
-      value.criteria[0].verdict = 'FAILED';
+    if (context.task.stepId === 'verify') value.criteria[0].verdict = 'FAILED';
     return value;
   });
   assert.equal(report.executionDisposition, 'EXECUTED');
@@ -327,7 +328,7 @@ test('最大数量的 setup 约束不能截断尾项', () => {
 test('setup 重复观察触发人工而非耗尽业务预算', async () => {
   const { report, client, seen } = await run(
     (context) =>
-      context.executionStep.stepId === 'prepare'
+      context.task.stepId === 'prepare'
         ? { type: 'browser.observe' }
         : complete(context),
     (execution) => {
@@ -343,7 +344,7 @@ test('setup 重复观察触发人工而非耗尽业务预算', async () => {
 // 范围：环境未就绪时禁止执行 cleanup，退出登录或清 Cookie 不会发生；不连接真实浏览器。
 test('环境未 ready 时连 cleanup 也不执行', async () => {
   const { report, client, seen } = await run((context) => {
-    assert.equal(context.executionStep.stepId, 'prepare');
+    assert.equal(context.task.stepId, 'prepare');
     return { type: 'verification.block', summary: '指定资格不符合' };
   });
   assert.deepEqual(seen, ['prepare']);
@@ -381,7 +382,7 @@ test('准备完成声明必须整批通过校验后才保存', async () => {
       const value = complete(context);
       if (turn === 1) value.criteria.pop();
       if (turn === 2) {
-        assert.deepEqual(context.recordedCriteria, []);
+        assert.deepEqual(context.state.criteria, []);
         return {
           type: 'verification.intervene',
           reason: '重新核实账号',
@@ -441,7 +442,7 @@ test('人工登录成功后仍可针对未解决条件再次交接', async () =>
         assert.equal(control.requests[1].items.length, 1);
         assert.match(control.requests[1].items[0], /甲类资格尚未核实/);
         assert.ok(
-          context.workflow.steps.every((step) => step.status === 'pending'),
+          context.state.requirements.every((step) => step.status === 'pending'),
         );
       }
       return complete(context);

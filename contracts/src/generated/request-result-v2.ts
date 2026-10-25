@@ -968,6 +968,20 @@ export interface StepResult {
     authRevision: number;
     recordedAt: string;
   }[];
+  /**
+   * 原始要求完成声明，只是带来源的执行记录，不替代业务验收。
+   *
+   * @maxItems 33
+   */
+  requirements?: {
+    id: string;
+    status: 'pending' | 'recorded' | 'incomplete' | 'blocked';
+    summary?: string;
+    /**
+     * @maxItems 24
+     */
+    evidenceRefs: string[];
+  }[];
 }
 /**
  * 最近一次领取检查发现的排队原因；不包含节点身份或登录凭据，也不是业务验收结论。

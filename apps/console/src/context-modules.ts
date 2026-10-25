@@ -8,9 +8,12 @@ export interface ContextModule {
   value: unknown;
 }
 
-/** 常用模块保持固定阅读顺序，LLM 和 JEV 的额外字段随后逐项展示。 */
+/** 只为已存档字段提供标签；旧工作流和 JEV 标签用于历史读取，不参与新请求构造。 */
 const CONTEXT_LABELS: Record<string, string> = {
   task: '任务定义与验收标准',
+  state: '执行阶段与已保存进度',
+  history: '历史命令与页面片段',
+  budget: '剩余硬预算',
   workflow: '当前子目标与工作流',
   executionGuidance: '执行计划、进度与预算诊断',
   budgetRemaining: '剩余预算',
@@ -72,7 +75,7 @@ export function contextModules(
   if (context) {
     for (const [key, value] of Object.entries(context)) {
       if (
-        key === 'observation' &&
+        ['page', 'observation'].includes(key) &&
         value &&
         typeof value === 'object' &&
         !Array.isArray(value)
@@ -81,18 +84,18 @@ export function contextModules(
         if (text !== undefined)
           modules.push({
             title: '当前页面正文',
-            path: `${contextPath}.observation.text`,
+            path: `${contextPath}.${key}.text`,
             value: text,
           });
         if (targets !== undefined)
           modules.push({
             title: '当前可操作目标',
-            path: `${contextPath}.observation.targets`,
+            path: `${contextPath}.${key}.targets`,
             value: targets,
           });
         modules.push({
           title: '当前页面身份与证据',
-          path: `${contextPath}.observation`,
+          path: `${contextPath}.${key}`,
           value: metadata,
         });
       } else

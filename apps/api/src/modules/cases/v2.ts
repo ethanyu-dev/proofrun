@@ -162,20 +162,24 @@ export class CaseV2Service {
       return previous.definition;
     }
     const { definition } = await this.stored(id);
+    if (
+      budgetMode === 'original' &&
+      (definition.comparison ||
+        (definition.executionMode && definition.executionMode !== 'llm'))
+    )
+      throw new ApiError(
+        422,
+        'RERUN_BUDGET_INCOMPATIBLE',
+        '历史 JEV/双跑预算不能用于新执行，请选择当前预算',
+      );
     const profile: CaseProfile = {
-      // 历史快照省略开关时沿用旧语义，避免新建默认值改变重跑的登录与人工权限。
+      // 不扩张历史人工权限；旧登录元数据只保留原值，不再生成登录复用开关。
       environment: {
         ...structuredClone(definition.environment),
-        reuseAuth:
-          definition.environment.reuseAuth ??
-          definition.environment.allowIntervention ??
-          false,
         allowIntervention: definition.environment.allowIntervention ?? false,
       },
       budget: structuredClone(definition.budget),
-      executionMode: definition.comparison
-        ? 'parallel'
-        : (definition.executionMode ?? 'llm'),
+      executionMode: 'llm',
       evidenceKinds: [...definition.acceptanceCriteria[0]!.evidenceKinds],
     };
     // 新运行独立编译配置，跳过同 case 的提交幂等分支，业务定义保持原身份。

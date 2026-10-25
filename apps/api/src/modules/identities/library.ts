@@ -1,4 +1,3 @@
-import { fallbackLibraryIdentity } from './slot.js';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -129,7 +128,7 @@ export class IdentityLibrary {
         description: row.description,
         concurrency: row.concurrency,
         cookiesConfigured: !!row.cookie_file,
-        baselineReady: !!row.baseline_node,
+        baselineReady: false,
       })),
     };
   }
@@ -151,18 +150,12 @@ export class IdentityLibrary {
         description: row.description,
         identityType: row.identity_type,
         url: row.url,
-        ...(row.baseline_node
-          ? {
-              nodeId: row.baseline_node,
-              stateId: `lib-${row.id}-${row.version}`,
-            }
-          : {}),
       })),
       pools: [],
       sites: [],
     };
   }
-  /** 保存六个用户字段；只有地址或 Cookie 改变时才使原 profile 基准失效。 */
+  /** 保存身份来源字段；地址或 Cookie 改变时更新材料版本，旧版本不能用于新准备。 */
   async save(raw: unknown) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw))
       throw new ApiError(422, 'INVALID_IDENTITY', '身份信息无效');
@@ -316,36 +309,5 @@ export class IdentityLibrary {
       }
     }
     return { url: identity.url ?? identity.origins[0]!, cookies };
-  }
-  /** 只有人工成功保存基准后登记归属；旧版本不能覆盖页面刚修改的 Cookie。 */
-  async published(taskId: string, nodeId: string) {
-    const row = (
-      await this.db.query<{
-        identity: SessionPlan['candidates'][number] | null;
-        definition: VerificationTask;
-      }>(
-        'SELECT a.identity,t.definition FROM pr_tasks t LEFT JOIN pr_identity_assignments a ON a.task_id=t.id WHERE t.id=$1',
-        [taskId],
-      )
-    ).rows[0];
-    const identity =
-      row?.identity ??
-      (row?.definition.sessionPlan?.library
-        ? fallbackLibraryIdentity(row.definition)
-        : undefined);
-    if (!identity?.libraryVersion) return;
-    await this.db.query(
-      `INSERT INTO pr_identity_library(id,version,url,name,identity_type,description,concurrency,baseline_node) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(id) DO UPDATE SET baseline_node=$8,updated_at=clock_timestamp() WHERE pr_identity_library.version=$2 AND NOT pr_identity_library.deleted`,
-      [
-        identity.id,
-        identity.libraryVersion,
-        identity.url ?? identity.origins[0],
-        identity.label,
-        identity.identityType ?? '',
-        identity.description ?? '人工准备的测试身份',
-        identity.maxConcurrent,
-        nodeId,
-      ],
-    );
   }
 }

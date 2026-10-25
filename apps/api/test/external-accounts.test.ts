@@ -12,7 +12,6 @@ import {
 import { buildApp } from '../src/app.js';
 import type { ApiConfig } from '../src/config.js';
 import { compileCase } from '../src/modules/cases/structured.js';
-import { sessionAuth } from '../src/modules/scheduling/auth.js';
 import {
   executionDeadline,
   executionTimeoutCode,
@@ -86,7 +85,6 @@ test('外部来源显式冻结且人工暂停不能超过账号期限', () => {
     task.sessionPlan?.external?.selector.platform,
     'example-production',
   );
-  assert.equal(sessionAuth(task), null);
   assert.ok(task.sessionPlan!.external!.durationSeconds > 300);
   const context = {
     control_mode: 'HUMAN',
@@ -335,67 +333,6 @@ test(
         );
         assert.ok(!node.sessions.has(execution.sessionId));
       });
-      // 范围：本子场景核实协议与持久状态，浏览器关闭由模拟节点报告。
-      await suite.test(
-        '双跑额度独立，容量为一时等待，材料版本改变拒绝第二组',
-        async () => {
-          // 使用平台双跑模式提交；业务完成由夹具置位，不伪造真实验收报告。
-          config.caseProfile!.executionMode = 'parallel';
-          await api('/v2/cases', [example('comparison')]);
-          const first = await start();
-          assert.equal(first.task.comparison.arm, 'llm');
-          await until(
-            async () => {
-              await claim();
-              return fixture.state.requests;
-            },
-            (r) => r.some((x) => x.account_id === 'account-1'),
-          );
-          assert.equal(node.sessions.size, 1);
-          fixture.state.version = 'material-2';
-          await sql.query(
-            "UPDATE pr_tasks SET state='COMPLETED',finished_at=clock_timestamp() WHERE id=$1",
-            [first.task.taskId],
-          );
-          node.closed(first.sessionId);
-          await until(
-            () => row('comparison'),
-            (r) => r.state === 'RELEASED',
-          );
-          await until(
-            async () => {
-              await hurry();
-              await claim();
-              return (
-                await sql.query(
-                  'SELECT state,error FROM pr_tasks WHERE id=$1',
-                  ['comparison-case-v2-comparison-jev'],
-                )
-              ).rows[0];
-            },
-            (r) => r.state === 'ERROR',
-          );
-          const second = (
-            await sql.query(
-              'SELECT * FROM pr_external_accounts WHERE task_id=$1',
-              ['comparison-case-v2-comparison-jev'],
-            )
-          ).rows[0];
-          assert.equal(second.session_id, null);
-          await until(
-            async () => {
-              await hurry();
-              return (
-                await sql.query(
-                  'SELECT state FROM pr_external_accounts WHERE task_id=$1',
-                  [second.task_id],
-                )
-              ).rows[0];
-            },
-            (r) => r.state === 'RELEASED',
-          );
-        },
-      );
       // 范围：真实账本在明确账号异常或到期时关闭并交还；业务与节点仍为夹具。
       await suite.test(
         '管理员确认异常才反馈账号健康，账号期限优先于业务期限',
@@ -466,7 +403,7 @@ test(
       await suite.test(
         '材料绑定错误不创建会话，并交还已经分配的额度',
         async () => {
-          config.caseProfile!.executionMode = 'parallel';
+          config.caseProfile!.executionMode = 'llm';
           fixture.state.wrongRecipient = true;
           await api('/v2/cases', [example('invalid-material')]);
           await claim();
@@ -485,19 +422,6 @@ test(
             fixture.state.releases.some(
               (r) => r.lease_id === binding.lease_id && r.usage_stopped,
             ),
-          );
-          // 首组未取得可信材料时，另一组不能换账号或永久等待。
-          await until(
-            async () => {
-              await claim();
-              return (
-                await sql.query(
-                  'SELECT state,error FROM pr_tasks WHERE id=$1',
-                  ['comparison-case-v2-invalid-material-jev'],
-                )
-              ).rows[0];
-            },
-            (r) => r.state === 'ERROR',
           );
           fixture.state.wrongRecipient = false;
         },

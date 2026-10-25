@@ -291,30 +291,12 @@ export interface RecordVerification {
    */
   summary: string;
   /**
-   * @minItems 1
+   * @minItems 0
    */
-  criteria: [
-    {
-      criterionId: string;
-      verdict: 'PASSED' | 'FAILED' | 'INCONCLUSIVE' | 'SKIPPED';
-      summary: string;
-      evidenceRefs: string[];
-    } & {
-      criterionId: string;
-      verdict: 'PASSED' | 'FAILED' | 'INCONCLUSIVE' | 'SKIPPED';
-      summary: string;
-      evidenceRefs: string[];
-    },
-    ...({
-      criterionId: string;
-      verdict: 'PASSED' | 'FAILED' | 'INCONCLUSIVE' | 'SKIPPED';
-      summary: string;
-      evidenceRefs: string[];
-    } & {
-      criterionId: string;
-      verdict: 'PASSED' | 'FAILED' | 'INCONCLUSIVE' | 'SKIPPED';
-      summary: string;
-      evidenceRefs: string[];
-    })[],
-  ];
+  criteria: {
+    criterionId: string;
+    verdict: 'PASSED' | 'FAILED' | 'INCONCLUSIVE' | 'SKIPPED';
+    summary: string;
+    evidenceRefs: string[];
+  }[];
 }

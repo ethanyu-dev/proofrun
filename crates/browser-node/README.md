@@ -35,11 +35,11 @@ target/release/proofrun-node --config deploy/node.example.toml serve
 
 需要在浏览器中手动验证导航、观察、截图、target、点击和填写时，可运行[本地调试页](../../tests/browser-node/debug-ui/README.md)。调试页启动同一二进制的内部 `session-host`，适合 macOS 上的真实 Chrome 适配测试；它不覆盖正式节点的网关与 systemd 路径。
 
-## 完整身份 profile
+## 临时身份会话
 
-新身份库任务声明 `authState.fullProfile`，节点在启动前复制身份的完整磁盘基准。可在 TOML 中配置 `base_profile_directory = "/private/closed-template"`，作为首次身份准备时的环境模板；目录必须属于节点用户、浏览器已关闭。未配置则使用空 profile。模板不在任务完成后回写。
+每个执行从空 profile 启动，能力标记为 `ephemeralProfiles`。身份库 Cookie 与 DevPass 材料只注入当前会话，种子文件用后删除；运行时仍核验页面身份与授权条件。HITL 完成后保持当前浏览器，不复制、发布、保存或恢复完整 profile。
 
-只有 HITL 完成命令发布新的不可变版本，先关闭浏览器并保存会话 Cookie 补充状态，再复制目录、原子切换版本指针，最后重启当前任务并重建标签页。对照组固定同一个初始版本；普通任务产生的状态随副本丢弃。profile 包含磁盘存储，不包含浏览器进程内存。版本默认留在本节点，不自动跨节点迁移或回收；并发人工发布使用版本比较保护较新的基准。详见[测试身份](../../apps/api/src/modules/identities/README.md)。
+`browser.auth.save`、`authState` 恢复、节点默认模板和 `auth-import/auth-forget` 已停用。部署时删除 `base_profile_directory`；旧本地基准文件不会由本次改造自动删除。完整目录仅作为当前执行的隔离资源，仍由物理关闭和保留策略回收。
 
 ## 模块
 
@@ -60,7 +60,7 @@ target/release/proofrun-node --config deploy/node.example.toml serve
 
 写操作默认关闭，包括导航。检查过的 agent-browser 上游源码在连接异常路径可能重试，尚未证明当前发布二进制在“业务成功、响应丢失”时不会再次写入。开发测试必须显式设置 `allow_unverified_writes = true`；该开关不会将 engineWritesVerified 变成 true。节点的 commandId 去重不能约束引擎内部重试，不能宣称业务 exactly-once。
 
-已补充凭据轮换/原配对回执恢复、Cookie/localStorage 登录复用、网络元数据、停机清理和显式主机重启恢复工具，见 [部署与运行维护](../../deploy/README.md)。iframe 条件等待、closed Shadow DOM 和 TRACE 已实现，验证范围见[浏览器能力](../../docs/browser-capabilities-ha.md)；磁盘故障演练和真实内网 VM 部署仍待验收。当前截图是多次 CLI 调用中的一次采样，`atomic: false`；观察成功不等于业务验收通过。
+已补充凭据轮换/原配对回执恢复、身份 Cookie 注入、网络元数据、停机清理和显式主机重启恢复工具，见 [部署与运行维护](../../deploy/README.md)。iframe 条件等待、closed Shadow DOM 和 TRACE 已实现，验证范围见[浏览器能力](../../docs/browser-capabilities-ha.md)；磁盘故障演练和真实内网 VM 部署仍待验收。当前截图是多次 CLI 调用中的一次采样，`atomic: false`；观察成功不等于业务验收通过。
 
 跨主机重启导致 boot ID 改变，或创建意图没有可验证的 cgroup 身份时，节点保守地停止接单并要求恢复处理。不要通过删除数据库、清空 home 或重用 sessionId 来解除未核实的占用。维护工具可以清理确认关闭的旧 profile 和命令内容，仍保留去重身份。实际 VM 重启后的运维演练尚未验收。
 

@@ -52,7 +52,7 @@ PROOFRUN_TEST_AGENT_BROWSER="$PWD/.proofrun/bin/agent-browser-linux-x64" \
 PROOFRUN_TEST_FULL_LINUX=true pnpm test:agent:linux
 ```
 
-完整入口包含登录快照与网络、systemd 生命周期、网关、DOM/Shadow DOM/iframe/TRACE 和 HITL。容器中的 privileged 仅用于一次性 systemd/cgroup 测试，不能复制到生产服务。脚本创建独立容器、网络与数据并负责回收；需要 Docker、Python 3 及可构建 Rust 的环境。
+完整入口包含临时身份隔离与网络、systemd 生命周期、网关、DOM/Shadow DOM/iframe/TRACE 和 HITL。容器中的 privileged 仅用于一次性 systemd/cgroup 测试，不能复制到生产服务。脚本创建独立容器、网络与数据并负责回收；需要 Docker、Python 3 及可构建 Rust 的环境。
 
 故障引擎会生成脱离 CLI 且忽略 SIGTERM 的后代进程，验证真正的进程范围回收。真实 Chromium 夹具访问回环页面，由页面服务独立计数写入，并下载证据核对摘要；仍不能证明引擎在真实业务响应丢失时不会内部重试。
 
@@ -67,7 +67,7 @@ node tests/browser-node/validate-events.mjs /absolute/path/to/events.jsonl
 
 `real_engine_smoke.py` 同时覆盖普通输入框、两层 Shadow DOM 与同源 iframe 的定向 Tab、真实按键和失焦事件、过期观察拒绝、当前焦点回执，以及焦点被监听器转移时停止按键；独立 HTTP 计数核对实际收到的 Tab。页面只在本机回环地址运行，不验证生产邀请码提示或 Linux 会话监管。
 
-能力场景见 `browser-node/capabilities_smoke.py`，包含当前截图视觉点击及同视口新增覆盖层后的拒绝；登录与网络场景见 `browser-node/auth_network_smoke.py`。登录快照只覆盖 Cookie/localStorage，网络证据只有有界脱敏元数据，不保证捕获完整。
+能力场景见 `browser-node/capabilities_smoke.py`，包含当前截图视觉点击及同视口新增覆盖层后的拒绝；登录与网络场景见 `browser-node/auth_network_smoke.py`。身份场景验证禁止保存和跨会话隔离，网络证据只有有界脱敏元数据，不保证捕获完整。
 
 人工输入网络隔离回归见 `browser-node/input_network_smoke.py`，使用同样的引擎与 Chrome 环境变量。真实浏览器的后台标签页阻塞二十二秒、前台接口持续等待时，验证前台点击完成、新请求证据保留及独立写入计数；不访问生产网站，也不证明某次线上超时的唯一原因。该场景已纳入完整 Linux 回归。
 
@@ -79,30 +79,30 @@ node tests/browser-node/validate-events.mjs /absolute/path/to/events.jsonl
 
 真实模型回放工具见 [脚本说明](../scripts/README.md)，实际业务验收与 VM 故障演练见 [部署说明](../deploy/README.md#业务验收)。模型输出 PASSED、任务 COMPLETED、证据摘要正确分别代表不同事实，不能互相替代。
 
-## 薄身份库与完整 profile
+## 薄身份库与临时 profile
 
-- `pnpm test:api`：六字段私密存储、版本冻结、选择租约；HTTP/WebSocket 贯通默认身份选择、成功 HITL 发布与“无法处理”整例终态。浏览器结果使用协议夹具。
+- `pnpm test:api`：六字段私密存储、版本冻结、选择租约；HTTP/WebSocket 贯通默认身份选择、HITL 交还当前会话与“无法处理”整例终态。浏览器结果使用协议夹具。
 - `pnpm test:agent`：单次身份选择工具调用、无凭据模型输入、无效引用与人工分支。
-- `pnpm test:identity:profile`：设置 `PROOFRUN_AGENT_BROWSER_BIN`（0.38.1 原生 CLI）和 `PROOFRUN_CHROME_BIN` 后，真实 Chrome 回环验证完整 profile 的 Cookie 与站点状态复用、HITL 重启、业务修改隔离。此入口不覆盖 Linux 监管、SSO 或生产业务。
+- `pnpm test:identity:ephemeral`：设置 `PROOFRUN_AGENT_BROWSER_BIN` 和 `PROOFRUN_CHROME_BIN`，用真实 Chrome 回环夹具验证当前会话状态、禁止保存、下次会话隔离和网络脱敏；不覆盖生产登录或 Linux 监管。
 
 ### 通用执行策略回归
 
-`pnpm test:agent` 包含持续子目标、权威进度、循环检测、位置线索、预算与旧节点兼容；`pnpm test:console` 包含诊断的两种请求格式。模型和控制面夹具不能代表真实业务验收。`capabilities_smoke.py` 在真实 Chromium 中检查新旧滚动命令、iframe 容器及观察失效。
+`pnpm test:agent` 包含要求账本、观察历史、停滞收尾、预算与旧协议拒绝；`pnpm test:console` 包含当前和历史模型请求的诊断展示。模型和控制面夹具不能代表真实业务验收。`capabilities_smoke.py` 在真实 Chromium 中检查新旧滚动命令、iframe 容器及观察失效。
 
 需要真实模型时，在浏览器节点主机运行 `python3 tests/agent/guidance-browser-fixture.py`（仅监听 127.0.0.1:8082），分别执行 `/long-form`、`/nested`、`/wizard`。固定模型与预算，检查报告、真实动作和 `/metrics` 的禁止提交计数；此类结果仍仅是本地合成业务。外部回归保留原任务标准、约束、预算，不因无法触发禁止操作而放宽结论。
 
 `tests/agent/settlement.test.mjs` 验证同轮结论先保存、未知副作用后不丢结果、无效证据禁止动作、慢回复后的预算内只读收尾，以及历史正文去重边界。HTTP 模型和页面为夹具，不能替代真实模型完成率比较。真实对照仍使用相同模型、原始任务和预算，分别统计可靠结论与未完成项。
 
-## 统一计划执行回归
+## 单一循环与上下文回归
 
-`pnpm test:agent` 中的 `planned-execution.test.mjs` 覆盖首轮计划随动作提交、计划字段值复用、结构化复核、批量面板采集、上下文裁剪、请求预算和身份代次失效。回复及控制面由脚本生成，只证明执行协议。
+`pnpm test:agent` 中的 `loop-context.test.mjs` 覆盖七模块白名单、统一 progress、旧字段拒绝、历史裁剪、文档语言和滚动参数边界；setup、continuity 与 settlement 用例覆盖阶段门禁、人工代次和收尾。回复及控制面由脚本生成，只证明执行协议。
 
 ```bash
 # 使用本机固定版本的原生引擎和 Chrome 绝对路径。
 export PROOFRUN_AGENT_BROWSER_BIN=/absolute/path/to/agent-browser
 export PROOFRUN_CHROME_BIN=/absolute/path/to/chrome
 cargo build --locked -p proofrun-node
-pnpm test:agent:planned-browser
+pnpm test:agent:browser
 ```
 
 浏览器用例创建临时独立会话，在真实 Rust session-host/Chrome 中填写和提交，由回环 HTTP 服务独立计数，结束关闭会话。未提供浏览器路径时明确跳过。模型、控制面证据上传和租约仍为夹具；不验证真实供应商质量、生产账号或 API 数据库持久化。
@@ -115,7 +115,7 @@ pnpm test:agent:planned-browser
 
 对比旧查询路径时可将旧提交的 `reader.ts` 保存到忽略目录，保持其相对依赖可解析，以 `PROOFRUN_LIST_COMPARE_READER` 指向该模块，在同一临时库交替运行新旧读取器并逐字段比较响应；只忽略每次事务的快照时间。也可用 `PROOFRUN_LIST_BASELINE_READER` 单独运行旧版。基线与候选复用相同数据生成器、PostgreSQL 和预算，原始结果保留在 `.proofrun/`。旧读取器不维护摘要，因此不参与新摘要索引断言。
 
-- `apps/api/test/requests.test.ts` 使用独立临时 PostgreSQL 数据库和真实 HTTP 路由，覆盖三 case 双跑归属、同请求重试/重排、并发交叉批次、共享 case、关联写入故障整批回滚、报告部分/终态投影、缺报告、组间差异、微秒时间相同的分页、搜索完整性、原子重跑、旧数组与认证隔离。
+- `apps/api/test/requests.test.ts` 使用独立临时 PostgreSQL 数据库和真实 HTTP 路由，覆盖多 case 归属和历史双跑读取、同请求重试/重排、并发交叉批次、共享 case、关联写入故障整批回滚、报告部分/终态投影、缺报告、组间差异、微秒时间相同的分页、搜索完整性、原子重跑、旧数组与认证隔离。
 - `tests/contracts/request-summary.test.mjs` 覆盖唯一业务标准去重、跨 case 同名标准、混合单/双组、取消和超时缺报告、确认失败优先、覆盖差异、重复记录、准备受阻与清理异常的不同口径。
 - `tests/console/requests.test.ts` 覆盖请求草稿身份稳定性、真实 ApiClient 序列化、请求详情跳转、部分结果文本、两组来源、证据归档禁用及来源导航；静态渲染不替代浏览器检查。
 

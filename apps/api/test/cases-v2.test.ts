@@ -64,17 +64,17 @@ const INPUT: VerificationCaseV2 = {
   ],
 };
 
-// 范围：新 v2 缺省配置映射到 JEV 单组，并保留显式模式与关闭选项；不验证真实登录恢复、人工处理或节点并发。
-test('v2 默认 JEV 单组、复用登录并允许人工辅助，保留平台显式配置', () => {
+// 范围：新 v2 默认 LLM、不生成登录复用开关，保留显式历史字段及人工权限；不验证真实浏览器或节点并发。
+test('v2 默认 LLM 单组、独立会话并允许人工辅助，保留平台显式配置', () => {
   const { executionMode: _, ...defaults } = PROFILE;
   const task = compileCase(INPUT, defaults);
   const arms = expandCaseTasks(task);
-  assert.equal(task.executionMode, 'jev');
+  assert.equal(task.executionMode, 'llm');
   assert.equal(arms.length, 1);
-  assert.equal(task.stepBudget!.steps[0]!.maxModelCalls, 40);
-  assert.equal(task.stepBudget!.cleanup.maxModelCalls, 40);
+  assert.equal(task.stepBudget!.steps[0]!.maxModelCalls, 20);
+  assert.equal(task.stepBudget!.cleanup.maxModelCalls, 20);
   for (const arm of arms) {
-    assert.equal(arm.environment.reuseAuth, true);
+    assert.equal(arm.environment.reuseAuth, undefined);
     assert.equal(arm.environment.allowIntervention, true);
     assert(validateVerificationTask(arm));
   }
@@ -343,102 +343,6 @@ test('v2 默认业务每步贡献 300 秒，清理不占业务预算', () => {
   });
 });
 
-// 范围：显式双跑、两组完整预算、各自原任务收尾、查询和取消、配置改变后幂等；不模拟数据库隔离与模型质量。
-test('v2 显式双跑返回两组独立结果，并取消两组', async () => {
-  const profile: CaseProfile = {
-    environment: PROFILE.environment,
-    budget: { maxActions: 30 },
-    executionMode: 'parallel',
-    evidenceKinds: ['DOM'],
-  };
-  const { service, records, tasks } = fixture(profile);
-  const [result] = await service.submit([INPUT]);
-  assert(
-    validateCaseResultV2(result),
-    JSON.stringify(validateCaseResultV2.errors),
-  );
-  assert.equal(result!.comparison!.arms.length, 2);
-  assert.deepEqual(
-    result!.comparison!.arms.map((arm) => arm.executionMode),
-    ['llm', 'jev'],
-  );
-  const [llm, jev] = [...records.values()];
-  assert.equal(llm!.definition.budget.timeoutMs, 900_000);
-  assert.deepEqual(llm!.definition.budget, jev!.definition.budget);
-  assert.notEqual(llm!.definition.resourceKey, jev!.definition.resourceKey);
-  for (const arm of [llm!, jev!]) {
-    assert(validateVerificationTask(arm.definition));
-    assert.equal(cleanupTask(arm.definition), null);
-    assert.deepEqual(arm.definition.cleanupStepIds, ['cleanup-1']);
-  }
-  const disabled = new CaseV2Service(tasks, undefined, 'https://proofrun.test');
-  assert.deepEqual(await disabled.submit([INPUT]), [result]);
-  const single = new CaseV2Service(tasks, PROFILE, 'https://proofrun.test');
-  await single.submit([INPUT]);
-  assert.equal(records.size, 2);
-  // 只在另一组已持久化的步骤记录中出现的证据也可读取，未知证据仍拒绝。
-  jev!.stepResults = [
-    {
-      stepId: 'step-1',
-      status: 'COMPLETED',
-      summary: '夹具',
-      evidenceRefs: ['jev-evidence'],
-      criteria: [],
-      startedAt: null,
-      finishedAt: null,
-    },
-  ];
-  await service.requireEvidence(INPUT.caseId, 'jev-evidence');
-  await assert.rejects(
-    service.requireEvidence(INPUT.caseId, 'unknown-evidence'),
-    { code: 'EVIDENCE_MISSING' },
-  );
-  const cancelled = await service.cancel(INPUT.caseId);
-  assert(validateCaseResultV2(cancelled));
-  assert(cancelled.comparison!.arms.every((arm) => arm.status === 'CANCELLED'));
-});
-
-// 范围：历史单组不会因新默认值追加执行，带模式后缀的业务身份不会碰撞；不覆盖真实并发事务。
-test('v2 双跑命名空间与历史单组保持隔离', async () => {
-  const { service, records, tasks } = fixture();
-  await service.submit([INPUT]);
-  const parallel = new CaseV2Service(
-    tasks,
-    { ...PROFILE, executionMode: 'parallel' },
-    'https://proofrun.test',
-  );
-  assert.equal((await parallel.submit([INPUT]))[0]!.comparison, undefined);
-  await parallel.submit([{ ...INPUT, caseId: `${INPUT.caseId}-jev` }]);
-  assert.equal(records.size, 3);
-});
-
-// 范围：部署从双组改为 JEV 后，旧 case 幂等重提仍保留双组，新 case 只创建一个任务；不连接 Railway 或数据库。
-test('切换为 JEV 单组不改写已经接收的双组 case', async () => {
-  const { service, records, tasks } = fixture({
-    ...PROFILE,
-    executionMode: 'parallel',
-  });
-  const [original] = await service.submit([INPUT]);
-  assert.equal(original!.comparison!.arms.length, 2);
-  const single = new CaseV2Service(
-    tasks,
-    { ...PROFILE, executionMode: 'jev' },
-    'https://proofrun.test',
-  );
-  const [repeated] = await single.submit([INPUT]);
-  assert.deepEqual(repeated!.comparison, original!.comparison);
-  assert.equal(records.size, 2);
-  const [fresh] = await single.submit([
-    { ...INPUT, caseId: 'single-after-migration' },
-  ]);
-  assert.equal(fresh!.comparison, undefined);
-  assert.equal(records.size, 3);
-  assert.equal(
-    records.get('case-v2-single-after-migration')!.definition.executionMode,
-    'jev',
-  );
-});
-
 // 范围：清理分段排序、身份冲突及最大 64 步协议；不连接数据库或浏览器。
 test('清理始终置后，业务与清理身份唯一且支持各 32 步', () => {
   const input = {
@@ -534,14 +438,14 @@ test('历史 v2 重跑不被新默认值开启登录复用或人工辅助', asyn
   delete original.definition.environment.allowIntervention;
   await f.service.rerun(INPUT.caseId, 'historical-rerun');
   const fresh = f.records.get('case-run-historical-rerun')!;
-  assert.equal(fresh.definition.environment.reuseAuth, false);
+  assert.equal(fresh.definition.environment.reuseAuth, undefined);
   assert.equal(fresh.definition.environment.allowIntervention, false);
   assert.deepEqual(original.definition.environment, PROFILE.environment);
 });
 
 // 范围：三种模式重跑保留冻结配置、完整步骤和末尾清理；不连接数据库、模型或浏览器。
 test('v2 重跑保留原配置及整个 case，重试不重复创建', async () => {
-  for (const executionMode of ['llm', 'jev', 'parallel'] as const) {
+  for (const executionMode of ['llm'] as const) {
     const f = fixture({ ...PROFILE, executionMode });
     await f.service.submit([INPUT]);
     await f.service.cancel(INPUT.caseId);
@@ -577,17 +481,8 @@ test('v2 重跑保留原配置及整个 case，重试不重复创建', async () 
       fresh.definition.resourceKey,
       before[0]![1].definition.resourceKey,
     );
-    if (executionMode === 'parallel') {
-      assert.deepEqual(
-        result.comparison!.arms.map((a) => a.executionMode),
-        ['llm', 'jev'],
-      );
-      assert.equal(f.records.size, 4);
-    } else {
-      assert.equal(result.comparison, undefined);
-      assert.equal(fresh.definition.executionMode, executionMode);
-      assert.equal(f.records.size, 2);
-    }
+    assert.equal(result.comparison, undefined);
+    assert.equal(fresh.definition.executionMode, executionMode);
     const count = f.records.size;
     assert.deepEqual(await changed.rerun(INPUT.caseId, 'new-case'), result);
     assert.equal(f.records.size, count);
@@ -630,13 +525,12 @@ test('v2 重跑校验身份并沿用提交的冲突语义', async () => {
 });
 
 // 范围：模式倍率、等待后准备检查额度、平台硬上限及显式历史预算复现；不验证模型质量或节点能力。
-test('v2 新预算按步骤冻结，混合组请求加倍，超过上限直接拒绝', async () => {
+test('v2 新预算按步骤冻结，不再为混合组放大额度，超过上限直接拒绝', async () => {
   const arms = expandCaseTasks(
-    compileCase(INPUT, { ...PROFILE, executionMode: 'parallel' }),
+    compileCase(INPUT, { ...PROFILE, executionMode: 'llm' }),
   );
   assert.equal(arms[0]!.stepBudget!.steps[0]!.maxModelCalls, 20);
-  assert.equal(arms[1]!.stepBudget!.steps[0]!.maxModelCalls, 40);
-  assert.equal(arms[1]!.stepBudget!.cleanup.maxModelCalls, 40);
+  assert.equal(arms.length, 1);
   const pureWait = compileCase(
     {
       ...INPUT,
@@ -686,7 +580,7 @@ test('v2 新预算按步骤冻结，混合组请求加倍，超过上限直接�
 
 // 范围：重跑时间扩容、双组冻结、旧记录及幂等性；端口夹具不验证真实超时或模型速度。
 test('重跑可单独扩大步骤和清理时间且不改变动作额度或业务定义', async () => {
-  const f = fixture({ ...PROFILE, executionMode: 'parallel' });
+  const f = fixture({ ...PROFILE, executionMode: 'llm' });
   await f.service.submit([INPUT]);
   const source = f.records.get('case-v2-case-1')!.definition;
   source.stepBudget!.steps[0]!.timeoutMs = 1_200_000;
@@ -705,7 +599,7 @@ test('重跑可单独扩大步骤和清理时间且不改变动作额度或业�
   assert.equal(fresh.budget.maxActions, before.budget.maxActions);
   assert.deepEqual(fresh.steps, before.steps);
   assert.deepEqual(fresh.acceptanceCriteria, before.acceptanceCriteria);
-  for (const arm of ['case-run-extended', 'comparison-case-run-extended-jev']) {
+  for (const arm of ['case-run-extended']) {
     const task = f.records.get(arm)!.definition;
     assert(validateVerificationTask(task));
     assert.equal(task.stepBudget!.cleanup.timeoutMs, 600_000);
@@ -815,9 +709,9 @@ test('多组 v2 提交和重跑最多并发八组，保留历史任务的冻结�
       { ...INPUT.steps[0]!, stepId: `verify-${i}`, exec_order: i * 2 + 2 },
     ]).flat() as VerificationCaseV2['steps'];
     const arms = expandCaseTasks(
-      compileCase(input, { ...PROFILE, executionMode: 'parallel' }),
+      compileCase(input, { ...PROFILE, executionMode: 'llm' }),
     );
-    assert.equal(arms.length, 2);
+    assert.equal(arms.length, 1);
     for (const arm of arms) {
       assert.equal(arm.profilePlan!.maxConcurrency, Math.min(count, 8));
       assert(validateVerificationTask(arm));

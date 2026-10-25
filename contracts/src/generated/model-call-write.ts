@@ -45,11 +45,11 @@ export interface ModelCall {
    */
   id: string;
   /**
-   * 当前执行内的模型请求顺序，混合策略的子请求也单独计数。
+   * 当前执行内的模型请求顺序；历史混合策略的子请求也单独计数。
    */
   callIndex: number;
   /**
-   * 执行循环的决策轮次，同一轮可能调用多个模型。
+   * 执行循环的决策轮次；新循环每轮至多一个模型请求。
    */
   decisionIndex: number;
   /**
@@ -57,7 +57,7 @@ export interface ModelCall {
    */
   model: string;
   /**
-   * 请求用于决策、候选选择或填写值生成。
+   * 新调用只接受 DECISION；JEV_SELECTION 与 FIELD_VALUE 仅供历史记录解码。
    */
   purpose: 'DECISION' | 'JEV_SELECTION' | 'FIELD_VALUE';
   /**
@@ -81,7 +81,7 @@ export interface ModelCall {
    */
   requestSha256: string;
   /**
-   * 供应商返回的 choices、answers、usage 等已选择字段 JSON，未接收或清理后为空。
+   * 供应商返回的 model、choices、usage 字段 JSON；历史调用可含 answers，未接收或清理后为空。
    */
   response: string | null;
   /**

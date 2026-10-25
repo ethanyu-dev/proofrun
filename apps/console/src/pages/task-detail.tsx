@@ -26,7 +26,6 @@ export function TaskDetailPage({ api, id }: { api: ApiClient; id: string }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
   const active = useRef<AbortController | null>(null);
-  const comparisonId = useRef(`compare-${crypto.randomUUID()}`);
   useEffect(() => () => active.current?.abort(), []);
   const cancel = async () => {
     if (pending) return;
@@ -79,34 +78,6 @@ export function TaskDetailPage({ api, id }: { api: ApiClient; id: string }) {
               caseId={task.definition.caseV2Definition?.caseId}
             />
           )}
-        {task && !paired && !task.definition.steps && (
-          <button
-            className="button button-primary"
-            disabled={pending}
-            onClick={async () => {
-              if (pending) return;
-              setPending(true);
-              setError(undefined);
-              const controller = new AbortController();
-              active.current = controller;
-              try {
-                const result = await api.json<{ taskId: string }>(
-                  `/v1/tasks/${id}/compare`,
-                  controller.signal,
-                  { comparisonId: comparisonId.current },
-                );
-                if (!controller.signal.aborted)
-                  location.hash = `/tasks/${result.taskId}`;
-              } catch (error) {
-                if (!controller.signal.aborted) setError(errorMessage(error));
-              } finally {
-                if (!controller.signal.aborted) setPending(false);
-              }
-            }}
-          >
-            {pending ? '正在处理…' : '并行对比 JEV / LLM'}
-          </button>
-        )}
         {task && !paired && ['QUEUED', 'RUNNING'].includes(task.state) && (
           <button
             className="button button-secondary"
