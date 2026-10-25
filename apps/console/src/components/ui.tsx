@@ -1,3 +1,5 @@
+import { Badge } from './ui/badge';
+import { Button } from './ui/button';
 import { useEffect, useState, type ReactNode } from 'react';
 
 /** 固定日期位数并使用 24 小时制，刷新栏不随月份、日期或加载状态改变宽度。 */
@@ -16,6 +18,7 @@ const LABELS: Record<string, string> = {
   PENDING: '等待执行',
   QUEUED: '排队中',
   RUNNING: '执行中',
+  IN_PROGRESS: '执行中',
   COMPLETED: '执行完成',
   CANCELLED: '已取消',
   TIMED_OUT: '已超时',
@@ -56,7 +59,8 @@ const LABELS: Record<string, string> = {
 
 export function Status({ value }: { value: string | null | undefined }) {
   return (
-    <span
+    <Badge
+      variant="secondary"
       className="status"
       data-tone={
         value === 'PASSED'
@@ -85,7 +89,7 @@ export function Status({ value }: { value: string | null | undefined }) {
       }
     >
       {value ? (LABELS[value] ?? value) : '尚无结论'}
-    </span>
+    </Badge>
   );
 }
 export function time(value: string | Date | null | undefined) {
@@ -126,7 +130,6 @@ export function PageHeader({
   return (
     <div className="page-header">
       <div>
-        <p className="eyebrow">PROOFRUN / CONSOLE</p>
         <h1>{title}</h1>
         <p className="muted">{description}</p>
       </div>
@@ -158,14 +161,15 @@ export function RefreshBar({
             : '----/--/-- --:--:--'}
         </time>
       </span>
-      <button
+      <Button
+        variant="ghost"
         className="text-button"
         disabled={loading}
         aria-busy={loading}
         onClick={refresh}
       >
         刷新
-      </button>
+      </Button>
     </div>
   );
 }
@@ -184,7 +188,8 @@ export function ThemeToggle() {
       );
   }, [dark]);
   return (
-    <button
+    <Button
+      variant="ghost"
       className="theme-toggle"
       aria-label="深色模式"
       aria-pressed={dark}
@@ -198,6 +203,6 @@ export function ThemeToggle() {
           strokeWidth="1.5"
         />
       </svg>
-    </button>
+    </Button>
   );
 }

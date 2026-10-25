@@ -428,12 +428,10 @@ export type IdentityCheck = {
   value?: string;
 };
 /**
- * 只声明身份引用与条件，禁止携带密码或 Cookie；guest 不恢复认证。
+ * 只支持访客、当前会话人工登录和 DevPass 外部账号；禁止携带密码或 Cookie。
  */
 export type SessionRequest = {
-  mode: 'guest' | 'manual' | 'identity' | 'pool' | 'auto' | 'external';
-  identityRef?: string;
-  poolRef?: string;
+  mode: 'guest' | 'manual' | 'external';
   /**
    * @maxItems 32
    */
@@ -463,7 +461,7 @@ export type ExternalAccountSelector = (
   roles?: string[];
 };
 /**
- * 平台冻结的非敏感身份候选；分配在领取事务内完成，凭据只在节点解析。
+ * 执行会话快照。新任务仅生成 guest/manual/external；旧本地身份字段仅用于读取历史快照，提交与执行入口拒绝使用。
  */
 export type SessionPlan = {
   version: 1;
@@ -548,7 +546,7 @@ export type SessionPlan = {
   requirements: IdentityCheck[];
   preparationMs: number;
   /**
-   * 使用页面身份库和完整 profile；选择由独立身份 Agent 完成。
+   * 仅兼容历史本地身份快照，新执行不允许启用。
    */
   library?: boolean;
   selection?: 'pending' | 'selected' | 'human';

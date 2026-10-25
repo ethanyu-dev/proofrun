@@ -303,20 +303,6 @@ export interface OpenSession {
    */
   renewable?: boolean;
   /**
-   * 控制面仅在私有节点传输时注入，不写入任务、模型或命令账本。
-   */
-  identitySeed?: {
-    url: string;
-    /**
-     * @maxItems 32
-     */
-    cookies: {
-      name: string;
-      value: string;
-      httpOnly: boolean;
-    }[];
-  };
-  /**
    * 外部账号期限锚定 leaseRequestId 的节点单调时钟，不受人工续期延长。
    */
   externalAccount?: {

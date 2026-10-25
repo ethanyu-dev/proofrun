@@ -119,7 +119,7 @@ export PROOFRUN_AGENT_MODEL_MS=120000
 
 ## 身份与临时 profile
 
-身份选择使用独立提示词 `prompts/identity-selector.ts`，只读取 Case 与同源候选摘要。每次任务创建全新浏览器 profile，消费身份库 Cookie 或 DevPass 材料；候选描述和注入成功均不是登录证明。HITL 只修改当前会话并交还控制，不保存登录基准、不重启浏览器、不自动生成新账号。
+Agent 直接领取执行任务，不再调用本地身份选择接口。每次任务创建全新浏览器 profile；需要自动账号时，由 API 通过 DevPass 获取材料并绑定租约。访客和人工会话不加载账号材料；注入成功仍不是登录证明。HITL 只修改当前会话并交还控制，不保存登录基准、不重启浏览器。
 
 profile 分组指同一临时浏览器下的独占 tab。组内串行、组间模型调用可并行，浏览器命令通过统一队列串行派发。`profile-runner.ts` 的 snapshots 队列保存步骤结果，不是浏览器 profile 快照。租约、账号容量和物理关闭确认仍保留。
 

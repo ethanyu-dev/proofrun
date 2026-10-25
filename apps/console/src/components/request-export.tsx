@@ -1,3 +1,4 @@
+import { Button } from './ui/button';
 import { useEffect, useState } from 'react';
 import type { RequestResultV2 } from '@proofrun/contracts';
 
@@ -12,12 +13,14 @@ export function RequestExport({ value }: { value: RequestResultV2 }) {
     return () => URL.revokeObjectURL(next);
   }, [value]);
   return url ? (
-    <a
-      className="button button-secondary"
-      href={url}
-      download={`${value.requestId}-${value.reportPhase === 'FINAL' ? 'final' : 'partial'}-report.json`}
-    >
-      导出{value.reportPhase === 'FINAL' ? '最终' : '部分'}报告 JSON
-    </a>
+    <Button asChild variant="outline">
+      <a
+        className="button button-secondary"
+        href={url}
+        download={`${value.requestId}-${value.reportPhase === 'FINAL' ? 'final' : 'partial'}-report.json`}
+      >
+        导出{value.reportPhase === 'FINAL' ? '最终' : '部分'}报告 JSON
+      </a>
+    </Button>
   ) : null;
 }

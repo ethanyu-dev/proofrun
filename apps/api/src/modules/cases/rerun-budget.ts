@@ -53,10 +53,9 @@ export function extendRerunTimeBudget(
     time.cleanupTimeoutMs ?? 0,
   );
   const budget = businessBudget(plan);
-  const preparationMs =
-    task.sessionPlan?.candidates.length || task.sessionPlan?.library
-      ? task.sessionPlan.preparationMs
-      : 0;
+  const preparationMs = task.sessionPlan?.external
+    ? task.sessionPlan.preparationMs
+    : 0;
   if (
     budget.timeoutMs +
       preparationMs +

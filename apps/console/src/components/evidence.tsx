@@ -1,3 +1,4 @@
+import { Button } from './ui/button';
 import { useEffect, useRef, useState } from 'react';
 import type { VerificationReport } from '@proofrun/contracts';
 import { ApiClient, errorMessage } from '../api';
@@ -76,9 +77,13 @@ export function Evidence({
           </h2>
           <p className="mono muted wrap">{artifact.id}</p>
         </div>
-        <button className="button button-secondary" onClick={close}>
+        <Button
+          variant="outline"
+          className="button button-secondary"
+          onClick={close}
+        >
           关闭预览
-        </button>
+        </Button>
       </div>
       <ErrorNotice message={error} />
       {!content && !error && <p role="status">正在读取并校验证据…</p>}
@@ -97,13 +102,15 @@ export function Evidence({
             <span className="muted wrap">
               SHA-256 已核对 · {artifact.sha256}
             </span>
-            <a
-              className="button button-secondary"
-              href={content.url}
-              download={`${artifact.id}.${artifact.kind !== 'SCREENSHOT' ? 'json' : 'png'}`}
-            >
-              下载证据
-            </a>
+            <Button asChild variant="outline">
+              <a
+                className="button button-secondary"
+                href={content.url}
+                download={`${artifact.id}.${artifact.kind !== 'SCREENSHOT' ? 'json' : 'png'}`}
+              >
+                下载证据
+              </a>
+            </Button>
           </div>
         </>
       )}

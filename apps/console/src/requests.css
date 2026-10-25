@@ -39,16 +39,29 @@
 }
 .request-card-heading {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 12px 24px;
-  margin-bottom: 4px;
+  margin-bottom: 12px;
 }
 .request-card-title {
   min-width: 0;
+  flex: 1;
+}
+/* 请求进度紧随标题，避免与下方 case 的验证结论混在同一列。 */
+.request-card-title-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-bottom: 4px;
+}
+.request-execution-summary {
+  display: inline-flex;
+  flex-shrink: 0;
 }
 .request-card-heading h2 {
-  margin: 0 0 2px;
+  margin: 0;
   font-size: 15px;
   line-height: 1.5;
   overflow-wrap: anywhere;
@@ -59,9 +72,6 @@
   gap: 2px 16px;
   color: var(--color-muted);
   font-size: 11px;
-}
-.request-card-meta .request-id {
-  font-size: inherit;
 }
 .request-detail-link {
   flex-shrink: 0;
@@ -74,19 +84,22 @@
   text-decoration: underline;
   text-underline-offset: 4px;
 }
-.request-id {
-  display: block;
-  font-size: 12px;
-  font-weight: 400;
-  overflow-wrap: anywhere;
-  line-height: 1.6;
+/* 同一请求的操作按任务、报告顺序纵向排列，窄屏不拆散两个入口。 */
+.request-card-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  flex-shrink: 0;
+}
+.request-card-actions .request-detail-link {
+  white-space: nowrap;
 }
 .request-preview-members {
   display: grid;
   gap: 0;
 }
 .request-preview-member {
-  padding: 4px 0;
+  padding: 8px 0;
   min-width: 0;
 }
 .request-preview-member + .request-preview-member {
@@ -101,6 +114,21 @@
 .request-member-heading > div {
   min-width: 0;
   flex: 1;
+}
+.request-member-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.request-member-title > a:first-child {
+  min-width: 0;
+}
+/* Live 沿用状态标签尺寸，长标题省略时仍保留可点击入口。 */
+.request-member-heading .case-live-link {
+  display: inline-flex;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
 }
 .request-member-heading a {
   display: block;
@@ -330,15 +358,16 @@
   height: 24px;
   background: transparent;
 }
-/* 三列分别容纳通过数、验证结论和执行状态，避免第三项换行撑高列表。 */
+/* 每行保留通过数、验证结论和执行状态，避免跨 case 查找对应关系。 */
 .request-preview-member .case-verification-progress {
   display: grid;
-  grid-template-columns: 96px 72px 128px;
+  grid-template-columns: 96px 88px 128px;
   gap: 10px;
   align-items: center;
-  justify-items: end;
+  justify-items: center;
 }
 .request-preview-member .case-pass-count {
+  justify-self: end;
   justify-content: flex-end;
   flex-wrap: nowrap;
   white-space: nowrap;
@@ -346,9 +375,6 @@
 }
 .request-preview-member .report-progress {
   font-size: 14px;
-}
-.request-preview-member .status {
-  padding: 3px 8px;
 }
 .request-record {
   font-size: 13px;
@@ -382,7 +408,8 @@
     padding: 16px;
   }
   .request-card-heading {
-    gap: 10px;
+    align-items: flex-start;
+    gap: 16px;
   }
   .request-case-heading {
     flex-wrap: wrap;
@@ -538,14 +565,6 @@
   font-size: 13px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-}
-.verification-status {
-  display: inline-flex;
-  padding: 3px 9px;
-  border-radius: 5px;
-  font-size: 12px;
-  font-weight: 500;
-  white-space: nowrap;
 }
 .verification-status-success {
   color: var(--color-success);

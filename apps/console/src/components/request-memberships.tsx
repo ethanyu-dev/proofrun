@@ -37,8 +37,7 @@ export function RequestMemberships({
                   <a href={`#/requests/${encodeURIComponent(r.requestId)}`}>
                     {source === r.requestId ? '返回来源请求：' : ''}
                     {r.title}
-                  </a>{' '}
-                  <span className="mono">{r.requestId}</span>
+                  </a>
                 </li>
               ))}
             </ul>

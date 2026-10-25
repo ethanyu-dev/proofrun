@@ -1,3 +1,4 @@
+import { Button } from './ui/button';
 import { useEffect, useRef, useState } from 'react';
 import { ApiClient, errorMessage } from '../api';
 import { ErrorNotice } from './ui';
@@ -45,7 +46,8 @@ export function TaskRerun({
   };
   return (
     <div className="task-rerun">
-      <button
+      <Button
+        variant="outline"
         type="button"
         className="button button-secondary button-small"
         disabled={pending}
@@ -63,7 +65,7 @@ export function TaskRerun({
             : paired
               ? '以 LLM 重跑'
               : '重跑'}
-      </button>
+      </Button>
       <ErrorNotice message={error} />
     </div>
   );

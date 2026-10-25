@@ -1,3 +1,4 @@
+import { Button } from './ui/button';
 import { useEffect, useRef, useState } from 'react';
 import type {
   RequestAnalysis as Analysis,
@@ -68,13 +69,14 @@ export function RequestAnalysis({
     >
       <div className="request-report-heading">
         <h2>Agent 分析</h2>
-        <button
+        <Button
+          variant="outline"
           className="button button-secondary button-small"
           disabled={!finished || busy || running || resource.data === undefined}
           onClick={() => void generate(!!analysis)}
         >
           {busy || running ? '正在生成…' : analysis ? '重新分析' : '生成分析'}
-        </button>
+        </Button>
       </div>
       <p className="muted">
         结合执行记录，分析失败、部分失败和结论不明的 Case。

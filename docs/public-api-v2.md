@@ -162,7 +162,7 @@ cleanup 中每项必填 url、exec_order、description，可选 stepId、policy�
 
 steps 按实际执行顺序包含清理步骤；cleanup 仍提供 taskId、status、result 摘要，其中 taskId 就是该组原任务的身份，PENDING 表示尚未进入收尾阶段。清理摘要单独投影自己的步骤结论，result 在原任务报告交付前为 null。原任务报告覆盖业务和清理，清理的 expected 计入总验收项；清理受阻或错误会使整体 outcome 不完整，但不会抹掉已完成的业务验收结论。
 
-新任务在自己的临时会话末尾清理。互斥键绑定 case 运行范围、资源池、环境及 entry 的 origin；旧显式登录槽字段仅参与稳定身份计算，不触发恢复或保存。不同 caseId 不因此互相等待，身份库账号容量另行约束；该键不隔离服务端业务数据，共用账号或业务对象的操作顺序仍需上游协调。历史双跑清理和结果只按原记录读取。
+新任务在自己的临时会话末尾清理。互斥键绑定 case 运行范围、资源池、环境及 entry 的 origin；旧显式登录槽字段仅参与稳定身份计算，不触发恢复或保存。不同 caseId 不因此互相等待，DevPass 账号容量由外部租约约束；该键不隔离服务端业务数据，共用账号或业务对象的操作顺序仍需上游协调。历史双跑清理和结果只按原记录读取。
 
 升级前已经提交的任务继续使用冻结的独立清理定义；同 caseId 幂等重提不会转换执行方式或创建新执行。新提交的 case 使用同任务收尾；重新执行沿用 caseId 并新增运行。
 
@@ -184,3 +184,7 @@ steps 按实际执行顺序包含清理步骤；cleanup 仍提供 taskId、statu
 管理员通过 `POST /v1/tasks/{taskId}/delete` 删除一次完整运行，或通过 `POST /v1/tasks/delete` 提交 `{ "ids": ["taskId-1", "taskId-2"] }`，上限 100 个。双跑与历史独立清理共同删除；任一任务仍在运行、清理待执行或会话未核实关闭时整批返回 409。请求级入口为 `POST /v2/requests/{requestId}/delete` 与 `POST /v2/requests/delete`，仍被其他请求引用的执行保留。
 
 软删除保留底层记录，隐藏列表与详情，并排除 Case、运行次数、通过率、趋势及关联 Tokens。涉及删除成员的旧分析整轮失效，其调用用量排除；剩余成员可重新生成分析。删除最新运行后默认读取前一条未删除运行；重复删除幂等，删除的运行幂等键不可复活。历史上不同 caseId 的旧重跑不会自动合并。
+
+## 会话来源
+
+`session.mode` 仅接受 `guest`、`manual`、`external`。省略时按访客准备要求生成 guest，否则使用人工临时会话，不调用账号选择 Agent。需要自动账号时显式选择 DevPass，提供 platform、poolId 或 accountId，以及 requirements；具体配置见 [DevPass 说明](../apps/api/src/modules/account-providers/README.md)。本地 identity/pool/auto 与 identityRef/poolRef 已移除，不能用于新提交或重跑。人工介入只影响当前临时会话，不保存为后续任务的登录来源。

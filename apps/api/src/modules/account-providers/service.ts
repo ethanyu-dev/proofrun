@@ -16,7 +16,7 @@ import { ApiError } from '../../domain.js';
 import { executionContext, stopExecution } from '../scheduling/state.js';
 import { privateText, type DevPassConfig } from './config.js';
 import { ACCOUNT_CLOSE_MARGIN_MS, ACCOUNT_HUMAN_MARGIN_MS } from './policy.js';
-import { PREPARATION_MS } from '../identities/catalog.js';
+import { PREPARATION_MS } from '../sessions/plan.js';
 export { ACCOUNT_CLOSE_MARGIN_MS } from './policy.js';
 
 /** 准备预留有界；账号分配在事务外，不占用浏览器进程或数据库行锁。 */

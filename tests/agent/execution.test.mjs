@@ -2640,63 +2640,32 @@ test('setup 身份缺失禁止执行后续业务及清理', async () => {
   assert.equal(report.steps[2].status, 'SKIPPED');
 });
 
-// 范围：一次自动登录在逐步预算前派发、不给模型原始秘密；准备回执及浏览器为夹具。
-test('自动登录仅准备一次且不占业务动作额度', async () => {
-  const order = [];
+// 范围：人工会话不派发本地登录配方且按步骤执行；浏览器和模型为夹具。
+test('人工会话直接执行，不尝试本地自动登录', async () => {
   const { report, client } = await run(
     (context) => ({
       ...finish(context),
       evidenceRefs: context.page.artifactRefs.map((a) => a.artifactId),
     }),
-    (client, execution) => {
+    (_client, execution) => {
       structuredGrant(execution, [{}, {}]);
       execution.task.stepBudget = compileStepBudget(execution.task);
       execution.task.sessionPlan = {
         version: 1,
-        mode: 'identity',
+        mode: 'manual',
         preparationMs: 120000,
         requirements: [],
-        candidates: [
-          {
-            id: 'fixture',
-            label: 'fixture',
-            accountKey: 'fixture',
-            origins: ['https://example.test'],
-            checks: [],
-            maxConcurrent: 1,
-            loginRef: 'private-ref',
-          },
-        ],
-      };
-      const command = client.command.bind(client);
-      client.command = async (...args) => {
-        order.push(args[2].type);
-        if (args[2].type === 'browser.identity.prepare') {
-          assert.equal(args[2].profileRef, 'private-ref');
-          assert.ok(args[3] > config.commandMs);
-          return {
-            operationStatus: 'SUCCEEDED',
-            effect: 'COMPLETED',
-            data: { status: 'NEEDS_HUMAN' },
-          };
-        }
-        return command(...args);
-      };
-      const record = client.recordSteps.bind(client);
-      client.recordSteps = async (...args) => {
-        order.push('steps');
-        return record(...args);
+        candidates: [],
       };
     },
   );
-  assert.equal(order[0], 'browser.identity.prepare');
-  assert.equal(order.filter((v) => v === 'browser.identity.prepare').length, 1);
-  assert.equal(report.executionDetails.actions, 1);
+  assert.ok(
+    !client.calls.some((c) => c.operation.type === 'browser.identity.prepare'),
+  );
   assert.deepEqual(
     report.steps.map((s) => s.status),
     ['COMPLETED', 'COMPLETED'],
   );
-  assert.ok(!JSON.stringify(client.modelCalls).includes('private-ref'));
 });
 
 // 范围：结构化身份条件将登录和角色核验合并为一次 HITL；人工、网页与模型均为夹具。
@@ -2707,24 +2676,14 @@ test('结构化登录和角色确认共用一次环境准备人工请求', async
   execution.task.environment.allowIntervention = true;
   execution.task.sessionPlan = {
     version: 1,
-    mode: 'identity',
+    mode: 'manual',
     preparationMs: 120000,
-    requirements: [],
-    candidates: [
+    candidates: [],
+    requirements: [
       {
-        id: 'fixture',
-        label: 'fixture',
-        accountKey: 'fixture',
-        origins: ['https://example.com'],
-        checks: [
-          {
-            id: 'role',
-            description: '确认当前账号是非所有者团队成员',
-            method: 'manual',
-          },
-        ],
-        maxConcurrent: 1,
-        loginRef: 'private-ref',
+        id: 'role',
+        description: '确认当前账号是非所有者团队成员',
+        method: 'manual',
       },
     ],
   };
@@ -2741,12 +2700,6 @@ test('结构化登录和角色确认共用一次环境准备人工请求', async
     controlRevision: revision,
   });
   client.command = async (...args) => {
-    if (args[2].type === 'browser.identity.prepare')
-      return {
-        operationStatus: 'SUCCEEDED',
-        effect: 'COMPLETED',
-        data: { status: 'NEEDS_HUMAN', reasonCode: 'LOGIN_RECIPE_MISSING' },
-      };
     const result = await command(...args);
     if (args[2].type === 'browser.observe' && !resumed) {
       result.data.url = 'https://example.com/login';

@@ -1,3 +1,5 @@
+import { assertSupportedSession, usesLocalIdentity } from '../sessions/plan.js';
+import { identitySummary } from '../sessions/summary.js';
 import {
   ExternalAccounts,
   ACCOUNT_CLOSE_MARGIN_MS,
@@ -7,15 +9,10 @@ import {
   registerMembers,
   type RequestRegistration,
 } from '../requests/registration.js';
-import { selectedTask } from '../identities/selection.js';
 import { staleRenewal } from './renewal.js';
-import type { IdentityLibrary } from '../identities/library.js';
 import { taskEvidenceKinds } from '@proofrun/contracts';
 import { taskOutcomes } from '../tasks/outcome.js';
 import { authorizeCookieCleanup } from './cookie-cleanup.js';
-import { identitySummary } from '../identities/metrics.js';
-import { authorizePreparation } from '../identities/preparation.js';
-import { allocateIdentity } from '../identities/allocation.js';
 import { sessionBudgetMs } from '@proofrun/contracts';
 import { startStepBudget, consumeStepBudget } from './step-budget.js';
 import {
@@ -92,8 +89,6 @@ const MAX_TASK_MS = 86_400_000;
 export class Coordinator {
   /** 在应用装配时注入唯一网关，避免建立第二套路由状态。 */
   gateway!: NodeGateway;
-  /** 凭据只在向已授权节点投递时读取，不进入持久命令正文。 */
-  identityLibrary?: IdentityLibrary;
   /** 外部申请异步执行，不阻塞节点租约投递。 */
   readonly externalAccounts: ExternalAccounts;
   constructor(
@@ -106,6 +101,7 @@ export class Coordinator {
 
   /** 接收上层定义的任务快照；相同身份只允许相同定义。 */
   async submit(task: VerificationTask) {
+    assertSupportedSession(task.sessionPlan);
     if (task.executionMode && task.executionMode !== 'llm')
       throw new ApiError(422, 'EXECUTION_MODE_RETIRED', '新任务只支持 llm');
     if (
@@ -249,6 +245,7 @@ export class Coordinator {
         );
       }
       for (const task of tasks) {
+        assertSupportedSession(task.sessionPlan);
         if (
           !validateVerificationTask(task) ||
           !task.caseV2Definition ||
@@ -609,9 +606,11 @@ export class Coordinator {
           )
         ).rows[0];
         if (!row) continue;
-        const selected = await selectedTask(client, row.definition);
-        if (!selected) continue;
-        let task = selected;
+        const task = row.definition;
+        if (usesLocalIdentity(task.sessionPlan)) {
+          await recordQueueReason(client, task.taskId, 'IDENTITY_UNAVAILABLE');
+          continue;
+        }
         if (
           task.comparison ||
           (task.executionMode && task.executionMode !== 'llm')
@@ -627,67 +626,7 @@ export class Coordinator {
         );
         if (task.sessionPlan && identityVersion !== 1 && identityVersion !== 2)
           continue;
-        if (task.sessionPlan?.library && identityVersion !== 2) continue;
         if (task.profilePlan && profileTabsVersion !== 1) continue;
-        const allocationTask = task;
-        // 把尚未出现在心跳中的会话预留也计入，池内其他账号可改用空闲节点。
-        const identityReservations = task.sessionPlan?.candidates.length
-          ? (
-              await client.query<{ node_id: string; ids: string[] }>(
-                'SELECT node_id,array_agg(id) AS ids FROM pr_sessions WHERE NOT closure_verified AND node_id=ANY($1::text[]) GROUP BY node_id',
-                [live.map((c) => c.nodeId)],
-              )
-            ).rows
-          : [];
-        const identityNodeFree = (c: (typeof live)[number]) =>
-          new Set([
-            ...(identityReservations.find((r) => r.node_id === c.nodeId)?.ids ??
-              []),
-            ...c.heartbeat!.occupied.map((s) => s.sessionId),
-          ]).size < c.heartbeat!.capacity;
-        const compatibleIdentity = (
-          identity: NonNullable<
-            VerificationTask['sessionPlan']
-          >['candidates'][number],
-          requireCapacity = false,
-        ) =>
-          live.some(
-            (c) =>
-              (!routedNode || c.nodeId === routedNode) &&
-              (!identity.nodeId || c.nodeId === identity.nodeId) &&
-              (!requireCapacity || identityNodeFree(c)) &&
-              this.eligible(c.heartbeat!, {
-                ...allocationTask,
-                sessionPlan: {
-                  ...allocationTask.sessionPlan!,
-                  candidates: [identity],
-                },
-              }),
-          );
-        const eligibleIdentity = (
-          identity: NonNullable<
-            VerificationTask['sessionPlan']
-          >['candidates'][number],
-        ) => compatibleIdentity(identity, true);
-        const allocated = await allocateIdentity(client, task, routedNode, {
-          reserve: false,
-          eligible: eligibleIdentity,
-        });
-        if (!allocated) {
-          await recordQueueReason(
-            client,
-            task.taskId,
-            task.sessionPlan?.candidates.some(eligibleIdentity)
-              ? 'IDENTITY_BUSY'
-              : task.sessionPlan?.candidates.some((identity) =>
-                    compatibleIdentity(identity),
-                  )
-                ? 'NODE_CAPACITY'
-                : 'IDENTITY_UNAVAILABLE',
-          );
-          continue;
-        }
-        task = allocated;
         const cleanup = await cleanupPlacement(client, task, routedNode);
         if (cleanup.blocked) {
           await recordQueueReason(client, task.taskId, cleanup.blocked);
@@ -810,17 +749,6 @@ export class Coordinator {
               'FENCE_EXHAUSTED',
               'Node fence counter exhausted',
             );
-          // 确认节点可分配后才冻结候选；排队失败不会将整个账号池钉死在第一个账号。
-          const selectedIdentity = task.sessionPlan?.candidates[0];
-          if (selectedIdentity)
-            await client.query(
-              'INSERT INTO pr_identity_assignments(task_id,account_key,identity) VALUES($1,$2,$3) ON CONFLICT(task_id) DO NOTHING',
-              [
-                task.taskId,
-                selectedIdentity.accountKey,
-                JSON.stringify(selectedIdentity),
-              ],
-            );
           const executionId = randomUUID();
           const token = newToken();
           // 排队时间不侵占新版逐步额度；领取后才启用自动执行的总安全期限。
@@ -829,8 +757,7 @@ export class Coordinator {
               Date.now() +
                 task.budget.timeoutMs +
                 task.stepBudget.settleMs * task.stepBudget.steps.length +
-                (task.sessionPlan?.candidates.length ||
-                task.sessionPlan?.external
+                (task.sessionPlan?.external
                   ? task.sessionPlan.preparationMs
                   : 0),
             );
@@ -927,10 +854,7 @@ export class Coordinator {
                   heartbeat.limits.maxSessionMs,
                 ),
               },
-              Math.min(
-                task.sessionPlan?.library || external ? 120_000 : 15_000,
-                remaining,
-              ),
+              Math.min(external ? 120_000 : 15_000, remaining),
             ),
           );
           return {
@@ -967,8 +891,6 @@ export class Coordinator {
         heartbeat.capabilities.liveView === true) &&
       (!task.environment.allowIntervention ||
         heartbeat.capabilities.renewableSessions === true) &&
-      (!task.sessionPlan?.candidates.length ||
-        heartbeat.capabilities.identityPreparation === true) &&
       (!taskEvidenceKinds(task).includes('NETWORK') ||
         heartbeat.capabilities.networkEvidence === true) &&
       (!taskEvidenceKinds(task).includes('TRACE') ||
@@ -1019,9 +941,7 @@ export class Coordinator {
   /** 执行 worker 独立续期；节点心跳不能续期一个已经失联的 worker。 */
   async heartbeatExecution(id: string, token: string) {
     return this.db.transaction(async (client) => {
-      const context = await executionContext(client, id, {
-        resolveIdentity: false,
-      });
+      const context = await executionContext(client, id, {});
       this.authorize(context, token, true);
       const expires = new Date(
         Math.min(
@@ -1054,7 +974,6 @@ export class Coordinator {
       );
       const context = await executionContext(client, id, {
         lock: false,
-        resolveIdentity: false,
       });
       this.authorize(context, token, false);
       const artifacts = (
@@ -1139,11 +1058,11 @@ export class Coordinator {
         'Worker cannot manage node leases or sessions directly',
       );
     const actor = token === null ? 'HUMAN' : 'AGENT';
-    if (actor === 'HUMAN' && operation.type === 'browser.identity.prepare')
+    if (operation.type === 'browser.identity.prepare')
       throw new ApiError(
         403,
         'IDENTITY_PREPARATION_FORBIDDEN',
-        '自动登录准备仅由执行器在业务步骤前发起',
+        '本地登录配方已移除，请使用 DevPass 或当前会话人工登录',
       );
     if (
       ['browser.auth.save', 'browser.input', 'browser.cookies.set'].includes(
@@ -1209,7 +1128,6 @@ export class Coordinator {
       if (
         actor === 'AGENT' &&
         context.definition.profilePlan &&
-        operation.type !== 'browser.identity.prepare' &&
         operation.type !== 'browser.trace'
       ) {
         const group = context.definition.profilePlan.groups.find((g) =>
@@ -1278,16 +1196,11 @@ export class Coordinator {
           'SESSION_BUSY',
           'One browser operation at a time',
         );
-      const preparationMs =
-        operation.type === 'browser.identity.prepare'
-          ? await authorizePreparation(client, context, operation)
-          : null;
       // 人工操作仍经过权限、代次和串行检查，但不占用或受限于 Agent 动作预算。
       if (
         actor === 'AGENT' &&
         context.definition.stepBudget &&
-        operation.type !== 'browser.trace' &&
-        preparationMs === null
+        operation.type !== 'browser.trace'
       )
         await consumeStepBudget(
           client,
@@ -1317,11 +1230,7 @@ export class Coordinator {
       }
       const budget = Math.max(
         1,
-        Math.min(
-          timeoutMs,
-          preparationMs ?? timeoutMs,
-          executionDeadline(context) - Date.now(),
-        ),
+        Math.min(timeoutMs, executionDeadline(context) - Date.now()),
       );
       // 人工点击、输入、导航的身份影响无法可靠推断；只读观察和滚动不改变认证版本。
       const authChanged =
@@ -2029,22 +1938,6 @@ export class Coordinator {
             !(await this.externalAccounts.attach(task.task_id, command.command))
           )
             continue;
-        }
-        if (command.command.type === 'session.open' && this.identityLibrary) {
-          const assigned = (
-            await this.db.query<{
-              identity: NonNullable<
-                VerificationTask['sessionPlan']
-              >['candidates'][number];
-            }>(
-              'SELECT a.identity FROM pr_identity_assignments a JOIN pr_executions e ON e.task_id=a.task_id WHERE e.id=$1',
-              [row.execution_id],
-            )
-          ).rows[0];
-          if (assigned?.identity.libraryVersion)
-            command.command.identitySeed = await this.identityLibrary.seed(
-              assigned.identity,
-            );
         }
         await this.gateway.send(command);
       }

@@ -1,3 +1,4 @@
+import { Button } from './ui/button';
 import {
   TaskExecutionStatus,
   ExecutionOutcomeDetails,
@@ -175,21 +176,24 @@ export function TaskReport({ api, task }: TaskSectionProps) {
         <div className="section-heading">
           <h2>验收报告</h2>
           {report && (
-            <a
-              className="button button-secondary button-small"
-              href={`#/reports/${encodeURIComponent(task.id)}`}
-            >
-              打开验证报告
-            </a>
+            <Button asChild variant="outline">
+              <a
+                className="button button-secondary button-small"
+                href={`#/reports/${encodeURIComponent(task.id)}`}
+              >
+                打开验证报告
+              </a>
+            </Button>
           )}
           {report && (
             <div className="status-group">
-              <button
+              <Button
+                variant="outline"
                 className="button button-secondary button-small"
                 onClick={() => setExportOpen(true)}
               >
                 导出此组报告
-              </button>
+              </Button>
               <ReportProgress counts={verificationProgress([task])} />
             </div>
           )}
@@ -269,7 +273,9 @@ export function TaskEvidence({ api, task }: TaskSectionProps) {
           </div>
           <div className="artifact-list">
             {report.artifacts.map((artifact) => (
-              <button
+              <Button
+                variant="ghost"
+                size="content"
                 className="artifact-button"
                 key={artifact.id}
                 disabled={!!task.archived_at}
@@ -279,7 +285,7 @@ export function TaskEvidence({ api, task }: TaskSectionProps) {
                 <span>{artifact.kind}</span>
                 <span className="mono wrap">{artifact.id}</span>
                 <span aria-hidden="true">↗</span>
-              </button>
+              </Button>
             ))}
           </div>
         </section>

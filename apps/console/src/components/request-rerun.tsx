@@ -1,3 +1,4 @@
+import { Button } from './ui/button';
 import { useEffect, useRef, useState } from 'react';
 import type {
   RequestResultV2,
@@ -49,14 +50,15 @@ export function RequestRerun({
   };
   return (
     <div>
-      <button
+      <Button
+        variant="outline"
         className="button button-secondary"
         disabled={pending || !value.cases.length}
         onClick={() => void rerun()}
-        title="沿用各 case 冻结环境与执行模式，创建新请求及运行记录，保留各 caseId；采用当前预算策略。"
+        title="沿用各 case 冻结环境与执行模式，创建新请求及运行记录；采用当前预算策略。"
       >
         {pending ? '正在创建重跑请求…' : '重跑整个请求'}
-      </button>
+      </Button>
       <ErrorNotice message={error} />
     </div>
   );

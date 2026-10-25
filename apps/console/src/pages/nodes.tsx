@@ -1,3 +1,6 @@
+import { toast } from 'sonner';
+import { Modal } from '../components/modal';
+import { Button } from '../components/ui/button';
 import { useEffect, useRef, useState } from 'react';
 import { NodeEnrollment } from '../components/node-enrollment';
 import { NodeVersion } from '../components/node-version';
@@ -55,6 +58,7 @@ export function NodesPage({ api }: { api: ApiClient }) {
       );
       if (!controller.signal.aborted) {
         setConfirm(undefined);
+        toast.success('节点凭据已撤销');
         resource.refresh();
       }
     } catch (error) {
@@ -64,17 +68,18 @@ export function NodesPage({ api }: { api: ApiClient }) {
     }
   };
   return (
-    <>
+    <div className="nodes-page">
       <PageHeader
         title="执行节点"
         description="查看内网节点、浏览器容量与连接状态。"
       >
-        <button
+        <Button
+          variant="default"
           className="button button-primary"
           onClick={() => setEnrolling(true)}
         >
           注册节点
-        </button>
+        </Button>
       </PageHeader>
       {rotation && (
         <NodeEnrollment
@@ -96,6 +101,7 @@ export function NodesPage({ api }: { api: ApiClient }) {
           saved={() => {
             setRoutingNode(undefined);
             setSavedRouting(true);
+            toast.success('域名配置已保存');
             resource.refresh();
           }}
         />
@@ -103,28 +109,36 @@ export function NodesPage({ api }: { api: ApiClient }) {
       {savedRouting && <p role="status">域名配置已保存，对后续分配生效。</p>}
       <ErrorNotice message={error} />
       {confirm && (
-        <div className="confirm-panel" role="alert">
+        <Modal
+          title="撤销节点"
+          close={() => setConfirm(undefined)}
+          busy={pending}
+        >
+          <ErrorNotice message={error} />
           <p>
             撤销节点 {confirm}{' '}
             的连接凭据并停止关联任务。已发生的业务操作不会撤销，未确认关闭的会话仍保留占用。
           </p>
           <div className="page-actions">
-            <button
+            <Button
+              variant="default"
               className="button button-primary"
               disabled={pending}
               onClick={() => void revoke()}
             >
               确认撤销
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="outline"
               className="button button-secondary"
               disabled={pending}
+              data-dialog-cancel
               onClick={() => setConfirm(undefined)}
             >
               返回
-            </button>
+            </Button>
           </div>
-        </div>
+        </Modal>
       )}
       <RefreshBar {...resource} />
       <ErrorNotice message={resource.error} />
@@ -248,19 +262,24 @@ export function NodesPage({ api }: { api: ApiClient }) {
                       aria-label={`${node.name} 管理操作`}
                     >
                       {node.occupied === 0 && (
-                        <button
+                        <Button
+                          variant="ghost"
                           className="text-button"
                           onClick={() => setRotation(node.id)}
                         >
                           轮换凭据
-                        </button>
+                        </Button>
                       )}
-                      <button
+                      <Button
+                        variant="ghost"
                         className="text-button node-revoke"
-                        onClick={() => setConfirm(node.id)}
+                        onClick={(event) => {
+                          event.currentTarget.focus();
+                          setConfirm(node.id);
+                        }}
                       >
                         撤销节点
-                      </button>
+                      </Button>
                     </div>
                   )}
                 </footer>
@@ -272,6 +291,6 @@ export function NodesPage({ api }: { api: ApiClient }) {
           </p>
         </>
       )}
-    </>
+    </div>
   );
 }

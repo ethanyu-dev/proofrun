@@ -1,4 +1,4 @@
-import type { CatalogSource } from '../identities/provider.js';
+import { assertSupportedSession } from '../sessions/plan.js';
 import {
   summarizeReport,
   validateVerificationCaseV2,
@@ -31,8 +31,6 @@ export class CaseV2Service {
     private readonly profile: CaseProfile | undefined,
     /** 构造同源公开证据地址，不透传内部报告地址。 */
     private readonly publicUrl: string,
-    /** 提交前解析平台元数据，冻结后重提不访问外部库。 */
-    private readonly identities?: CatalogSource,
   ) {}
 
   /** 身份不是任意内部任务路径；清理结果也只通过所属 case 读取。 */
@@ -93,8 +91,6 @@ export class CaseV2Service {
     if (new Set(input.map((item) => item.caseId)).size !== input.length)
       throw new ApiError(422, 'INVALID_CASE', '批次内 caseId 不能重复');
     const definitions: VerificationTask[] = [];
-    let resolved =
-      typeof this.identities === 'function' ? undefined : this.identities;
     for (const item of input) {
       const existing = await this.stored(item.caseId).catch(
         (error: unknown) => {
@@ -114,17 +110,7 @@ export class CaseV2Service {
             'CASE_NOT_CONFIGURED',
             '平台未配置 case 执行环境',
           );
-        if (
-          typeof this.identities === 'function' &&
-          (!item.session ||
-            ['identity', 'pool', 'auto'].includes(item.session.mode))
-        )
-          resolved = await this.identities(item.session);
-        const compiled = compileCase(
-          item,
-          validateCaseProfile(this.profile),
-          resolved,
-        );
+        const compiled = compileCase(item, validateCaseProfile(this.profile));
         definitions.push(compiled);
       }
     }
@@ -157,11 +143,13 @@ export class CaseV2Service {
       throw error;
     });
     if (previous) {
+      assertSupportedSession(previous.definition.sessionPlan);
       if (previous.definition.caseV2Definition?.caseId !== id)
         throw new ApiError(409, 'CASE_CONFLICT', 'runId 已属于其他 case');
       return previous.definition;
     }
     const { definition } = await this.stored(id);
+    assertSupportedSession(definition.sessionPlan);
     if (
       budgetMode === 'original' &&
       (definition.comparison ||
@@ -184,15 +172,7 @@ export class CaseV2Service {
     };
     // 新运行独立编译配置，跳过同 case 的提交幂等分支，业务定义保持原身份。
     const input = structuredClone(definition.caseV2Definition!);
-    let identities =
-      typeof this.identities === 'function' ? undefined : this.identities;
-    if (
-      typeof this.identities === 'function' &&
-      (!input.session ||
-        ['identity', 'pool', 'auto'].includes(input.session.mode))
-    )
-      identities = await this.identities(input.session);
-    const result = compileCase(input, validateCaseProfile(profile), identities);
+    const result = compileCase(input, validateCaseProfile(profile));
     result.taskId = taskId;
     result.resourceKey = digest(canonical([result.resourceKey, taskId]));
     if (budgetMode === 'original') {

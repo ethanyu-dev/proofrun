@@ -1,3 +1,6 @@
+import { toast } from 'sonner';
+import { Button } from './ui/button';
+import { Textarea } from './ui/textarea';
 import { useEffect, useRef, useState } from 'react';
 import type { TaskDetail, VerificationReport } from '@proofrun/contracts';
 import { ErrorNotice } from './ui';
@@ -49,6 +52,7 @@ export function ReportExport({
     try {
       await navigator.clipboard.writeText(json);
       setCopied(true);
+      toast.success('报告 JSON 已复制');
       setError(undefined);
     } catch {
       setError('复制失败，可在下方文本框中手动选择并复制。');
@@ -63,11 +67,15 @@ export function ReportExport({
     >
       <div className="section-heading">
         <h2>报告 JSON</h2>
-        <button className="button button-secondary" onClick={close}>
+        <Button
+          variant="outline"
+          className="button button-secondary"
+          onClick={close}
+        >
           关闭导出
-        </button>
+        </Button>
       </div>
-      <textarea
+      <Textarea
         aria-label="导出的报告 JSON"
         className="mono"
         readOnly
@@ -80,20 +88,23 @@ export function ReportExport({
           可将此报告直接交给上层 Agent。证据下载仍需访问凭据。
         </p>
         <div className="page-actions">
-          <button
+          <Button
+            variant="outline"
             className="button button-secondary"
             onClick={() => void copy()}
           >
             {copied ? '已复制报告' : '复制报告 JSON'}
-          </button>
+          </Button>
           {url && (
-            <a
-              className="button button-primary"
-              href={url}
-              download={`${report.taskId}-report.json`}
-            >
-              下载 JSON
-            </a>
+            <Button asChild variant="default">
+              <a
+                className="button button-primary"
+                href={url}
+                download={`${report.taskId}-report.json`}
+              >
+                下载 JSON
+              </a>
+            </Button>
           )}
         </div>
       </div>

@@ -1,12 +1,10 @@
 /* 根据 contracts/schemas 自动生成，请勿手改；修改 Schema 后运行 pnpm contracts:generate。 */
 
 /**
- * 只声明身份引用与条件，禁止携带密码或 Cookie；guest 不恢复认证。
+ * 只支持访客、当前会话人工登录和 DevPass 外部账号；禁止携带密码或 Cookie。
  */
 export type SessionRequest = {
-  mode: 'guest' | 'manual' | 'identity' | 'pool' | 'auto' | 'external';
-  identityRef?: string;
-  poolRef?: string;
+  mode: 'guest' | 'manual' | 'external';
   /**
    * @maxItems 32
    */

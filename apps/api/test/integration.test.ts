@@ -1,4 +1,3 @@
-import type { IdentityCatalog } from '../src/modules/identities/catalog.js';
 import WebSocket from 'ws';
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -64,11 +63,6 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
   await new Promise<void>((resolve) => portHolder.close(() => resolve()));
   const base = `http://127.0.0.1:${port}`;
   const config = {
-    identityCatalog: {
-      identities: [],
-      pools: [],
-      sites: [],
-    } as IdentityCatalog,
     caseProfile: {
       environment: { id: 'private-case-environment', nodePool: 'case-fixture' },
       budget: { timeoutMs: 60000, maxActions: 20 },
@@ -97,12 +91,6 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
     body?: unknown,
     token = ADMIN,
   ) => {
-    // 本组覆盖显式旧会话协议；省略 session 的身份选择流程由 identity-library-http 单独覆盖。
-    if (method === 'POST' && path === '/v2/cases' && Array.isArray(body))
-      body = body.map((item) => ({
-        ...item,
-        session: item.session ?? { mode: 'manual' },
-      }));
     // 旧的单步协议夹具补齐新版身份字段；错误身份、跨组证据和并发行为另有专门回归。
     const executionPath = /^\/v1\/executions\/([^/]+)\//.exec(path);
     if (method === 'POST' && body && executionPath) {
@@ -348,137 +336,27 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         );
       },
     );
-    // 范围：真实 API/数据库/WebSocket 的准备授权、版本门禁、幂等及独立预算；登录回执为节点夹具。
-    await suite.test(
-      '身份登录准备单次授权、旧节点隔离及预算不挤占业务',
-      async (t) => {
-        const profile = config.caseProfile;
-        const saved = structuredClone(profile);
-        t.after(() => Object.assign(profile, saved));
-        profile.environment = {
-          id: 'identity-test',
-          nodePool: 'identity-test',
-        };
-        config.identityCatalog.identities.push({
-          id: 'member-fixture',
-          label: '测试团队',
-          accountKey: 'member-physical',
-          origins: ['https://identity.test'],
-          checks: [
-            {
-              id: 'member',
-              description: '团队成员',
-              method: 'text',
-              value: 'Fixture member',
-            },
-          ],
-          loginRef: 'private-fixture',
-          maxConcurrent: 1,
-        });
-        const node = await addNode('identity-test');
-        const submitted = await api('POST', '/v2/cases', [
-          {
-            caseId: 'identity-preparation',
-            platform: '身份测试',
-            entry: 'https://identity.test',
-            session: { mode: 'identity', identityRef: 'member-fixture' },
-            steps: [
-              {
-                url: 'https://identity.test',
-                type: 'verification',
-                exec_order: 1,
-                description: '检查',
-                policy: [],
-                expected: ['Fixture result'],
-              },
-            ],
-            cleanup: [],
-          },
-        ]);
-        assert.equal(submitted.status, 202, JSON.stringify(submitted));
-        // 断言失败时也撤销本用例任务，避免共享队列中的遗留任务被后续用例领取。
-        t.after(async () => {
-          await api('POST', '/v1/tasks/case-v2-identity-preparation/cancel');
-          await cleaned('case-v2-identity-preparation');
-        });
-        assert.equal(await claim(true), null);
-        node.identityPreparation = true;
-        node.heartbeat();
-        // 心跳需异步提交数据库并更新网关，按实际领取结果等待，不假定 CI 在 30ms 内完成。
-        const execution = await until(
-          () => claim(true),
-          (value) => Boolean(value),
+    // 范围：真实路由已下线且旧身份协议被拒绝；不执行真实账号或浏览器登录。
+    await suite.test('本地身份管理与选择接口已移除', async () => {
+      for (const [method, path] of [
+        ['GET', '/v1/admin/identity-library'],
+        ['POST', '/v1/admin/identity-library'],
+        ['POST', '/v1/admin/identity-library/remove'],
+        ['GET', '/v1/admin/identities'],
+        ['GET', '/v1/admin/identities/settings'],
+        ['POST', '/v1/admin/identities/settings'],
+        ['POST', '/v1/admin/identities/test'],
+        ['POST', '/v1/admin/identities/refresh'],
+        ['GET', '/v1/admin/identities/metrics'],
+        ['POST', '/v1/worker/identity-selection/claim'],
+        ['POST', '/v1/worker/identity-selection/finish'],
+      ])
+        assert.equal(
+          (await api(method!, path!, method === 'POST' ? {} : undefined))
+            .status,
+          404,
         );
-        assert.ok(execution);
-        assert.equal(execution.task.taskId, 'case-v2-identity-preparation');
-        await ready(execution);
-        assert.equal(execution.task.sessionPlan.candidates.length, 1);
-        const operation = {
-          type: 'browser.identity.prepare',
-          url: 'https://identity.test',
-          profileRef: 'private-fixture',
-          checks: [{ method: 'text', value: 'Fixture member' }],
-          saveSnapshot: false,
-        };
-        const path = `/v1/executions/${execution.id}/commands`;
-        const forged = await api(
-          'POST',
-          path,
-          {
-            type: 'execution.command',
-            commandId: randomUUID(),
-            timeoutMs: 10000,
-            command: { ...operation, profileRef: 'other' },
-          },
-          execution.leaseToken,
-        );
-        assert.equal(forged.status, 403);
-        const prepared = await command(execution, operation);
-        const repeated = await api(
-          'POST',
-          path,
-          prepared.request,
-          execution.leaseToken,
-        );
-        assert.equal(repeated.status, 202);
-        assert.equal(node.calls.get(prepared.request.commandId), 1);
-        const retry = await api(
-          'POST',
-          path,
-          { ...prepared.request, commandId: randomUUID() },
-          execution.leaseToken,
-        );
-        assert.equal(retry.data.code, 'IDENTITY_PREPARATION_EXHAUSTED');
-        const detail = (
-          await api('GET', '/v1/tasks/case-v2-identity-preparation')
-        ).data;
-        assert.equal(detail.identity.identityRef, 'member-fixture');
-        assert.equal(detail.identity.preparation.source, 'cookies');
-        assert.equal(detail.identity.preparation.status, 'READY');
-        assert.equal(detail.executions[0].action_count, 0);
-        const steps = execution.task.steps.map((step: { stepId: string }) => ({
-          stepId: step.stepId,
-          status: 'RUNNING',
-          summary: 'fixture',
-          evidenceRefs: [],
-          criteria: [],
-          startedAt: new Date().toISOString(),
-          finishedAt: null,
-        }));
-        const start = await api(
-          'POST',
-          `/v1/executions/${execution.id}/steps`,
-          steps,
-          execution.leaseToken,
-        );
-        assert.equal(start.status, 200, JSON.stringify(start));
-        assert.equal(start.data.stepBudget.actions, 0);
-        assert.ok(start.data.stepBudget.deadlineAt > Date.now() + 299000);
-        const metrics = await api('GET', '/v1/admin/identities/metrics');
-        assert.equal(metrics.status, 200);
-        assert.equal(metrics.data.automaticReady, 1);
-      },
-    );
+    });
 
     // 范围：真实 PostgreSQL 批量事务、同站点任务独立、逐步证据和清理顺序；节点为协议夹具，不执行业务浏览器。
     await suite.test('v2 批量原子接收、独立任务与同会话清理', async () => {

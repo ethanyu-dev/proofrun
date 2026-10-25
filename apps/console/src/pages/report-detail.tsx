@@ -1,4 +1,4 @@
-import { CaseRunHistory } from '../components/case-run-history';
+import { Button } from '../components/ui/button';
 import { RequestMemberships } from '../components/request-memberships';
 import {
   TaskExecutionStatus,
@@ -41,26 +41,22 @@ export function ReportDetailPage({ api, id }: { api: ApiClient; id: string }) {
         title="验证报告"
         description="核对本次结论、验收范围与原始证据。"
       >
-        <a className="button button-secondary" href="#/reports">
-          返回报告
-        </a>
-        <a
-          className="button button-secondary"
-          href={`#/tasks/${encodeURIComponent(id)}`}
-        >
-          {resource.data?.definition.comparison
-            ? '查看执行对比'
-            : '查看任务详情'}
-        </a>
+        <Button asChild variant="outline">
+          <a className="button button-secondary" href="#/tasks">
+            返回任务
+          </a>
+        </Button>
+        <Button asChild variant="outline">
+          <a
+            className="button button-secondary"
+            href={`#/tasks/${encodeURIComponent(id)}`}
+          >
+            {resource.data?.definition.comparison
+              ? '查看执行对比'
+              : '查看任务详情'}
+          </a>
+        </Button>
       </PageHeader>
-      {resource.data?.definition.caseV2Definition && (
-        <CaseRunHistory
-          key={id}
-          api={api}
-          caseId={resource.data.definition.caseV2Definition.caseId}
-          taskId={resource.data.definition.comparison?.sourceTaskId ?? id}
-        />
-      )}
       <RequestMemberships api={api} taskId={id} />
       <RefreshBar {...resource} />
       <ErrorNotice message={resource.error} />
@@ -166,7 +162,8 @@ export function ReportDetails({
                       </span>
                       {arm && <TaskExecutionStatus task={arm} />}
                       {arm?.report && (
-                        <button
+                        <Button
+                          variant="ghost"
                           className="text-button"
                           onClick={() =>
                             setExportId(
@@ -175,7 +172,7 @@ export function ReportDetails({
                           }
                         >
                           导出{paired ? '本组' : ''}报告
-                        </button>
+                        </Button>
                       )}
                     </div>
                   );

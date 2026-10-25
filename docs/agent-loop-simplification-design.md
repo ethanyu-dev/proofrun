@@ -95,15 +95,14 @@ API 持久化可选 StepResult.requirements，验证唯一要求身份、证据�
 
 预算收尾仅允许 record/finish/block，停滞收尾按执行状态限制；不提供新的浏览器动作或人工续时。视觉输入只受 LLM 的 vision 配置控制，没有 JEV 图片或 Box 旁路。
 
-| 文件                           | 当前职责                                         |
-| ------------------------------ | ------------------------------------------------ |
-| `prompts/decision.ts`          | 公共任务、浏览器、证据规则，按阶段与收尾状态装配 |
-| `prompts/tools.ts`             | 工具用途及证据引用说明                           |
-| `prompts/recovery.ts`          | 当前使用的恢复反馈模板                           |
-| `prompts/action-replay.ts`     | 人工交接后的防重放反馈                           |
-| `prompts/settlement.ts`        | 收尾修复反馈                                     |
-| `prompts/identity-selector.ts` | 身份选择的独立请求                               |
-| `prompts/report-analysis.ts`   | 报告复盘的独立请求                               |
+| 文件                         | 当前职责                                         |
+| ---------------------------- | ------------------------------------------------ |
+| `prompts/decision.ts`        | 公共任务、浏览器、证据规则，按阶段与收尾状态装配 |
+| `prompts/tools.ts`           | 工具用途及证据引用说明                           |
+| `prompts/recovery.ts`        | 当前使用的恢复反馈模板                           |
+| `prompts/action-replay.ts`   | 人工交接后的防重放反馈                           |
+| `prompts/settlement.ts`      | 收尾修复反馈                                     |
+| `prompts/report-analysis.ts` | 报告复盘的独立请求                               |
 
 工具机器协议仍由 Contracts 提供，Agent 的 tools.ts 收紧本轮能力与枚举、附加 progress，并覆盖模型用途说明。身份选择与报告复盘不是浏览器循环中的隐藏子调用。
 

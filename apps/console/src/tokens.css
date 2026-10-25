@@ -1,11 +1,11 @@
-/* 数值依据与控制台适配范围见 docs/console-design.md，业务页面统一使用语义变量。 */
+/* 控制台与 shadcn 组件共用语义变量；状态色只用于业务结论和反馈。 */
 :root {
   color-scheme: light;
   --color-background: #ffffff;
   --color-foreground: #0a0a0a;
-  --color-surface: #f9f8f6;
-  --color-secondary: #f2f1ef;
-  --color-muted: #686662;
+  --color-surface: #fafafa;
+  --color-secondary: #f4f4f5;
+  --color-muted: #64646b;
   /* 业务状态扩展仅用于结论标签与错误说明，不作为品牌主色。 */
   --color-success: #276342;
   --color-success-surface: #ecf5ee;
@@ -22,7 +22,7 @@
   --color-code-muted: #a9a8a5;
   --color-code-border: rgb(255 255 255 / 18%);
 
-  /* 官网使用自定义字体，当前以本机字体替代，避免内网运行依赖外部字体服务。 */
+  /* 使用本机字体，避免内网运行依赖外部字体服务。 */
   --font-sans:
     'Helvetica Neue', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif;
   --font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
@@ -31,7 +31,7 @@
   --text-hero: 3.75rem;
   --text-section: 3rem;
   --radius-control: 0.5rem;
-  --radius-card: 1rem;
+  --radius-card: 0.5rem;
   --radius-pill: 9999px;
   --space-1: 0.25rem;
   --space-2: 0.5rem;

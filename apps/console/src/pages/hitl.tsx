@@ -1,3 +1,6 @@
+import { Button } from '../components/ui/button';
+import { Input } from '../components/ui/input';
+import { Textarea } from '../components/ui/textarea';
 import { useEffect, useRef, useState } from 'react';
 import type { NodeCommand, HitlServer } from '@proofrun/contracts';
 import { ThemeToggle } from '../components/ui';
@@ -262,14 +265,15 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
         <section className="panel hitl-done">
           <h1>{unableResult ? '人为判定无法执行' : '处理已完成'}</h1>
           <p>{unableResult || '浏览器已交还 Agent，可以关闭此页。'}</p>
-          <button
+          <Button
+            variant="default"
             className="button button-primary"
             onClick={() => {
               window.close();
             }}
           >
             关闭页面
-          </button>
+          </Button>
         </section>
       ) : (
         <div className="hitl-layout">
@@ -374,7 +378,8 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
                 ? '● 已聚焦浏览器 · 键盘和滚轮仅作用于远端'
                 : '点击画面聚焦浏览器，点击画面外退出'}
             </span>
-            <button
+            <Button
+              variant="outline"
               type="button"
               className="button button-small button-secondary"
               disabled={!controlling}
@@ -384,7 +389,7 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
               }}
             >
               退出聚焦
-            </button>
+            </Button>
             <ThemeToggle />
           </div>
           <div className="hitl-controls">
@@ -420,7 +425,7 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
               >
                 <label>
                   向远端焦点输入文字（支持中文与粘贴）
-                  <input
+                  <Input
                     type="password"
                     autoComplete="off"
                     value={text}
@@ -429,16 +434,18 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
                     disabled={!interactive}
                   />
                 </label>
-                <button
+                <Button
+                  variant="outline"
                   className="button button-secondary"
                   disabled={!interactive || !text}
                 >
                   输入
-                </button>
+                </Button>
               </form>
               <div className="page-actions">
                 {['Tab', 'Enter', 'Backspace', 'Escape'].map((key) => (
-                  <button
+                  <Button
+                    variant="outline"
                     key={key}
                     className="button button-secondary button-small"
                     disabled={!interactive}
@@ -452,7 +459,7 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
                     }}
                   >
                     {key}
-                  </button>
+                  </Button>
                 ))}
               </div>
               <p className="muted note">
@@ -481,7 +488,7 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
                   <div className="hitl-checks">
                     {state.items.map((item, index) => (
                       <label key={index}>
-                        <input
+                        <Input
                           type="checkbox"
                           checked={checked.includes(index)}
                           onChange={(event) =>
@@ -511,15 +518,17 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
                 </p>
               )}
               {(!connected || !hasFrame || frameTimedOut) && (
-                <button
+                <Button
+                  variant="outline"
                   className="button button-secondary"
                   disabled={busy || typingPending || completing.current}
                   onClick={() => setAttempt((n) => n + 1)}
                 >
                   重新连接
-                </button>
+                </Button>
               )}
-              <button
+              <Button
+                variant="default"
                 className="button button-primary"
                 disabled={
                   !interactive ||
@@ -551,8 +560,9 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
                 }}
               >
                 完成，继续任务
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="outline"
                 className="button button-secondary"
                 disabled={
                   !connected ||
@@ -564,11 +574,11 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
                 onClick={() => setUnable((value) => !value)}
               >
                 无法处理
-              </button>
+              </Button>
               {unable && (
                 <div className="identity-field">
                   <label htmlFor="unable-reason">无法处理的具体原因</label>
-                  <textarea
+                  <Textarea
                     id="unable-reason"
                     required
                     rows={3}
@@ -577,7 +587,8 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
                     onChange={(event) => setUnableReason(event.target.value)}
                     placeholder="例如：无法取得符合要求的团队权限"
                   />
-                  <button
+                  <Button
+                    variant="default"
                     className="button button-primary"
                     disabled={
                       !connected ||
@@ -604,7 +615,7 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
                     }}
                   >
                     确认无法执行
-                  </button>
+                  </Button>
                 </div>
               )}
               <p className="muted note">

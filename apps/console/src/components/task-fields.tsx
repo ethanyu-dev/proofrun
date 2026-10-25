@@ -1,3 +1,6 @@
+import { Button } from './ui/button';
+import { Input } from './ui/input';
+import { Textarea } from './ui/textarea';
 import type { VerificationTask } from '@proofrun/contracts';
 
 /** 当前服务支持的证据类型，截图与网络证据还需执行节点具备对应能力。 */
@@ -31,7 +34,7 @@ export function TaskFields({
         <h2>验证目标</h2>
         <label>
           目标网址
-          <input
+          <Input
             type="url"
             required
             placeholder="https://example.com"
@@ -43,7 +46,7 @@ export function TaskFields({
         </label>
         <label>
           任务目标
-          <textarea
+          <Textarea
             required
             rows={4}
             placeholder="描述需要验证的业务流程、检查范围和最终输出。"
@@ -63,7 +66,7 @@ export function TaskFields({
             <div className="task-form-grid">
               <label>
                 验收项 ID
-                <input
+                <Input
                   required
                   maxLength={128}
                   value={c.id}
@@ -72,7 +75,7 @@ export function TaskFields({
               </label>
               <label>
                 检查内容
-                <input
+                <Input
                   required
                   value={c.description}
                   placeholder="例如：GLM 价格表"
@@ -84,7 +87,7 @@ export function TaskFields({
             </div>
             <label>
               预期结果
-              <textarea
+              <Textarea
                 required
                 rows={3}
                 value={c.expectedResult}
@@ -102,7 +105,7 @@ export function TaskFields({
               <span>证据类型</span>
               {EVIDENCE.map((kind) => (
                 <label className="check-label" key={kind}>
-                  <input
+                  <Input
                     type="checkbox"
                     checked={c.evidenceKinds.includes(kind)}
                     disabled={
@@ -123,7 +126,8 @@ export function TaskFields({
                 </label>
               ))}
             </div>
-            <button
+            <Button
+              variant="outline"
               type="button"
               className="button button-secondary button-small"
               disabled={task.acceptanceCriteria.length === 1}
@@ -137,10 +141,11 @@ export function TaskFields({
               }
             >
               移除此项
-            </button>
+            </Button>
           </fieldset>
         ))}
-        <button
+        <Button
+          variant="outline"
           type="button"
           className="button button-secondary"
           onClick={() =>
@@ -159,14 +164,14 @@ export function TaskFields({
           }
         >
           添加验收项
-        </button>
+        </Button>
       </section>
       <section className="task-section">
         <h2>执行设置</h2>
         <div className="task-form-grid">
           <label>
             环境名称
-            <input
+            <Input
               required
               value={task.environment.id}
               onChange={(e) => environment({ id: e.target.value })}
@@ -174,7 +179,7 @@ export function TaskFields({
           </label>
           <label>
             节点池
-            <input
+            <Input
               required
               pattern="[A-Za-z0-9_-]+"
               maxLength={128}
@@ -184,7 +189,7 @@ export function TaskFields({
           </label>
           <label>
             最大动作次数
-            <input
+            <Input
               type="number"
               required
               min={1}
@@ -204,7 +209,7 @@ export function TaskFields({
           </label>
           <label>
             总时间预算（分钟）
-            <input
+            <Input
               type="number"
               required
               min={1 / 60000}
@@ -225,7 +230,7 @@ export function TaskFields({
         </div>
         <p className="muted">总时间包含排队与等待人工的时间。</p>
         <label className="check-label">
-          <input
+          <Input
             type="checkbox"
             checked={task.environment.allowIntervention ?? false}
             onChange={(e) =>
@@ -241,7 +246,7 @@ export function TaskFields({
           <summary>高级设置：任务 ID</summary>
           <label>
             任务 ID
-            <input
+            <Input
               required
               pattern="[A-Za-z0-9_-]+"
               maxLength={128}

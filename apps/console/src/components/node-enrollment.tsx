@@ -1,3 +1,5 @@
+import { Button } from './ui/button';
+import { Input } from './ui/input';
 import { useEffect, useRef, useState } from 'react';
 import { ApiClient, errorMessage } from '../api';
 import { ErrorNotice, time } from './ui';
@@ -52,9 +54,13 @@ export function NodeEnrollment({
     <section className="panel" aria-label="注册执行节点">
       <div className="section-heading">
         <h2>{nodeId ? '轮换节点凭据' : '注册执行节点'}</h2>
-        <button className="button button-secondary" onClick={close}>
+        <Button
+          variant="outline"
+          className="button button-secondary"
+          onClick={close}
+        >
           关闭
-        </button>
+        </Button>
       </div>
       <ErrorNotice message={error} />
       {!pairing ? (
@@ -69,7 +75,7 @@ export function NodeEnrollment({
             <>
               <label>
                 节点名称
-                <input
+                <Input
                   required
                   maxLength={128}
                   value={name}
@@ -78,7 +84,7 @@ export function NodeEnrollment({
               </label>
               <label>
                 节点池
-                <input
+                <Input
                   required
                   pattern="[A-Za-z0-9_-]+"
                   maxLength={128}
@@ -88,12 +94,13 @@ export function NodeEnrollment({
               </label>
             </>
           )}
-          <button
+          <Button
+            variant="default"
             className="button button-primary"
             disabled={busy || (!nodeId && !name.trim())}
           >
             {busy ? '签发中…' : '生成配对码'}
-          </button>
+          </Button>
         </form>
       ) : (
         <>
@@ -108,7 +115,7 @@ export function NodeEnrollment({
           </p>
           <label>
             配对码
-            <input
+            <Input
               className="mono"
               readOnly
               value={pairing.pairingToken}

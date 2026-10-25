@@ -409,38 +409,20 @@ test('人工交还后丢弃兄弟 tab 旧决定，重新检查 policy', async ()
   assert(!client.calls.some((call) => call.operation.action === 'click'));
 });
 
-// 范围：并发组及 cleanup 共用一次身份准备并引用同一真实命令；不测试真实凭据或身份提供方。
-test('profile 身份准备只执行一次，使用原始入口', async () => {
+// 范围：分组人工会话无需本地准备命令，各组仍进入自己的入口；不验证真实登录。
+test('profile 分组直接执行且不读取本地身份配方', async () => {
   const { report, client } = await run(finish, (execution) => {
     execution.task.sessionPlan = {
       version: 1,
-      mode: 'identity',
+      mode: 'manual',
       preparationMs: 120000,
       requirements: [],
-      candidates: [
-        {
-          id: 'fixture',
-          label: 'fixture',
-          accountKey: 'fixture',
-          origins: ['http://intranet.test'],
-          checks: [],
-          maxConcurrent: 1,
-          loginRef: 'private-ref',
-        },
-      ],
+      candidates: [],
     };
     execution.task.steps[0].url = 'http://intranet.test/another';
   });
-  const preparation = client.calls.filter(
-    (call) => call.operation.type === 'browser.identity.prepare',
-  );
-  assert.equal(preparation.length, 1);
-  assert.equal(preparation[0].operation.url, 'http://intranet.test/form');
-  assert.equal(preparation[0].operation.tabScope, undefined);
-  assert.equal(
-    report.executionDetails.commandIds.filter((id) => id === preparation[0].id)
-      .length,
-    1,
+  assert.ok(
+    !client.calls.some((c) => c.operation.type === 'browser.identity.prepare'),
   );
   assert(
     report.executionDetails.commandIds.every((id) =>

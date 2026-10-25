@@ -1,4 +1,3 @@
-import { selectedTask } from '../identities/selection.js';
 import type { BudgetState } from './step-budget.js';
 import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
@@ -68,7 +67,7 @@ export interface ExecutionContext {
 export async function executionContext(
   client: PoolClient,
   id: string,
-  options: { lock?: boolean; resolveIdentity?: boolean } = {},
+  options: { lock?: boolean } = {},
 ): Promise<ExecutionContext> {
   const result = await client.query<ExecutionContext>(
     `
@@ -82,9 +81,6 @@ export async function executionContext(
   if (!result.rows[0])
     throw new ApiError(404, 'EXECUTION_MISSING', 'Execution not found');
   const context = result.rows[0];
-  if (options.resolveIdentity !== false)
-    context.definition =
-      (await selectedTask(client, context.definition)) ?? context.definition;
   return context;
 }
 

@@ -90,7 +90,7 @@ test('提交页默认只要求粘贴 v2 JSON', () => {
   const html = renderToStaticMarkup(
     createElement(TaskSubmitPage, { api: new ApiClient('fixture') }),
   );
-  assert.match(html, /aria-pressed="true"[^>]*>v2 Schema 提交/);
+  assert.match(html, /role="tab" aria-selected="true"[^>]*>v2 Schema 提交/);
   assert.match(html, /v1 兼容入口/);
   assert.match(html, /id="case-definition"/);
   assert.equal((html.match(/<textarea/g) ?? []).length, 1);

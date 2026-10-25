@@ -1,3 +1,5 @@
+import { Button } from '../components/ui/button';
+import { Input } from '../components/ui/input';
 import { useState } from 'react';
 import type { NodeCommand } from '@proofrun/contracts';
 
@@ -39,7 +41,7 @@ export function HitlNavigation({
     >
       <label>
         前往远端网址
-        <input
+        <Input
           type="url"
           required
           value={url}
@@ -48,17 +50,22 @@ export function HitlNavigation({
           placeholder="https://example.com/"
         />
       </label>
-      <button className="button button-secondary" disabled={disabled}>
+      <Button
+        variant="outline"
+        className="button button-secondary"
+        disabled={disabled}
+      >
         前往
-      </button>
-      <button
+      </Button>
+      <Button
+        variant="outline"
         type="button"
         className="button button-secondary"
         disabled={disabled}
         onClick={() => submit({ type: 'browser.act', action: 'reload' })}
       >
         刷新远端页面
-      </button>
+      </Button>
       {error && <p role="alert">{error}</p>}
     </form>
   );
