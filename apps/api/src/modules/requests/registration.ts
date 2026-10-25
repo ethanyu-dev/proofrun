@@ -1,3 +1,4 @@
+import { registerRerun, replaceMemberRuns } from './rerun-registration.js';
 import type { PoolClient } from 'pg';
 import type { VerificationTask } from '@proofrun/contracts';
 import { ApiError, canonical, digest } from '../../domain.js';
@@ -6,19 +7,21 @@ import { ApiError, canonical, digest } from '../../domain.js';
 export interface RequestRegistration {
   /** 一次逻辑提交的稳定身份。 */
   requestId: string;
+  /** 原请求内只替换选定成员的当前运行，不新增请求。 */
+  replaceRuns?: boolean;
   /** 首次接收冻结的标题。 */
   title: string;
   /** 不受成员排列影响的请求定义摘要。 */
   hash: string;
-  /** 重跑只允许新建目标，来源映射随同成员一起冻结。 */
+  /** 重跑来源；要求运行身份全新，原地重跑时与 requestId 相同。 */
   sourceRequestId?: string;
-  /** 新 case 身份映射到原 case，不改变旧成员关系。 */
+  /** 兼容新请求重跑的成员来源，不改变业务 case 身份。 */
   sources?: Record<string, string>;
   /** 保存完整重跑选择供溯源，不参与调度状态更新。 */
   rerunParameters?: unknown;
 }
 
-/** 在 case 锁之前获取请求锁；重试只返回原成员，不覆盖已有归属。 */
+/** 在 case 锁之前获取请求锁；首次提交和原地重跑各自检查幂等身份。 */
 export async function registerRequest(
   client: PoolClient,
   request: RequestRegistration,
@@ -26,6 +29,7 @@ export async function registerRequest(
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
     `request:${request.requestId}`,
   ]);
+  if (request.replaceRuns) return registerRerun(client, request);
   const existing = (
     await client.query(
       'SELECT definition_hash FROM pr_verification_requests WHERE request_id=$1',
@@ -61,6 +65,10 @@ export async function registerMembers(
   tasks: VerificationTask[],
   created: Set<string>,
 ) {
+  if (request.replaceRuns) {
+    await replaceMemberRuns(client, request, tasks);
+    return;
+  }
   for (const [position, candidate] of tasks.entries()) {
     const definition = (
       await client.query('SELECT definition FROM pr_tasks WHERE id=$1', [

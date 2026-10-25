@@ -17,7 +17,7 @@ requestId 必填，为 1–80 位字母、数字、下划线或短横线；title
 - `GET /v2/requests`：请求摘要列表，支持 q、executionStatus、reportStatus、limit（1–100，默认 25）及 cursor。q 按请求身份、标题、case 身份或目标搜索；命中一个成员仍返回整个请求的统计。游标绑定筛选条件，不能更换筛选后沿用。
 - `GET /v2/requests/{requestId}`：请求元数据、全部成员、冻结的步骤、各组进度和汇总。
 - `GET /v2/requests/{requestId}/report`：相同一致性快照的汇总报告，包含 case 矩阵、逐项两组结论、证据引用与清理情况。
-- `POST /v2/requests/{requestId}/rerun`：接收新 requestId、完整 `caseIds: [{ sourceCaseId, runId }]` 映射，以及可选 budgetMode/timeBudget。每个 runId 是新运行身份，成员 caseId 保持不变；整请求原子重建，不覆盖旧结果。旧映射字段 caseId 兼容解释为运行幂等键。重试沿用目标 requestId 和全部映射，参数改变返回 REQUEST_CONFLICT。
+- `POST /v2/requests/{requestId}/rerun`：接收 `caseIds: [{ sourceCaseId, runId }]` 和可选 budgetMode/timeBudget。默认保留原 requestId，可选一个或全部成员，在一个事务内新增运行并切换所选成员的报告；未选成员及其他请求不变。旧运行和证据保留，新运行进行中不回退旧结果，旧 Agent 分析失效。重试沿用完整映射及预算；成功后再次重跑必须更换 runId，旧操作重试不会回退最新结果。同一 runId 改变参数或被其他操作占用返回 409 CASE_CONFLICT。旧映射字段 caseId 兼容解释为运行幂等键。兼容旧客户端显式提供新的 requestId，此时必须覆盖全部成员，创建独立请求；相同新 requestId 参数改变返回 REQUEST_CONFLICT。
 
 请求的 executionStatus 为 QUEUED / IN_PROGRESS / FINISHED，只表达执行进度；reportPhase 为 PENDING / PARTIAL / FINAL。所有要求组终止后为 FINAL，即使有子报告缺失。非 FINAL 的 reportStatus 为 null；已交付报告中的失败仍由 observedFailureCount 显示。FINAL 时，任一组已确认 FAILED 则汇总 FAILED，所有要求组均 PASSED 才 PASSED，否则 INCONCLUSIVE。两组相反的明确判断另计 confirmedDisagreementCount，不能将组间差异直接解释成产品根因。
 
@@ -25,7 +25,7 @@ uniqueCriteriaCounts 按 `(caseId, criterionId)` 统计一次，包含 total、p
 
 reportCoverage 的 expected、available、missing 明确报告齐全程度；byExecutionMode 分别统计 LLM/JEV 已交付报告，不把未配置模式当成缺报告。响应携带 generatedAt 与 aggregationVersion（当前为 1），页面和 JSON 导出使用同一份服务端快照；部分导出明确标记 partial。清理失败不改变已确认业务通过，证据清理不改变已有结论。
 
-Console 的任务和报告默认按请求展示，提供未归组任务、全部执行明细以及原 taskId 深链接。共享 case 的执行详情列出所有关联请求，取消会影响所有引用同一执行的请求。单 case 重跑仍使用原接口，新执行不会替换原请求成员；需要整份新请求报告时使用请求重跑接口。请求分组不改变调度、浏览器会话或 case 间依赖关系。
+Console 的任务和报告默认按请求展示，提供未归组任务、全部执行明细以及原 taskId 深链接。共享 case 的执行详情列出所有关联请求，取消会影响所有引用同一执行的请求。请求内单 case 重跑向请求重跑接口提交仅含该成员的映射；整体重跑提交全部成员。报告使用各成员当前运行的结果。独立 `/v2/cases/{caseId}/rerun` 仍只新增运行，不推测要更新哪个请求。请求分组不改变调度、浏览器会话或 case 间依赖关系。
 
 ## 提交与身份
 
@@ -122,7 +122,7 @@ executionPlan.evidenceKinds 是验收取证配置与全部步骤（含 setup、c
 
 可额外传 `timeBudget: {"stepTimeoutMs":900000,"cleanupTimeoutMs":600000}`，在所选预算基础上将每个业务步骤至少扩展到 15 分钟、整段清理至少扩展到 10 分钟。两个字段可单独提供，值必须为正整数毫秒；原本更长的步骤（包含等待）不会缩短。动作数、模型请求数及收尾额度不变，业务总时间重新汇总，完整会话仍受 24 小时上限约束。没有逐步预算的历史任务会在新身份上补编译逐步计划。相同 runId 重提始终返回首次冻结的预算；改变额度需要另一个新 runId。
 
-runId 为 1–80 位字母、数字、下划线或短横线，与 caseId 使用独立命名空间。相同 runId 的重试返回已存在运行，不再执行；其他 case 占用该运行身份时返回 409 CASE_CONFLICT。旧 caseId 请求参数兼容作为 runId，但不能同时传入两个字段。除上述时间下限外，请求不接受其他预算或步骤覆盖。Console 的列表和详情页统一显示“重跑整个 case”，从任一对照组点击均重跑整个 case，并跳转到新主任务。
+runId 为 1–80 位字母、数字、下划线或短横线，与 caseId 使用独立命名空间。相同 runId 的重试返回已存在运行，不再执行；其他 case 占用该运行身份时返回 409 CASE_CONFLICT。旧 caseId 请求参数兼容作为 runId，但不能同时传入两个字段。除上述时间下限外，请求不接受其他预算或步骤覆盖。Console 请求详情的“重跑此 case”使用请求重跑接口，并留在原请求页刷新；不会将单个 case 的新执行放入另一个请求。
 
 - `GET /v2/cases/{caseId}`：读取最新未删除运行的状态、逐步结果和清理状态；可通过 `?runId=返回的运行身份` 指定历史运行。
 - `GET /v2/cases/{caseId}/runs`：按时间倒序读取未删除运行，旧记录自动作为首轮运行。

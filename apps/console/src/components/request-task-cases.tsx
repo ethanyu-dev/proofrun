@@ -1,3 +1,5 @@
+import type { ApiClient } from '../api';
+import { RequestRerun } from './request-rerun';
 import type { RequestResultV2 } from '@proofrun/contracts';
 import { displayedCaseArm } from '../request-presentation';
 import { OutcomeStatus } from './execution-outcome';
@@ -12,7 +14,16 @@ const STEP_LABELS = {
 };
 
 /** 任务页只展示定义、步骤进度和操作入口；验收结论与证据由报告页承载。 */
-export function RequestTaskCases({ value }: { value: RequestResultV2 }) {
+export function RequestTaskCases({
+  value,
+  api,
+  onRerun,
+}: {
+  value: RequestResultV2;
+  api: ApiClient;
+  /** 任一 case 重跑成功后刷新整份请求的进度和报告状态。 */
+  onRerun: () => void;
+}) {
   return (
     <div className="request-cases">
       {value.cases.map((member, index) => {
@@ -33,6 +44,12 @@ export function RequestTaskCases({ value }: { value: RequestResultV2 }) {
               <div className="request-case-title">
                 <strong>{member.title}</strong>
               </div>
+              <RequestRerun
+                api={api}
+                value={value}
+                caseId={member.caseId}
+                onComplete={onRerun}
+              />
               <div className="request-task-progress">
                 <RequestCaseLive member={member} requestId={value.requestId} />
                 {arm ? (

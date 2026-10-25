@@ -2,11 +2,11 @@
 
 export interface RequestRerun {
   /**
-   * 逻辑提交的稳定身份；重试沿用，重跑使用新身份。
+   * 可选的旧版新请求身份；省略时在原请求内新增运行，重试沿用 caseIds。
    */
-  requestId: string;
+  requestId?: string;
   /**
-   * 完整 case 与新运行映射，由服务端原子提交。
+   * 原请求内待重跑的 case 与新运行映射；可选一个或全部成员，服务端原子提交。指定新 requestId 时必须覆盖全部成员。
    *
    * @minItems 1
    * @maxItems 32

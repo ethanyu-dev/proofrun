@@ -65,24 +65,28 @@ export class RequestService {
     return this.reader.get(input.requestId);
   }
 
-  /** 全部目标必须新建；完整映射与预算选择纳入请求幂等摘要。 */
+  /** 省略新请求身份时原地更新选定成员；映射和预算共同确定一次幂等操作。 */
   async rerun(id: string, input: unknown): Promise<RequestResultV2> {
     if (!validateRequestRerun(input) || input.requestId === id)
-      throw new ApiError(400, 'INVALID_RERUN', '需要新请求身份和完整运行映射');
+      throw new ApiError(
+        400,
+        'INVALID_RERUN',
+        '需要有效的运行映射；新请求身份不能与来源相同',
+      );
     const source = await this.reader.get(id);
     const sourceIds = new Set(source.cases.map((c) => c.caseId));
     if (
-      input.caseIds.length !== sourceIds.size ||
+      (input.requestId && input.caseIds.length !== sourceIds.size) ||
       new Set(input.caseIds.map((c) => c.sourceCaseId)).size !==
-        sourceIds.size ||
+        input.caseIds.length ||
       new Set(input.caseIds.map((c) => c.runId ?? c.caseId)).size !==
-        sourceIds.size ||
+        input.caseIds.length ||
       input.caseIds.some((c) => !sourceIds.has(c.sourceCaseId))
     )
       throw new ApiError(
         400,
         'INVALID_RERUN',
-        '映射必须覆盖全部来源，且运行身份互不重复',
+        '映射必须属于当前请求且身份互不重复；新建请求必须覆盖全部来源',
       );
     const parameters = {
       sourceRequestId: id,
@@ -93,23 +97,27 @@ export class RequestService {
       ...(input.timeBudget ? { timeBudget: input.timeBudget } : {}),
     };
     const hash = digest(canonical(parameters));
-    const replay = await this.replay(input.requestId, hash);
-    if (replay) return replay;
+    if (input.requestId) {
+      const replay = await this.replay(input.requestId, hash);
+      if (replay) return replay;
+    }
     const mapping = new Map(
       input.caseIds.map((c) => [c.sourceCaseId, c.runId ?? c.caseId]),
     );
     const definitions = [];
-    for (const member of source.cases)
+    for (const member of source.cases.filter((c) => mapping.has(c.caseId)))
       definitions.push(
         await this.cases.prepareRerun(
           member.caseId,
           mapping.get(member.caseId)!,
           parameters.budgetMode,
           input.timeBudget,
+          member.arms[0]!.taskId,
         ),
       );
     await this.tasks.submitCaseBatch(definitions, {
-      requestId: input.requestId,
+      requestId: input.requestId ?? id,
+      replaceRuns: !input.requestId,
       title: source.title,
       hash,
       sourceRequestId: id,
@@ -118,6 +126,6 @@ export class RequestService {
       ),
       rerunParameters: parameters,
     });
-    return this.reader.get(input.requestId);
+    return this.reader.get(input.requestId ?? id);
   }
 }
