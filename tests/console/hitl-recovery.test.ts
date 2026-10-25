@@ -182,6 +182,19 @@ test('人工页面没有首帧时仍可导航，超时可重连且不重放操�
       sockets[4]!.sent.filter((m) => m.type === 'command').length,
       0,
     );
+    // 范围：交接应答超时后忙碌标记释放，人工可以重新查询；不证明服务端是否已完成交接。
+    await act(async () => button('完成，继续任务').click());
+    await act(async () => context.mock.timers.tick(150000));
+    assert.equal(button('重新连接').disabled, false);
+    assert.match(container.textContent!, /交接结果未确认/);
+    assert.equal(
+      container.querySelector('img.hitl-screen')!.getAttribute('aria-disabled'),
+      'true',
+    );
+    assert.equal(
+      sockets[4]!.sent.filter((m) => m.type === 'complete').length,
+      1,
+    );
   } finally {
     await act(async () => root.unmount());
     context.mock.timers.reset();

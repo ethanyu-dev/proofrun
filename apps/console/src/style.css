@@ -1173,8 +1173,8 @@ summary {
   gap: 12px;
   align-items: start;
 }
-.hitl-tools,
-.hitl-todo {
+.panel.hitl-tools,
+.panel.hitl-todo {
   min-width: 0;
   padding: 12px;
 }
@@ -1227,7 +1227,7 @@ summary {
   display: block;
   width: auto;
   max-width: 100%;
-  max-height: 72vh;
+  max-height: 60vh;
   height: auto;
   margin: auto;
   /* 保持图片本身比例，不引入 object-fit 留白，坐标始终映射到真实画面。 */

@@ -111,15 +111,10 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
         return true;
       },
       setBusy,
-      () => {
-        setError(
+      () =>
+        stopForReview(
           '操作结果未确认，已停止后续操作。请重新连接检查页面，不要重复提交。',
-        );
-        setConnected(false);
-        setFreshFrame(false);
-        setConnectionState('closed');
-        socket.current?.close();
-      },
+        ),
     );
   const completed = useRef(false);
   const completing = useRef(false);
@@ -128,6 +123,22 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
     undefined,
   );
   const [typingPending, setTypingPending] = useState(false);
+  /** 操作或交接结果不明时停止输入并开放手动核查，不能让 busy 锁住恢复入口。 */
+  function stopForReview(message: string) {
+    socket.current?.close();
+    if (input.current!.busy) input.current!.reset();
+    clearTimeout(completionTimer.current);
+    clearTimeout(typingTimer.current);
+    typing.current = '';
+    completing.current = false;
+    setTypingPending(false);
+    setBusy(false);
+    setConnected(false);
+    setFreshFrame(false);
+    setRemoteFocused(false);
+    setConnectionState('closed');
+    setError(message);
+  }
   /** 区分交接、断线和队列繁忙，避免让短暂拥塞看起来像权限丢失。 */
   const enqueue = (
     command: NodeCommand['command'] | NodeCommand['command'][],
@@ -592,9 +603,7 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
                       }),
                     );
                     completionTimer.current = setTimeout(() => {
-                      setError('交接结果未确认，请重新连接查看处理状态。');
-                      setConnected(false);
-                      socket.current?.close();
+                      stopForReview('交接结果未确认，请重新连接查看处理状态。');
                     }, COMPLETION_ACK_MS);
                   }}
                 >
@@ -648,9 +657,9 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
                         }),
                       );
                       completionTimer.current = setTimeout(() => {
-                        setError('结果未确认，请重新连接核查人工处理结果。');
-                        setConnected(false);
-                        socket.current?.close();
+                        stopForReview(
+                          '结果未确认，请重新连接核查人工处理结果。',
+                        );
                       }, COMPLETION_ACK_MS);
                     }}
                   >
