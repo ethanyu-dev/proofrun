@@ -220,6 +220,14 @@ test(
         modelMs: 5000,
       };
       const client = new ControlClient(settings);
+      // execute 自己交付报告；故障钩子必须拦在首次提交前，不能在已落库后等待另一终态。
+      if (beforeComplete) {
+        const complete = client.complete.bind(client);
+        client.complete = async (...args) => {
+          await beforeComplete();
+          return complete(...args);
+        };
+      }
       const execution = await until(() => client.claim(), Boolean);
       try {
         assert.equal(execution.task.taskId, definition.taskId);
@@ -230,8 +238,6 @@ test(
             new ChatModel(settings),
           execution,
         );
-        await beforeComplete?.();
-        await client.complete(execution, report);
         const stored = await until(
           () => api('GET', `/v1/tasks/${definition.taskId}`),
           (value) => value.executions.every((e) => e.closure_verified),
@@ -962,11 +968,18 @@ test(
       // 范围：任务总预算包括模型时间，超时终态不能被报告提前或迟到改写；不模拟跨主机时钟漂移。
       await suite.test('任务截止后仍可保存可追溯故障报告', async () => {
         const definition = task('agent-timeout');
-        definition.budget.timeoutMs = 750;
+        // 为启动与首次模型调用留出预算，明确覆盖执行中超时而非排队超时。
+        definition.budget.timeoutMs = 5000;
+        let modelStarted = false;
         const { stored } = await run(
           definition,
-          async (context) => {
-            await pause(1100);
+          async (context, _turn, _body, _request, { execution }) => {
+            modelStarted = true;
+            // 按本轮真实截止时间返回，避免固定 sleep 与启动耗时竞争。
+            await pause(
+              Math.max(0, Date.parse(execution.taskDeadlineAt) - Date.now()) +
+                100,
+            );
             return finish(context);
           },
           {
@@ -978,6 +991,7 @@ test(
               ),
           },
         );
+        assert.equal(modelStarted, true, '必须进入模型执行后验证超时报告');
         assert.equal(stored.state, 'TIMED_OUT');
         assert.equal(stored.report.lifecycle, 'TIMED_OUT');
         assert.equal(stored.report.verdict, null);
