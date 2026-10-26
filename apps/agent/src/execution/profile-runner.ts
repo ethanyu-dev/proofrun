@@ -279,7 +279,7 @@ export async function executeProfile(
     let next = 0;
     // TRACE 仍属于整个 profile；网络采集已按 tab 隔离，此次保持原有串行预算策略。
     const concurrency = taskEvidenceKinds(grant.task).some((k) =>
-      ['NETWORK', 'TRACE'].includes(k),
+      ['NETWORK', 'TRACE', 'RUNTIME'].includes(k),
     )
       ? 1
       : plan.maxConcurrency;

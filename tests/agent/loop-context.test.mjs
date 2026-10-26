@@ -378,3 +378,59 @@ test('语言切换的历史文档声明与正文一起保留，不被当前状�
   result.history.excerpts[0].documents[0].lang = 'fr';
   assert.equal(history[0].documents[0].lang, 'zh-CN');
 });
+
+// 范围：大列表只裁剪模型副本并保留不完整标志；不把摘要当成完整缓存或网络验收。
+test('运行时证据超过上下文预算时明确截断，原始证据保持完整', async () => {
+  const { args, current } = await input();
+  current.runtime = {
+    version: 1,
+    status: 'observed',
+    cacheStorage: {
+      entries: Array.from({ length: 200 }, (_, i) => ({
+        url: `https://fixture.test/${i}/${'x'.repeat(300)}`,
+      })),
+      truncated: false,
+    },
+  };
+  const result = decisionContext({ ...args, maxContextChars: 8000 });
+  assert(result.text.length <= 8000);
+  assert.equal(result.context.page.runtime.cacheStorage.truncated, true);
+  assert.equal(result.context.page.runtime.cacheStorage.complete, false);
+  assert.equal(current.runtime.cacheStorage.entries.length, 200);
+  assert.equal(current.runtime.cacheStorage.truncated, false);
+});
+
+// 范围：键盘目标收紧不能误伤鼠标点击的非聚焦控件；校验真实出站 schema，不连接业务浏览器。
+test('不可聚焦目标仍可点击，但不能用于定向按键', async () => {
+  const { args, current } = await input();
+  current.targets[0].focusable = true;
+  current.targets[1].focusable = false;
+  current.viewport = { targetedPress: true };
+  const server = await modelServer(() => ({
+    type: 'browser.act',
+    action: 'click',
+    target: '@e2',
+  }));
+  const settings = { ...config, modelUrl: server.url };
+  try {
+    await new ChatModel(settings).decide(
+      decisionContext(args),
+      new AbortController().signal,
+    );
+    const schema = server.requests[0].tools.find(
+      (t) => t.function.name === 'browser_act',
+    ).function.parameters;
+    const validate = new Ajv({ strict: false }).compile(schema);
+    assert.equal(validate({ action: 'click', target: '@e2' }), true);
+    assert.equal(
+      validate({ action: 'press', target: '@e2', value: 'Enter' }),
+      false,
+    );
+    assert.equal(
+      validate({ action: 'press', target: '@e1', value: 'Enter' }),
+      true,
+    );
+  } finally {
+    await server.close();
+  }
+});

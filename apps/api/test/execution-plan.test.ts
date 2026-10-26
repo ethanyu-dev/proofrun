@@ -132,3 +132,27 @@ test('固定检查绑定 policy 并冻结全流程证据并集', () => {
   delete original.steps[0]!.policyChecks![0]!.path;
   assert.equal(validateVerificationCaseV2(original), false);
 });
+
+// 范围：能力只影响准入与证据需求，不新增业务标准，也不把登录与运行时能力混同。
+test('PWA 和响应头检查在准入前声明实际证据能力', () => {
+  const original = input();
+  original.steps[1]!.description =
+    '检查 Service Worker 与 CacheStorage，响应头 Cache-Control';
+  original.steps[1]!.expected = ['Service Worker 已激活'];
+  const task = compileCase(original, profile);
+  assert.deepEqual(task.executionPlan?.requiredCapabilities, [
+    'runtimeEvidenceV1',
+    'networkDetailsV1',
+  ]);
+  assert.deepEqual(taskEvidenceKinds(task), ['DOM', 'RUNTIME', 'NETWORK']);
+  assert.deepEqual(task.acceptanceCriteria[0]!.evidenceKinds, [
+    'DOM',
+    'RUNTIME',
+    'NETWORK',
+  ]);
+  assert.equal(task.sessionPlan?.mode, 'guest');
+  assert(
+    validateVerificationTask(task),
+    JSON.stringify(validateVerificationTask.errors),
+  );
+});

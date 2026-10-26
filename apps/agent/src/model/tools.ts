@@ -79,6 +79,22 @@ export function decisionTools(
           maxLength: 600,
         };
         const targets = context.page.targets.map((item) => item.target);
+        const pressTargets = context.page.targets
+          .filter(
+            (item) =>
+              item.focusable !== false &&
+              item.ariaHidden !== true &&
+              item.disabled !== true,
+          )
+          .map((item) => item.target);
+        const actionSchema = parameters.properties.action as { enum: string[] };
+        actionSchema.enum = actionSchema.enum.filter(
+          (action) =>
+            !['online', 'pwa.cleanup', 'network.probe'].includes(action) ||
+            (context.page.runtime?.version === 1 &&
+              (action !== 'pwa.cleanup' || context.state.phase === 'CLEANUP')),
+        );
+
         const scrollTargets = context.page.targets
           .filter((item) => item.operations?.includes('scroll'))
           .map((item) => item.target);
@@ -90,8 +106,8 @@ export function decisionTools(
             },
             then:
               (context.page.viewport as { targetedPress?: boolean })
-                ?.targetedPress && targets.length
-                ? { properties: { target: { enum: targets } } }
+                ?.targetedPress && pressTargets.length
+                ? { properties: { target: { enum: pressTargets } } }
                 : { not: { required: ['target'] } },
           },
           {

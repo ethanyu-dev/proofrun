@@ -133,7 +133,7 @@ export class ApiClient {
     const expected =
       kind === 'SCREENSHOT'
         ? 'image/png'
-        : ['DOM', 'NETWORK', 'TRACE'].includes(kind)
+        : ['DOM', 'NETWORK', 'TRACE', 'RUNTIME'].includes(kind)
           ? 'application/json'
           : null;
     if (

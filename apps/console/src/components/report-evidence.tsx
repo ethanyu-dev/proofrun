@@ -10,6 +10,7 @@ const KIND_LABELS = {
   SCREENSHOT: '页面截图',
   DOM: 'DOM 观察',
   NETWORK: '网络记录',
+  RUNTIME: '运行时证据',
   TRACE: '执行时间线',
 };
 type Artifact = VerificationReport['artifacts'][number];

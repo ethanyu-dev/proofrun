@@ -87,7 +87,13 @@
                     "description": "平台登记的证据身份。"
                   },
                   "kind": {
-                    "enum": ["DOM", "SCREENSHOT", "NETWORK", "TRACE"],
+                    "enum": [
+                      "DOM",
+                      "SCREENSHOT",
+                      "NETWORK",
+                      "TRACE",
+                      "RUNTIME"
+                    ],
                     "description": "证据媒介，由平台取证配置决定。"
                   },
                   "url": {

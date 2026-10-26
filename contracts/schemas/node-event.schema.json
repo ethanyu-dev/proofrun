@@ -243,6 +243,21 @@
             "reducedMotion": {
               "type": "boolean",
               "description": "支持会话级动画偏好、首次导航前应用并回读核验。"
+            },
+            "runtimeEvidenceVersion": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1
+            },
+            "networkDetailsVersion": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1
+            },
+            "focusRecoveryVersion": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1
             }
           },
           "required": [
@@ -470,13 +485,31 @@
           "additionalProperties": false,
           "properties": {
             "type": {
-              "enum": ["browser.input", "browser.cookies.set", "browser.act"]
+              "enum": [
+                "browser.input",
+                "browser.cookies.set",
+                "browser.act",
+                "browser.observe"
+              ]
             },
             "action": {
               "type": "string"
             }
           },
           "required": ["type"]
+        },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "runtime": {
+              "type": "object"
+            },
+            "network": {
+              "type": "object"
+            }
+          },
+          "description": "仅只读观察的脱敏运行时证据；输入命令不回传账号材料。"
         }
       },
       "required": [

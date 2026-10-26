@@ -34,6 +34,7 @@ const LABELS: Record<string, string> = {
   WORKER_ERROR: '执行器异常',
   NODE_ERROR: '节点异常',
   SESSION_ERROR: '浏览器会话异常',
+  CAPABILITY_ERROR: '执行能力不足',
   MODEL_ERROR: '模型服务异常',
   INVALID_MODEL_DECISION: '模型决策校验失败',
   SERVICE_ERROR: '服务请求异常',

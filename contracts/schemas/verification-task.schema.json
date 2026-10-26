@@ -121,13 +121,25 @@
             "minItems": 1,
             "uniqueItems": true,
             "items": {
-              "enum": ["DOM", "SCREENSHOT", "NETWORK", "TRACE"]
+              "enum": ["DOM", "SCREENSHOT", "NETWORK", "TRACE", "RUNTIME"]
             }
           },
           "stepId": {
             "type": "string",
             "pattern": "^[A-Za-z0-9_-]{1,80}$",
             "description": "结构化任务中所属步骤身份。"
+          },
+          "requiredCapabilities": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "runtimeEvidenceV1",
+                "networkDetailsV1",
+                "focusRecoveryV1"
+              ]
+            },
+            "description": "本步骤必须具备的实际节点能力；文本推导只补充已识别的需求。"
           }
         }
       }
@@ -370,8 +382,16 @@
           "type": "array",
           "uniqueItems": true,
           "items": {
-            "enum": ["DOM", "SCREENSHOT", "NETWORK", "TRACE"]
+            "enum": ["DOM", "SCREENSHOT", "NETWORK", "TRACE", "RUNTIME"]
           }
+        },
+        "requiredCapabilities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": ["runtimeEvidenceV1", "networkDetailsV1", "focusRecoveryV1"]
+          },
+          "description": "本步骤必须具备的实际节点能力；文本推导只补充已识别的需求。"
         }
       }
     },

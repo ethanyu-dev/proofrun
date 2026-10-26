@@ -182,6 +182,38 @@ test('人工页面没有首帧时仍可导航，超时可重连且不重放操�
       sockets[4]!.sent.filter((m) => m.type === 'command').length,
       0,
     );
+    // 范围：读取只读证据不会伪造待办确认，倒计时取实际等待期限而非四小时链接。
+    await act(async () =>
+      sockets[4]!.receive({
+        ...state('HUMAN'),
+        runtimeEvidenceAvailable: true,
+        expiresAt: new Date(Date.now() + 4 * 3600000).toISOString(),
+        waitDeadline: new Date(Date.now() + 60000).toISOString(),
+      }),
+    );
+    assert.doesNotMatch(container.textContent!, /4 小时|240 分/);
+    await act(async () => button('读取运行时证据').click());
+    const probe = sockets[4]!.sent.filter((m) => m.type === 'command').at(-1);
+    assert.deepEqual(probe.command, {
+      type: 'browser.observe',
+      screenshot: false,
+    });
+    await act(async () =>
+      sockets[4]!.receive({
+        type: 'result',
+        commandId: probe.commandId,
+        status: 'SUCCEEDED',
+        effect: 'APPLIED',
+        evidence: {
+          runtime: { status: 'observed', serviceWorker: { registrations: [] } },
+        },
+      }),
+    );
+    assert.match(container.textContent!, /serviceWorker/);
+    assert.equal(
+      sockets[4]!.sent.filter((m) => m.type === 'complete').length,
+      0,
+    );
     // 范围：交接应答超时后忙碌标记释放，人工可以重新查询；不证明服务端是否已完成交接。
     await act(async () => button('完成，继续任务').click());
     await act(async () => context.mock.timers.tick(150000));

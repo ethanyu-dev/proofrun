@@ -211,6 +211,21 @@ fn operation_allowed(operation: &Value, grant: &Grant) -> Result<()> {
         "人工不能切换分组作用域"
     );
     match operation["type"].as_str() {
+        Some("browser.observe") => {
+            ensure!(
+                grant.state["runtimeEvidenceAvailable"] == true,
+                "当前会话未启用取证"
+            );
+            ensure!(
+                operation
+                    .as_object()
+                    .context("无效操作")?
+                    .keys()
+                    .all(|k| k == "type" || k == "screenshot"),
+                "观察参数越权"
+            );
+            ensure!(operation["screenshot"] != true, "人工只读探针不采集文件");
+        }
         Some("browser.input") => {}
         Some("browser.cookies.set") => {
             let url = reqwest::Url::parse(operation["url"].as_str().context("缺少地址")?)?;
@@ -348,7 +363,11 @@ impl Controller {
             send(socket,json!({"type":"error","code":"HITL_COMMAND","message":"命令格式无效或结果尚未确定，请重新连接检查状态"})).await?;
             return Ok(false);
         }
-        send(socket,json!({"type":"result","commandId":value["commandId"],"status":result["operationStatus"],"effect":result["effect"]})).await?;
+        let mut receipt = json!({"type":"result","commandId":value["commandId"],"status":result["operationStatus"],"effect":result["effect"]});
+        if let Some(evidence) = result.get("evidence") {
+            receipt["evidence"] = evidence.clone();
+        }
+        send(socket, receipt).await?;
         Ok(result["operationStatus"] == "SUCCEEDED")
     }
     /// 冻结与结果落盘共享串行许可；写盘失败时回收会话，不能开放自动操作。
@@ -579,6 +598,27 @@ mod tests {
         assert!(
             operation_allowed(&json!({"type":"browser.act","action":"reload"}), &grant).is_ok()
         );
+    }
+    // 范围：人工探针只能只读且须已授权；不连接实际画面或验收业务。
+    #[test]
+    fn runtime_probe_requires_granted_read_only_capability() {
+        let mut grant = grant();
+        assert!(operation_allowed(&json!({"type":"browser.observe"}), &grant).is_err());
+        grant.state["runtimeEvidenceAvailable"] = json!(true);
+        assert!(
+            operation_allowed(
+                &json!({"type":"browser.observe","screenshot":false}),
+                &grant
+            )
+            .is_ok()
+        );
+        for command in [
+            json!({"type":"browser.observe","screenshot":true}),
+            json!({"type":"browser.observe","script":"alert(1)"}),
+            json!({"type":"browser.act","action":"pwa.cleanup"}),
+        ] {
+            assert!(operation_allowed(&command, &grant).is_err());
+        }
     }
     // 范围：完整待办与稳定条件确认，拒绝重复序号和额外字段；不证明业务环境就绪。
     #[test]

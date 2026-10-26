@@ -8,6 +8,7 @@ import {
   needsLoginIntervention,
 } from '../../apps/agent/dist/execution/login-intervention.js';
 import { config, grant, FakeControl, finish, modelServer } from './fixture.mjs';
+import { conditionKey } from '../../apps/agent/dist/execution/policy-checks.js';
 
 /** 页面、人工和账号均为夹具，记录完整交接状态以检验执行器是否真的等待并重新观察。 */
 class LoginControl extends FakeControl {
@@ -63,6 +64,78 @@ class LoginControl extends FakeControl {
       this.revision++;
     }, 10);
   }
+}
+
+// 范围：未分组的新执行计划也必须携带并消费同认证版本的条件确认；仅模拟控制协议，不证明真实账号资格。
+for (const confirmation of ['matching', 'missing', 'stale']) {
+  test(`普通任务人工身份确认按条件身份持久生效：${confirmation}`, async () => {
+    const execution = grant();
+    const check = {
+      id: 'role',
+      method: 'manual',
+      description: '确认当前测试角色',
+    };
+    execution.task.environment.allowIntervention = true;
+    execution.task.sessionPlan = {
+      version: 1,
+      mode: 'manual',
+      candidates: [],
+      requirements: [check],
+      preparationMs: 120000,
+    };
+    execution.task.executionPlan = {
+      version: 1,
+      environment: {
+        mode: 'configured',
+        source: 'explicit',
+        basis: [],
+        resolverVersion: 1,
+      },
+      evidenceKinds: ['DOM'],
+    };
+    const client = new LoginControl();
+    let requestedKeys;
+    const intervene = client.intervene.bind(client);
+    client.intervene = async (...args) => {
+      requestedKeys = args[6];
+      return intervene(...args);
+    };
+    const view = client.view.bind(client);
+    client.view = async (...args) => ({
+      ...(await view(...args)),
+      authRevision: 0,
+      ...(client.resumed && confirmation !== 'missing'
+        ? {
+            humanConfirmation: {
+              revision: 2,
+              authRevision: confirmation === 'stale' ? 1 : 0,
+              items: [check.description],
+              conditionKeys: requestedKeys ?? [],
+            },
+          }
+        : {}),
+    });
+    const server = await modelServer((context) => finish(context));
+    const settings = { ...config, modelUrl: server.url };
+    try {
+      const report = await execute(
+        settings,
+        client,
+        new ChatModel(settings),
+        execution,
+      );
+      assert.deepEqual(requestedKeys, [conditionKey('identity', check)]);
+      assert.equal(client.requests.length, 1);
+      if (confirmation === 'matching') assert.equal(report.verdict, 'PASSED');
+      else {
+        assert.equal(report.verdict, null);
+        assert.equal(report.executionDetails.reasonCode, 'PRECONDITION_UNMET');
+      }
+      assert.deepEqual(server.errors, []);
+    } finally {
+      await server.close();
+    }
+  });
 }
 
 /** 复现两类生产 case 的当前步骤，业务预期仍由输入决定；不连接真实控制面。 */

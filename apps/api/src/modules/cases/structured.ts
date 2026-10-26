@@ -1,3 +1,4 @@
+import { requiredCapabilities } from '@proofrun/contracts';
 import { refreshExternalSessionBudget } from '../sessions/budget.js';
 import { resolveExecutionPlan } from './execution-plan.js';
 import { resolveSession } from '../sessions/plan.js';
@@ -51,7 +52,25 @@ export function stepCriteria(
       stepId: step.stepId!,
       description: step.description,
       expectedResult,
-      evidenceKinds: [...evidenceKinds],
+      requiredCapabilities: requiredCapabilities({
+        ...step,
+        expected: [expectedResult],
+      }),
+      evidenceKinds: [
+        ...new Set([
+          ...evidenceKinds,
+          ...requiredCapabilities({
+            ...step,
+            expected: [expectedResult],
+          }).flatMap((c) =>
+            c === 'runtimeEvidenceV1'
+              ? ['RUNTIME' as const]
+              : c === 'networkDetailsV1'
+                ? ['NETWORK' as const]
+                : [],
+          ),
+        ]),
+      ] as VerificationTask['acceptanceCriteria'][number]['evidenceKinds'],
     })),
   );
 }

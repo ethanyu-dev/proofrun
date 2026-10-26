@@ -5,6 +5,8 @@ mod cookie_cleanup;
 mod inspection;
 #[path = "dom_network.rs"]
 mod network_capture;
+#[path = "dom_runtime.rs"]
+mod runtime_capture;
 use crate::error::{Fault, Result};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
@@ -617,7 +619,7 @@ impl Dom {
                         )));
                         let descriptor = json!({"target":id,"role":role,"name":name,"tag":tag,"value":value,"options":options,
                             "comparisonKey":comparison_key,"visible":true,"visibilityScope":"frame", "visibilityReason":facts["visibilityReason"],"ariaHidden":facts["ariaHidden"],"inert":facts["inert"],"operations":operations,
-                            "disabled":facts["disabled"],"expanded":facts["expanded"],"checked":facts["checked"],
+                            "focusable":facts["focusable"],"focused":facts["focused"],"documentFocused":facts["documentFocused"],"disabled":facts["disabled"],"expanded":facts["expanded"],"checked":facts["checked"],
                             "context":facts["context"],"clip":facts["clip"],"disclosure":facts["disclosure"],"selected":facts["selected"],"activeRegion":facts["activeRegion"],"scroll":facts["scroll"],"region":facts["region"],"frame":string(&doc["frameId"])});
                         let bytes = descriptor.to_string().len();
                         if descriptor_bytes + bytes > TARGET_BYTES {
@@ -872,14 +874,37 @@ impl Dom {
             return Ok(());
         }
         if action == "focus" {
+            if state["focusable"] == false || state["inert"] == true || state["ariaHidden"] == true
+            {
+                return Err(Fault::rejected(
+                    "TARGET_OBSCURED",
+                    "target cannot receive keyboard focus; observe again",
+                ));
+            }
             // focus 监听器可能转移焦点、导航或移除目标，派发后失败不能当作未执行重试。
             *input_started = true;
+            // headless 标签页可能可见但文档未获焦；先激活当前观察所属主页，不切到兄弟分组。
+            let main_session = self
+                .sessions
+                .first()
+                .cloned()
+                .unwrap_or_else(|| target.session.clone());
+            self.call(Some(&main_session), "Page.bringToFront", json!({}))
+                .await?;
             let focused = self.call(Some(&target.session), "Runtime.callFunctionOn",
                 json!({"objectId":object_id,"functionDeclaration":FOCUS_FOR_PRESS,"returnByValue":true})).await?;
-            if focused.get("exceptionDetails").is_some() || focused["result"]["value"] != true {
+            if focused.get("exceptionDetails").is_some()
+                || (focused["result"]["value"] != true
+                    && focused["result"]["value"]["verified"] != true)
+            {
                 return Err(Fault::unknown(
                     "KEYBOARD_FOCUS_UNCONFIRMED",
-                    "target focus was not confirmed; key was not dispatched",
+                    format!(
+                        "target focus was not confirmed; key was not dispatched; active={}, documentFocused={}, connected={}",
+                        focused["result"]["value"]["active"],
+                        focused["result"]["value"]["documentFocused"],
+                        focused["result"]["value"]["connected"]
+                    ),
                 ));
             }
             return Ok(());

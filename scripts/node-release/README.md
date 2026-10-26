@@ -19,6 +19,16 @@
 
 预发布版本需显式指定下载 URL 和 `--version`；GitHub `latest` 不包含预发布。[node-v0.1.0-alpha.1](https://github.com/ethanyu-dev/proofrun/releases/tag/node-v0.1.0-alpha.1) 已于 2026-09-29 发布，下方固定版本的下载命令可用。摘要校验保证资产完整性，不等于独立签名或 VM 验收。
 
+## ALB 节点代理检查与修复
+
+已使用 ALB 终止 TLS、转发到节点 HTTP 9444 的部署，可在对应 Linux 节点执行 `repair-node-proxy.sh`。它检查 Node 回环 9310、Nginx 9444 和公网三个 WebSocket 入口；默认只检查，`--apply` 修复已有托管配置或在空闲 9444 上建立代理。需要已安装 Nginx、curl 和 systemd，不重启 Browser Node，也不修改 ALB、安全组、节点身份或会话。
+
+```sh
+sudo bash repair-node-proxy.sh --domain agent-browser-runtime.pplabs.tech --apply
+```
+
+原有托管配置保存在 `/var/backups/proofrun-node-proxy-*`，本机验证失败自动恢复；未识别的配置和端口占用会拒绝覆盖。退出码 0 表示本机及公网握手通过，1 表示本机检查或修复失败，2 表示本机通过但公网失败；后者保留已验证的本机配置，并输出 ALB 目标协议 HTTP、端口 9444、健康检查 `/healthz` 的核对项。握手通过后仍需在 Console 重新连接并确认收到实际首帧，不能把握手检查当成画面验收。
+
 ## 节点机一次性准备
 
 支持 Debian 12 / Ubuntu 24.04 及兼容系统，Linux x64 / arm64、glibc 2.36+。需要 Bash、curl、sha256sum、Python 3.11+、systemd 用户管理器和 cgroup v2，以及已安装的 Chrome/Chromium。节点机不需要 Node.js、pnpm 或 Rust 编译器。
@@ -106,3 +116,21 @@ python3 -m unittest discover -s tests/node-release -p 'test_*.py'
 先发布包含 `reducedMotion` 协议与能力识别的 API（以及配置展示的 Web），再排空并按本文安装流程升级 Browser Node。升级窗口内，带动画偏好配置的任务会等待支持该能力的节点，不能静默回退到正常动画。现有已打开会话不会热修改；升级后新建任务和重跑创建的新会话生效。Agent 无新增执行逻辑，但保持同一发布版本即可。
 
 使用新的 `node-v0.1.0-…` 版本号触发 `release-node.yml`，核对 x64/arm64 资产、摘要及 build-info 后发布草稿；不覆盖已有 alpha.16 资产。升级后确认心跳包含 `capabilities.reducedMotion=true`，并在新执行的启动结果中确认 `environmentProof.reducedMotion=true`。动画验收可在 case 的 session 中明确设为 false，具体契约见[结构化 Case API](../../docs/public-api-v2.md#浏览器动画偏好)。
+
+## 运行时取证与会话恢复升级
+
+运行时取证需要同时更新 API、Agent、Console 和 Browser Node。先部署包含 migration 038 的 API 及同版本 Agent/Console，再排空节点上的所有绑定并发布、安装新的节点版本；不能覆盖已有 alpha.17 资产。旧节点仍可接普通 DOM 用例，需要新增能力的用例会明确报告 `CAPABILITY_UNSUPPORTED`，不会退化为人工打开 DevTools 或一直排队。
+
+升级后核对心跳的 `runtimeEvidenceVersion=1`、`networkDetailsVersion=1`、`focusRecoveryVersion=1`。新会话的观察应产生独立 `RUNTIME` 附件，包含当前 origin 的 Service Worker、缓存元数据和限定范围的 Console 记录。缓存正文、Cookie 和任意脚本不在探针接口内。图片参数探测只改变已观察站内图片的质量，使用不带账号凭据的公开请求，不能替代浏览器登录会话响应。人工页的“读取运行时证据”只读且不代填待办确认。
+
+焦点恢复仅在收到明确“按键未发送”的节点回执时有效，恢复前强制重新观察；传输未知仍停止。人工等待显示实际截止时间，四小时链接有效期不代表会话可等待四小时。管理员 execution activity 的 `renewals` 返回最近 20 次续租的创建、首次投递、确认状态、授权延迟和剩余时长，可区分排队、传输和真实到期；不返回执行令牌。
+
+本地真实 Chromium 回归需显式设置独立浏览器路径：
+
+```sh
+PROOFRUN_TEST_CHROME=/path/to/chromium cargo test --locked -p proofrun-node native_ -- --ignored
+pnpm test:node:linux
+pnpm test:hitl:linux
+```
+
+这些测试验证本地夹具和协议链路。生产验收仍需在升级后重跑原用例，核对实际 SW、缓存边界、账号准备及最终报告；不得为取得通过结果修改原始业务标准。

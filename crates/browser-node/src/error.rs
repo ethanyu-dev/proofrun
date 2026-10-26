@@ -12,10 +12,12 @@ pub struct Fault {
     pub effect: String,
 }
 impl Fault {
-    /// 只读 DOM 采集失败允许重新观察；写入、超时和其他未知故障仍须关闭会话。
+    /// DOM 采集失败和明确未派发按键的焦点失败允许重新观察；传输与其他未知写入仍关闭。
     /// read_only_observation 必须由原始类型化命令确定，不能由错误正文推断。
     pub fn requires_session_close(&self, read_only_observation: bool) -> bool {
-        self.effect != "NOT_STARTED" && !(read_only_observation && self.code == "DOM_ENGINE_FAILED")
+        self.effect != "NOT_STARTED"
+            && self.code != "KEYBOARD_FOCUS_UNCONFIRMED"
+            && !(read_only_observation && self.code == "DOM_ENGINE_FAILED")
     }
 
     /// 明确在派发前拒绝，保证该命令没有开始执行。

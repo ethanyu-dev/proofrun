@@ -153,6 +153,8 @@ export class SimulatedNode {
   /** 只延后关闭事件，关闭命令仍确认成功，用于验证两类回执的乱序。 */
   holdClosedEvent = false;
   unknownWrite = false;
+  /** 仅注入焦点回执分类，不能据此声称真实键盘已验证。 */
+  focusFailure: 'confirmed' | 'transport' | null = null;
   /** 注入旧节点的只读 DOM 故障，验证控制面与 Agent 恢复，不模拟真实 CDP。 */
   domObservationFailures = 0;
   /** 分别注入输入前拒绝与点击后未知效果，核实控制面不会混用两类恢复边界。 */
@@ -517,6 +519,10 @@ export class SimulatedNode {
     const domFailed =
       kind === 'browser.observe' && this.domObservationFailures > 0;
     if (domFailed) this.domObservationFailures--;
+    const focusFailed =
+      operation.type === 'browser.act' &&
+      operation.action === 'press' &&
+      this.focusFailure;
     const result = {
       ...identity,
       type: 'command.result',
@@ -524,26 +530,37 @@ export class SimulatedNode {
       operationStatus:
         saveFailed || preparationFailed
           ? 'FAILED'
-          : unknown || domFailed
+          : unknown || domFailed || focusFailed
             ? 'UNKNOWN'
             : 'SUCCEEDED',
       effect:
         saveFailed || preparationFailed
           ? 'NOT_STARTED'
-          : unknown || domFailed
+          : unknown || domFailed || focusFailed
             ? 'MAY_HAVE_HAPPENED'
             : 'COMPLETED',
-      ...(domFailed || preparationFailed || (click && this.domUnknownClick)
+      ...(domFailed ||
+      preparationFailed ||
+      focusFailed ||
+      (click && this.domUnknownClick)
         ? {
             error: {
-              code: preparationFailed
-                ? 'DOM_ACTION_PRECONDITION_FAILED'
-                : 'DOM_ENGINE_FAILED',
+              code:
+                focusFailed === 'confirmed'
+                  ? 'KEYBOARD_FOCUS_UNCONFIRMED'
+                  : preparationFailed
+                    ? 'DOM_ACTION_PRECONDITION_FAILED'
+                    : 'DOM_ENGINE_FAILED',
               message: 'native DOM command failed',
             },
           }
         : {}),
-      data: domFailed || preparationFailed ? {} : data,
+      data:
+        focusFailed === 'confirmed'
+          ? { keyboard: { focusAttempted: true, keyDispatched: false } }
+          : domFailed || preparationFailed
+            ? {}
+            : data,
     };
     this.results.set(command.commandId, result);
     this.send(result);

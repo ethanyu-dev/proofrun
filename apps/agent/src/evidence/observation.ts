@@ -15,6 +15,11 @@ export interface ObservedTarget {
   ariaHidden?: boolean;
   visibilityScope?: string;
   disabled?: boolean;
+  /** 原生焦点能力，旧节点缺失时不推断。 */
+  focusable?: boolean;
+  focused?: boolean;
+  /** 文档获得焦点与 activeElement 分开，防止后台页面被误认为可直接输入。 */
+  documentFocused?: boolean;
   operations?: string[];
   expanded?: string | boolean | null;
   checked?: string | boolean | null;
@@ -79,9 +84,11 @@ export interface Observation {
   coverage?: Record<string, unknown>;
   /** 节点已脱敏的网络元数据；不能用于推断服务端写入次数。 */
   network?: unknown;
+  /** 同一 tab 的固定运行时探针；状态缺失或截断不等于不存在。 */
+  runtime?: Record<string, unknown>;
   artifactRefs: Array<{
     artifactId: string;
-    kind: 'DOM' | 'SCREENSHOT' | 'NETWORK';
+    kind: 'DOM' | 'SCREENSHOT' | 'NETWORK' | 'RUNTIME';
     sha256: string;
   }>;
 }
@@ -158,7 +165,7 @@ export function observation(result: CommandResult): Observation {
       (r) =>
         !r ||
         typeof r.artifactId !== 'string' ||
-        !['DOM', 'SCREENSHOT', 'NETWORK'].includes(r.kind) ||
+        !['DOM', 'SCREENSHOT', 'NETWORK', 'RUNTIME'].includes(r.kind) ||
         typeof r.sha256 !== 'string',
     )
   ) {
@@ -179,6 +186,7 @@ export function observation(result: CommandResult): Observation {
       ? { coverage: data.coverage }
       : {}),
     ...(data.network ? { network: data.network } : {}),
+    ...(data.runtime ? { runtime: data.runtime } : {}),
     artifactRefs: data.artifactRefs.map(({ artifactId, kind, sha256 }) => ({
       artifactId,
       kind,

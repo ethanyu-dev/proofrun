@@ -443,3 +443,67 @@ test('滚动方向由模型选择，页面和容器的距离仍由执行器计�
     if (sample.container) assert.equal(scrolls[0].operation.target, '@list');
   }
 });
+
+// 范围：证明未发送按键的失败先补采再重新决策，最多提交一次原按键；不运行真实页面。
+test('定向聚焦失败重新观察，不能直接重放按键', async () => {
+  const client = new FakeControl();
+  const original = client.command.bind(client);
+  client.command = async (...args) => {
+    if (args[2].action === 'press') {
+      client.calls.push({ id: args[1], operation: args[2] });
+      return {
+        operationStatus: 'UNKNOWN',
+        effect: 'MAY_HAVE_HAPPENED',
+        error: { code: 'KEYBOARD_FOCUS_UNCONFIRMED' },
+        data: { keyboard: { focusAttempted: true, keyDispatched: false } },
+      };
+    }
+    const reply = await original(...args);
+    if (args[2].type === 'browser.observe')
+      reply.data.viewport = { targetedPress: true };
+    return reply;
+  };
+  let before;
+  const report = await run(grant(), client, (context, turn) => {
+    if (turn === 1) {
+      before = context.page.observationId;
+      return {
+        type: 'browser.act',
+        action: 'press',
+        target: '@e1',
+        value: 'Enter',
+      };
+    }
+    assert.notEqual(context.page.observationId, before);
+    assert.match(
+      context.feedback.map((f) => f.message ?? f.code).join(' '),
+      /BROWSER_FOCUS_CHANGED/,
+    );
+    return finish(context);
+  });
+  assert.equal(report.verdict, 'PASSED');
+  assert.equal(
+    client.calls.filter((c) => c.operation.action === 'press').length,
+    1,
+  );
+  const press = client.calls.findIndex((c) => c.operation.action === 'press');
+  assert.equal(client.calls[press + 1].operation.type, 'browser.observe');
+});
+
+// 范围：观察解码保留 runtime 以及独立附件引用，不代表已验证任何业务标准。
+test('运行时探针数据不会在 Agent 观察边界丢失', async () => {
+  const client = new FakeControl();
+  const reply = await client.command(grant(), 'o', { type: 'browser.observe' });
+  reply.data.runtime = {
+    version: 1,
+    status: 'observed',
+    serviceWorker: { registrations: [] },
+  };
+  reply.data.artifactRefs.push({
+    artifactId: 'runtime',
+    kind: 'RUNTIME',
+    sha256: 'b'.repeat(64),
+  });
+  assert.deepEqual(observation(reply).runtime, reply.data.runtime);
+  assert.equal(observation(reply).artifactRefs.at(-1).kind, 'RUNTIME');
+});

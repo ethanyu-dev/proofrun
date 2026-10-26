@@ -162,7 +162,7 @@ impl Node {
         let occupied: Vec<_> = records.into_iter().map(|record| json!({
             "sessionId":record.session_id,"state":record.state,"leaseId":record.lease_id,"fence":record.fence
         })).collect();
-        let mut heartbeat = json!({"type":"node.heartbeat","protocolVersion":"0.1","nodeId":self.id,"nodeEpoch":self.epoch,"runtime":crate::version::current(),"leaseRequestId":request,"pool":self.config.pool,"admission":admission,"limits":{"maxLeaseMs":self.config.max_lease_ms,"maxSessionMs":self.config.max_session_ms},"occupied":occupied,"capabilities":{"observe":true,"screenshot":true,"conditionWait":true,"writeActions":self.config.allow_unverified_writes,"engineWritesVerified":false,"networkEvidence":true,"environmentProof":true,"authState":false,"liveView":true,"directHitl":self.config.public_url.is_some(),"renewableSessions":true,"identityPreparation":false,"fullProfile":false,"reducedMotion":true,"ephemeralProfiles":true,"externalAccounts":true,"nodeProfileManagement":false,"cookieCleanup":true,"profileTabs":true,"trace":true}});
+        let mut heartbeat = json!({"type":"node.heartbeat","protocolVersion":"0.1","nodeId":self.id,"nodeEpoch":self.epoch,"runtime":crate::version::current(),"leaseRequestId":request,"pool":self.config.pool,"admission":admission,"limits":{"maxLeaseMs":self.config.max_lease_ms,"maxSessionMs":self.config.max_session_ms},"occupied":occupied,"capabilities":{"observe":true,"screenshot":true,"conditionWait":true,"writeActions":self.config.allow_unverified_writes,"engineWritesVerified":false,"networkEvidence":true,"runtimeEvidenceVersion":1,"networkDetailsVersion":1,"focusRecoveryVersion":1,"environmentProof":true,"authState":false,"liveView":true,"directHitl":self.config.public_url.is_some(),"renewableSessions":true,"identityPreparation":false,"fullProfile":false,"reducedMotion":true,"ephemeralProfiles":true,"externalAccounts":true,"nodeProfileManagement":false,"cookieCleanup":true,"profileTabs":true,"trace":true}});
         if let Some(url) = &self.config.public_url {
             heartbeat["publicUrl"] = json!(url);
         }
@@ -304,7 +304,9 @@ impl Node {
                             control.auth_revision = control.auth_revision.max(auth_revision);
                             if intervention.is_some() {
                                 let raw = serde_json::to_value(&command.command).unwrap();
-                                if raw["type"] != "browser.input" || raw["action"] != "scroll" {
+                                if raw["type"] != "browser.observe"
+                                    && (raw["type"] != "browser.input" || raw["action"] != "scroll")
+                                {
                                     control.auth_revision += 1;
                                 }
                                 meta["authRevision"] = json!(control.auth_revision);
@@ -338,6 +340,17 @@ impl Node {
         };
         if intervention.is_some() {
             // 控制面只收到事实摘要，输入和引擎返回内容保留在节点执行边界。
+            if response["operation"]["type"] == "browser.observe"
+                && response["operationStatus"] == "SUCCEEDED"
+            {
+                let mut evidence = serde_json::Map::new();
+                for key in ["runtime", "network"] {
+                    if response["data"][key].is_object() {
+                        evidence.insert(key.into(), response["data"][key].clone());
+                    }
+                }
+                response["evidence"] = Value::Object(evidence);
+            }
             response.as_object_mut().unwrap().remove("data");
             if response.get("error").is_some() {
                 response["error"]["message"] = json!("人工操作未完成，请根据错误码检查节点状态");
@@ -474,7 +487,10 @@ impl Node {
                 {
                     let deadline = self.deadline(lease_request_id, *lease_ttl_ms).await?;
                     session.renew(deadline)?;
-                    return Ok(json!({"renewed":true}));
+                    return Ok(
+                        json!({"renewed":true,"leaseRemainingMs":session.lease_remaining_ms(),
+                        "grantAgeMs":lease_ttl_ms.saturating_sub(deadline.saturating_sub(process::boot_ms()))}),
+                    );
                 }
                 if matches!(
                     operation,
@@ -550,6 +566,10 @@ fn failure(mut meta: Value, fault: Fault) -> Value {
         _ => "FAILED",
     }
     .into();
+    if fault.code == "KEYBOARD_FOCUS_UNCONFIRMED" {
+        meta["data"] =
+            json!({"keyboard":{"keyDispatched":false,"focusAttempted":true,"focusVerified":false}});
+    }
     meta["effect"] = fault.effect.into();
     meta["error"] = json!({"code":fault.code,"message":fault.message});
     meta

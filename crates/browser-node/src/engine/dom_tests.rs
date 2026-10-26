@@ -135,6 +135,7 @@ async fn dispatched_input_never_becomes_a_preparation_failure() {
 async fn unconfirmed_focus_stops_before_key_dispatch() {
     let (error, calls) = failed_action("focus", "focus-denied", false).await;
     assert_eq!(error.code, "KEYBOARD_FOCUS_UNCONFIRMED");
+    assert!(!error.requires_session_close(false));
     assert_eq!(error.effect, "MAY_HAVE_HAPPENED");
     assert!(
         !calls

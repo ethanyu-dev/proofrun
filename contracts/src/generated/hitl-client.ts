@@ -442,7 +442,10 @@ export interface ActBrowser {
     | 'tab.switch'
     | 'tab.close'
     | 'resize'
-    | 'visual.click';
+    | 'visual.click'
+    | 'online'
+    | 'pwa.cleanup'
+    | 'network.probe';
   /**
    * 导航为 HTTP(S) URL；元素动作为当前观察 target；frame 为 iframe target 或 main；tab.switch/close 为已观察 tabId。
    */

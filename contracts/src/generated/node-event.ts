@@ -117,6 +117,9 @@ export type NodeEvent =
          * 支持会话级动画偏好、首次导航前应用并回读核验。
          */
         reducedMotion?: boolean;
+        runtimeEvidenceVersion?: number;
+        networkDetailsVersion?: number;
+        focusRecoveryVersion?: number;
       };
       /**
        * 节点接受的租约和会话硬期限上限，控制面不得超额授权。
@@ -190,8 +193,19 @@ export type NodeEvent =
         [k: string]: unknown;
       };
       operation: {
-        type: 'browser.input' | 'browser.cookies.set' | 'browser.act';
+        type: 'browser.input' | 'browser.cookies.set' | 'browser.act' | 'browser.observe';
         action?: string;
+      };
+      /**
+       * 仅只读观察的脱敏运行时证据；输入命令不回传账号材料。
+       */
+      evidence?: {
+        runtime?: {
+          [k: string]: unknown;
+        };
+        network?: {
+          [k: string]: unknown;
+        };
       };
     }
   | {

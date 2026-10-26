@@ -388,26 +388,43 @@ export class ExecutionControl {
     );
     if (!result.rowCount)
       throw new ApiError(404, 'EXECUTION_MISSING', 'Execution not found');
-    const [commands, events, observation, artifacts] = await Promise.all([
-      this.db.query(
-        `SELECT * FROM (SELECT id,kind,actor,envelope#>>'{command,action}' AS action,result->>'operationStatus' AS status,result->>'effect' AS effect,result#>>'{error,code}' AS error,created_at FROM pr_commands WHERE execution_id=$1 AND kind NOT IN ('session.renew','session.watch','session.control') UNION ALL SELECT id,result#>>'{operation,type}' AS kind,'HUMAN' AS actor,result#>>'{operation,action}' AS action,result->>'operationStatus' AS status,result->>'effect' AS effect,result#>>'{error,code}' AS error,created_at FROM pr_human_commands WHERE execution_id=$1) activity ORDER BY created_at DESC,id DESC LIMIT $2`,
-        [id, ACTIVITY_LIMIT],
-      ),
-      this.db.query(
-        'SELECT mode,revision,reason,created_at FROM pr_control_events WHERE execution_id=$1 ORDER BY id DESC LIMIT $2',
-        [id, ACTIVITY_LIMIT],
-      ),
-      this.db.query(
-        "SELECT result->'data' AS data FROM pr_commands WHERE execution_id=$1 AND kind='browser.observe' AND result->>'operationStatus'='SUCCEEDED' ORDER BY created_at DESC,id DESC LIMIT 1",
-        [id],
-      ),
-      this.db.query(
-        "SELECT id,kind,hash AS sha256 FROM pr_artifacts WHERE execution_id=$1 AND state='AVAILABLE' ORDER BY created_at DESC LIMIT $2",
-        [id, ACTIVITY_LIMIT],
-      ),
-    ]);
+    const [commands, events, observation, artifacts, renewals] =
+      await Promise.all([
+        this.db.query(
+          `SELECT * FROM (SELECT id,kind,actor,envelope#>>'{command,action}' AS action,result->>'operationStatus' AS status,result->>'effect' AS effect,result#>>'{error,code}' AS error,created_at FROM pr_commands WHERE execution_id=$1 AND kind NOT IN ('session.renew','session.watch','session.control') UNION ALL SELECT id,result#>>'{operation,type}' AS kind,'HUMAN' AS actor,result#>>'{operation,action}' AS action,result->>'operationStatus' AS status,result->>'effect' AS effect,result#>>'{error,code}' AS error,created_at FROM pr_human_commands WHERE execution_id=$1) activity ORDER BY created_at DESC,id DESC LIMIT $2`,
+          [id, ACTIVITY_LIMIT],
+        ),
+        this.db.query(
+          'SELECT mode,revision,reason,created_at FROM pr_control_events WHERE execution_id=$1 ORDER BY id DESC LIMIT $2',
+          [id, ACTIVITY_LIMIT],
+        ),
+        this.db.query(
+          "SELECT result->'data' AS data FROM pr_commands WHERE execution_id=$1 AND kind='browser.observe' AND result->>'operationStatus'='SUCCEEDED' ORDER BY created_at DESC,id DESC LIMIT 1",
+          [id],
+        ),
+        this.db.query(
+          "SELECT id,kind,hash AS sha256 FROM pr_artifacts WHERE execution_id=$1 AND state='AVAILABLE' ORDER BY created_at DESC LIMIT $2",
+          [id, ACTIVITY_LIMIT],
+        ),
+        // 只投影续租时序与结果，完整信封中的授权材料不得进入管理诊断。
+        this.db.query(
+          `SELECT id,created_at AS "createdAt",first_sent_at AS "sentAt",
+          result->>'operationStatus' AS status,result#>>'{error,code}' AS error,
+          (envelope#>>'{command,leaseTtlMs}')::bigint AS "requestedTtlMs",
+          (result#>>'{data,grantAgeMs}')::integer AS "grantAgeMs",
+          (result#>>'{data,leaseRemainingMs}')::integer AS "leaseRemainingMs"
+          FROM pr_commands WHERE execution_id=$1 AND kind='session.renew'
+          ORDER BY created_at DESC,id DESC LIMIT 20`,
+          [id],
+        ),
+      ]);
     return {
       commands: commands.rows,
+      renewals: renewals.rows.map((row) => ({
+        ...row,
+        requestedTtlMs:
+          row.requestedTtlMs === null ? null : Number(row.requestedTtlMs),
+      })),
       events: events.rows,
       observation: observation.rows[0]?.data ?? null,
       artifacts: artifacts.rows,

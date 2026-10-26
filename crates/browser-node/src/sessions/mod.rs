@@ -135,6 +135,12 @@ impl Session {
             .send_replace(self.deadline.load(Ordering::SeqCst));
         Ok(())
     }
+    /// 对外仅报告剩余时长，不暴露不同进程不可比较的单调时钟绝对值。
+    pub fn lease_remaining_ms(&self) -> u64 {
+        self.deadline
+            .load(Ordering::SeqCst)
+            .saturating_sub(process::boot_ms())
+    }
     /// 不排队获取会话操作许可；忙碌时立即返回 SESSION_BUSY。
     /// 控制切换等待同一操作许可，防止管理员恢复越过正在执行的人工输入。
     pub async fn acquire_control(
@@ -594,10 +600,9 @@ async fn supervise(
     let close_reason = if let Some(io) = host.as_mut() {
         let mut health = tokio::time::interval(HOST_HEALTH_INTERVAL);
         loop {
-            let deadline = session.deadline.load(Ordering::SeqCst);
             tokio::select! {
                 _ = session.cancel.cancelled() => break session.close_reason.lock().unwrap().unwrap_or("UNKNOWN"),
-                _ = tokio::time::sleep(Duration::from_millis(deadline.saturating_sub(process::boot_ms()))) => break "SESSION_LEASE_EXPIRED",
+                _ = wait_for_deadline(&session.deadline, u64::MAX) => break "SESSION_LEASE_EXPIRED",
                 _ = health.tick() => {
                     if !matches!(io.child.try_wait(), Ok(None)) { break "HOST_EXITED"; }
                 },
@@ -633,7 +638,7 @@ async fn supervise(
     record
         .close_reason
         .get_or_insert_with(|| close_reason.to_owned());
-    tracing::info!(session_id = %record.session_id, close_reason, "session closing");
+    tracing::info!(session_id = %record.session_id, close_reason, lease_remaining_ms = session.lease_remaining_ms(), hard_remaining_ms = session.hard_deadline.saturating_sub(process::boot_ms()), "session closing");
     // 任何退出路径都先撤销执行权限，再尝试通过 systemd 关闭整组后代。
     session.cancel.cancel();
     record.state = "CLOSING".into();
@@ -672,6 +677,20 @@ async fn supervise(
     closed.send_replace(Some(final_result));
 }
 
+/// 旧定时器就绪时再次读取已确认租约；续租与定时器同时就绪不能误撤权，命令期限不延长。
+async fn wait_for_deadline(lease: &AtomicU64, command_deadline: u64) {
+    loop {
+        let end = lease.load(Ordering::SeqCst).min(command_deadline);
+        tokio::time::sleep(Duration::from_millis(
+            end.saturating_sub(process::boot_ms()),
+        ))
+        .await;
+        if process::boot_ms() >= lease.load(Ordering::SeqCst).min(command_deadline) {
+            return;
+        }
+    }
+}
+
 /// 将主服务已接受的租约期限同步给 host 的独立计时器。
 async fn send_renewal(io: &mut HostIo, session: &Session) -> anyhow::Result<()> {
     io.send(host::Input::Renew {
@@ -703,10 +722,9 @@ async fn run_operation(
     .await
     .map_err(|_| Fault::unknown("HOST_IO", "could not dispatch to host"))?;
     loop {
-        let deadline = deadline_ms.min(session.deadline.load(Ordering::SeqCst));
         tokio::select! {
             _ = session.cancel.cancelled() => return Err(Fault::unknown("CANCELLED", "session cancelled")),
-            _ = tokio::time::sleep(Duration::from_millis(deadline.saturating_sub(process::boot_ms()))) => {
+            _ = wait_for_deadline(&session.deadline, deadline_ms) => {
                 return Err(Fault::unknown("DEADLINE_EXCEEDED", "command or lease deadline expired"));
             },
             changed = renew.changed() => {
@@ -734,6 +752,32 @@ fn operation_close_reason(code: &str, lease_expired_first: bool) -> &'static str
 
 #[cfg(test)]
 mod close_reason_tests {
+    // 范围：真实计时器创建后续租，旧定时器不得撤销新授权；固定命令截止仍有效，不启动 host。
+    #[tokio::test]
+    async fn old_timer_rechecks_accepted_lease() {
+        use super::*;
+        let now = process::boot_ms();
+        let lease = AtomicU64::new(now + 20);
+        let waiting = wait_for_deadline(&lease, now + 150);
+        tokio::pin!(waiting);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(5), &mut waiting)
+                .await
+                .is_err()
+        );
+        lease.store(now + 1_000, Ordering::SeqCst);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(40), &mut waiting)
+                .await
+                .is_err()
+        );
+        tokio::time::timeout(Duration::from_millis(200), &mut waiting)
+            .await
+            .unwrap();
+        assert!(process::boot_ms() >= now + 150);
+        assert!(process::boot_ms() < lease.load(Ordering::SeqCst));
+    }
+
     // 范围：只验证操作失败时的原因选择；不启动 host，也不替代 Linux 租约验收。
     #[test]
     fn running_operation_distinguishes_lease_command_and_channel_failure() {

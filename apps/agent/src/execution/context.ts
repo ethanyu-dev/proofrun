@@ -194,6 +194,7 @@ function contextData(input: ContextInput) {
       viewport: structuredClone(current.viewport),
       atomic: current.atomic,
       network: structuredClone(current.network),
+      runtime: structuredClone(current.runtime),
       artifactRefs: current.artifactRefs.filter((ref) =>
         allowed.has(ref.artifactId),
       ),
@@ -254,6 +255,31 @@ function contextData(input: ContextInput) {
 /** 最终请求数据由唯一构造器推导，工具和模型不得另建视图。 */
 export type DecisionContextData = ReturnType<typeof contextData>;
 
+/** 运行时列表只裁剪模型副本并标注不完整，完整内容仍通过 RUNTIME/NETWORK 附件归档。 */
+function trimRuntimeLists(...values: unknown[]): boolean {
+  let candidate:
+    { parent: Record<string, unknown>; key: string; bytes: number } | undefined;
+  const visit = (value: unknown) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+    const parent = value as Record<string, unknown>;
+    for (const [key, item] of Object.entries(parent)) {
+      if (Array.isArray(item) && item.length) {
+        const bytes = JSON.stringify(item).length;
+        if (!candidate || bytes > candidate.bytes)
+          candidate = { parent, key, bytes };
+      } else visit(item);
+    }
+  };
+  values.forEach(visit);
+  if (!candidate) return false;
+  const { parent, key } = candidate;
+  const entries = parent[key] as unknown[];
+  parent[key] = entries.slice(0, Math.floor(entries.length / 2));
+  parent.truncated = true;
+  parent.complete = false;
+  return true;
+}
+
 /** 优先裁剪重复历史和页面正文；固定约束与关键回执装不下时明确失败。 */
 export function boundContext(
   context: DecisionContextData,
@@ -275,6 +301,8 @@ export function boundContext(
         Math.floor(context.page.text.length / 2),
       );
       context.page.coverage.text.truncated = true;
+    } else if (trimRuntimeLists(context.page.runtime, context.page.network)) {
+      // 保留摘要和附件引用；禁止把裁剪后的列表当作全量检查。
     } else if (
       context.state.readings?.items.some((item) => item.text.length > 80)
     ) {

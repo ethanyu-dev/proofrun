@@ -4,7 +4,7 @@ import { Textarea } from './ui/textarea';
 import type { VerificationTask } from '@proofrun/contracts';
 
 /** 当前服务支持的证据类型，截图与网络证据还需执行节点具备对应能力。 */
-const EVIDENCE = ['DOM', 'SCREENSHOT', 'NETWORK', 'TRACE'] as const;
+const EVIDENCE = ['DOM', 'SCREENSHOT', 'NETWORK', 'TRACE', 'RUNTIME'] as const;
 
 /** 编辑完整任务快照；嵌套更新保留 JSON 模式导入的可选配置。 */
 export function TaskFields({

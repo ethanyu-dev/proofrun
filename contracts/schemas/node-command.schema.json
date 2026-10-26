@@ -293,7 +293,10 @@
                 "tab.switch",
                 "tab.close",
                 "resize",
-                "visual.click"
+                "visual.click",
+                "online",
+                "pwa.cleanup",
+                "network.probe"
               ]
             },
             "target": {

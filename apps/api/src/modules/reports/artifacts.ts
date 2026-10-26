@@ -1,3 +1,7 @@
+import {
+  requiresActiveServiceWorker,
+  activeServiceWorkerObserved,
+} from '@proofrun/contracts';
 import { randomUUID, createHash } from 'node:crypto';
 import { createWriteStream, createReadStream } from 'node:fs';
 import { mkdir, open, rename, unlink, readFile } from 'node:fs/promises';
@@ -174,6 +178,41 @@ export class ArtifactStore {
           {
             artifactId: id,
             kind: 'NETWORK',
+            sha256: hash,
+            status: 'AVAILABLE',
+          },
+        ],
+      };
+    }
+    if (
+      observation &&
+      result.operationStatus === 'SUCCEEDED' &&
+      result.data?.runtime
+    ) {
+      const content = result.data.runtime;
+      const bytes = canonical(content);
+      const id = randomUUID();
+      const hash = digest(bytes);
+      await client.query(
+        `INSERT INTO pr_artifacts(id,node_id,execution_id,session_id,command_id,kind,hash,state,size,content,stored_at) VALUES($1,$2,$3,$4,$5,'RUNTIME',$6,'AVAILABLE',$7,$8,clock_timestamp())`,
+        [
+          id,
+          context.node_id,
+          context.id,
+          context.session_id,
+          result.commandId,
+          hash,
+          Buffer.byteLength(bytes),
+          content,
+        ],
+      );
+      output.data = {
+        ...output.data,
+        artifactRefs: [
+          ...(output.data!.artifactRefs as unknown[]),
+          {
+            artifactId: id,
+            kind: 'RUNTIME',
             sha256: hash,
             status: 'AVAILABLE',
           },
@@ -362,7 +401,7 @@ export class ArtifactStore {
     ).rows[0]?.step_results as StepResult[] | null;
     const artifacts = (
       await client.query(
-        "SELECT a.id,a.kind,c.envelope#>>'{command,tabScope}' AS tab_scope FROM pr_artifacts a JOIN pr_commands c ON c.id=a.command_id WHERE a.execution_id=$1 AND a.state='AVAILABLE'",
+        "SELECT a.id,a.kind,CASE WHEN a.kind='RUNTIME' THEN a.content END AS runtime_content,c.envelope#>>'{command,tabScope}' AS tab_scope FROM pr_artifacts a JOIN pr_commands c ON c.id=a.command_id WHERE a.execution_id=$1 AND a.state='AVAILABLE'",
         [context.id],
       )
     ).rows;
@@ -486,6 +525,24 @@ export class ArtifactStore {
       )
         throw invalid();
       if (step.evidenceRefs.some((id) => !evidence.has(id))) throw invalid();
+      if (
+        step.status === 'COMPLETED' &&
+        context.definition.executionPlan?.requiredCapabilities?.includes(
+          'runtimeEvidenceV1',
+        ) &&
+        requiresActiveServiceWorker(definition) &&
+        !step.evidenceRefs.some((id) =>
+          activeServiceWorkerObserved(
+            definition.url,
+            artifacts.find((artifact) => artifact.id === id)?.runtime_content,
+          ),
+        )
+      )
+        throw new ApiError(
+          422,
+          'INVALID_STEPS',
+          '准备完成必须引用当前执行中已确认 Service Worker 激活的运行时证据',
+        );
       for (const item of step.readings ?? []) {
         if (
           item.evidenceRefs.some(

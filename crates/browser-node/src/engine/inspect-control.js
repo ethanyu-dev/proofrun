@@ -286,6 +286,14 @@ function inspectControl(wheelScroll = false) {
     clip: { left, top, right, bottom },
     disabled,
     editable,
+    // aria-hidden 背景与 inert 子树不作为键盘目标；程序化 tabIndex=-1 仍可聚焦。
+    focusable:
+      !disabled &&
+      !inert &&
+      !ariaHidden &&
+      (el.tabIndex >= 0 || el.hasAttribute('tabindex') || el.isContentEditable),
+    focused: el.getRootNode().activeElement === el,
+    documentFocused: el.ownerDocument.hasFocus(),
     label: label.slice(0, 512),
     expanded: el.getAttribute('aria-expanded'),
     selected: el.getAttribute('aria-selected'),
