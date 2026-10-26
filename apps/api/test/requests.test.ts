@@ -297,288 +297,41 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
         assert.ok(archived.cases[0]!.arms[0]!.archivedAt);
       },
     );
-    // 范围：真实数据库队列、认证、分片读取、租约恢复和重跑隔离；模型结果为夹具，不代表归因质量。
-    await suite.test(
-      '报告分析异步生成且不重跑 case，旧领取不能覆盖新结果',
-      async () => {
-        const path = '/v2/requests/request-main/analysis';
-        const workerCall = (
-          url: string,
-          body: object = {},
-          token = 'request-integration-worker-fixture',
-          method: 'GET' | 'POST' = 'POST',
-        ) =>
-          app.inject({
+    // 范围：管理员与 Worker 的旧分析入口均已退役；注入 HTTP 不验证线上部署版本。
+    await suite.test('报告分析接口不再提供服务', async () => {
+      for (const [method, url] of [
+        ['GET', '/v2/requests/request-main/analysis'],
+        ['POST', '/v2/requests/request-main/analysis'],
+        ['POST', '/v1/worker/analyses/claim'],
+        [
+          'GET',
+          '/v1/analyses/request-main/context?caseIndex=0&record=0&offset=0',
+        ],
+        ['POST', '/v1/analyses/request-main/heartbeat'],
+        ['POST', '/v1/analyses/request-main/model-calls/fixture'],
+        ['POST', '/v1/analyses/request-main/complete'],
+      ] as const) {
+        for (const token of [ADMIN, 'request-integration-worker-fixture']) {
+          const response = await app.inject({
             method,
             url,
             headers: { authorization: `Bearer ${token}` },
-            ...(method === 'POST' ? { payload: body } : {}),
+            ...(method === 'POST' ? { payload: {} } : {}),
           });
-        assert.equal(
-          (await app.inject({ method: 'POST', url: path, payload: {} }))
-            .statusCode,
-          401,
-        );
-        assert.equal(
-          (await call('/v2/requests/concurrent/analysis', {})).statusCode,
-          409,
-        );
-        assert.equal((await call(path)).json(), null);
-        const before = (
-          await sql.query('SELECT count(*)::int AS n FROM pr_tasks')
-        ).rows[0].n;
-        const enqueued = await Promise.all([call(path, {}), call(path, {})]);
-        assert.equal(enqueued[0]!.statusCode, 202, enqueued[0]!.body);
-        assert.equal(
-          enqueued[0]!.json().revision,
-          enqueued[1]!.json().revision,
-        );
-        const claims = await Promise.all([
-          workerCall('/v1/worker/analyses/claim'),
-          workerCall('/v1/worker/analyses/claim'),
-        ]);
-        const grants = claims.map((reply) => reply.json()).filter(Boolean);
-        assert.equal(grants.length, 1);
-        const grant = grants[0];
-        assert.deepEqual(grant.caseIndices, [0, 1, 2]);
-        const base = '/v1/analyses/request-main';
-        // 用量先登记、后回写；重复交付不能双计，错凭据与非法用量被拒绝。
-        const usagePath = `${base}/model-calls/usage-first`;
-        const start = { phase: 'start', stage: 'review', model: 'fixture-llm' };
-        const finish = {
-          phase: 'finish',
-          status: 'RECEIVED',
-          promptTokens: 100,
-          completionTokens: 10,
-          elapsedMs: 25,
-          error: null,
-        };
-        assert.equal(
-          (await workerCall(usagePath, start, grant.token)).statusCode,
-          200,
-        );
-        assert.equal(
-          (await workerCall(usagePath, start, grant.token)).statusCode,
-          200,
-        );
-        assert.equal(
-          (await workerCall(usagePath, finish, 'invalid-token')).statusCode,
-          409,
-        );
-        assert.equal(
-          (
-            await workerCall(
-              usagePath,
-              { ...finish, promptTokens: -1 },
-              grant.token,
-            )
-          ).statusCode,
-          400,
-        );
-        assert.equal(
-          (
-            await workerCall(
-              usagePath,
-              { ...finish, privateData: 'not allowed' },
-              grant.token,
-            )
-          ).statusCode,
-          400,
-        );
-        const getContext = (token: string, record = 0, offset = 0) =>
-          workerCall(
-            `${base}/context?caseIndex=0&record=${record}&offset=${offset}`,
-            {},
-            token,
-            'GET',
+          assert.equal(
+            response.statusCode,
+            404,
+            `${method} ${url}: ${response.body}`,
           );
-        assert.equal((await getContext('invalid-token')).statusCode, 409);
-        const first = await getContext(grant.token);
-        assert.equal(first.statusCode, 200, first.body);
-        assert.match(first.json().text, /check/);
-        assert.match(first.json().text, /FAILED/);
-        assert.equal(
-          (await workerCall(`${base}/heartbeat`, {}, grant.token)).statusCode,
-          200,
-        );
-        await sql.query(
-          "INSERT INTO pr_executions(id,task_id,worker_id,token_hash,lease_expires_at,state) VALUES('analysis-trace','comparison-case-v2-alpha-jev','fixture','fixture',clock_timestamp(),'FINISHED')",
-        );
-        await sql.query(
-          "INSERT INTO pr_model_calls(id,execution_id,call_index,record,start_hash) VALUES('analysis-call','analysis-trace',1,$1,'fixture')",
-          [
-            {
-              stepId: 'check',
-              request: JSON.stringify({
-                messages: [
-                  { role: 'system', content: 'SYSTEM_MUST_NOT_BE_INPUT' },
-                  {
-                    role: 'user',
-                    content:
-                      'observation-start-' +
-                      'x'.repeat(25000) +
-                      '-observation-end',
-                  },
-                ],
-              }),
-              response: JSON.stringify({
-                choices: [{ message: { content: '实际决策' } }],
-              }),
-            },
-          ],
-        );
-        const trace = (await getContext(grant.token, 1)).json();
-        assert.match(trace.text, /observation-start/);
-        assert.doesNotMatch(trace.text, /SYSTEM_MUST_NOT_BE_INPUT/);
-        assert.equal(trace.next.record, 1);
-        const tail = (
-          await getContext(grant.token, trace.next.record, trace.next.offset)
-        ).json();
-        assert.match(tail.text, /observation-end/);
-        assert.match(tail.text, /实际决策/);
-        assert.equal((await getContext(grant.token, 2)).json().next, null);
-        await sql.query(
-          "UPDATE pr_request_analyses SET lease_until=clock_timestamp()-interval '1 second' WHERE request_id='request-main'",
-        );
-        const recovered = (
-          await workerCall('/v1/worker/analyses/claim')
-        ).json();
-        assert.notEqual(recovered.token, grant.token);
-        // 原领取结束后的迟到回执仍只归原调用；不能给新代次派发调用或覆盖总结。
-        assert.equal(
-          (await workerCall(usagePath, finish, grant.token)).statusCode,
-          200,
-        );
-        assert.equal(
-          (await workerCall(usagePath, finish, grant.token)).statusCode,
-          200,
-        );
-        assert.equal(
-          (
-            await workerCall(
-              usagePath,
-              { ...finish, promptTokens: 999 },
-              grant.token,
-            )
-          ).statusCode,
-          409,
-        );
-        assert.equal(
-          (await workerCall(`${base}/model-calls/stale`, start, grant.token))
-            .statusCode,
-          409,
-        );
-        const secondPath = `${base}/model-calls/usage-second`;
-        assert.equal(
-          (
-            await workerCall(
-              secondPath,
-              { ...start, stage: 'final' },
-              recovered.token,
-            )
-          ).statusCode,
-          200,
-        );
-        assert.equal(
-          (
-            await workerCall(
-              secondPath,
-              { ...finish, promptTokens: 200, completionTokens: 20 },
-              recovered.token,
-            )
-          ).statusCode,
-          200,
-        );
-
-        assert.equal(
-          (
-            await workerCall(
-              `${base}/complete`,
-              { summary: '旧结果', model: 'fixture' },
-              grant.token,
-            )
-          ).statusCode,
-          409,
-        );
-        assert.equal(
-          (
-            await workerCall(
-              `${base}/complete`,
-              { summary: '失败原因：夹具观察', model: 'fixture' },
-              recovered.token,
-            )
-          ).statusCode,
-          200,
-        );
-        const completed = (await call(path)).json();
-        assert.equal(completed.status, 'SUCCEEDED');
-        assert.deepEqual(completed.usage.current, {
-          promptTokens: 300,
-          completionTokens: 30,
-          totalTokens: 330,
-          calls: 2,
-        });
-        assert.deepEqual(completed.usage.current, completed.usage.cumulative);
-
-        assert.ok(completed.generatedAt);
-        assert.equal(completed.token_hash, undefined);
-        assert.equal(
-          (await call(path, {})).json().revision,
-          completed.revision,
-        );
-        const rerun = (await call(path, { rerun: true })).json();
-        assert.notEqual(rerun.revision, completed.revision);
-        assert.equal(rerun.summary, completed.summary);
-        const retry = (await workerCall('/v1/worker/analyses/claim')).json();
-        assert.equal(rerun.usage.current.totalTokens, null);
-        assert.equal(rerun.usage.cumulative.totalTokens, 330);
-        const retryPath = `${base}/model-calls/usage-retry`;
-        await workerCall(retryPath, start, retry.token);
-        await workerCall(
-          retryPath,
-          { ...finish, promptTokens: 50, completionTokens: 5 },
-          retry.token,
-        );
-
-        assert.equal(
-          (await workerCall(`${base}/complete`, { failed: true }, retry.token))
-            .statusCode,
-          200,
-        );
-        assert.equal((await call(path)).json().status, 'FAILED');
-        assert.equal((await call(path)).json().summary, completed.summary);
-        assert.equal((await call(path)).json().usage.current.totalTokens, 55);
-        assert.equal(
-          (await call(path)).json().usage.cumulative.totalTokens,
-          385,
-        );
-        const metrics = (await call('/v2/requests/request-main/report')).json()
-          .metrics;
-        assert.equal(metrics.analysis.totalTokens, 385);
-
-        assert.equal(
-          (await sql.query('SELECT count(*)::int AS n FROM pr_tasks')).rows[0]
-            .n,
-          before,
-        );
-        await call(path, { rerun: true });
-        await workerCall('/v1/worker/analyses/claim');
-        await sql.query(
-          "UPDATE pr_request_analyses SET attempts=3,lease_until=clock_timestamp()-interval '1 second' WHERE request_id='request-main'",
-        );
-        assert.equal(
-          (await workerCall('/v1/worker/analyses/claim')).json(),
-          null,
-        );
-        assert.equal((await call(path)).json().status, 'FAILED');
-      },
-    );
+        }
+      }
+    });
     // 范围：真实数据库关联、同一 JEV 执行内混合调用拆分及无报告用量；不运行真实模型或计费。
     await suite.test(
       '请求耗时按执行跨度，Tokens 按调用用途拆分且不重复累加报告',
       async () => {
         await sql.query(
-          "UPDATE pr_executions SET created_at='2026-10-19T00:00:00Z' WHERE id='analysis-trace'",
+          "INSERT INTO pr_executions(id,task_id,worker_id,token_hash,lease_expires_at,state,created_at) VALUES('usage-trace','comparison-case-v2-alpha-jev','fixture','fixture',clock_timestamp(),'FINISHED','2026-10-19T00:00:00Z')",
         );
         await sql.query(
           "UPDATE pr_tasks SET finished_at='2026-10-19T00:05:00Z',report=jsonb_set(report,'{executionDetails}',$1) WHERE id='comparison-case-v2-alpha-jev'",
@@ -596,7 +349,7 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
           ],
         );
         await sql.query(
-          "UPDATE pr_model_calls SET record=record || $1::jsonb WHERE id='analysis-call'",
+          "INSERT INTO pr_model_calls(id,execution_id,call_index,record,start_hash) VALUES('usage-jev','usage-trace',1,$1,'fixture')",
           [
             JSON.stringify({
               purpose: 'JEV_SELECTION',
@@ -606,7 +359,7 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
           ],
         );
         await sql.query(
-          "INSERT INTO pr_model_calls(id,execution_id,call_index,record,start_hash) VALUES('usage-llm','analysis-trace',2,$1,'fixture')",
+          "INSERT INTO pr_model_calls(id,execution_id,call_index,record,start_hash) VALUES('usage-llm','usage-trace',2,$1,'fixture')",
           [
             JSON.stringify({
               purpose: 'FIELD_VALUE',
@@ -625,7 +378,8 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
         assert.equal(result.metrics.jev.totalTokens, 1100);
         assert.equal(result.metrics.llm.totalTokens, 2200);
         assert.equal(result.metrics.execution.totalTokens, 3300);
-        assert.equal(result.metrics.totalTokens, 3685);
+        assert.equal(result.metrics.totalTokens, 3300);
+        assert.equal('analysis' in result.metrics, false);
         assert.equal(result.metrics.execution.calls, 2);
         // 第二组与首组重叠，整体验证为六分钟，既不是耗时相加，也不是取最长单组。
         await sql.query(
@@ -641,7 +395,7 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
         );
         // 供应商没有返回 usage 的错误调用只增加调用数，不产生虚构 Tokens。
         await sql.query(
-          "INSERT INTO pr_model_calls(id,execution_id,call_index,record,start_hash) VALUES('usage-error','analysis-trace',3,$1,'fixture')",
+          "INSERT INTO pr_model_calls(id,execution_id,call_index,record,start_hash) VALUES('usage-error','usage-trace',3,$1,'fixture')",
           [
             JSON.stringify({
               purpose: 'DECISION',
@@ -806,154 +560,6 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
           '/v1/tasks/case-v2-alpha/requests',
         ])
           assert.equal((await app.inject({ url: path })).statusCode, 401);
-      },
-    );
-    // 范围：真实数据库与 HTTP 验证分析范围、全成功直出、幂等及重跑；报告为注入夹具，不证明浏览器验收或模型输出质量。
-    await suite.test(
-      '只领取异常 case，全成功无需 worker 或模型即可生成固定结论',
-      async () => {
-        const cases = ['success', 'failure', 'partial', 'unknown'].map(
-          (status) => {
-            const value = example(`analysis-${status}`);
-            value.steps[0]!.expected = ['显示结果', '显示详情'];
-            return value;
-          },
-        );
-        const submitted = await call('/v2/cases', {
-          requestId: 'analysis-mixed',
-          cases,
-        });
-        assert.equal(submitted.statusCode, 202, submitted.body);
-        const snapshot = submitted.json<RequestResultV2>();
-        for (const [index, member] of snapshot.cases.entries()) {
-          for (const arm of member.arms) {
-            // 成功 case 的另一执行组故意失败，确保分析范围与页面一样只采用 JEV。
-            const verdicts =
-              index === 0
-                ? arm.executionMode === 'jev'
-                  ? ['PASSED', 'PASSED']
-                  : ['FAILED', 'FAILED']
-                : index === 1
-                  ? ['FAILED', 'FAILED']
-                  : index === 2
-                    ? ['PASSED', 'FAILED']
-                    : ['PASSED', 'INCONCLUSIVE'];
-            const report = {
-              protocolVersion: '0.1',
-              taskId: arm.taskId,
-              executionDisposition: index === 3 ? 'BLOCKED' : 'EXECUTED',
-              verdict:
-                index === 3
-                  ? null
-                  : verdicts.includes('FAILED')
-                    ? 'FAILED'
-                    : 'PASSED',
-              summary: '分析范围夹具',
-              criteria: member.criteria.map((criterion, i) => ({
-                criterionId: criterion.criterionId,
-                verdict: verdicts[i],
-                summary: '夹具观察',
-                evidenceRefs: [],
-              })),
-              artifacts: [],
-              steps: [],
-            };
-            await sql.query(
-              "UPDATE pr_tasks SET state='COMPLETED',report=$2,finished_at=clock_timestamp() WHERE id=$1",
-              [arm.taskId, report],
-            );
-          }
-        }
-        const workerCall = (
-          url: string,
-          body: object = {},
-          token = 'request-integration-worker-fixture',
-          method: 'POST' | 'GET' = 'POST',
-        ) =>
-          app.inject({
-            method,
-            url,
-            headers: { authorization: `Bearer ${token}` },
-            ...(method === 'POST' ? { payload: body } : {}),
-          });
-        const queued = await call('/v2/requests/analysis-mixed/analysis', {});
-        assert.equal(queued.json().status, 'QUEUED', queued.body);
-        const grant = (await workerCall('/v1/worker/analyses/claim')).json();
-        assert.equal(grant.requestId, 'analysis-mixed');
-        assert.equal(grant.caseCount, 4);
-        assert.deepEqual(grant.caseIndices, [1, 2, 3]);
-        for (const [index, status] of [
-          [1, 'failure'],
-          [2, 'partial'],
-          [3, 'unknown'],
-        ] as const) {
-          const page = await workerCall(
-            `/v1/analyses/analysis-mixed/context?caseIndex=${index}&record=0&offset=0`,
-            {},
-            grant.token,
-            'GET',
-          );
-          assert.equal(page.statusCode, 200, page.body);
-          const data = JSON.parse(page.json().text);
-          assert.equal(data.verification.status, status);
-          assert.equal(data.overall.success, 1);
-          assert.equal(data.case.arms.length, 1);
-          assert.equal(data.case.arms[0].executionMode, 'jev');
-          // 部分失败仍提供已通过项的上下文，不能在复盘前裁掉可能相关的前置事实。
-          assert.equal(data.case.arms[0].result.result.criteria.length, 2);
-        }
-        assert.equal(
-          (
-            await workerCall(
-              '/v1/analyses/analysis-mixed/complete',
-              { summary: '异常分析夹具', model: 'fixture' },
-              grant.token,
-            )
-          ).statusCode,
-          200,
-        );
-
-        const successRequest = await call('/v2/cases', {
-          requestId: 'analysis-success-only',
-          cases: [cases[0]],
-        });
-        assert.equal(successRequest.statusCode, 202, successRequest.body);
-        const path = '/v2/requests/analysis-success-only/analysis';
-        const generated = await Promise.all([call(path, {}), call(path, {})]);
-        const result = generated[0]!.json();
-        assert.equal(result.status, 'SUCCEEDED', generated[0]!.body);
-        assert.equal(result.summary, '本次验证共 1 个 case，全部通过。');
-        assert.equal(result.model, null);
-        assert.ok(result.generatedAt);
-        assert.equal(result.usage.current.calls, 0);
-        assert.equal(result.revision, generated[1]!.json().revision);
-        assert.equal((await call(path, {})).json().revision, result.revision);
-        assert.equal(
-          (await workerCall('/v1/worker/analyses/claim')).json(),
-          null,
-        );
-        // 重跑替换旧模型总结时不继续显示旧模型名，也不复用旧代次。
-        await sql.query(
-          "UPDATE pr_request_analyses SET summary='旧模型总结',model='old-model' WHERE request_id='analysis-success-only'",
-        );
-        const rerun = (await call(path, { rerun: true })).json();
-        assert.notEqual(rerun.revision, result.revision);
-        assert.equal(rerun.status, 'SUCCEEDED');
-        assert.equal(rerun.summary, result.summary);
-        assert.equal(rerun.model, null);
-        assert.equal(rerun.usage.current.calls, 0);
-        // 升级前已经入队的全成功报告也不派发模型任务。
-        await sql.query(
-          "UPDATE pr_request_analyses SET status='QUEUED',summary=NULL,generated_at=NULL WHERE request_id='analysis-success-only'",
-        );
-        assert.equal(
-          (await workerCall('/v1/worker/analyses/claim')).json(),
-          null,
-        );
-        const recovered = (await call(path)).json();
-        assert.equal(recovered.status, 'SUCCEEDED');
-        assert.equal(recovered.summary, result.summary);
-        assert.equal(recovered.usage.cumulative.calls, 0);
       },
     );
     // 范围：真实数据库与两条 HTTP 读取入口保持同一异常步骤投影；证据和进度由夹具注入，不代表浏览器验收。
@@ -1167,14 +773,11 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
         );
       },
     );
-    // 范围：请求自己的冻结配置与旧分析失效、新代次生成；不代表分析质量或真实 worker 回执。
-    await suite.test('重跑使用请求当前配置并使旧分析失效', async () => {
+    // 范围：重跑沿用请求自身的冻结配置；不运行真实 worker 或浏览器。
+    await suite.test('重跑使用请求当前配置', async () => {
       await sql.query(
         "UPDATE pr_tasks SET state='COMPLETED' WHERE id IN ('case-run-second-in-place-a','case-run-first-in-place-b')",
       );
-      const analysisPath = '/v2/requests/in-place/analysis';
-      assert.equal((await call(analysisPath, {})).statusCode, 202);
-      const oldAnalysis = (await call(analysisPath)).json();
       // 为同一逻辑 case 制造另一份独立运行，冻结环境不同；请求内重跑不得选取它。
       assert.equal(
         (
@@ -1199,22 +802,9 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
         ).rows[0].id,
         'fixture',
       );
-      assert.equal((await call(analysisPath)).json(), null);
-      const excluded = (
-        await sql.query(
-          "SELECT status,token_hash,excluded_at FROM pr_request_analyses WHERE request_id='in-place'",
-        )
-      ).rows[0];
-      assert.equal(excluded.status, 'FAILED');
-      assert.equal(excluded.token_hash, null);
-      assert.ok(excluded.excluded_at);
-      assert.equal((await call(analysisPath, {})).statusCode, 409);
       await sql.query(
         "UPDATE pr_tasks SET state='COMPLETED' WHERE id='case-run-third-in-place-a'",
       );
-      const fresh = await call(analysisPath, {});
-      assert.equal(fresh.statusCode, 202, fresh.body);
-      assert.notEqual(fresh.json().revision, oldAnalysis.revision);
     });
     // 范围：报告只采用最新关联运行的结果，历史报告保持可查；报告注入不代表真实验收。
     await suite.test('请求报告显示最新测试结果而非历史结果', async () => {

@@ -519,9 +519,8 @@
   }
 }
 
-/* 汇总、分析、逐 case 依次展开；颜色与文字同时表达业务验证状态。 */
-.request-report-overview,
-.request-agent-analysis {
+/* 汇总、逐 case 依次展开；颜色与文字同时表达业务验证状态。 */
+.request-report-overview {
   margin-top: 18px;
 }
 .request-report-heading {
@@ -593,9 +592,6 @@
   color: var(--color-muted);
   background: var(--color-secondary);
 }
-.request-agent-analysis .report-summary {
-  overflow-wrap: anywhere;
-}
 @media (max-width: 700px) {
   .request-report-counts {
     gap: 16px;
@@ -666,12 +662,4 @@
 .report-usage-detail th,
 .report-usage-detail td {
   white-space: nowrap;
-}
-/* 分析用量与正文留出间距，折叠入口保持与验证汇总一致。 */
-.analysis-usage {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 12px;
-  margin-top: 16px;
-  min-width: 0;
 }

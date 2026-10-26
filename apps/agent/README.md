@@ -124,7 +124,3 @@ Agent 直接领取执行任务，不再调用本地身份选择接口。每次�
 profile 分组指同一临时浏览器下的独占 tab。组内串行、组间模型调用可并行，浏览器命令通过统一队列串行派发。`profile-runner.ts` 的 snapshots 队列保存步骤结果，不是浏览器 profile 快照。租约、账号容量和物理关闭确认仍保留。
 
 升级时同时更新 API、Agent 和 Node；Node 必须声明 `ephemeralProfiles`。历史 JEV/双跑报告继续可读，旧任务不自动迁移；重跑创建 LLM 新运行，不重新执行旧引擎。移除旧策略和 TypeSafe 环境变量，节点移除 `base_profile_directory`。
-
-## 报告复盘
-
-`serve` 在浏览器执行槽之外运行一个报告分析消费者，复用文本模型与推理配置，不要求浏览器节点在线。报告页为已结束请求幂等生成，也可单独重新分析。全部 Case 成功时，API 直接保存固定通过结论，不派发模型任务；其他请求仅按领取中的 `caseIndices` 复盘失败、部分失败和结论不明的 Case，跳过成功 Case 的记录。提示词位于 `src/prompts/report-analysis.ts`：`review` 读取待分析 Case 的完整分片，但只保留异常、关键证据和必要前置事实；`final` 每个异常 Case 默认 2～3 句话，不复述成功过程或总体统计，证据不足不能写成产品失败。模型 token 上限不变。不重新执行 Case，也不修改原验收结论。`once` 不领取报告分析任务。

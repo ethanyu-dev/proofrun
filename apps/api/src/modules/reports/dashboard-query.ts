@@ -32,7 +32,7 @@ FROM logical_cases c JOIN pr_tasks t ON t.id=c.task_id
 WHERE c.created_at >= $1::timestamptz AND c.created_at < $2::timestamptz`;
 
 /**
- * 用量使用服务端调用开始时间，重试、跨日、清理及多次分析各自归日。
+ * 用量使用服务端调用开始时间，重试、跨日及清理各自归日。
  * 旧报告只有汇总时按结束日回填，并单独返回回填数量；已有调用记录则绝不再叠加报告汇总。
  * 在 SQL 内完成聚合，响应体大小只与日期数有关，与调用正文大小无关。
  */
@@ -43,9 +43,6 @@ WITH usage AS (
     (record->>'completionTokens')::bigint AS completion,
     1::bigint AS calls, 0 AS legacy
   FROM pr_model_calls m JOIN pr_executions e ON e.id=m.execution_id JOIN pr_tasks t ON t.id=e.task_id WHERE t.deleted_at IS NULL AND m.created_at >= $1::timestamptz AND m.created_at < $2::timestamptz
-  UNION ALL
-  SELECT started_at, 'analysis', prompt_tokens, completion_tokens, 1, 0
-  FROM pr_analysis_calls WHERE excluded_at IS NULL AND started_at >= $1::timestamptz AND started_at < $2::timestamptz
   UNION ALL
   SELECT t.finished_at, 'execution',
     (t.report#>>'{executionDetails,promptTokens}')::bigint,

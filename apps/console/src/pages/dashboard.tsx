@@ -213,33 +213,28 @@ export function DashboardPage({ api }: { api: ApiClient }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {(
-                    [
-                      ['execution', '验证执行'],
-                      ['analysis', '报告分析'],
-                    ] as const
-                  ).map(([key, label]) => (
-                    <tr key={key}>
-                      <th scope="row">{label}</th>
-                      <td>
-                        {summary[key].promptTokens === null
-                          ? summary[key].calls
-                            ? '未上报'
-                            : '0'
-                          : NUMBER_FORMAT.format(summary[key].promptTokens)}
-                      </td>
-                      <td>
-                        {summary[key].completionTokens === null
-                          ? summary[key].calls
-                            ? '未上报'
-                            : '0'
-                          : NUMBER_FORMAT.format(summary[key].completionTokens)}
-                      </td>
-                      <td>{dashboardTokens(summary[key])}</td>
-                      <td>{NUMBER_FORMAT.format(summary[key].calls)}</td>
-                      <td>{summary[key].unmeasuredCalls} 次</td>
-                    </tr>
-                  ))}
+                  <tr>
+                    <th scope="row">验证执行</th>
+                    <td>
+                      {summary.execution.promptTokens === null
+                        ? summary.execution.calls
+                          ? '未上报'
+                          : '0'
+                        : NUMBER_FORMAT.format(summary.execution.promptTokens)}
+                    </td>
+                    <td>
+                      {summary.execution.completionTokens === null
+                        ? summary.execution.calls
+                          ? '未上报'
+                          : '0'
+                        : NUMBER_FORMAT.format(
+                            summary.execution.completionTokens,
+                          )}
+                    </td>
+                    <td>{dashboardTokens(summary.execution)}</td>
+                    <td>{NUMBER_FORMAT.format(summary.execution.calls)}</td>
+                    <td>{summary.execution.unmeasuredCalls} 次</td>
+                  </tr>
                 </tbody>
               </table>
             </div>
@@ -269,8 +264,6 @@ export function DashboardPage({ api }: { api: ApiClient }) {
                     <th>无完整结论</th>
                     <th>进行中</th>
                     <th>通过率</th>
-                    <th>执行 Tokens</th>
-                    <th>分析 Tokens</th>
                     <th>合计 Tokens</th>
                   </tr>
                 </thead>
@@ -292,7 +285,7 @@ export function DashboardPage({ api }: { api: ApiClient }) {
                         )}
                       </th>
                       {day.date > today ? (
-                        <td colSpan={9} className="muted">
+                        <td colSpan={7} className="muted">
                           尚未发生
                         </td>
                       ) : (
@@ -305,8 +298,6 @@ export function DashboardPage({ api }: { api: ApiClient }) {
                           </td>
                           <td>{NUMBER_FORMAT.format(day.cases.pending)}</td>
                           <td>{dashboardRate(day.cases.passRate)}</td>
-                          <td>{dashboardTokens(day.execution)}</td>
-                          <td>{dashboardTokens(day.analysis)}</td>
                           <td>
                             {dashboardTokens(day.tokens)}
                             {day.tokens.unmeasuredCalls > 0 && (
@@ -345,11 +336,11 @@ export function DashboardPage({ api }: { api: ApiClient }) {
               </li>
               <li>
                 Tokens
-                按服务端接收调用的日期累计，包含所有执行组、清理、失败重试及多轮报告分析。跨日执行的
+                按服务端接收调用的日期累计，包含所有执行组、清理及失败重试。跨日执行的
                 Tokens 与 Case 提交日期可能不同。
               </li>
               <li>
-                删除的运行及其清理用量不计入统计；涉及已删除成员的旧分析整轮排除。缺失的用量不按零估算；有缺失时合计只代表已知部分。旧报告无调用明细时按结束日回填，既无明细也无汇总的历史消耗无法统计。
+                删除的运行及其清理用量不计入统计。缺失的用量不按零估算；有缺失时合计只代表已知部分。旧报告无调用明细时按结束日回填，既无明细也无汇总的历史消耗无法统计。
               </li>
             </ul>
           </details>

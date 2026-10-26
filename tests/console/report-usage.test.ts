@@ -33,7 +33,6 @@ function metrics(jev: TokenUsage = EMPTY_USAGE): RequestMetrics {
     execution: llm,
     llm,
     jev,
-    analysis: EMPTY_USAGE,
     totalTokens: 120,
   };
 }

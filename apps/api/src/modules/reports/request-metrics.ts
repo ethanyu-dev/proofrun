@@ -1,6 +1,5 @@
 import type { RequestMetrics, VerificationReport } from '@proofrun/contracts';
 import type { PoolClient } from 'pg';
-import { analysisUsage } from './analysis-calls.js';
 import { addUsage, emptyUsage } from './usage.js';
 
 /** 历史报告仅含纯模型名时才回退拆分；混合名称不按执行模式猜测。 */
@@ -44,7 +43,6 @@ export async function requestMetrics(
     execution: emptyUsage(),
     jev: emptyUsage(),
     llm: emptyUsage(),
-    analysis: (await analysisUsage(client, requestId)).cumulative,
     totalTokens: null,
   };
   for (const task of tasks) {
@@ -93,12 +91,6 @@ export async function requestMetrics(
     );
     metrics.executionElapsedMs = Math.max(0, end - start);
   }
-  if (
-    metrics.execution.totalTokens !== null ||
-    metrics.analysis.totalTokens !== null
-  )
-    metrics.totalTokens =
-      (metrics.execution.totalTokens ?? 0) +
-      (metrics.analysis.totalTokens ?? 0);
+  metrics.totalTokens = metrics.execution.totalTokens;
   return metrics;
 }

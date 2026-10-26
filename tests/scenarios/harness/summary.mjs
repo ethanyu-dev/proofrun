@@ -12,7 +12,7 @@ export function usage(calls) {
     complete:
       calls.length > 0 &&
       calls.every((c) => known(c.promptTokens) && known(c.completionTokens)),
-    scope: '仅浏览器执行模型请求，不包含身份选择或报告分析',
+    scope: '仅浏览器执行模型请求，不包含身份选择',
   };
 }
 

@@ -1,7 +1,5 @@
 import { executionTimeline } from './modules/scheduling/timeline.js';
 import { TaskLifecycle } from './modules/tasks/lifecycle.js';
-import { RequestAnalyses } from './modules/reports/request-analysis.js';
-import { analysisRoutes } from './modules/reports/analysis-routes.js';
 import { dashboardStatistics } from './modules/reports/dashboard.js';
 import { RequestReader } from './modules/requests/reader.js';
 import { RequestService } from './modules/requests/service.js';
@@ -555,7 +553,6 @@ export async function buildApp(
     { preHandler: admin },
     (request) => coordinator.cancel(request.params.id),
   );
-  analysisRoutes(app, new RequestAnalyses(db, requestReader), admin, worker);
   app.post<{ Params: IdParams }>(
     '/v1/tasks/:id/account-feedback',
     { preHandler: admin },

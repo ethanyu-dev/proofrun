@@ -1,4 +1,3 @@
-import { serveReportAnalyses } from './report-analysis.js';
 import { readFile } from 'node:fs/promises';
 import { validateVerificationTask } from '@proofrun/contracts';
 import { ControlClient } from './client.js';
@@ -24,11 +23,6 @@ async function worker(once: boolean, slot: number): Promise<void> {
     controller.abort(new AgentFault('WORKER_STOPPED', 'worker 正在关停'));
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
-  // 每个进程只启动一个分析消费者，独立于浏览器并发槽。
-  const analysis =
-    !once && slot === 0
-      ? serveReportAnalyses(config, controller.signal)
-      : undefined;
   try {
     while (!controller.signal.aborted) {
       try {
@@ -69,7 +63,6 @@ async function worker(once: boolean, slot: number): Promise<void> {
     }
   } finally {
     controller.abort();
-    await analysis;
     process.removeListener('SIGINT', stop);
     process.removeListener('SIGTERM', stop);
   }

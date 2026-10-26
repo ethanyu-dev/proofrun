@@ -50,7 +50,6 @@ function response(path: string): DashboardStatistics {
     },
     tokens: usage,
     execution: usage,
-    analysis: empty,
     legacyUsageTasks: 0,
   };
   return {

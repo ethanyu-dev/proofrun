@@ -23,8 +23,8 @@ import {
 interface UsageRow {
   /** 服务端北京时间日期。 */
   date: string;
-  /** 分开统计执行与异步分析。 */
-  kind: 'execution' | 'analysis';
+  /** 调用按验证执行归属。 */
+  kind: 'execution';
   /** 已上报输入合计。 */
   prompt: string | null;
   /** 已上报输出合计。 */
@@ -62,7 +62,6 @@ function emptyMetrics(): DashboardMetrics {
       passRate: null,
     },
     execution: emptyUsage(),
-    analysis: emptyUsage(),
     tokens: emptyUsage(),
     legacyUsageTasks: 0,
   };
@@ -171,7 +170,7 @@ export async function dashboardStatistics(
         'pending',
       ] as const)
         summary.cases[field] += day.cases[field];
-      for (const field of ['execution', 'analysis', 'tokens'] as const)
+      for (const field of ['execution', 'tokens'] as const)
         mergeUsage(summary[field], day[field]);
       summary.runs += day.runs;
       summary.legacyUsageTasks += day.legacyUsageTasks;

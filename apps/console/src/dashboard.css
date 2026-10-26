@@ -141,9 +141,6 @@
 .dashboard-page [data-series='execution'] {
   background: var(--color-foreground);
 }
-.dashboard-page [data-series='analysis'] {
-  background: var(--color-muted);
-}
 .dashboard-plot {
   display: grid;
   gap: 4px;

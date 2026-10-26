@@ -48,9 +48,7 @@ export interface DashboardMetrics {
   cases: DashboardCases;
   /** 所有执行组和清理过程的调用，按服务端接收调用的日期归属。 */
   execution: DashboardUsage;
-  /** 报告分析的全部轮次，独立于验证用量。 */
-  analysis: DashboardUsage;
-  /** 执行与分析相加，不沿请求关联重复累计。 */
+  /** 验证执行总用量，不沿请求关联重复累计。 */
   tokens: DashboardUsage;
   /** 无调用记录的旧报告，按结束日回填用量的任务数。 */
   legacyUsageTasks: number;

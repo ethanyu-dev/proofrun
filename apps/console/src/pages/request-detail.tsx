@@ -1,4 +1,4 @@
-import { RequestReportContent } from '../components/request-report-content';
+import { RequestReportOverview } from '../components/request-report-overview';
 import type { RequestResultV2 } from '@proofrun/contracts';
 import type { ApiClient } from '../api';
 import { useResource } from '../use-resource';
@@ -77,7 +77,7 @@ export function RequestDetailPage({
         <Empty title={resource.loading ? '正在读取请求…' : '请求读取失败'} />
       ) : (
         <>
-          {reports && <RequestReportContent key={id} api={api} value={value} />}
+          {reports && <RequestReportOverview value={value} />}
           <h2 className="request-section-heading">
             {reports ? 'case 验证结果' : 'case 目标与执行进度'}
             <span>{value.caseCount} 个 case</span>

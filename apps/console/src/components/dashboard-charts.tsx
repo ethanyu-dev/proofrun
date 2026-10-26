@@ -123,10 +123,6 @@ export function DashboardCharts({
             <i data-series="execution" />
             验证执行
           </span>
-          <span>
-            <i data-series="analysis" />
-            报告分析
-          </span>
         </div>
         <div
           className="dashboard-plot"
@@ -157,10 +153,6 @@ export function DashboardCharts({
                     <span
                       data-series="execution"
                       style={{ flex: day.execution.totalTokens ?? 0 }}
-                    />
-                    <span
-                      data-series="analysis"
-                      style={{ flex: day.analysis.totalTokens ?? 0 }}
                     />
                   </span>
                 )}
