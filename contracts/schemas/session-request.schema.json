@@ -14,6 +14,10 @@
     },
     "external": {
       "$ref": "external-account-selector.schema.json"
+    },
+    "reducedMotion": {
+      "type": "boolean",
+      "description": "本次会话是否偏好减少动画；省略时新执行默认 true，动画验收可显式设为 false。历史缺失字段不代表已启用。"
     }
   },
   "required": ["mode"],

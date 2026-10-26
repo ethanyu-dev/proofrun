@@ -213,6 +213,7 @@ async fn empty_engine_binary_is_not_reported_as_success() {
         external_account: None,
         binary: "/usr/bin/false".into(),
         chrome: None,
+        reduced_motion: true,
         identity_seed_file: None,
         full_profile: false,
         node_template: false,

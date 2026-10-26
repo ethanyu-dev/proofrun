@@ -201,6 +201,10 @@
                 ]
               },
               "description": "只在私密节点投递中附加，不得写入命令账本。"
+            },
+            "reducedMotion": {
+              "type": "boolean",
+              "description": "浏览器启动前应用的减少动画偏好；省略时节点默认 true，false 明确使用正常动画偏好。"
             }
           },
           "required": ["type", "leaseRequestId", "leaseTtlMs", "maxDurationMs"],

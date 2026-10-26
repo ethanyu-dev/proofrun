@@ -910,3 +910,53 @@ test('DevPass 重跑按最终预算计算租期并拒绝超过两小时的运行
   );
   assert.equal(f.records.has('case-run-external-too-long'), false);
 });
+
+// 范围：默认与显式偏好经过真实重跑编译路径冻结，旧记录保持原样；不连接真实浏览器或数据库。
+test('历史重跑默认减少动画，显式动画验收配置与身份替换互不覆盖', async () => {
+  for (const preference of [undefined, true, false]) {
+    const f = fixture();
+    const input = {
+      ...INPUT,
+      session: {
+        mode: 'manual' as const,
+        ...(preference === undefined ? {} : { reducedMotion: preference }),
+      },
+    };
+    await f.service.submit([input]);
+    const original = f.records.get(`case-v2-${INPUT.caseId}`)!;
+    if (preference === undefined)
+      delete original.definition.sessionPlan!.reducedMotion;
+    const before = structuredClone(original);
+    await f.service.rerun(INPUT.caseId, 'motion-default');
+    assert.equal(
+      f.records.get('case-run-motion-default')!.definition.sessionPlan
+        ?.reducedMotion,
+      preference ?? true,
+    );
+    await f.service.rerun(
+      INPUT.caseId,
+      'motion-identity',
+      'current',
+      undefined,
+      { mode: 'guest' },
+    );
+    assert.equal(
+      f.records.get('case-run-motion-identity')!.definition.sessionPlan
+        ?.reducedMotion,
+      preference ?? true,
+    );
+    await f.service.rerun(
+      INPUT.caseId,
+      'motion-explicit',
+      'current',
+      undefined,
+      { mode: 'auto', reducedMotion: false },
+    );
+    assert.equal(
+      f.records.get('case-run-motion-explicit')!.definition.sessionPlan
+        ?.reducedMotion,
+      false,
+    );
+    assert.deepEqual(original, before);
+  }
+});

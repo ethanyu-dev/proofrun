@@ -272,6 +272,63 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         ),
     );
   try {
+    // 范围：真实 HTTP/数据库冻结偏好、能力升级门禁和缺失证明拒绝；节点和浏览器由协议夹具模拟。
+    await suite.test(
+      '动画偏好等待新版节点，传递显式配置并拒绝缺失证明',
+      async () => {
+        const node = await addNode('motion-preference');
+        node.reducedMotion = false;
+        node.heartbeat();
+        const capability = async () =>
+          (
+            await sql.query('SELECT capabilities FROM pr_nodes WHERE id=$1', [
+              node.id,
+            ])
+          ).rows[0].capabilities.reducedMotion;
+        await until(capability, (value) => value === false);
+        for (const [index, preference] of [true, false, true].entries()) {
+          const definition = {
+            ...task(node.pool),
+            sessionPlan: {
+              version: 1 as const,
+              mode: 'guest' as const,
+              candidates: [],
+              requirements: [],
+              preparationMs: 120000,
+              reducedMotion: preference,
+            },
+          };
+          await submit(definition);
+          if (index === 0) {
+            assert.equal(await claim(true), null);
+            assert.equal(node.sessions.size, 0);
+            node.reducedMotion = true;
+            node.heartbeat();
+            await until(capability, (value) => value === true);
+          }
+          node.motionProof = index !== 2;
+          const execution = await claim(true);
+          assert.ok(execution);
+          if (index === 2) {
+            const detail = await until(
+              async () =>
+                (await api('GET', `/v1/tasks/${definition.taskId}`)).data,
+              (value) => value.state === 'ERROR',
+            );
+            assert.equal(detail.error.code, 'MOTION_PREFERENCE_MISMATCH');
+          } else {
+            const view = await ready(execution);
+            assert.equal(view.environmentProof.reducedMotion, preference);
+            const open = node.sessions.get(execution.sessionId)!;
+            assert.equal(open.command.type, 'session.open');
+            if (open.command.type === 'session.open')
+              assert.equal(open.command.reducedMotion, preference);
+            await api('POST', `/v1/tasks/${definition.taskId}/cancel`);
+          }
+          await cleaned(definition.taskId);
+        }
+      },
+    );
     // 范围：真实心跳、数据库与 HTTP 的版本更新/持久化及执行快照；不验证真实节点构建或浏览器。
     await suite.test(
       '节点上报版本并冻结执行快照，旧节点回退不沿用旧版本',
@@ -3969,6 +4026,7 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         sessionId: execution.sessionId,
         initialState: 'empty',
         authRestored: false,
+        reducedMotion: true,
       });
       assert.equal(
         node.sessions.get(execution.sessionId)!.command.type,

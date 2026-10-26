@@ -113,6 +113,10 @@ export type NodeEvent =
          */
         ephemeralProfiles?: boolean;
         directHitl?: boolean;
+        /**
+         * 支持会话级动画偏好、首次导航前应用并回读核验。
+         */
+        reducedMotion?: boolean;
       };
       /**
        * 节点接受的租约和会话硬期限上限，控制面不得超额授权。

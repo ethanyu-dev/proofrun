@@ -40,6 +40,16 @@ export function TaskResources({ task }: { task: TaskDetail }) {
             </dd>
           </div>
           <div>
+            <dt>动画偏好配置</dt>
+            <dd>
+              {task.definition.sessionPlan?.reducedMotion === undefined
+                ? '未记录'
+                : task.definition.sessionPlan.reducedMotion
+                  ? '减少动画'
+                  : '正常动画'}
+            </dd>
+          </div>
+          <div>
             <dt>创建时间</dt>
             <dd>{time(task.created_at)}</dd>
           </div>

@@ -3,6 +3,8 @@
 mod cookies;
 mod dom;
 mod external_account;
+#[cfg(test)]
+mod motion_tests;
 mod scroll;
 mod visual;
 
@@ -46,6 +48,14 @@ const NAVIGATION_PROBE: &str = "({url:location.href,readyState:document.readySta
 const VISUAL_VIEWPORT: &str =
     "({url:location.href,width:innerWidth,height:innerHeight,x:scrollX,y:scrollY})";
 
+/// 固定只读媒体查询，不接收任务或模型提供的可执行代码。
+const MOTION_QUERY: &str = "matchMedia('(prefers-reduced-motion: reduce)').matches";
+
+/// 旧调用方未传偏好时，新建浏览器同样采用减少动画。
+fn default_reduced_motion() -> bool {
+    true
+}
+
 /// 单个 session-host 的引擎启动参数，不携带节点机器凭据。
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EngineConfig {
@@ -53,6 +63,9 @@ pub struct EngineConfig {
     pub binary: PathBuf,
     /// 可选的 Chrome 绝对路径。
     pub chrome: Option<PathBuf>,
+    /// 默认减少动画；显式关闭也覆盖宿主偏好，避免动画验收受机器配置影响。
+    #[serde(default = "default_reduced_motion")]
+    pub reduced_motion: bool,
     /// 秘密种子只存会话私有文件，注入后删除。
     #[serde(default)]
     pub identity_seed_file: Option<PathBuf>,
@@ -154,6 +167,13 @@ impl Engine {
         if let Some(chrome) = &config.chrome {
             options["executablePath"] = json!(chrome);
         }
+        // 使用进程级偏好覆盖首次导航、profile 分组、新标签页和弹出页。
+        // 不通过页面脚本屏蔽资源，也不强制禁用 WebGL。
+        options["args"] = json!(if config.reduced_motion {
+            "--force-prefers-reduced-motion"
+        } else {
+            "--force-prefers-no-reduced-motion"
+        });
         options["profile"] = json!(config.directory.join("profile"));
         std::fs::write(
             config.directory.join("agent-browser.json"),
@@ -207,6 +227,19 @@ impl Engine {
             deadline.saturating_sub(process::boot_ms()),
         )
         .await?;
+        // 先回读浏览器实际偏好，失败即终止初始化，不把配置意图当作生效证据。
+        let motion = self
+            .cli(
+                vec!["eval".into(), MOTION_QUERY.into()],
+                deadline.saturating_sub(process::boot_ms()),
+            )
+            .await?;
+        if motion["result"].as_bool() != Some(self.config.reduced_motion) {
+            return Err(Fault::rejected(
+                "MOTION_PREFERENCE_MISMATCH",
+                "浏览器动画偏好未按配置生效",
+            ));
+        }
         if self.config.external_account.is_some() {
             self.prepare_external_account(deadline).await?;
         }
@@ -244,7 +277,7 @@ impl Engine {
                 .await?;
             }
         }
-        let mut proof = json!({"authRestored":false,"initialState":"empty"});
+        let mut proof = json!({"authRestored":false,"initialState":"empty","reducedMotion":self.config.reduced_motion});
         if let Some(account) = &self.config.external_account {
             proof["initialState"] = json!("external");
             proof["externalAccount"] = account.clone();

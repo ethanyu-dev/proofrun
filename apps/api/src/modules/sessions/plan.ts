@@ -53,6 +53,7 @@ export function resolveSession(
     );
   return {
     version: 1,
+    reducedMotion: selection.reducedMotion ?? true,
     mode: selection.mode,
     candidates: [],
     requirements: structuredClone(selection.requirements ?? []),

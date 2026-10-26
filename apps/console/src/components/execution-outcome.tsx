@@ -47,6 +47,7 @@ export const EXECUTION_REASONS: Record<string, string> = {
   SESSION_CLOSE_REQUESTED: '收到控制面关闭请求',
   SESSION_LEASE_EXPIRED: '浏览器会话租约到期',
   SESSION_START_FAILED: '浏览器会话启动失败',
+  MOTION_PREFERENCE_MISMATCH: '浏览器动画偏好未按配置生效',
   SESSION_COMMAND_TIMEOUT: '执行中的浏览器命令超时，会话被回收',
   SESSION_OPERATION_FAILED: '会话因浏览器操作故障关闭',
   NODE_SHUTDOWN: '节点停止，关闭现存会话',

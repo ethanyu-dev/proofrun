@@ -196,6 +196,12 @@ export class CaseV2Service {
         ...(external ? { external: structuredClone(external) } : {}),
       };
     const result = compileCase(input, validateCaseProfile(profile));
+    // 只冻结本轮执行偏好，不把新默认值补进原始 case 业务定义。
+    result.sessionPlan!.reducedMotion =
+      replacement?.reducedMotion ??
+      definition.sessionPlan?.reducedMotion ??
+      definition.caseV2Definition?.session?.reducedMotion ??
+      true;
     if (replacement) result.rerunSession = structuredClone(replacement);
     result.taskId = taskId;
     if (budgetMode === 'original') {

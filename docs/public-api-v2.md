@@ -213,3 +213,11 @@ steps 按实际执行顺序包含清理步骤；cleanup 仍提供 taskId、statu
 省略 `session` 时沿用来源配置；历史本地身份仍返回 `LOCAL_IDENTITY_REMOVED`，须显式选择新的身份。覆盖只作用于新运行的冻结定义，保留步骤、验收、旧运行的报告与证据，不改变其他共享请求。显式替换会清除旧登录槽绑定；选择 `manual` 会允许当前新会话人工登录。业务准备要求仍参与冲突校验，不能用会话覆盖绕过访客或已登录要求。
 
 相同 `runId` 的重试必须保持是否覆盖及会话内容一致；更换或撤销会话覆盖返回 409，须使用新的 `runId`。整请求重跑仍为原子提交。Console 的重跑弹窗支持逐 case 配置；提交结果不确定时冻结输入并沿用原运行 ID 重试，明确拒绝后可以修改配置。
+
+## 浏览器动画偏好
+
+新任务和历史重跑默认采用减少动画偏好，在 Chromium 启动时设置，覆盖首次导航、iframe 和新标签页。它向网站声明 `prefers-reduced-motion: reduce`，不强制移除动画、禁用 WebGL 或屏蔽第三方资源；未响应此偏好的网站仍可能耗费 CPU。
+
+动画或视觉验收可显式提交 `"session":{"mode":"auto","reducedMotion":false}`，也可搭配 guest/manual/external 身份。身份重新判断与动画偏好独立；重跑优先采用显式覆盖，其次保留原执行冻结值，历史缺失才使用 true。无需每次执行前选择。
+
+`sessionPlan.reducedMotion` 记录配置；节点在空白页回读媒体查询后，通过 `session.open` 结果中的 `environmentProof.reducedMotion` 记录实际生效值。核验失败则停止初始化，错误码为 `MOTION_PREFERENCE_MISMATCH`，不会进入业务页面。历史记录不补写字段，缺失不能解释为已经减少动画。要求该配置的任务只分配到声明 `capabilities.reducedMotion` 的新版节点。

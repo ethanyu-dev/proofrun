@@ -130,3 +130,7 @@ pnpm test:agent:browser
 `PROOFRUN_TEST_DATABASE_URL=postgresql://... pnpm test:api` 包含外部账号协议集成测试，使用独立临时数据库与 MCP/JWE 夹具，不接触真实账号。覆盖恢复、关闭后交还、材料版本、到期、管理员反馈和错误启动回执。
 
 配置固定版本原生 CLI 的 `PROOFRUN_AGENT_BROWSER_BIN` 和 Chrome 的 `PROOFRUN_CHROME_BIN` 后运行 `pnpm test:identity:external`。该测试使用真实浏览器及本机 HTTP 页面，验证 Cookie path/httpOnly、私密种子删除、禁止保存共享身份和新会话隔离；不覆盖生产登录或 Linux 进程监管。
+
+### 动画偏好回归
+
+沿用真实浏览器测试的 `PROOFRUN_AGENT_BROWSER_BIN`、`PROOFRUN_CHROME_BIN` 和可选的 `PROOFRUN_TEST_BINARY`，执行 `python3 tests/browser-node/motion_smoke.py`。它通过真实 session-host 和固定引擎验证缺省、开启与关闭三种配置的首次脚本、导航、iframe、新标签页及启动证明；本地 HTML 不代表生产站点性能或 Linux cgroup 已验收。该脚本也纳入 Linux 完整回归套件。

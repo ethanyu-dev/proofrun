@@ -48,6 +48,7 @@ test('默认会话直接编译且不产生本地候选或身份选择', () => {
       PROFILE,
     );
     assert.equal(task.sessionPlan?.mode, session?.mode ?? 'guest');
+    assert.equal(task.sessionPlan?.reducedMotion, true);
     assert.deepEqual(task.sessionPlan?.candidates, []);
     assert.equal(task.sessionPlan?.selection, undefined);
     assert.equal(task.sessionPlan?.library, undefined);
@@ -96,5 +97,23 @@ test('DevPass 是唯一自动账号来源，必须给出核验条件', () => {
   assert.throws(
     () => resolveSession({ ...session, requirements: [] }, INPUT.entry),
     { code: 'EXTERNAL_ACCOUNT_REQUIREMENTS' },
+  );
+});
+
+// 范围：自动与显式身份共用动画偏好默认值和布尔契约；不验证真实媒体查询。
+test('动画偏好可独立于身份显式关闭且不修改输入', () => {
+  for (const mode of ['auto', 'guest', 'manual'] as const) {
+    const input = { ...INPUT, session: { mode, reducedMotion: false } };
+    const before = structuredClone(input);
+    assert.equal(validateVerificationCaseV2(input), true);
+    assert.equal(compileCase(input, PROFILE).sessionPlan?.reducedMotion, false);
+    assert.deepEqual(input, before);
+  }
+  assert.equal(
+    validateVerificationCaseV2({
+      ...INPUT,
+      session: { mode: 'auto', reducedMotion: 'false' },
+    }),
+    false,
   );
 });

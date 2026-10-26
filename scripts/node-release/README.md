@@ -98,3 +98,11 @@ python3 -m unittest discover -s tests/node-release -p 'test_*.py'
 升级已有安装前，停止派发并确认会话清理；手动删除旧 `capacity`，填写 `public_url` 和 `listen`，按实际内存调整余量。安装器保留配置，不替用户迁移资源策略。API/Console 与 Node 必须按同一协议升级；仅在线不代表域名、证书与客户端网络已经通过验证。
 
 多控制面节点的授权保存在同一个 `home/node.db`，安装器保留并识别注册表。升级前排空所有绑定；旧单控制面可停机执行 `bindings import-legacy` 原样导入，再热添加其他服务，操作见[多控制面部署](../../deploy/README.md#一个节点授权多套控制面)。SQLite 升级后不能只切回旧二进制。
+
+## 减少动画默认值的发布
+
+动画偏好由 Browser Node 内的 Rust 引擎适配器设置，本次修复需要构建新的节点 release 并升级节点；只发布 Railway API/Web/Agent 不会改变旧节点的浏览器启动行为。固定 agent-browser 仍为 0.38.1，无需升级上游引擎。
+
+先发布包含 `reducedMotion` 协议与能力识别的 API（以及配置展示的 Web），再排空并按本文安装流程升级 Browser Node。升级窗口内，带动画偏好配置的任务会等待支持该能力的节点，不能静默回退到正常动画。现有已打开会话不会热修改；升级后新建任务和重跑创建的新会话生效。Agent 无新增执行逻辑，但保持同一发布版本即可。
+
+使用新的 `node-v0.1.0-…` 版本号触发 `release-node.yml`，核对 x64/arm64 资产、摘要及 build-info 后发布草稿；不覆盖已有 alpha.16 资产。升级后确认心跳包含 `capabilities.reducedMotion=true`，并在新执行的启动结果中确认 `environmentProof.reducedMotion=true`。动画验收可在 case 的 session 中明确设为 false，具体契约见[结构化 Case API](../../docs/public-api-v2.md#浏览器动画偏好)。

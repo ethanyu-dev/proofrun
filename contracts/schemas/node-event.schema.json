@@ -239,6 +239,10 @@
             },
             "directHitl": {
               "type": "boolean"
+            },
+            "reducedMotion": {
+              "type": "boolean",
+              "description": "支持会话级动画偏好、首次导航前应用并回读核验。"
             }
           },
           "required": [

@@ -62,6 +62,10 @@ elif operation == 'set':
 elif operation == 'stream':
     data = {'enabled': True}
 # 范围：固定视口仅支撑截图管道夹具，不模拟真实布局或视觉命中。
+elif operation == 'eval' and 'prefers-reduced-motion' in args[1]:
+    # 范围：只模拟启动偏好回执，不证明真实 Chromium 媒体查询生效。
+    config = json.loads(Path(sys.argv[sys.argv.index('--config') + 1]).read_text())
+    data = {'result': '--force-prefers-reduced-motion' in config.get('args', [])}
 elif operation == 'eval':
     data = {'result': {'url': 'http://fixture/', 'width': 1280, 'height': 720, 'x': 0, 'y': 0}}
 elif operation == 'screenshot':
