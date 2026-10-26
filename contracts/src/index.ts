@@ -235,12 +235,6 @@ export {
   requestVerification,
 } from './request-verification.js';
 export type { VerificationStatus } from './request-verification.js';
-export type {
-  RequestAnalysis,
-  AnalysisGrant,
-  AnalysisContextPage,
-  AnalysisCallWrite,
-} from './request-analysis.js';
 export * from './dashboard.js';
 
 import type { ExecutionTimeline } from './generated/execution-timeline.js';

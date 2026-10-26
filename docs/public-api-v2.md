@@ -17,7 +17,7 @@ requestId 必填，为 1–80 位字母、数字、下划线或短横线；title
 - `GET /v2/requests`：请求摘要列表，支持 q、executionStatus、reportStatus、limit（1–100，默认 25）及 cursor。q 按请求身份、标题、case 身份或目标搜索；命中一个成员仍返回整个请求的统计。游标绑定筛选条件，不能更换筛选后沿用。
 - `GET /v2/requests/{requestId}`：请求元数据、全部成员、冻结的步骤、各组进度和汇总。
 - `GET /v2/requests/{requestId}/report`：相同一致性快照的汇总报告，包含 case 矩阵、逐项两组结论、证据引用与清理情况。
-- `POST /v2/requests/{requestId}/rerun`：接收 `caseIds: [{ sourceCaseId, runId }]` 和可选 budgetMode/timeBudget。默认保留原 requestId，可选一个或全部成员，在一个事务内新增运行并切换所选成员的报告；未选成员及其他请求不变。旧运行和证据保留，新运行进行中不回退旧结果，旧 Agent 分析失效。重试沿用完整映射及预算；成功后再次重跑必须更换 runId，旧操作重试不会回退最新结果。同一 runId 改变参数或被其他操作占用返回 409 CASE_CONFLICT。旧映射字段 caseId 兼容解释为运行幂等键。兼容旧客户端显式提供新的 requestId，此时必须覆盖全部成员，创建独立请求；相同新 requestId 参数改变返回 REQUEST_CONFLICT。
+- `POST /v2/requests/{requestId}/rerun`：接收 `caseIds: [{ sourceCaseId, runId }]` 和可选 budgetMode/timeBudget。默认保留原 requestId，可选一个或全部成员，在一个事务内新增运行并切换所选成员的报告；未选成员及其他请求不变。旧运行和证据保留，新运行进行中不回退旧结果。重试沿用完整映射及预算；成功后再次重跑必须更换 runId，旧操作重试不会回退最新结果。同一 runId 改变参数或被其他操作占用返回 409 CASE_CONFLICT。旧映射字段 caseId 兼容解释为运行幂等键。兼容旧客户端显式提供新的 requestId，此时必须覆盖全部成员，创建独立请求；相同新 requestId 参数改变返回 REQUEST_CONFLICT。
 
 请求的 executionStatus 为 QUEUED / IN_PROGRESS / FINISHED，只表达执行进度；reportPhase 为 PENDING / PARTIAL / FINAL。所有要求组终止后为 FINAL，即使有子报告缺失。非 FINAL 的 reportStatus 为 null；已交付报告中的失败仍由 observedFailureCount 显示。FINAL 时，任一组已确认 FAILED 则汇总 FAILED，所有要求组均 PASSED 才 PASSED，否则 INCONCLUSIVE。两组相反的明确判断另计 confirmedDisagreementCount，不能将组间差异直接解释成产品根因。
 
@@ -183,7 +183,7 @@ steps 按实际执行顺序包含清理步骤；cleanup 仍提供 taskId、statu
 
 管理员通过 `POST /v1/tasks/{taskId}/delete` 删除一次完整运行，或通过 `POST /v1/tasks/delete` 提交 `{ "ids": ["taskId-1", "taskId-2"] }`，上限 100 个。双跑与历史独立清理共同删除；任一任务仍在运行、清理待执行或会话未核实关闭时整批返回 409。请求级入口为 `POST /v2/requests/{requestId}/delete` 与 `POST /v2/requests/delete`，仍被其他请求引用的执行保留。
 
-软删除保留底层记录，隐藏列表与详情，并排除 Case、运行次数、通过率、趋势及关联 Tokens。涉及删除成员的旧分析整轮失效，其调用用量排除；剩余成员可重新生成分析。删除最新运行后默认读取前一条未删除运行；重复删除幂等，删除的运行幂等键不可复活。历史上不同 caseId 的旧重跑不会自动合并。
+软删除保留底层记录，隐藏列表与详情，并排除 Case、运行次数、通过率、趋势及关联 Tokens。删除最新运行后默认读取前一条未删除运行；重复删除幂等，删除的运行幂等键不可复活。历史上不同 caseId 的旧重跑不会自动合并。
 
 ## 会话来源
 

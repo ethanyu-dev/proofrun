@@ -8,7 +8,7 @@ export function thinkingEnabled(config: AgentConfig): boolean {
   );
 }
 
-/** 决策、身份选择和报告复盘共用供应商推理参数。 */
+/** 决策和身份选择共用供应商推理参数。 */
 export function reasoningParameters(config: AgentConfig) {
   return {
     ...(config.thinking ? { thinking: { type: config.thinking } } : {}),

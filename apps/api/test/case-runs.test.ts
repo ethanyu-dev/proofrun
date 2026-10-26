@@ -239,8 +239,8 @@ test('稳定 case 运行历史与软删除集成', { timeout: 60_000 }, async (s
         ).rows[0].report,
       );
     });
-    // 范围：批量全成全败、双跑成组删除、摘要失效和分析排除；用量与报告均为夹具。
-    await suite.test('批量删除原子校验并同步请求汇总和分析', async () => {
+    // 范围：批量全成全败、双跑成组删除和摘要失效；用量与报告均为夹具。
+    await suite.test('批量删除原子校验并同步请求汇总', async () => {
       await submit('batch', ['alpha', 'beta']);
       await finish('case-v2-alpha');
       let r = await call('/v1/tasks/delete', {
@@ -250,14 +250,6 @@ test('稳定 case 运行历史与软删除集成', { timeout: 60_000 }, async (s
       assert.equal((await call('/v1/tasks/case-v2-alpha')).statusCode, 200);
       await finish('case-v2-beta');
       await read('/v2/requests');
-      const snapshot = await read('/v2/requests/batch');
-      await sql.query(
-        "INSERT INTO pr_request_analyses(request_id,revision,status,snapshot,summary) VALUES('batch','revision','SUCCEEDED',$1,'旧分析')",
-        [snapshot],
-      );
-      await sql.query(
-        "INSERT INTO pr_analysis_calls(request_id,call_id,revision,token_hash,model,stage,status,prompt_tokens,completion_tokens,start_hash) VALUES('batch','call','revision','fixture','fixture','review','RECEIVED',70,10,'fixture')",
-      );
       const before = await statistics();
       r = await call('/v1/tasks/delete', {
         ids: ['comparison-case-v2-alpha-jev', 'case-v2-alpha'],
@@ -274,17 +266,10 @@ test('稳定 case 运行历史与软删除集成', { timeout: 60_000 }, async (s
         ).caseCount,
         1,
       );
-      assert.equal(await read('/v2/requests/batch/analysis'), null);
-      assert.equal(detail.metrics.analysis.calls, 0);
       const after = await statistics();
       assert.equal(
         after.summary.tokens.totalTokens,
-        before.summary.tokens.totalTokens - 200,
-      );
-      // 请求仅剩 beta 后可以重新分析，新一轮不继续展示已删除成员的旧总结。
-      assert.equal(
-        (await call('/v2/requests/batch/analysis', {})).statusCode,
-        202,
+        before.summary.tokens.totalTokens - 120,
       );
       assert.equal(
         (await call('/v1/tasks/delete', { ids: ['case-v2-beta', 'missing'] }))
@@ -463,29 +448,6 @@ test('稳定 case 运行历史与软删除集成', { timeout: 60_000 }, async (s
           )
         ).rows[0].n,
         1,
-      );
-    });
-    // 范围：报告分析冻结与删除并发后不保留旧成员分析；不验证真实 worker 或模型回执。
-    await suite.test('分析生成与删除并发不会复活旧快照', async () => {
-      await submit('analysis-race', ['race-a', 'race-b']);
-      await finish('case-v2-race-a', 'FAILED');
-      await finish('case-v2-race-b', 'FAILED');
-      const responses = await Promise.all([
-        call('/v2/requests/analysis-race/analysis', {}),
-        call('/v1/tasks/case-v2-race-a/delete', {}),
-      ]);
-      assert.equal(responses[0]!.statusCode, 202, responses[0]!.body);
-      assert.equal(responses[1]!.statusCode, 200, responses[1]!.body);
-      const analysis = (
-        await sql.query(
-          "SELECT snapshot,excluded_at FROM pr_request_analyses WHERE request_id='analysis-race'",
-        )
-      ).rows[0];
-      assert.ok(
-        analysis.excluded_at ||
-          analysis.snapshot.cases.every(
-            (c: { caseId: string }) => c.caseId !== 'race-a',
-          ),
       );
     });
     // 范围：旧普通任务的 sourceTaskId 是溯源身份，删除仅按 comparison.id 成组；不执行真实对比。

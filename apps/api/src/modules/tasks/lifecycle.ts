@@ -1,4 +1,3 @@
-import type { PoolClient } from 'pg';
 import { Database } from '../../db.js';
 import { ApiError } from '../../domain.js';
 
@@ -9,7 +8,7 @@ const TASK_ID = /^[A-Za-z0-9_-]{1,160}$/;
 /** 删除只改变可见性，保留执行、会话和证据之间的不可变关联。 */
 export class TaskLifecycle {
   constructor(
-    /** 删除标记、摘要失效和分析撤权在同一事务提交。 */
+    /** 删除标记与摘要失效在同一事务提交。 */
     private readonly db: Database,
   ) {}
 
@@ -105,43 +104,14 @@ export class TaskLifecycle {
           'TASK_RESOURCES_OPEN',
           '任务会话或清理尚未结束，请稍后删除',
         );
-      const changed = related.rows
-        .filter((r) => !r.deleted_at)
-        .map((r) => r.id);
       await client.query(
         'UPDATE pr_tasks SET deleted_at=clock_timestamp() WHERE id=ANY($1::text[]) AND deleted_at IS NULL',
         [affected],
       );
-      const requestIds = (
-        await client.query<{ request_id: string }>(
-          'SELECT DISTINCT request_id FROM pr_request_runs WHERE task_id=ANY($1::text[])',
-          [changed],
-        )
-      ).rows.map((r) => r.request_id);
-      if (requests) requestIds.push(...ids);
-      await this.invalidateAnalyses(client, [...new Set(requestIds)]);
       return {
         deletedTaskIds: affected,
         deletedRequestIds: requests ? ids : [],
       };
     });
-  }
-
-  /** 成员变化后旧分析整体失效；无法可靠拆分的多 case 分析用量整轮排除。 */
-  private async invalidateAnalyses(client: PoolClient, ids: string[]) {
-    for (const id of [...ids].sort())
-      await client.query(
-        'SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
-        [`analysis:${id}`],
-      );
-    await client.query(
-      `UPDATE pr_request_analyses SET excluded_at=clock_timestamp(),status='FAILED',token_hash=NULL,lease_until=NULL
-      WHERE request_id=ANY($1::text[]) AND excluded_at IS NULL`,
-      [ids],
-    );
-    await client.query(
-      'UPDATE pr_analysis_calls SET excluded_at=clock_timestamp() WHERE request_id=ANY($1::text[]) AND excluded_at IS NULL',
-      [ids],
-    );
   }
 }

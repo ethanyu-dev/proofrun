@@ -1057,15 +1057,14 @@ export interface ExecutionOutcome {
  */
 export interface RequestMetrics {
   /**
-   * 关联执行首次领取到最后任务结束的墙钟跨度，含人工等待、组间等待与清理，不含首次排队和异步分析；复用任务沿用原时间。
+   * 关联执行首次领取到最后任务结束的墙钟跨度，含人工等待、组间等待与清理，不含首次排队；复用任务沿用原时间。
    */
   executionElapsedMs: number | null;
   execution: TokenUsage;
   jev: TokenUsage1;
   llm: TokenUsage2;
-  analysis: TokenUsage3;
   /**
-   * 验证执行与全部 Agent 分析已采集 Tokens 的合计。
+   * 验证执行已采集 Tokens 的合计。
    */
   totalTokens: number | null;
 }
@@ -1112,30 +1111,9 @@ export interface TokenUsage1 {
   calls: number;
 }
 /**
- * 验证中的文本决策和填写调用，不含报告分析。
+ * 验证中的文本决策和填写调用。
  */
 export interface TokenUsage2 {
-  /**
-   * 已返回的输入 Tokens。
-   */
-  promptTokens: number | null;
-  /**
-   * 已返回的输出 Tokens。
-   */
-  completionTokens: number | null;
-  /**
-   * 已返回输入与输出的合计；均未采集时为 null。
-   */
-  totalTokens: number | null;
-  /**
-   * 已登记的实际模型调用次数，包含未回传用量的调用。
-   */
-  calls: number;
-}
-/**
- * 本请求全部分析代次、恢复及失败调用的累计用量。
- */
-export interface TokenUsage3 {
   /**
    * 已返回的输入 Tokens。
    */

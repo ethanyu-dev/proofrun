@@ -263,16 +263,7 @@ test(
         'COMPLETED',
         { modelCalls: 2, promptTokens: 30, completionTokens: 3 },
       );
-      for (const [id, revision] of [
-        ['analysis-one', 'old'],
-        ['analysis-two', 'new'],
-      ])
-        await sql.query(
-          `INSERT INTO pr_analysis_calls(request_id,call_id,revision,token_hash,model,stage,status,prompt_tokens,completion_tokens,started_at,start_hash) VALUES('request-one',$1,$2,'fixture','fixture','review','RECEIVED',50,5,'2024-03-05T01:00:00Z','fixture')`,
-          [id, revision],
-        );
-
-      // 范围：全部执行组、跨日、重试、分析历史、缺失用量及旧报告回填；不推断供应商计费。
+      // 范围：执行组、跨日、重试、缺失用量及旧报告回填；不推断供应商计费。
       await suite.test(
         'Tokens 不随 Case 复用或报告汇总重复，缺失单独计数',
         async () => {
@@ -284,17 +275,11 @@ test(
             calls: 7,
             unmeasuredCalls: 2,
           });
-          assert.deepEqual(week.summary.analysis, {
-            promptTokens: 100,
-            completionTokens: 10,
-            totalTokens: 110,
-            calls: 2,
-            unmeasuredCalls: 0,
-          });
-          assert.equal(week.summary.tokens.totalTokens, 520);
+          assert.equal('analysis' in week.summary, false);
+          assert.equal(week.summary.tokens.totalTokens, 410);
           assert.equal(week.summary.legacyUsageTasks, 1);
           assert.equal(week.days[0]!.tokens.totalTokens, 365);
-          assert.equal(week.days[1]!.tokens.totalTokens, 122);
+          assert.equal(week.days[1]!.tokens.totalTokens, 12);
           assert.equal(week.days[2]!.tokens.totalTokens, 33);
           assert.equal(
             week.summary.tokens.totalTokens,

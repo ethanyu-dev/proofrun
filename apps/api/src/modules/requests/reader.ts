@@ -75,7 +75,7 @@ export class RequestReader {
     });
   }
 
-  /** 供已有事务冻结分析输入，避免持锁时再占用第二条连接。 */
+  /** 供已有事务读取请求快照，避免持锁时再占用第二条连接。 */
   async snapshot(client: PoolClient, id: string): Promise<RequestResultV2> {
     const rows = (
       await client.query<RequestRow>(

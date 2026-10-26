@@ -44,7 +44,7 @@ export function durationText(ms: number | null | undefined): string {
     .join(' ');
 }
 
-/** 顶部只展示验证执行用量，异步分析的消耗在分析卡片单独展示。 */
+/** 顶部展示验证执行用量，与导出报告保持一致。 */
 export function ReportUsage({
   metrics,
   historicalJev = false,
@@ -98,13 +98,13 @@ export function ReportUsageDetails({
   ];
   return (
     <UsageDetails rows={rows}>
-      运行时间含人工等待与清理，不含首次排队和异步分析。验证 Tokens
+      运行时间含人工等待与清理，不含首次排队。验证 Tokens
       合计包含所有执行组和清理，复用 Case 沿用原执行记录。
     </UsageDetails>
   );
 }
 
-/** 验证与分析复用相同的折叠表格，各自传入所属用量和口径说明。 */
+/** 折叠表格展示验证执行用量及统计口径。 */
 export function UsageDetails({
   rows,
   children,

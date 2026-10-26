@@ -20,10 +20,6 @@ export async function registerRerun(
     [request.requestId, request.hash, request.rerunParameters],
   );
   if (!accepted.rowCount) return false;
-  // 与分析入队共用锁：新运行不能继续展示或接受旧快照的分析回执。
-  await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
-    `analysis:${request.requestId}`,
-  ]);
   return true;
 }
 
@@ -54,9 +50,4 @@ export async function replaceMemberRuns(
       [request.requestId, caseId],
     );
   }
-  await client.query(
-    `UPDATE pr_request_analyses SET excluded_at=clock_timestamp(),status='FAILED',
-     token_hash=NULL,lease_until=NULL WHERE request_id=$1`,
-    [request.requestId],
-  );
 }

@@ -8,7 +8,7 @@
     "executionElapsedMs": {
       "type": ["integer", "null"],
       "minimum": 0,
-      "description": "关联执行首次领取到最后任务结束的墙钟跨度，含人工等待、组间等待与清理，不含首次排队和异步分析；复用任务沿用原时间。"
+      "description": "关联执行首次领取到最后任务结束的墙钟跨度，含人工等待、组间等待与清理，不含首次排队；复用任务沿用原时间。"
     },
     "execution": {
       "$ref": "token-usage.schema.json",
@@ -20,24 +20,13 @@
     },
     "llm": {
       "$ref": "token-usage.schema.json",
-      "description": "验证中的文本决策和填写调用，不含报告分析。"
-    },
-    "analysis": {
-      "$ref": "token-usage.schema.json",
-      "description": "本请求全部分析代次、恢复及失败调用的累计用量。"
+      "description": "验证中的文本决策和填写调用。"
     },
     "totalTokens": {
       "type": ["integer", "null"],
       "minimum": 0,
-      "description": "验证执行与全部 Agent 分析已采集 Tokens 的合计。"
+      "description": "验证执行已采集 Tokens 的合计。"
     }
   },
-  "required": [
-    "executionElapsedMs",
-    "execution",
-    "jev",
-    "llm",
-    "analysis",
-    "totalTokens"
-  ]
+  "required": ["executionElapsedMs", "execution", "jev", "llm", "totalTokens"]
 }
