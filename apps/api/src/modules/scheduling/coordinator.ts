@@ -1,3 +1,5 @@
+import { supportsCapabilities } from '@proofrun/contracts';
+import { recoverableFocusFailure } from '@proofrun/contracts';
 import { assertSupportedSession, usesLocalIdentity } from '../sessions/plan.js';
 import { TaskReader } from '../tasks/reader.js';
 import {
@@ -142,7 +144,10 @@ export class Coordinator {
     if (
       task.acceptanceCriteria.some((c) =>
         c.evidenceKinds.some(
-          (kind) => !['DOM', 'SCREENSHOT', 'NETWORK', 'TRACE'].includes(kind),
+          (kind) =>
+            !['DOM', 'SCREENSHOT', 'NETWORK', 'TRACE', 'RUNTIME'].includes(
+              kind,
+            ),
         ),
       )
     )
@@ -449,6 +454,29 @@ export class Coordinator {
           routed.some((c) => c.heartbeat?.admission?.accepting === false)
         )
           queueCode = 'NODE_CAPACITY';
+        if (
+          routed.length &&
+          routed.every(
+            (c) =>
+              !supportsCapabilities(
+                c.heartbeat!.capabilities,
+                task.executionPlan?.requiredCapabilities ?? [],
+              ),
+          )
+        ) {
+          await client.query(
+            "UPDATE pr_tasks SET state='ERROR',finished_at=clock_timestamp(),queue_reason=NULL,error=$2 WHERE id=$1 AND state='QUEUED'",
+            [
+              task.taskId,
+              {
+                code: 'CAPABILITY_UNSUPPORTED',
+                message: '在线路由节点不支持本用例需要的取证能力',
+                requiredCapabilities: task.executionPlan?.requiredCapabilities,
+              },
+            ],
+          );
+          continue;
+        }
         for (const connection of candidates) {
           const heartbeat = connection.heartbeat!;
           const node = (
@@ -605,7 +633,9 @@ export class Coordinator {
                   ? { renewable: true }
                   : {}),
                 liveView: heartbeat.capabilities.directHitl === true,
-                networkEvidence: taskEvidenceKinds(task).includes('NETWORK'),
+                networkEvidence: taskEvidenceKinds(task).some((kind) =>
+                  ['NETWORK', 'RUNTIME'].includes(kind),
+                ),
                 leaseRequestId: heartbeat.leaseRequestId,
                 leaseTtlMs: this.leaseTtl(context, heartbeat),
                 maxDurationMs: Math.min(
@@ -636,9 +666,15 @@ export class Coordinator {
     });
   }
 
-  /** 能力不足时继续排队；不把缺失能力静默降级成别的证据。 */
+  /** 候选节点必须满足所需能力；确定的版本缺口由准入层单独报告。 */
   private eligible(heartbeat: Heartbeat, task: VerificationTask): boolean {
     return (
+      supportsCapabilities(
+        heartbeat.capabilities,
+        task.executionPlan?.requiredCapabilities ?? [],
+      ) &&
+      (!taskEvidenceKinds(task).includes('RUNTIME') ||
+        heartbeat.capabilities.runtimeEvidenceVersion === 1) &&
       heartbeat.pool === task.environment.nodePool &&
       heartbeat.admission?.accepting === true &&
       (!task.sessionPlan?.external ||
@@ -656,7 +692,9 @@ export class Coordinator {
         (heartbeat.capabilities.renewableSessions === true &&
           heartbeat.capabilities.directHitl === true &&
           !!heartbeat.publicUrl)) &&
-      (!taskEvidenceKinds(task).includes('NETWORK') ||
+      (!taskEvidenceKinds(task).some((kind) =>
+        ['NETWORK', 'RUNTIME'].includes(kind),
+      ) ||
         heartbeat.capabilities.networkEvidence === true) &&
       (!taskEvidenceKinds(task).includes('TRACE') ||
         heartbeat.capabilities.trace === true) &&
@@ -923,6 +961,17 @@ export class Coordinator {
           '旧任务不能启用分组标签页',
         );
       }
+      if (
+        operation.type === 'browser.act' &&
+        operation.action === 'pwa.cleanup' &&
+        (actor !== 'AGENT' ||
+          !context.definition.cleanupStepIds?.includes(stepId ?? ''))
+      )
+        throw new ApiError(
+          403,
+          'CLEANUP_SCOPE_FORBIDDEN',
+          'PWA 清理只能在本用例的清理步骤执行',
+        );
       // Cookie 权限绑定任务 origin，不能借人工链接写入其他站点或任意 URL。
       if (operation.type === 'browser.cookies.set') {
         const url = new URL(operation.url);
@@ -1593,7 +1642,8 @@ export class Coordinator {
       } else if (
         !staleRenewal(row.kind as string, event) &&
         ((event.effect === 'MAY_HAVE_HAPPENED' &&
-          !recoverableObservationFailure(row.kind, event)) ||
+          !recoverableObservationFailure(row.kind, event) &&
+          !recoverableFocusFailure(request.command, event)) ||
           (['session.open', 'session.renew'].includes(row.kind as string) &&
             event.operationStatus !== 'SUCCEEDED'))
       ) {

@@ -29,6 +29,8 @@ def run():
         definition=task();definition['environment']['allowIntervention']=True
         # 首次 Agent 导航耗尽预算后，人工点击、输入及按键仍须完成；仅验证本地夹具，不代表真实账号登录验收。
         definition['budget']['maxActions']=1
+        # 真实运行时取证与 DOM 分开归档，人工读取不改变账号版本或代替待办确认。
+        definition['acceptanceCriteria'][0]['evidenceKinds']=['DOM','RUNTIME']
         definition['target']['url']=f'http://127.0.0.1:{page.server_port}'
         api('POST','/v1/tasks',definition,expected=202)
         execution=harness.claim();harness.ready(execution)
@@ -45,6 +47,8 @@ def run():
         api('POST',f'/v1/executions/{execution["id"]}/commands',{'type':'execution.command','commandId':command_id,'timeoutMs':15000,'controlRevision':2,'command':{'type':'browser.observe','screenshot':True}},execution['leaseToken'],202)
         result=until(lambda:api('GET',f'/v1/executions/{execution["id"]}/commands/{command_id}',token=execution['leaseToken'])['result'])
         assert 'Logged in --cdp HITL中文' in result['data']['text'],result
+        assert result['data']['runtime']['status']=='observed',result
+        assert any(ref['kind']=='RUNTIME' for ref in result['data']['artifactRefs']),result
         # 人工处理结束仍使用原 session；最终任务取消才回收，避免将处理页关闭当成浏览器关闭。
         assert harness.execution(execution)['state']=='RUNNING'
         api('POST',f'/v1/tasks/{definition["taskId"]}/cancel');harness.cleaned(execution,[])

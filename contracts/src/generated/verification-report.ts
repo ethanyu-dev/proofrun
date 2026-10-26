@@ -18,7 +18,7 @@ export type VerificationReport = {
   }[];
   artifacts: {
     id: string;
-    kind: 'DOM' | 'SCREENSHOT' | 'NETWORK' | 'TRACE';
+    kind: 'DOM' | 'SCREENSHOT' | 'NETWORK' | 'TRACE' | 'RUNTIME';
     uri: string;
     sha256: string;
   }[];

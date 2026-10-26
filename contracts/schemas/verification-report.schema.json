@@ -94,7 +94,7 @@
             "minLength": 1
           },
           "kind": {
-            "enum": ["DOM", "SCREENSHOT", "NETWORK", "TRACE"]
+            "enum": ["DOM", "SCREENSHOT", "NETWORK", "TRACE", "RUNTIME"]
           },
           "uri": {
             "type": "string",

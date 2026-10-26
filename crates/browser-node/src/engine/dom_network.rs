@@ -6,6 +6,8 @@ use std::collections::VecDeque;
 
 /// 单 tab 的历史上限；截断后只能证明已保留的正向事实。
 const NETWORK_HISTORY: usize = 500;
+/// Console 只保留有界错误记录，不遍历或序列化页面对象。
+const CONSOLE_HISTORY: usize = 100;
 
 /// 认证头、正文和 URL 查询参数在收到事件时即丢弃，不进入历史缓存。
 pub(super) struct NetworkCapture {
@@ -13,23 +15,62 @@ pub(super) struct NetworkCapture {
     target: String,
     entries: VecDeque<Value>,
     truncated: bool,
+    /// 主渲染目标的异常有界保存，截断后不能证明没有异常。
+    console: VecDeque<Value>,
+    /// 截断后缺少记录不能作为不存在异常的证明。
+    console_truncated: bool,
+    /// 最近一次受限公开图片探测，单独标注凭据和采集位置。
+    last_probe: Option<Value>,
 }
 
 impl NetworkCapture {
-    /// 请求与响应以 Chromium 身份关联；重定向覆盖该请求的旧地址，不能拼接错误状态。
+    /// 请求与响应以 Chromium 身份关联；重定向逐跳保留，最终响应只更新最新一跳。
     pub(super) fn event(&mut self, event: &Value) {
         if event["sessionId"] != self.session {
             return;
         }
         let p = &event["params"];
+        if ["Runtime.exceptionThrown", "Runtime.consoleAPICalled"]
+            .contains(&event["method"].as_str().unwrap_or(""))
+        {
+            if event["method"] == "Runtime.exceptionThrown" || p["type"] == "error" {
+                // 不序列化任意 Console 对象；保留错误类型、位置及有界文本。
+                let message = if event["method"] == "Runtime.exceptionThrown" {
+                    p["exceptionDetails"]["text"]
+                        .as_str()
+                        .unwrap_or("uncaught exception")
+                } else {
+                    "console.error"
+                };
+                self.console.push_back(json!({"kind":event["method"],"message":message.chars().take(1000).collect::<String>(),"timestamp":p["timestamp"],"line":p["exceptionDetails"]["lineNumber"]}));
+                if self.console.len() > CONSOLE_HISTORY {
+                    self.console.pop_front();
+                    self.console_truncated = true;
+                }
+            }
+            return;
+        }
         if event["method"] == "Network.requestWillBeSent" {
-            self.entries
-                .retain(|entry| entry["requestId"] != p["requestId"]);
+            if let Some(previous) = self
+                .entries
+                .iter_mut()
+                .rev()
+                .find(|entry| entry["requestId"] == p["requestId"])
+            {
+                if p.get("redirectResponse").is_some() {
+                    previous["status"] = p["redirectResponse"]["status"].clone();
+                    previous["headers"] = response_headers(&p["redirectResponse"]["headers"]);
+                    previous["redirect"] = json!(true);
+                }
+            }
             let raw = json!({"requests":[{"url":p["request"]["url"],"method":p["request"]["method"],"resourceType":p["type"]}]});
             let Ok(clean) = crate::network::sanitize(&raw) else {
                 return;
             };
             let mut entry = clean["requests"][0].clone();
+            if let Some(image) = image_parameters(p["request"]["url"].as_str().unwrap_or("")) {
+                entry["image"] = image;
+            }
             entry["requestId"] = p["requestId"].clone();
             entry["navigationId"] = p["loaderId"].clone();
             entry["frameId"] = p["frameId"].clone();
@@ -43,20 +84,32 @@ impl NetworkCapture {
             && let Some(entry) = self
                 .entries
                 .iter_mut()
+                .rev()
                 .find(|entry| entry["requestId"] == p["requestId"])
         {
             entry["status"] = p["response"]["status"].clone();
+            entry["headers"] = response_headers(&p["response"]["headers"]);
         }
     }
 }
 
 impl Dom {
+    /// 运行时探针复用长期采集连接，避免每次观察增加未释放的 CDP 会话。
+    pub(crate) fn network_session(&self, target: &str) -> Option<String> {
+        self.network
+            .as_ref()
+            .filter(|capture| capture.target == target)
+            .map(|capture| capture.session.clone())
+    }
     /// 认证相关输入前排空旧事件，再清除所有旧请求；迟到响应不能复活旧账号的事实。
     pub(crate) async fn network_invalidate(&mut self) -> Result<()> {
         self.network_snapshot().await?;
         let capture = self.network.as_mut().unwrap();
         capture.entries.clear();
         capture.truncated = false;
+        capture.console.clear();
+        capture.console_truncated = false;
+        capture.last_probe = None;
         Ok(())
     }
 
@@ -68,7 +121,13 @@ impl Dom {
             target: target.into(),
             entries: VecDeque::new(),
             truncated: false,
+            console: VecDeque::new(),
+            console_truncated: false,
+            last_probe: None,
         });
+        self.call(Some(&session), "Runtime.enable", json!({}))
+            .await?;
+        self.call(Some(&session), "Page.enable", json!({})).await?;
         self.call(Some(&session), "Network.enable", json!({}))
             .await?;
         Ok(())
@@ -89,8 +148,152 @@ impl Dom {
             .cloned()
             .collect();
         Ok(
-            json!({"requests":requests,"navigationId":navigation,"targetId":capture.target,"scope":"tab-navigation","truncated":capture.truncated,"complete":false,"redacted":true}),
+            json!({"requests":requests,"navigationId":navigation,"targetId":capture.target,"scope":"tab-navigation","truncated":capture.truncated,"complete":false,"redacted":true,"probe":capture.last_probe}),
         )
+    }
+}
+
+/// 只暴露无查询参数的站内图片路径；探测只能改变已观察图片的质量，不能替换资源地址。
+fn image_parameters(raw: &str) -> Option<Value> {
+    let url = reqwest::Url::parse(raw).ok()?;
+    if url.path() != "/_next/image" {
+        return None;
+    }
+    let pairs: Vec<_> = url.query_pairs().collect();
+    if pairs.len() != 3 {
+        return None;
+    }
+    let get = |key: &str| {
+        pairs
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_ref())
+    };
+    let source = get("url")?;
+    if !source.starts_with('/')
+        || source.starts_with("//")
+        || source.contains(['?', '#', '\\'])
+        || source.len() > 2048
+    {
+        return None;
+    }
+    let width = get("w")?.parse::<u32>().ok()?;
+    let quality = get("q")?.parse::<u8>().ok()?;
+    if width == 0 || width > 16384 || quality > 100 {
+        return None;
+    }
+    Some(json!({"source":source,"width":width,"quality":quality}))
+}
+
+/// 仅保留验收所需响应头；认证、Cookie 和任意响应头不会进入证据。
+fn response_headers(headers: &Value) -> Value {
+    let mut out = serde_json::Map::new();
+    if let Some(headers) = headers.as_object() {
+        for (key, value) in headers {
+            let name = key.to_ascii_lowercase();
+            if [
+                "location",
+                "cache-control",
+                "content-type",
+                "pragma",
+                "expires",
+            ]
+            .contains(&name.as_str())
+            {
+                let raw = value.as_str().unwrap_or("");
+                let clean = if name == "location" {
+                    if let Ok(mut url) = reqwest::Url::parse(raw) {
+                        let _ = url.set_username("");
+                        let _ = url.set_password(None);
+                        url.set_query(None);
+                        url.set_fragment(None);
+                        url.to_string()
+                    } else {
+                        raw.split(['?', '#']).next().unwrap_or("").to_owned()
+                    }
+                } else {
+                    raw.to_owned()
+                };
+                out.insert(name, json!(clean.chars().take(2048).collect::<String>()));
+            }
+        }
+    }
+    Value::Object(out)
+}
+
+impl Dom {
+    /// Console 范围明确限定当前渲染目标；不据零条记录推断跨进程 iframe 无异常。
+    pub(crate) fn console_snapshot(&self) -> Value {
+        match self.network.as_ref() {
+            Some(c) => {
+                json!({"scope":"active-tab-renderer-since-subscription","entries":c.console,"truncated":c.console_truncated,"complete":false})
+            }
+            None => json!({"status":"unavailable"}),
+        }
+    }
+
+    /// 仅重放当前 origin 已观察到的图片端点；公开无凭据探测与浏览器会话响应分别标记。
+    pub(crate) async fn network_probe(&mut self, url: &str) -> crate::error::Result<Value> {
+        use crate::error::Fault;
+        let requested = reqwest::Url::parse(url)
+            .map_err(|_| Fault::rejected("INVALID_TARGET", "HTTP URL required"))?;
+        let capture = self
+            .network
+            .as_ref()
+            .ok_or_else(|| Fault::rejected("CAPABILITY_UNSUPPORTED", "network capture missing"))?;
+        let session = capture.session.clone();
+        let tree = self
+            .call(Some(&session), "Page.getFrameTree", json!({}))
+            .await?;
+        let page = reqwest::Url::parse(tree["frameTree"]["frame"]["url"].as_str().unwrap_or(""))
+            .map_err(|_| Fault::rejected("INVALID_TARGET", "page origin missing"))?;
+        let capture = self.network.as_ref().unwrap();
+        let requested_image = image_parameters(url);
+        let known = requested_image.as_ref().is_some_and(|image| {
+            capture.entries.iter().any(|e| {
+                e["navigationId"] == tree["frameTree"]["frame"]["loaderId"]
+                    && e["url"]
+                        == format!(
+                            "{}{}",
+                            requested.origin().ascii_serialization(),
+                            requested.path()
+                        )
+                    && e["image"]["source"] == image["source"]
+                    && e["image"]["width"] == image["width"]
+            })
+        });
+        if !matches!(requested.scheme(), "http" | "https")
+            || requested.origin() != page.origin()
+            || !requested.username().is_empty()
+            || requested.password().is_some()
+            || requested.path() != "/_next/image"
+            || !known
+            || requested
+                .query_pairs()
+                .any(|(k, _)| !["url", "w", "q"].contains(&k.as_ref()))
+        {
+            return Err(Fault::rejected(
+                "PROBE_SCOPE_FORBIDDEN",
+                "only observed same-origin image endpoint parameters may be replayed",
+            ));
+        }
+        let response = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .map_err(|_| Fault::rejected("PROBE_FAILED", "client unavailable"))?
+            .get(requested.clone())
+            .send()
+            .await
+            .map_err(|_| Fault::unknown("PROBE_FAILED", "request outcome unavailable"))?;
+        let headers = response
+            .headers()
+            .iter()
+            .filter_map(|(k, v)| v.to_str().ok().map(|v| (k.as_str().to_string(), json!(v))))
+            .collect::<serde_json::Map<_, _>>();
+        let data = json!({"scope":"node-public-probe","credentials":"omitted","followRedirects":false,"url":format!("{}{}",requested.origin().ascii_serialization(),requested.path()),"quality":requested.query_pairs().find(|(k,_)|k=="q").map(|(_,v)|v.into_owned()),"status":response.status().as_u16(),"headers":response_headers(&Value::Object(headers))});
+        self.network.as_mut().unwrap().last_probe = Some(data.clone());
+        Ok(json!({"performed":true,"networkProbe":data}))
     }
 }
 
@@ -108,6 +311,9 @@ mod tests {
             target: "t".into(),
             entries: VecDeque::new(),
             truncated: false,
+            console: VecDeque::new(),
+            console_truncated: false,
+            last_probe: None,
         };
         for i in 0..=NETWORK_HISTORY {
             capture.event(&json!({"sessionId":"s","method":"Network.requestWillBeSent","params":{"requestId":i.to_string(),"loaderId":"n","frameId":"f","wallTime":1,"request":{"url":"https://fixture.test/api?token=secret","method":"GET","headers":{"Authorization":"secret"},"postData":"secret"}}}));
@@ -123,6 +329,43 @@ mod tests {
                 .unwrap()
                 .contains("secret")
         );
+    }
+
+    // 范围：重定向逐跳保留且敏感响应头、Location 凭据丢弃；事件为协议夹具。
+    #[test]
+    fn redirects_and_probe_parameters_are_bounded() {
+        let mut capture = NetworkCapture {
+            session: "s".into(),
+            target: "t".into(),
+            entries: VecDeque::new(),
+            truncated: false,
+            console: VecDeque::new(),
+            console_truncated: false,
+            last_probe: None,
+        };
+        capture.event(&json!({"sessionId":"s","method":"Network.requestWillBeSent","params":{"requestId":"r","loaderId":"n","request":{"url":"https://site.test/start","method":"GET"}}}));
+        capture.event(&json!({"sessionId":"s","method":"Network.requestWillBeSent","params":{"requestId":"r","loaderId":"n","redirectResponse":{"status":307,"headers":{"Location":"https://user:secret@site.test/end?token=secret","Set-Cookie":"secret"}},"request":{"url":"https://site.test/end","method":"GET"}}}));
+        capture.event(&json!({"sessionId":"s","method":"Network.responseReceived","params":{"requestId":"r","response":{"status":200,"headers":{"Cache-Control":"no-store"}}}}));
+        assert_eq!(capture.entries.len(), 2);
+        assert_eq!(capture.entries[0]["status"], 307);
+        assert_eq!(
+            capture.entries[0]["headers"]["location"],
+            "https://site.test/end"
+        );
+        assert_eq!(capture.entries[1]["status"], 200);
+        assert!(
+            !serde_json::to_string(&capture.entries)
+                .unwrap()
+                .contains("secret")
+        );
+        assert!(image_parameters("https://site.test/_next/image?url=%2Fasset&w=64&q=0").is_some());
+        for invalid in [
+            "https://site.test/_next/image?url=http://internal.test&w=64&q=80",
+            "https://site.test/_next/image?url=%2Fasset%3Ftoken%3Dsecret&w=64&q=80",
+            "https://site.test/_next/image?url=%2Fasset&w=64&q=80&extra=1",
+        ] {
+            assert!(image_parameters(invalid).is_none());
+        }
     }
 
     /// 真实隔离 Chromium 与本地 HTTP 验证初始请求跨观察保留、刷新隔离、兄弟 tab 排除；不连接业务站点或模型。

@@ -56,6 +56,10 @@ export type CaseStep = {
     statusMin?: number;
     statusMax?: number;
   }[];
+  /**
+   * 本步骤必须具备的实际节点能力；文本推导只补充已识别的需求。
+   */
+  requiredCapabilities?: ('runtimeEvidenceV1' | 'networkDetailsV1' | 'focusRecoveryV1')[];
 } & {
   /**
    * 步骤身份；省略时按原始数组位置生成，排序不改变身份。
@@ -112,6 +116,10 @@ export type CaseStep = {
     statusMin?: number;
     statusMax?: number;
   }[];
+  /**
+   * 本步骤必须具备的实际节点能力；文本推导只补充已识别的需求。
+   */
+  requiredCapabilities?: ('runtimeEvidenceV1' | 'networkDetailsV1' | 'focusRecoveryV1')[];
 };
 /**
  * 显式前置条件；文本检查使用完整观察，人工条件只能由当前会话的人工确认满足。

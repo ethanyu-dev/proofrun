@@ -32,6 +32,14 @@ export type HitlServer =
        * 节点已冻结输入，等待控制面确认完成。
        */
       finalizing?: boolean;
+      /**
+       * 实际人工处理截止时间；链接有效不代表任务仍可处理。
+       */
+      waitDeadline?: string;
+      /**
+       * 当前会话已启用运行时取证。
+       */
+      runtimeEvidenceAvailable?: boolean;
     }
   | {
       type: 'frame';
@@ -50,6 +58,17 @@ export type HitlServer =
       commandId: string;
       status: string;
       effect: string;
+      /**
+       * 仅只读观察的脱敏运行时证据；输入命令不回传账号材料。
+       */
+      evidence?: {
+        runtime?: {
+          [k: string]: unknown;
+        };
+        network?: {
+          [k: string]: unknown;
+        };
+      };
     }
   | {
       type: 'completed';

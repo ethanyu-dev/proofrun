@@ -114,7 +114,8 @@ export interface ExecutionOutcome {
     | 'BROWSER_ERROR'
     | 'CLEANUP_ERROR'
     | 'EXECUTION_ERROR'
-    | 'HUMAN_UNEXECUTABLE';
+    | 'HUMAN_UNEXECUTABLE'
+    | 'CAPABILITY_ERROR';
   /**
    * 主要原因；旧 AGENT_ERROR 可由报告具体原因细分。
    */

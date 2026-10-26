@@ -20,6 +20,10 @@ export function targetState(t: ObservedTarget): string {
     t.expanded,
     t.checked,
     t.selected,
+    t.focusable,
+    t.focused,
+    t.documentFocused,
+    t.ariaHidden,
     t.operations,
     t.scroll,
     t.options,
@@ -36,6 +40,15 @@ export function observationState(page: Observation): string {
     page.text.replace(TARGET_MARKER, '').trim(),
     page.documents?.map(({ url, lang }) => [url, lang]),
     page.targets.map(targetState).sort(),
+    // 采集时间不是进展；真实注册/控制器和缓存变化必须解除旧 DOM 的停滞计数。
+    page.runtime
+      ? [
+          page.runtime.status,
+          page.runtime.serviceWorker,
+          page.runtime.cacheStorage,
+        ]
+      : null,
+    (page.network as { probe?: unknown } | undefined)?.probe,
   ]);
 }
 

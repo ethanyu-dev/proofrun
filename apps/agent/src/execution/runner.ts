@@ -1,3 +1,8 @@
+import {
+  recoverableFocusFailure,
+  requiresActiveServiceWorker,
+  activeServiceWorkerObserved,
+} from '@proofrun/contracts';
 import { SCROLL_DIRECTIONS, scrollDistance } from './scroll-distance.js';
 import { conditionKey, evaluatePolicyChecks } from './policy-checks.js';
 import { InteractionProgress } from './interaction-progress.js';
@@ -457,6 +462,11 @@ class Execution {
       )
     )
       this.interactions.failedClick(this.current, clicked, result.error?.code);
+    if (recoverableFocusFailure(operation, result))
+      throw new AgentFault(
+        'BROWSER_FOCUS_CHANGED',
+        '聚焦已尝试但按键未发送；旧动作不得重放。重新观察焦点、弹层及页面状态后选择新动作，无法核实副作用时阻塞当前步骤。',
+      );
     if (recoverableObservationFailure(operation.type, result))
       throw new AgentFault(
         'DOM_OBSERVATION_FAILED',
@@ -841,6 +851,11 @@ class Execution {
       ...(decision.x !== undefined ? { x: decision.x } : {}),
       ...(decision.y !== undefined ? { y: decision.y } : {}),
     };
+    if (decision.action === 'pwa.cleanup' && !this.isCleanup())
+      throw new AgentFault(
+        'INVALID_MODEL_DECISION',
+        'PWA 清理仅允许在清理步骤执行',
+      );
     const invalid = () =>
       new AgentFault(
         'INVALID_MODEL_DECISION',
@@ -855,10 +870,40 @@ class Execution {
         'INVALID_MODEL_DECISION',
         'scroll.value 只能是 up、down、left、right；不要附加像素数（如 up:1400），不支持 top/bottom。幅度由执行器依据当前视口计算。',
       );
+    if (['online', 'pwa.cleanup', 'network.probe'].includes(decision.action)) {
+      if (
+        this.current?.runtime?.version !== 1 ||
+        decision.value !== undefined ||
+        decision.x !== undefined ||
+        decision.y !== undefined
+      )
+        throw invalid();
+      if (decision.action === 'network.probe') {
+        try {
+          const url = new URL(decision.target ?? '');
+          if (
+            url.origin !== new URL(this.current.url).origin ||
+            url.pathname !== '/_next/image' ||
+            url.username ||
+            url.password
+          )
+            throw invalid();
+        } catch {
+          throw invalid();
+        }
+      } else if (decision.target !== undefined) throw invalid();
+      return operation;
+    }
     if (decision.action === 'press' && decision.target !== undefined) {
       if (
         !decision.value ||
-        !this.current?.targets.some((t) => t.target === decision.target)
+        !this.current?.targets.some(
+          (t) =>
+            t.target === decision.target &&
+            t.focusable !== false &&
+            t.ariaHidden !== true &&
+            t.disabled !== true,
+        )
       )
         throw invalid();
       // 旧节点会忽略 press.target，不能把定向意图静默降级成向任意焦点按键。
@@ -2089,6 +2134,20 @@ class Execution {
           }
           const currentEvidence = this.currentEvidence();
           if (this.isSetup() && decision.type === 'verification.finish') {
+            const step = this.grant.task.steps?.[this.stepIndex];
+            if (
+              step &&
+              !this.isCleanup() &&
+              this.grant.task.executionPlan?.requiredCapabilities?.includes(
+                'runtimeEvidenceV1',
+              ) &&
+              requiresActiveServiceWorker(step) &&
+              !activeServiceWorkerObserved(step.url, this.current?.runtime)
+            )
+              throw new AgentFault(
+                'INVALID_MODEL_DECISION',
+                '准备要求等待 Service Worker 激活；当前运行时证据未确认适用注册为 activated，页面打开不能代替准备完成。请补采或明确阻塞，不要求人工替代缺失的浏览器证据。',
+              );
             // 准备结果整批提交；无效 finish 或后续人工交接不能留下半份旧账号结论。
             const ready = new CriteriaLedger(this.task.acceptanceCriteria);
             ready.record(decidedCriteria, currentEvidence);
@@ -2341,6 +2400,7 @@ class Execution {
             'BROWSER_TARGET_OBSCURED',
             'BROWSER_STALE_OBSERVATION',
             'BROWSER_ACTION_PRECONDITION_FAILED',
+            'BROWSER_FOCUS_CHANGED',
             'BROWSER_WAIT_NOT_MET',
           ].includes(error.code)
         ) {

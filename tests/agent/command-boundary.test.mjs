@@ -30,6 +30,11 @@ const ACTIONS = [
   ...['back', 'forward', 'reload'].map((action) => ({ action })),
   ...['tab.switch', 'tab.close'].map((action) => ({ action, target: 'tab-1' })),
   { action: 'resize', value: '1440x900' },
+  { action: 'online' },
+  {
+    action: 'network.probe',
+    target: 'http://intranet.test/_next/image?url=%2Fasset&w=64&q=0',
+  },
 ];
 
 // 范围：真实模型 HTTP 适配、执行器和控制协议校验；页面及动作回执为夹具，不代表真实浏览器验收。
@@ -67,6 +72,7 @@ test('所有浏览器意图派发时隔离 progress 和 revisitReason', async (s
           );
           const result = await command(...args);
           if (operation.type === 'browser.observe') {
+            result.data.runtime = { version: 1, status: 'observed' };
             result.data.viewport = {
               width: 1000,
               height: 800,

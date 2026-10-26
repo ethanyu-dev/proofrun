@@ -124,6 +124,8 @@ pub struct Engine {
     config: EngineConfig,
     /// 当前有效观察身份；执行动作后清空。
     observation: Option<String>,
+    /// 聚焦失败可改变页面，必须完成新观察才能再次写入；绝不自动重放按键。
+    focus_recovery_pending: bool,
     /// 平台 target 到引擎短期 ref 的映射，不能作为公共协议暴露。
     targets: HashMap<String, String>,
     /// 原生 DOM 观察与实际节点引用，仅属于当前观察。
@@ -185,6 +187,7 @@ impl Engine {
             active_scope: None,
             config,
             observation: None,
+            focus_recovery_pending: false,
             targets: HashMap::new(),
             dom: None,
             trace: None,
@@ -290,6 +293,26 @@ impl Engine {
     }
     /// 将封闭的公共操作映射到固定 CLI 命令，并规范化观察和结果。
     pub async fn execute(&mut self, operation: BrowserCommand, timeout_ms: u64) -> Result<Value> {
+        let observe = matches!(operation, BrowserCommand::BrowserObserve { .. });
+        if self.focus_recovery_pending && !observe {
+            return Err(Fault::rejected(
+                "STALE_OBSERVATION",
+                "focus changed; fresh observation required",
+            ));
+        }
+        let result = self.execute_inner(operation, timeout_ms).await;
+        if observe && result.is_ok() {
+            self.focus_recovery_pending = false;
+        } else if result
+            .as_ref()
+            .is_err_and(|error| error.code == "KEYBOARD_FOCUS_UNCONFIRMED")
+        {
+            self.focus_recovery_pending = true;
+        }
+        result
+    }
+    /// 实际命令与观察实现；恢复门禁在外层统一处理。
+    async fn execute_inner(&mut self, operation: BrowserCommand, timeout_ms: u64) -> Result<Value> {
         validate(&operation, self.config.allow_unverified_writes)?;
         let deadline = process::boot_ms() + timeout_ms;
         let remaining = || deadline.saturating_sub(process::boot_ms()).max(1);
@@ -524,10 +547,10 @@ impl Engine {
                     result["tabScope"] = json!(scope);
                 }
                 if self.config.network_evidence {
-                    result["network"] = if let Some(target) = network_target {
+                    result["network"] = if let Some(target) = network_target.as_ref() {
                         let mut network = self
                             .networks
-                            .get_mut(&target)
+                            .get_mut(target)
                             .unwrap()
                             .network_snapshot()
                             .await?;
@@ -546,6 +569,16 @@ impl Engine {
                             ));
                         }
                     };
+                }
+                if let Some(target) = network_target.as_ref() {
+                    let capture = self.networks.get_mut(target).unwrap();
+                    let mut runtime = capture.runtime_inspect(target).await.unwrap_or_else(
+                        |_| json!({"status":"unavailable","reason":"RUNTIME_READ_FAILED"}),
+                    );
+                    runtime["console"] = capture.console_snapshot();
+                    runtime["tabScope"] = json!(self.active_scope);
+                    runtime["version"] = json!(1);
+                    result["runtime"] = runtime;
                 }
                 // 纯文本观察同样声明滚动幅度能力；旧协议夹具继续不声明。
                 if self.dom.is_some() && !screenshot.unwrap_or(false) {
@@ -591,6 +624,20 @@ impl Engine {
                 ..
             } => {
                 let name = raw["action"].as_str().unwrap();
+                if ["online", "pwa.cleanup", "network.probe"].contains(&name) {
+                    let tab = network_target.as_ref().ok_or_else(|| {
+                        Fault::rejected("CAPABILITY_UNSUPPORTED", "runtime capture not enabled")
+                    })?;
+                    self.observation = None;
+                    self.visual = None;
+                    self.targets.clear();
+                    let capture = self.networks.get_mut(tab).unwrap();
+                    return if name == "network.probe" {
+                        capture.network_probe(target.as_deref().unwrap_or("")).await
+                    } else {
+                        capture.runtime_action(tab, name).await
+                    };
+                }
                 let element = [
                     "click", "fill", "type", "hover", "check", "uncheck", "select", "scroll",
                     "press",
@@ -1064,6 +1111,20 @@ pub fn validate(command: &BrowserCommand, writes: bool) -> Result<()> {
                     "INVALID_ARGUMENT",
                     "visual coordinates required",
                 ));
+            }
+            let name = serde_json::to_value(action).unwrap();
+            if ["online", "pwa.cleanup", "network.probe"].contains(&name.as_str().unwrap_or("")) {
+                if value.is_some()
+                    || (name != "network.probe" && target.is_some())
+                    || (name == "network.probe"
+                        && target.as_ref().is_none_or(|url| url.len() > 8192))
+                {
+                    return Err(Fault::rejected(
+                        "INVALID_ARGUMENT",
+                        "runtime action parameters invalid",
+                    ));
+                }
+                return Ok(());
             }
             // 原生节点输入经 CDP 传输，不经过 argv；允许空串和前导短横线。
             let native_input = target.as_deref().is_some_and(|id| id.starts_with("dom-"))

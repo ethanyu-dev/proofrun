@@ -122,7 +122,7 @@
             "type": "string"
           },
           "kind": {
-            "enum": ["DOM", "SCREENSHOT", "NETWORK"]
+            "enum": ["DOM", "SCREENSHOT", "NETWORK", "RUNTIME", "TRACE"]
           },
           "sha256": {
             "type": "string"
@@ -134,6 +134,52 @@
     "limit": {
       "type": "integer",
       "minimum": 1
+    },
+    "renewals": {
+      "description": "最近续租投递与节点确认的诊断；不含执行令牌或完整信封。",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "sentAt": {
+            "type": ["string", "null"],
+            "format": "date-time"
+          },
+          "status": {
+            "type": ["string", "null"]
+          },
+          "error": {
+            "type": ["string", "null"]
+          },
+          "requestedTtlMs": {
+            "type": ["integer", "null"]
+          },
+          "grantAgeMs": {
+            "type": ["integer", "null"]
+          },
+          "leaseRemainingMs": {
+            "type": ["integer", "null"]
+          }
+        },
+        "required": [
+          "id",
+          "createdAt",
+          "sentAt",
+          "status",
+          "error",
+          "requestedTtlMs",
+          "grantAgeMs",
+          "leaseRemainingMs"
+        ]
+      }
     }
   },
   "required": ["commands", "events", "observation", "artifacts", "limit"],

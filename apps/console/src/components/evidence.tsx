@@ -71,9 +71,11 @@ export function Evidence({
               ? '页面截图'
               : artifact.kind === 'NETWORK'
                 ? '网络元数据'
-                : artifact.kind === 'TRACE'
-                  ? '浏览器执行 TRACE'
-                  : 'DOM 观察'}
+                : artifact.kind === 'RUNTIME'
+                  ? '运行时证据'
+                  : artifact.kind === 'TRACE'
+                    ? '浏览器执行 TRACE'
+                    : 'DOM 观察'}
           </h2>
           <p className="mono muted wrap">{artifact.id}</p>
         </div>

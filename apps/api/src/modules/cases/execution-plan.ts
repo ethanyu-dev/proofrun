@@ -1,3 +1,4 @@
+import { requiredCapabilities } from '@proofrun/contracts';
 import type { VerificationCaseV2, VerificationTask } from '@proofrun/contracts';
 import { ApiError } from '../../domain.js';
 
@@ -67,6 +68,13 @@ export function resolveExecutionPlan(
       ? 'guest'
       : 'configured';
   const kinds = new Set(evidenceKinds);
+  const required = [
+    ...new Set(
+      [...input.steps, ...input.cleanup].flatMap(requiredCapabilities),
+    ),
+  ];
+  if (required.includes('runtimeEvidenceV1')) kinds.add('RUNTIME');
+  if (required.includes('networkDetailsV1')) kinds.add('NETWORK');
   for (const step of [...input.steps, ...input.cleanup]) {
     const ids = new Set<string>();
     for (const check of step.policyChecks ?? []) {
@@ -94,6 +102,7 @@ export function resolveExecutionPlan(
       resolverVersion: 1,
     },
     evidenceKinds: [...kinds],
+    requiredCapabilities: required,
   };
   return {
     plan,

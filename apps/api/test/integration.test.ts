@@ -2892,6 +2892,39 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       },
     );
 
+    // 范围：真实 API/数据库区分已确认未发送按键与传输未知；真实聚焦由独立 Chromium 测试覆盖。
+    await suite.test('聚焦回执允许补采而传输未知仍终止', async () => {
+      for (const failure of ['confirmed', 'transport'] as const) {
+        const node = await addNode(`focus-${failure}`);
+        node.focusFailure = failure;
+        const definition = task(node.pool);
+        await submit(definition);
+        const execution = await claim();
+        await ready(execution);
+        const failed = await command(execution, {
+          type: 'browser.act',
+          action: 'press',
+          value: 'Enter',
+          target: 'fixture-target',
+          observationId: 'fixture-observation',
+        });
+        assert.equal(failed.result.operationStatus, 'UNKNOWN');
+        if (failure === 'confirmed') {
+          assert.equal(
+            (await api('GET', `/v1/tasks/${definition.taskId}`)).data.state,
+            'RUNNING',
+          );
+          const recovered = await command(execution, {
+            type: 'browser.observe',
+          });
+          assert.equal(recovered.result.operationStatus, 'SUCCEEDED');
+          await api('POST', `/v1/tasks/${definition.taskId}/cancel`, {});
+        }
+        await cleaned(definition.taskId);
+        assert.equal(node.calls.get(failed.request.commandId), 1);
+      }
+    });
+
     // 范围：不确定写入结束执行且不能使用新命令绕过；不证明真实引擎内部没有重试。
     await suite.test('未知写入不自动重放，旧执行不能继续操作', async () => {
       const node = await addNode('unknown');

@@ -35,7 +35,8 @@
         "BROWSER_ERROR",
         "CLEANUP_ERROR",
         "EXECUTION_ERROR",
-        "HUMAN_UNEXECUTABLE"
+        "HUMAN_UNEXECUTABLE",
+        "CAPABILITY_ERROR"
       ],
       "description": "面向用户的执行分类，与验收结果分开。"
     },

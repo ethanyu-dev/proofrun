@@ -29,6 +29,10 @@ interface State {
   mode: string;
   /** 本轮操作授权的截止时间。 */
   expiresAt: string;
+  /** 实际任务等待期限优先于处理链接有效期。 */
+  waitDeadline?: string;
+  /** 只有节点支持固定探针时显示人工取证入口。 */
+  runtimeEvidenceAvailable?: boolean;
   /** 旧服务端未返回目标地址时不显示 Cookie 表单。 */
   targetUrl?: string;
 }
@@ -67,6 +71,10 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
     height: number;
   }>();
   const [error, setError] = useState('');
+  const [runtimeEvidence, setRuntimeEvidence] = useState<{
+    commandId: string;
+    evidence: unknown;
+  }>();
   const [connected, setConnected] = useState(false);
   const [connectionState, setConnectionState] =
     useState<ConnectionState>('connecting');
@@ -80,6 +88,7 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
     setChecked([]);
     setDone(false);
     setUnableResult('');
+    setRuntimeEvidence(undefined);
   }, [id, token]);
   const [busy, setBusy] = useState(false);
   const [checked, setChecked] = useState<number[]>([]);
@@ -202,7 +211,14 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
           setBusy(false);
           completing.current = false;
         } else if (message.type === 'result') {
-          if (input.current!.acknowledge(message)) setError('');
+          if (input.current!.acknowledge(message)) {
+            setError('');
+            if (message.evidence)
+              setRuntimeEvidence({
+                commandId: message.commandId,
+                evidence: message.evidence,
+              });
+          }
         } else if (message.type === 'unable') {
           completed.current = true;
           completing.current = false;
@@ -270,7 +286,8 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
     const timer = setTimeout(() => setFrameTimedOut(true), FIRST_FRAME_MS);
     return () => clearTimeout(timer);
   }, [connected, state?.mode, hasFrame, done, attempt]);
-  const expired = !!state && Date.parse(state.expiresAt) <= now;
+  const expired =
+    !!state && Date.parse(state.waitDeadline ?? state.expiresAt) <= now;
   // 导航不依赖画面坐标；仅坐标输入要求首帧，避免空白页无法导航的闭环。
   const authorized = connected && state?.mode === 'HUMAN' && !done && !expired;
   const interactive = authorized && hasFrame;
@@ -499,6 +516,39 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
               <p className="muted note">
                 点击画面操作；中文与粘贴可使用输入框。
               </p>
+              {state?.runtimeEvidenceAvailable && (
+                <div>
+                  <Button
+                    variant="outline"
+                    disabled={!authorized || busy || typingPending}
+                    onClick={() => {
+                      flush();
+                      enqueue({ type: 'browser.observe', screenshot: false });
+                    }}
+                  >
+                    读取运行时证据
+                  </Button>
+                  <p className="muted note">
+                    读取当前页面的 Service Worker、缓存、Console
+                    与网络记录；读取结果不会代替待办确认。
+                  </p>
+                  {runtimeEvidence && (
+                    <details>
+                      <summary>
+                        查看证据（操作 {runtimeEvidence.commandId}）
+                      </summary>
+                      <pre
+                        style={{
+                          whiteSpace: 'pre-wrap',
+                          overflowWrap: 'anywhere',
+                        }}
+                      >
+                        {JSON.stringify(runtimeEvidence.evidence, null, 2)}
+                      </pre>
+                    </details>
+                  )}
+                </div>
+              )}
               {state?.targetUrl && (
                 <details className="hitl-cookie-disclosure">
                   <summary>通过 Cookie 登录</summary>
@@ -520,16 +570,25 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
                 <>
                   <p className="muted hitl-task-id">任务 {state.taskId}</p>
                   <p className="note">
-                    有效至 {new Date(state.expiresAt).toLocaleString()}
-                    。完成后继续执行任务。
+                    请在{' '}
+                    {new Date(
+                      state.waitDeadline ?? state.expiresAt,
+                    ).toLocaleString()}{' '}
+                    前处理 。完成后继续执行任务。
                     <strong
                       className={
-                        Date.parse(state.expiresAt) - now <= 60000
+                        Date.parse(state.waitDeadline ?? state.expiresAt) -
+                          now <=
+                        60000
                           ? 'hitl-time-warning'
                           : 'hitl-time'
                       }
                     >
-                      处理链接剩余有效期：{remainingTime(state.expiresAt, now)}
+                      任务等待剩余时间：
+                      {remainingTime(
+                        state.waitDeadline ?? state.expiresAt,
+                        now,
+                      )}
                     </strong>
                   </p>
                   <div className="hitl-checks">

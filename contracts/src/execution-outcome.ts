@@ -48,6 +48,7 @@ export function executionOutcome(facts: ExecutionFacts): ExecutionOutcome {
     code === 'HUMAN_UNEXECUTABLE'
   )
     category = 'HUMAN_UNEXECUTABLE';
+  else if (code === 'CAPABILITY_UNSUPPORTED') category = 'CAPABILITY_ERROR';
   else if (facts.state === 'CANCELLED') category = 'CANCELLED';
   else if (facts.state === 'QUEUED') category = 'QUEUED';
   else if (facts.state === 'RUNNING')

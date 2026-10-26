@@ -48,6 +48,7 @@ const MIGRATIONS = [
   '035-request-reruns.sql',
   '036-remove-node-capacity.sql',
   '037-remove-report-analysis.sql',
+  '038-runtime-evidence.sql',
 ];
 
 /** 所有业务事务使用同一连接；独占连接单独维护控制面实例锁。 */

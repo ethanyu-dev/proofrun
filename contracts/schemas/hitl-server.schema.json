@@ -48,6 +48,15 @@
         "finalizing": {
           "type": "boolean",
           "description": "节点已冻结输入，等待控制面确认完成。"
+        },
+        "waitDeadline": {
+          "type": "string",
+          "format": "date-time",
+          "description": "实际人工处理截止时间；链接有效不代表任务仍可处理。"
+        },
+        "runtimeEvidenceAvailable": {
+          "type": "boolean",
+          "description": "当前会话已启用运行时取证。"
         }
       },
       "required": [
@@ -119,6 +128,19 @@
         },
         "effect": {
           "type": "string"
+        },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "runtime": {
+              "type": "object"
+            },
+            "network": {
+              "type": "object"
+            }
+          },
+          "description": "仅只读观察的脱敏运行时证据；输入命令不回传账号材料。"
         }
       },
       "required": ["type", "commandId", "status", "effect"]

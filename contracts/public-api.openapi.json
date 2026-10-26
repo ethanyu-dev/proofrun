@@ -740,7 +740,8 @@
               "BROWSER_ERROR",
               "CLEANUP_ERROR",
               "EXECUTION_ERROR",
-              "HUMAN_UNEXECUTABLE"
+              "HUMAN_UNEXECUTABLE",
+              "CAPABILITY_ERROR"
             ],
             "description": "面向用户的执行分类，与验收结果分开。"
           },
@@ -1034,7 +1035,13 @@
                           "description": "平台登记的证据身份。"
                         },
                         "kind": {
-                          "enum": ["DOM", "SCREENSHOT", "NETWORK", "TRACE"],
+                          "enum": [
+                            "DOM",
+                            "SCREENSHOT",
+                            "NETWORK",
+                            "TRACE",
+                            "RUNTIME"
+                          ],
                           "description": "证据媒介，由平台取证配置决定。"
                         },
                         "url": {
@@ -1266,6 +1273,18 @@
                 }
               ]
             }
+          },
+          "requiredCapabilities": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "runtimeEvidenceV1",
+                "networkDetailsV1",
+                "focusRecoveryV1"
+              ]
+            },
+            "description": "本步骤必须具备的实际节点能力；文本推导只补充已识别的需求。"
           }
         },
         "required": [
@@ -1845,7 +1864,13 @@
                           "description": "平台登记的证据身份。"
                         },
                         "kind": {
-                          "enum": ["DOM", "SCREENSHOT", "NETWORK", "TRACE"],
+                          "enum": [
+                            "DOM",
+                            "SCREENSHOT",
+                            "NETWORK",
+                            "TRACE",
+                            "RUNTIME"
+                          ],
                           "description": "证据媒介，由平台取证配置决定。"
                         },
                         "url": {
@@ -1973,7 +1998,8 @@
                                     "DOM",
                                     "SCREENSHOT",
                                     "NETWORK",
-                                    "TRACE"
+                                    "TRACE",
+                                    "RUNTIME"
                                   ],
                                   "description": "证据媒介，由平台取证配置决定。"
                                 },
@@ -2167,7 +2193,8 @@
                                       "DOM",
                                       "SCREENSHOT",
                                       "NETWORK",
-                                      "TRACE"
+                                      "TRACE",
+                                      "RUNTIME"
                                     ],
                                     "description": "证据媒介，由平台取证配置决定。"
                                   },
@@ -2301,7 +2328,8 @@
                                               "DOM",
                                               "SCREENSHOT",
                                               "NETWORK",
-                                              "TRACE"
+                                              "TRACE",
+                                              "RUNTIME"
                                             ],
                                             "description": "证据媒介，由平台取证配置决定。"
                                           },

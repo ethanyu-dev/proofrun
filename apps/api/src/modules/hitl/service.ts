@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
-import type { HitlServer, NodeEvent } from '@proofrun/contracts';
+import {
+  taskEvidenceKinds,
+  type HitlServer,
+  type NodeEvent,
+} from '@proofrun/contracts';
 import { Database } from '../../db.js';
 import { ApiError, digest, newToken } from '../../domain.js';
 import type { ApiConfig } from '../../config.js';
@@ -132,8 +136,18 @@ export class HitlService {
         items: link.items,
         mode: context.control_mode as 'REQUESTED' | 'HUMAN',
         expiresAt: link.expires_at.toISOString(),
+        waitDeadline: new Date(
+          Math.min(
+            link.expires_at.getTime(),
+            context.human_deadline_at?.getTime() ?? Infinity,
+            context.external_expires_at?.getTime() ?? Infinity,
+          ),
+        ).toISOString(),
         canSaveAuth: false,
         targetUrl: context.definition.target.url,
+        runtimeEvidenceAvailable: taskEvidenceKinds(
+          context.definition,
+        ).includes('RUNTIME'),
         ...(link.condition_keys ? { conditionKeys: link.condition_keys } : {}),
       };
       if (context.control_mode === 'REQUESTED') return { state };

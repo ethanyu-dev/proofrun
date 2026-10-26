@@ -8,7 +8,7 @@ const MAX_DIAGNOSTICS = 8;
 /** 诊断只接受平台标识形态，避免扩展数据携带 URL 或页面正文。 */
 const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
 /** 仅回显协议允许的证据类型和持久化阶段。 */
-const KINDS = new Set(['DOM', 'SCREENSHOT', 'NETWORK', 'TRACE']);
+const KINDS = new Set(['DOM', 'SCREENSHOT', 'NETWORK', 'TRACE', 'RUNTIME']);
 const STATES = new Set(['PENDING', 'STORED', 'AVAILABLE']);
 
 /** 命令携带的预期证据身份；必须同时匹配控制面类型、摘要和可用状态。 */

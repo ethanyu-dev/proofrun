@@ -17,6 +17,11 @@ const bootstrap = await fetch(`${base}/v1/hitl/bootstrap`, {
   return response.json();
 });
 assert.ok(bootstrap.direct);
+assert.equal(bootstrap.state.runtimeEvidenceAvailable, true);
+assert(
+  Date.parse(bootstrap.state.waitDeadline) <=
+    Date.parse(bootstrap.state.expiresAt),
+);
 // 范围：真实节点拒绝错误 Origin，失败认证不消费合法连接凭据；不验证公网证书。
 const unauthorized = new WebSocket(bootstrap.direct.controlUrl, {
   origin: 'https://wrong.example.test',
@@ -134,6 +139,22 @@ try {
     );
     assert.equal(result.status, 'SUCCEEDED', JSON.stringify(result));
   }
+  // 范围：真实同会话只读探针返回独立证据；不自动勾选或宣称网站通过。
+  const probeId = randomUUID();
+  socket.send(
+    JSON.stringify({
+      type: 'command',
+      commandId: probeId,
+      command: { type: 'browser.observe', screenshot: false },
+    }),
+  );
+  const probe = await until(() =>
+    messages.find((m) => m.type === 'result' && m.commandId === probeId),
+  );
+  assert.equal(probe.status, 'SUCCEEDED', JSON.stringify(probe));
+  assert.equal(probe.evidence.runtime.status, 'observed');
+  assert.equal(probe.evidence.runtime.cacheStorage.status, 'observed');
+  assert.equal(probe.evidence.network.scope, 'tab-navigation');
   socket.send(
     JSON.stringify({
       type: 'complete',

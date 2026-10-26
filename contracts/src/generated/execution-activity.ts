@@ -33,8 +33,21 @@ export interface ExecutionActivity {
   };
   artifacts: {
     id: string;
-    kind: 'DOM' | 'SCREENSHOT' | 'NETWORK';
+    kind: 'DOM' | 'SCREENSHOT' | 'NETWORK' | 'RUNTIME' | 'TRACE';
     sha256: string;
   }[];
   limit: number;
+  /**
+   * 最近续租投递与节点确认的诊断；不含执行令牌或完整信封。
+   */
+  renewals?: {
+    id: string;
+    createdAt: string;
+    sentAt: string | null;
+    status: string | null;
+    error: string | null;
+    requestedTtlMs: number | null;
+    grantAgeMs: number | null;
+    leaseRemainingMs: number | null;
+  }[];
 }

@@ -1,10 +1,14 @@
 function focusForPress() {
-  // getRootNode 同时支持普通文档与 Shadow DOM；hasFocus 核对所在文档和 iframe 焦点链。
+  // getRootNode 同时支持普通文档与 Shadow DOM；文档焦点与元素焦点分开诊断。
   this.focus({ preventScroll: true });
-  return (
-    this.isConnected &&
-    !this.matches(':disabled') &&
-    this.getRootNode().activeElement === this &&
-    this.ownerDocument.hasFocus()
-  );
+  const connected = this.isConnected;
+  const active = this.getRootNode().activeElement === this;
+  const documentFocused = this.ownerDocument.hasFocus();
+  return {
+    connected,
+    active,
+    documentFocused,
+    verified:
+      connected && !this.matches(':disabled') && active && documentFocused,
+  };
 }
