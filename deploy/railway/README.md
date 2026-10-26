@@ -102,9 +102,8 @@ Agent：
 | `PROOFRUN_MODEL_THINKING`         | 默认 `default`；DeepSeek 显式选择 `enabled` 或 `disabled`                         |
 | `PROOFRUN_MODEL_REASONING_EFFORT` | 默认 `default`；可设 `low` / `high` / `max`，显式关闭思考优先于档位               |
 | `PROOFRUN_AGENT_EVIDENCE_MS`      | 可选，默认 `60000`；观察和 TRACE 完成后等待证据上传及可用确认，仍受任务总期限约束 |
-| `PROOFRUN_AGENT_CONCURRENCY`      | 初始可设为 `2`，同时确认节点容量和供应商配额                                      |
 
-Agent 是后台 worker，启动命令包含 `serve`，不提供 HTTP 健康端点。只配置上述 LLM；TYPESAFE、JEV 与旧执行策略变量不再使用。其它参数见根目录 [.env.example](../../.env.example)。升级 API、Agent、Node 后，新调度要求节点声明 ephemeralProfiles。
+Agent 是后台 worker，启动命令包含 `serve`，不提供 HTTP 健康端点。Agent 持续领取，执行并发由节点资源准入决定；旧 `PROOFRUN_AGENT_CONCURRENCY` 已不再读取，升级后即使保留 `2` 也不会继续限流，可从服务变量删除。节点可接收更多任务时，模型并发请求也会增加，应核对供应商配额。只配置上述 LLM；TYPESAFE、JEV 与旧执行策略变量不再使用。其它参数见根目录 [.env.example](../../.env.example)。升级 API、Agent、Node 后，新调度要求节点声明 ephemeralProfiles。
 
 切换到 DeepSeek 时，按 [Agent 配置说明](../../apps/agent/README.md) 设置 `PROOFRUN_MODEL_THINKING=enabled`、`PROOFRUN_MODEL_REASONING_EFFORT=high` 与 `PROOFRUN_MODEL_MAX_TOKENS=8192`，直连官方接口使用 `PROOFRUN_MODEL_TOKEN_PARAMETER=max_tokens`。先部署支持推理参数的 Agent 与 API 版本，再确认变量变更已部署；原来已失败的任务需要另行重试，更新配置不会改变历史报告。输出上限包含推理 token，复杂调用仍可能截断，不能将提高上限视为增加步骤时间。
 

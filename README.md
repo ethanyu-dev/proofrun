@@ -72,7 +72,7 @@ API、Agent、Console 直接运行在 Mac，默认不依赖 Docker。Console 地
 
 浏览器任务仍需要独立的 Linux Browser Node；只启动三个服务可以使用控制台和 API，但没有在线节点时无法执行浏览器任务。既有 `proofrun-preview` Docker 环境可显式使用 `pnpm dev:local --with-preview-node` 恢复节点及 TLS 转发，此模式需要 `.proofrun/runtime/compose.yml`、既有容器和匹配数据库的配对记录；不要直接用旧节点身份连接全新数据库。服务就绪不代表模型额度可用或业务验收通过。
 
-本机节点配对完成后，可在 `.proofrun/local.env` 设置 `PROOFRUN_LOCAL_PREVIEW_NODE=true`，让 `pnpm dev:local` 同时恢复 Docker 节点。当前本地 PG 的节点配置位于 `.proofrun/runtime/local-node.toml`，使用独立 home；节点按实时 CPU/内存决定准入；`.proofrun/local.env` 的 `PROOFRUN_AGENT_CONCURRENCY` 仅限制 worker 同时执行数，不再对应节点槽位。旧节点 TOML 须移除 `capacity` 并配置直连地址，详见[节点直连部署](deploy/README.md#节点直连域名与升级)。
+本机节点配对完成后，可在 `.proofrun/local.env` 设置 `PROOFRUN_LOCAL_PREVIEW_NODE=true`，让 `pnpm dev:local` 同时恢复 Docker 节点。当前本地 PG 的节点配置位于 `.proofrun/runtime/local-node.toml`，使用独立 home；节点按实时 CPU/内存决定准入，Agent 持续申请授权，不设固定执行槽；旧 `PROOFRUN_AGENT_CONCURRENCY` 已不再读取，可从环境配置删除。旧节点 TOML 须移除 `capacity` 并配置直连地址，详见[节点直连部署](deploy/README.md#节点直连域名与升级)。
 
 需要分别在三个终端前台启动并调试时，每个终端先执行 `set -a; . .proofrun/local.env; set +a`，再分别执行：
 

@@ -56,7 +56,7 @@ export PROOFRUN_AGENT_MODEL_MS=120000
 4. 点击和填写必须使用当前观察返回的目标，由执行器注入 observationId。动作与等待之后自动刷新观察。
 5. 完整校验验收项与证据引用，聚合 verdict，再由 API 独立校验证据归属并存档。API 负责关闭会话与释放容量。
 
-每进程串行执行一条任务；增加 worker 实例可扩大并发，容量和资源池匹配仍由控制面统一管理。无需额外 Agent 框架、SDK、消息队列或本地执行数据库。
+每进程以 `PROOFRUN_AGENT_POLL_MS` 间隔串行申请授权，领取后立即独立执行，不等待其他 case 完成或人工交接结束。控制面根据路由、能力与节点准入决定是否分配，Node 在创建会话时检查实时资源；Agent 不设固定并发槽，也不缓存未获授权的任务。旧 `PROOFRUN_AGENT_CONCURRENCY` 已不再读取，遗留配置不会限制并发，可直接删除。每次领取使用独立身份、租约和执行上下文；SIGINT/SIGTERM 停止领取并通知全部活动执行收尾，等待报告提交与租约清理后退出。`once` 仍只领取一次并等待该次执行结束。无需额外 Agent 框架、SDK、消息队列或本地执行数据库。
 
 ## 边界与限制
 
@@ -81,17 +81,18 @@ export PROOFRUN_AGENT_MODEL_MS=120000
 
 超时返回 `EVIDENCE_UNAVAILABLE`，摘要列出证据类型、ID 和最近状态：`MISSING` 表示未登记，`PENDING` 表示等待存储，`STORED` 表示已存储但尚未收到可用确认，`MISMATCH` 表示类型或摘要不匹配。迟到证据不会恢复已结束任务；增加预算只能缓解延迟，持续失败仍需核对节点上传日志。
 
-| 文件                          | 职责                                      |
-| ----------------------------- | ----------------------------------------- |
-| `src/main.ts`                 | CLI、并发槽领取、关停与不含凭据的摘要日志 |
-| `src/config.ts`               | 地址、模型和预算配置                      |
-| `src/client.ts`               | 控制面请求、命令幂等重送、证据下载        |
-| `src/http.ts`                 | 限额读取、超时和错误脱敏                  |
-| `src/model/chat.ts`           | Chat Completions 工具协议适配             |
-| `src/execution/runner.ts`     | 执行循环、预算、验收和报告                |
-| `src/execution/lease.ts`      | 独立续租、截止时间与撤权                  |
-| `src/evidence/observation.ts` | 观察结构校验                              |
-| `src/evidence/delivery.ts`    | 证据独立等待预算、撤权与超时诊断          |
+| 文件                          | 职责                                       |
+| ----------------------------- | ------------------------------------------ |
+| `src/main.ts`                 | CLI、输入校验与启动配置                    |
+| `src/worker.ts`               | 持续领取、并行执行、统一关停与脱敏摘要日志 |
+| `src/config.ts`               | 地址、模型和预算配置                       |
+| `src/client.ts`               | 控制面请求、命令幂等重送、证据下载         |
+| `src/http.ts`                 | 限额读取、超时和错误脱敏                   |
+| `src/model/chat.ts`           | Chat Completions 工具协议适配              |
+| `src/execution/runner.ts`     | 执行循环、预算、验收和报告                 |
+| `src/execution/lease.ts`      | 独立续租、截止时间与撤权                   |
+| `src/evidence/observation.ts` | 观察结构校验                               |
+| `src/evidence/delivery.ts`    | 证据独立等待预算、撤权与超时诊断           |
 
 验证范围与运行命令见 [测试入口与覆盖边界](../../tests/README.md)。
 

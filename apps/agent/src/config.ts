@@ -4,7 +4,7 @@ import { validateControlRequest } from '@proofrun/contracts';
 /** 思考输出与工具参数共享额度；显式长推理仍有上限，默认成本配置保持独立。 */
 const MODEL_LIMITS = { timeoutMs: 600_000, outputTokens: 65_536 };
 
-/** 默认限制约束单 worker 的成本；任务预算和控制面租约仍是更硬的边界。 */
+/** 默认限制约束单次执行的成本；任务预算和控制面租约仍是更硬的边界。 */
 const DEFAULTS = {
   pollMs: 1000,
   requestMs: 5000,
@@ -17,12 +17,12 @@ const DEFAULTS = {
   maxTokens: 4096,
 };
 
-/** 一个进程只执行一个任务，并发通过多个 worker 实例实现。 */
+/** 进程共享连接与模型配置；每次领取派生独立身份和执行上下文。 */
 export interface AgentConfig {
   /** 控制面地址与领取凭据；不会进入模型提示。 */
   apiUrl: string;
   workerToken: string;
-  /** 本次进程身份，不复用失去租约的执行。 */
+  /** 进程配置中作为领取身份前缀；执行配置中为本次领取的唯一身份。 */
   workerId: string;
   /** 模型服务独立配置，模型名不设默认值。 */
   modelUrl: string;
