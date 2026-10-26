@@ -119,6 +119,9 @@ export class SimulatedNode {
   runtime?: NodeRuntime;
   /** 允许单独验证旧节点不能领取暂停时钟的任务。 */
   renewableSessions = true;
+  /** 模拟动画偏好能力，用于验证升级门禁；不代表真实浏览器行为。 */
+  reducedMotion = true;
+  motionProof = true;
   /** 默认模拟旧节点，身份测试显式启用新准备协议。 */
   identityPreparation = false;
   /** 完整 profile 能力仅用于新版控制面协议测试，磁盘复制由真实浏览器用例覆盖。 */
@@ -280,6 +283,7 @@ export class SimulatedNode {
       capabilities: {
         profileTabs: true,
         environmentProof: true,
+        reducedMotion: this.reducedMotion,
         observe: true,
         screenshot: true,
         conditionWait: true,
@@ -449,6 +453,11 @@ export class SimulatedNode {
           ? { externalAccount: operation.externalAccount }
           : {}),
         authRestored: false,
+        ...(this.motionProof &&
+        operation.type === 'session.open' &&
+        operation.reducedMotion !== undefined
+          ? { reducedMotion: operation.reducedMotion }
+          : {}),
       };
     if (kind === 'session.control') data.authRevision = control?.auth ?? 0;
     if (kind === 'browser.identity.prepare')

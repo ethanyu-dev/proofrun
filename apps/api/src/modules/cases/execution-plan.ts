@@ -106,6 +106,7 @@ export function resolveExecutionPlan(
                 ? 'external'
                 : 'manual',
           requirements: input.session?.requirements ?? [],
+          reducedMotion: input.session?.reducedMotion ?? true,
           ...(mode !== 'guest' && input.session?.external
             ? { external: input.session.external }
             : {}),

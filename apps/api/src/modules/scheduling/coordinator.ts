@@ -583,6 +583,9 @@ export class Coordinator {
               context,
               {
                 type: 'session.open',
+                ...(heartbeat.capabilities.reducedMotion === true
+                  ? { reducedMotion: task.sessionPlan?.reducedMotion ?? true }
+                  : {}),
                 ...(external
                   ? {
                       externalAccount: {
@@ -641,6 +644,8 @@ export class Coordinator {
       (!task.sessionPlan?.external ||
         heartbeat.capabilities.externalAccounts === true) &&
       heartbeat.capabilities.ephemeralProfiles === true &&
+      (task.sessionPlan?.reducedMotion === undefined ||
+        heartbeat.capabilities.reducedMotion === true) &&
       (!task.executionPlan ||
         heartbeat.capabilities.environmentProof === true) &&
       (!task.profilePlan || heartbeat.capabilities.profileTabs === true) &&
@@ -1530,6 +1535,26 @@ export class Coordinator {
         row.kind === 'session.open' &&
         event.operationStatus === 'SUCCEEDED'
       ) {
+        // 配置意图不能替代浏览器回读；旧节点缺失证明时不得宣称新偏好已生效。
+        if (
+          request.command.type === 'session.open' &&
+          request.command.reducedMotion !== undefined
+        ) {
+          const proof = event.data?.environmentProof as
+            Record<string, unknown> | undefined;
+          if (
+            proof?.sessionId !== request.sessionId ||
+            proof?.reducedMotion !== request.command.reducedMotion
+          ) {
+            await stopExecution(
+              client,
+              context,
+              'ERROR',
+              'MOTION_PREFERENCE_MISMATCH',
+            );
+            return;
+          }
+        }
         // 节点成功启动不等于注入了正确材料；公开回执必须绑定原会话与租约。
         if (
           request.command.type === 'session.open' &&

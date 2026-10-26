@@ -28,6 +28,7 @@ const CAPABILITIES = [
   ['writeActions', '写操作'],
   ['ephemeralProfiles', '临时身份会话'],
   ['networkEvidence', '网络证据'],
+  ['reducedMotion', '动画偏好'],
 ] as const;
 
 /** 占用量来自控制面并集计算，离线或待关闭会话不能被界面视为可用容量。 */

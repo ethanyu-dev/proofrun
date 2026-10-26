@@ -146,6 +146,10 @@
       },
       "required": ["loginRequired"],
       "description": "本次运行自动判断的登录需求及转人工原因，不改写历史快照。"
+    },
+    "reducedMotion": {
+      "type": "boolean",
+      "description": "本次会话是否偏好减少动画；省略时新执行默认 true，动画验收可显式设为 false。历史缺失字段不代表已启用。"
     }
   },
   "required": [

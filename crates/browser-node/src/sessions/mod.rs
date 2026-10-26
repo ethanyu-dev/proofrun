@@ -70,6 +70,8 @@ pub struct Session {
     network_evidence: bool,
     /// 本次会话是否初始化实时画面，实际观看和操作分别授权。
     live_view: bool,
+    /// 冻结本次会话的动画偏好，与身份配置无关。
+    reduced_motion: bool,
     /// 关闭、到期或故障时立即撤销执行许可。
     cancel: CancellationToken,
     /// 首个显式关闭请求的来源；停机与控制面关闭不能互相覆盖。
@@ -317,6 +319,10 @@ impl Sessions {
                 None
             },
             external_account,
+            reduced_motion: raw
+                .get("reducedMotion")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
             network_evidence,
             live_view,
             cancel: CancellationToken::new(),
@@ -477,6 +483,7 @@ async fn start(
         config: EngineConfig {
             binary: config.agent_browser_bin.clone(),
             chrome: config.chrome_bin.clone(),
+            reduced_motion: session.reduced_motion,
             external_account: session.external_account.clone(),
             identity_seed_file: seed_path,
             full_profile: false,
@@ -801,6 +808,7 @@ mod external_tests {
             external_account: Some(json!({"leaseId":"fixture"})),
             network_evidence: false,
             live_view: true,
+            reduced_motion: true,
             cancel: CancellationToken::new(),
             close_reason: std::sync::Mutex::new(None),
             work,

@@ -438,6 +438,10 @@ export type SessionRequest = {
    */
   requirements?: IdentityCheck[];
   external?: ExternalAccountSelector;
+  /**
+   * 本次会话是否偏好减少动画；省略时新执行默认 true，动画验收可显式设为 false。历史缺失字段不代表已启用。
+   */
+  reducedMotion?: boolean;
 };
 /**
  * 执行会话快照。新任务仅生成 guest/manual/external；旧本地身份字段仅用于读取历史快照，提交与执行入口拒绝使用。
@@ -548,6 +552,10 @@ export type SessionPlan = {
      */
     fallbackReason?: string;
   };
+  /**
+   * 本次会话是否偏好减少动画；省略时新执行默认 true，动画验收可显式设为 false。历史缺失字段不代表已启用。
+   */
+  reducedMotion?: boolean;
 };
 /**
  * 省略或 auto 时按 case 自动准备身份，优先 DevPass、无账号则人工介入；可显式约束身份，禁止携带密码或 Cookie。
@@ -559,6 +567,10 @@ export type SessionRequest1 = {
    */
   requirements?: IdentityCheck[];
   external?: ExternalAccountSelector;
+  /**
+   * 本次会话是否偏好减少动画；省略时新执行默认 true，动画验收可显式设为 false。历史缺失字段不代表已启用。
+   */
+  reducedMotion?: boolean;
 };
 
 /**

@@ -132,6 +132,10 @@ export type SessionRequest = {
    */
   requirements?: IdentityCheck[];
   external?: ExternalAccountSelector;
+  /**
+   * 本次会话是否偏好减少动画；省略时新执行默认 true，动画验收可显式设为 false。历史缺失字段不代表已启用。
+   */
+  reducedMotion?: boolean;
 };
 
 export interface VerificationCaseV2 {

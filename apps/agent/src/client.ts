@@ -53,6 +53,8 @@ export interface ExecutionView extends ExecutionTiming {
     sessionId: string;
     initialState: string;
     authRestored: boolean;
+    /** 节点回读验证的动画偏好；旧记录缺失时不能推断为已启用。 */
+    reducedMotion?: boolean;
   };
   /** 认证版本只随可能改变身份的操作增长。 */
   authRevision?: number;
