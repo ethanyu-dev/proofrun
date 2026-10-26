@@ -56,12 +56,11 @@ impl NetworkCapture {
                 .iter_mut()
                 .rev()
                 .find(|entry| entry["requestId"] == p["requestId"])
+                && p.get("redirectResponse").is_some()
             {
-                if p.get("redirectResponse").is_some() {
-                    previous["status"] = p["redirectResponse"]["status"].clone();
-                    previous["headers"] = response_headers(&p["redirectResponse"]["headers"]);
-                    previous["redirect"] = json!(true);
-                }
+                previous["status"] = p["redirectResponse"]["status"].clone();
+                previous["headers"] = response_headers(&p["redirectResponse"]["headers"]);
+                previous["redirect"] = json!(true);
             }
             let raw = json!({"requests":[{"url":p["request"]["url"],"method":p["request"]["method"],"resourceType":p["type"]}]});
             let Ok(clean) = crate::network::sanitize(&raw) else {
