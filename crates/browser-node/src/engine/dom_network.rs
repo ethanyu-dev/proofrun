@@ -462,7 +462,20 @@ mod tests {
         .unwrap();
         let second = dom.network_snapshot().await.unwrap();
         for request in first["requests"].as_array().unwrap() {
-            assert!(second["requests"].as_array().unwrap().contains(request));
+            // favicon 等异步请求可能在两次观察之间收到响应；身份和已知事实必须保留，
+            // 尚未知的状态码允许被真实响应补齐，不能要求整条可增长记录完全相等。
+            let retained = second["requests"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|next| next["requestId"] == request["requestId"])
+                .expect("观察不能丢失已有请求");
+            for (key, value) in request.as_object().unwrap() {
+                if key == "status" && value.is_null() {
+                    continue;
+                }
+                assert_eq!(&retained[key], value, "已有网络事实不能被覆盖：{key}");
+            }
         }
         assert!(!first.to_string().contains("secret"));
         dom.call(
