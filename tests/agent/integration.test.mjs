@@ -156,6 +156,7 @@ test(
         preparationFailures = 0,
         unknownClick = false,
         createModel,
+        observationTargets = [],
       } = {},
     ) => {
       const node = new SimulatedNode(base, definition.environment.nodePool);
@@ -163,6 +164,7 @@ test(
       node.unknownWrite = unknown;
       node.domActionPreparationFailures = preparationFailures;
       node.domUnknownClick = unknownClick;
+      node.observationTargets = observationTargets;
       if (observeFailuresAfterClick || preparationFailures || unknownClick)
         node.observationTargets = [
           { target: 'element-1', role: 'button', name: '提交' },
@@ -283,6 +285,92 @@ test(
         definition.stepBudget = compileStepBudget(definition);
         return definition;
       };
+      // 范围：真实 API/数据库验证携带进度的动作被接受、归属与部分结论保留；浏览器和模型仍为协议夹具。
+      await suite.test(
+        '动作携带进度与重查理由时仍派发，并保存通过和失败结论',
+        async () => {
+          const turns = new Map();
+          const { report, stored, execution } = await run(
+            structured('command-progress'),
+            (context) => {
+              const step = context.task.stepId;
+              const turn = (turns.get(step) ?? 0) + 1;
+              turns.set(step, turn);
+              const completion = finish(context);
+              if (step !== 'step-3' && turn === 1) {
+                completion.progress.requirements =
+                  context.state.requirements.map((requirement) => ({
+                    id: requirement.id,
+                    status: 'complete',
+                    summary: '夹具核实步骤要求，不代表真实页面验收',
+                    evidenceRefs: context.page.artifactRefs.map(
+                      (a) => a.artifactId,
+                    ),
+                  }));
+                if (step === 'step-2')
+                  completion.progress.criteria[0].verdict = 'FAILED';
+                return {
+                  type: 'browser.act',
+                  action: step === 'step-1' ? 'click' : 'navigate',
+                  target: step === 'step-1' ? 'element-1' : context.task.url,
+                  progress: completion.progress,
+                  revisitReason: '原步骤要求继续核对目标',
+                };
+              }
+              // 完成时不重新提交验收结论，证明动作中的 progress 已先行持久化。
+              completion.progress.criteria = [];
+              if (step !== 'step-3') delete completion.progress.requirements;
+              return {
+                ...completion,
+                evidenceRefs: context.page.artifactRefs.map(
+                  (a) => a.artifactId,
+                ),
+              };
+            },
+            {
+              observationTargets: [
+                { target: 'element-1', role: 'button', name: '提交' },
+              ],
+            },
+          );
+          assert.equal(stored.state, 'COMPLETED');
+          assert.deepEqual(
+            report.steps.map((s) => s.status),
+            ['COMPLETED', 'COMPLETED', 'COMPLETED'],
+          );
+          assert.deepEqual(
+            stored.report.criteria.map((c) => c.verdict),
+            ['PASSED', 'FAILED'],
+          );
+          assert.equal(stored.report.verdict, 'FAILED');
+          assert.deepEqual(
+            report.steps.slice(0, 2).map((s) => s.requirements[0].status),
+            ['recorded', 'recorded'],
+          );
+          const activity = await api(
+            'GET',
+            `/v1/admin/executions/${execution.id}/timeline`,
+          );
+          assert(
+            activity.commands.some(
+              (c) =>
+                c.action === 'click' &&
+                c.status === 'SUCCEEDED' &&
+                c.tabScope === 'group-1',
+            ),
+          );
+          assert(
+            activity.commands.some(
+              (c) =>
+                c.action === 'navigate' &&
+                c.status === 'SUCCEEDED' &&
+                c.tabScope === 'group-1',
+            ),
+          );
+          assert.equal(turns.get('step-1'), 2);
+          assert.equal(turns.get('step-2'), 2);
+        },
+      );
       // 范围：真实 API、数据库预算与并发 Agent 串接；模型和页面为脚本夹具，不证明业务通过。
       await suite.test(
         '同 profile 两组并发独立保存，环境失败只跳过本组和清理',

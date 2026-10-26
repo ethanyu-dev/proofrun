@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { compileStepBudget } from '../../contracts/dist/index.js';
+import {
+  compileStepBudget,
+  validateControlRequest,
+} from '../../contracts/dist/index.js';
 import { execute } from '../../apps/agent/dist/execution/runner.js';
 import { ChatModel } from '../../apps/agent/dist/model/chat.js';
 import { CriteriaLedger } from '../../apps/agent/dist/execution/criteria.js';
@@ -365,6 +368,17 @@ test('完成声明合并已保存项目，setup 不接受伪造验收身份，�
   const client = new FakeControl();
   const command = client.command.bind(client);
   client.command = async (...args) => {
+    // 与真实 API 使用同一协议校验，避免宽松夹具吞掉决策元数据。
+    assert.equal(
+      validateControlRequest({
+        type: 'execution.command',
+        commandId: args[1],
+        timeoutMs: 1000,
+        command: args[2],
+      }),
+      true,
+      JSON.stringify(validateControlRequest.errors),
+    );
     const result = await command(...args);
     if (args[2].type === 'browser.cookies.clear')
       result.data = { cleared: true, names: args[2].names };
@@ -408,7 +422,11 @@ test('完成声明合并已保存项目，setup 不接受伪造验收身份，�
           context.feedback.map((item) => item.message ?? item.code).join(' '),
           /progress.criteria 必须为空/,
         );
-        return { type: 'browser.cookies.clear', names: ['NEXT_LOCALE'] };
+        return {
+          type: 'browser.cookies.clear',
+          names: ['NEXT_LOCALE'],
+          progress: {},
+        };
       }
       assert.equal(
         context.history.commands.find((item) => item.cookieCleanup)

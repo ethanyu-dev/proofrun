@@ -41,7 +41,9 @@ jobs:
         run: rustup show active-toolchain
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
+      # 测试进程泄漏连接时尽早失败并保留日志，避免耗尽整个 check 的 30 分钟预算。
       - run: pnpm test:api
+        timeout-minutes: 5
         env:
           PROOFRUN_TEST_DATABASE_URL: postgresql://postgres:proofrun-ci-isolated@127.0.0.1:5432/proofrun
       - run: pnpm test:agent:integration
