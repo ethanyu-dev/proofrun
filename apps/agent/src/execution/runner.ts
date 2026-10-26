@@ -832,6 +832,15 @@ class Execution {
   private operation(
     decision: Extract<AgentDecision, { type: 'browser.act' }>,
   ): BrowserOperation {
+    // 决策元数据留在执行器中处理；仅复制节点协议字段，不能靠 TypeScript 类型抹除运行时属性。
+    const operation: Extract<BrowserOperation, { type: 'browser.act' }> = {
+      type: decision.type,
+      action: decision.action,
+      ...(decision.target !== undefined ? { target: decision.target } : {}),
+      ...(decision.value !== undefined ? { value: decision.value } : {}),
+      ...(decision.x !== undefined ? { x: decision.x } : {}),
+      ...(decision.y !== undefined ? { y: decision.y } : {}),
+    };
     const invalid = () =>
       new AgentFault(
         'INVALID_MODEL_DECISION',
@@ -861,7 +870,7 @@ class Execution {
           'INVALID_MODEL_DECISION',
           '当前节点不支持定向 press；先 click 聚焦目标并重新观察，再使用不带 target 的 press',
         );
-      return { ...decision, observationId: this.current.observationId };
+      return { ...operation, observationId: this.current.observationId };
     }
     if (['navigate', 'tab.new'].includes(decision.action)) {
       try {
@@ -887,7 +896,7 @@ class Execution {
           decision.value === undefined)
       )
         throw invalid();
-      return { ...decision, observationId: this.current.observationId };
+      return { ...operation, observationId: this.current.observationId };
     } else if (decision.action === 'scroll' && decision.target !== undefined) {
       const target = this.current?.targets.find(
         (t) => t.target === decision.target,
@@ -899,7 +908,7 @@ class Execution {
           `目标 ${decision.target}（${target.role}）不支持 scroll，可用操作：${target.operations?.join('、') ?? '未知'}。请滚动页面（不指定 target）或选择当前观察中的可滚动容器。`,
         );
       return {
-        ...decision,
+        ...operation,
         value: this.scrollValue(decision),
         observationId: this.current!.observationId,
       };
@@ -911,7 +920,7 @@ class Execution {
         !Number.isFinite(decision.y)
       )
         throw invalid();
-      return { ...decision, observationId: this.current!.observationId };
+      return { ...operation, observationId: this.current!.observationId };
     } else if (decision.action === 'frame') {
       if (
         decision.target !== 'main' &&
@@ -920,17 +929,17 @@ class Execution {
         )
       )
         throw invalid();
-      return { ...decision, observationId: this.current!.observationId };
+      return { ...operation, observationId: this.current!.observationId };
     } else if (
       ['back', 'forward', 'reload', 'tab.switch', 'tab.close'].includes(
         decision.action,
       )
     ) {
-      return decision;
+      return operation;
     } else if (!decision.value) throw invalid();
     if (decision.action === 'scroll')
-      return { ...decision, value: this.scrollValue(decision) };
-    return decision;
+      return { ...operation, value: this.scrollValue(decision) };
+    return operation;
   }
   /** 幅度只由当前能力和几何事实生成，不信任模型提供的任意像素值。 */
   private scrollValue(
@@ -2187,15 +2196,30 @@ class Execution {
               'INVALID_MODEL_DECISION',
               'Cookie 清理仅用于后续清理步骤',
             );
-          operation = { ...decision, url: this.task.target.url };
+          operation = {
+            type: decision.type,
+            names: decision.names,
+            url: this.task.target.url,
+          };
         } else if (decision.type === 'browser.observe') {
           if (decision.screenshot && !this.screenshots())
             throw new AgentFault(
               'INVALID_MODEL_DECISION',
               '当前模型配置不支持截图输入',
             );
-          operation = decision;
-        } else operation = decision;
+          operation = {
+            type: decision.type,
+            ...(decision.screenshot !== undefined
+              ? { screenshot: decision.screenshot }
+              : {}),
+          };
+        } else {
+          operation = {
+            type: decision.type,
+            selector: decision.selector,
+            text: decision.text,
+          };
+        }
         // 从这里开始发生浏览器操作；其传输错误绝不能进入模型重试分支。
         errors = 0;
         this.feedback = null;
