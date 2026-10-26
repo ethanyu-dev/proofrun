@@ -1526,19 +1526,25 @@ class Execution {
         '请确认本次测试身份及前置条件；已登录不代表账号角色符合要求',
         requested.map((r) => r.description.slice(0, 500)),
         true,
+        original.executionPlan
+          ? requested.map((result) =>
+              conditionKey(
+                'identity',
+                checks.find((check) => check.id === result.id)!,
+              ),
+            )
+          : undefined,
       );
-      if (this.controlRevision > revision)
+      // 新计划用控制面签收的条件身份恢复确认，避免下一轮检查清除临时 Map；
+      // 仅恢复控制权、缺少确认或认证版本过期均不能证明身份已满足。
+      if (original.executionPlan) this.identityChecks();
+      else if (this.controlRevision > revision)
         for (const check of checks)
           if (
             check.method === 'manual' &&
             requested.some((r) => r.id === check.id)
           )
-            this.confirmedChecks.set(
-              check.id,
-              this.grant.task.executionPlan
-                ? this.authRevision
-                : this.controlRevision,
-            );
+            this.confirmedChecks.set(check.id, this.controlRevision);
       results = evaluate();
     }
     if (this.stepResults[this.stepIndex])
