@@ -10,11 +10,14 @@ export function TaskRerun({
   id,
   paired = false,
   caseId,
+  taskKind,
 }: {
   api: ApiClient;
   id: string;
   paired?: boolean;
   caseId?: string | null | undefined;
+  /** 浏览器重跑保留对应列表与详情的导航归属。 */
+  taskKind?: 'browser';
 }) {
   const runId = useRef(`rerun-${crypto.randomUUID()}`);
   const active = useRef<AbortController | null>(null);
@@ -36,7 +39,7 @@ export function TaskRerun({
         caseId,
       );
       if (!controller.signal.aborted)
-        location.hash = `/tasks/${encodeURIComponent(taskId)}`;
+        location.hash = `/${taskKind === 'browser' ? 'browser-tasks' : 'tasks'}/${encodeURIComponent(taskId)}`;
     } catch (error) {
       if (
         error instanceof ApiError &&

@@ -2863,3 +2863,85 @@ test('本步未声明条件时仍向模型提供有效的准备人工确认', as
   assert.equal(requests, 1);
   assert.equal(report.verdict, 'PASSED');
 });
+
+// 范围：真实 Agent 循环交付通用任务正文与证据，模型与浏览器由夹具模拟，不代表真实业务验收。
+test('浏览器任务交付正文且不产生空验收通过结论', async () => {
+  const output = '| 项目 | 结果 |\n| --- | --- |\n| 名称 | Alice |';
+  const { report, requests } = await run(
+    (context, turn, body) => {
+      assert.equal(context.task.kind, 'browser');
+      assert.deepEqual(context.task.criteria, []);
+      assert.ok(body.messages[0].content.includes('通用浏览器任务'));
+      if (turn === 1)
+        return { type: 'verification.finish', summary: '尚未留证' };
+      assert.ok(
+        context.feedback.some((item) => item.message.includes('登记原目标')),
+      );
+      return {
+        type: 'verification.finish',
+        summary: output,
+        progress: {
+          requirements: context.task.requirements.map(({ id }) => ({
+            id,
+            status: 'complete',
+            summary: '已读取页面中的名称',
+            evidenceRefs: context.page.artifactRefs.map(
+              (item) => item.artifactId,
+            ),
+          })),
+          criteria: [],
+        },
+      };
+    },
+    (_client, execution) => {
+      execution.task.taskKind = 'browser';
+      execution.task.acceptanceCriteria = [];
+      execution.task.objective = '读取页面名称并整理为表格';
+    },
+  );
+  assert.equal(requests.length, 2);
+  assert.equal(report.executionDisposition, 'EXECUTED');
+  assert.equal(report.verdict, null);
+  assert.deepEqual(report.criteria, []);
+  assert.equal(report.browserResult.outcome, 'COMPLETED');
+  assert.equal(report.browserResult.output, output);
+  assert.ok(report.browserResult.evidenceRefs.length > 0);
+  assert.ok(
+    report.browserResult.evidenceRefs.every((id) =>
+      report.artifacts.some((item) => item.id === id),
+    ),
+  );
+});
+
+// 范围：重复无证据 finish 无法完成任务；不验证真实模型能否理解目标或生成充分业务证据。
+test('浏览器任务反复空完成时交付未完成结果', async () => {
+  const { report } = await run(
+    () => ({ type: 'verification.finish', summary: '已完成' }),
+    (_client, execution) => {
+      execution.task.taskKind = 'browser';
+      execution.task.acceptanceCriteria = [];
+    },
+  );
+  assert.notEqual(report.executionDisposition, 'EXECUTED');
+  assert.equal(report.verdict, null);
+  assert.equal(report.browserResult.outcome, 'INCOMPLETE');
+});
+
+// 范围：主动阻塞保留部分结果，不把未完成目标当成功；身份交接和真实页面另行验证。
+test('浏览器任务受阻时保留原因与部分正文', async () => {
+  const { report } = await run(
+    () => ({
+      type: 'verification.block',
+      reasonCode: 'OTHER',
+      summary: '已读取公开价格，企业报价需要联系销售，未能完成全部比较。',
+    }),
+    (_client, execution) => {
+      execution.task.taskKind = 'browser';
+      execution.task.acceptanceCriteria = [];
+    },
+  );
+  assert.equal(report.executionDisposition, 'BLOCKED');
+  assert.equal(report.browserResult.outcome, 'INCOMPLETE');
+  assert.match(report.browserResult.output, /企业报价/);
+  assert.equal(report.verdict, null);
+});

@@ -76,7 +76,7 @@ export class CriteriaLedger {
       'INVALID_MODEL_DECISION',
       this.expected.length
         ? `${reason}。合法 criterionId：${this.expected.map((c) => c.id).join('、')}；提交未登记项目，或用新增证据将 INCONCLUSIVE/SKIPPED 升级为 PASSED/FAILED；已确认结果同判定重送为幂等，引用已提供的 evidenceRefs。`
-        : '当前 setup 没有独立验收项，criteria 必须是 []；stepId 不是 criterionId。请用 summary 和本步 evidenceRefs 提交执行结果。',
+        : `${reason}。当前任务或步骤没有独立验收项，criteria 必须是 []；请用 progress.requirements 登记原始要求与证据，并用 summary 交付结果。`,
     );
   }
 

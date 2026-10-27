@@ -17,3 +17,5 @@ scroll 意图只接受 up/down/left/right；不接受方向附带像素数或 to
 每个模型请求经 `model/request.ts` 记录实际 prompt、tools、最终 context 和用量。图片原文以证据引用替代，保存原始请求摘要；请求存档失败则不派发。没有 JEV 候选请求、填写值子调用、legacy/guidance/planned-v1 路由或二次 context 投影。
 
 身份准备每会话只尝试一次，并由 profile 分组共享同一真实命令回执。案例使用临时浏览器，不保存基准或通过保存重启浏览器；账号和节点占用仍待物理关闭确认后释放。运行与升级配置见 [Agent README](../../README.md)，公开步骤和预算见 [v2 协议](../../../../docs/public-api-v2.md)。
+
+显式 `taskKind: browser` 复用观察和操作循环，由 `prompts/browser-task.ts` 定义交付职责。原目标作为完整要求登记，不自动生成验收标准；结束前必须登记原目标完成证据，并在 summary 交付所需正文。未登记目标或没有证据的 finish 被拒绝。报告返回 browserResult，正常完成为 COMPLETED，阻塞或故障为 INCOMPLETE；空验收集合不能产生 PASSED。历史任务和 v2 保持原验收账本与完成规则。

@@ -134,3 +134,5 @@ pnpm test:agent:browser
 ### 动画偏好回归
 
 沿用真实浏览器测试的 `PROOFRUN_AGENT_BROWSER_BIN`、`PROOFRUN_CHROME_BIN` 和可选的 `PROOFRUN_TEST_BINARY`，执行 `python3 tests/browser-node/motion_smoke.py`。它通过真实 session-host 和固定引擎验证缺省、开启与关闭三种配置的首次脚本、导航、iframe、新标签页及启动证明；本地 HTML 不代表生产站点性能或 Linux cgroup 已验收。该脚本也纳入 Linux 完整回归套件。
+
+浏览器任务回归：`apps/api/test/browser-tasks.test.ts` 覆盖精简接口、类型隔离、配置冻结、幂等、分页、重跑和报告证据归属；`tests/agent/execution.test.mjs` 覆盖无证据拒绝完成和部分结果交付；`tests/console/browser-task.test.ts` 覆盖双字段输入、草稿保留、网络重试和安全结果渲染。模型与浏览器均使用夹具，不代表真实浏览器任务成功率。

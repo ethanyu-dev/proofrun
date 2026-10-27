@@ -331,6 +331,14 @@ export type VerificationReport = {
     reason: string;
     decidedAt: string;
   };
+  /**
+   * 浏览器任务的交付正文和证据，不作为验证通过结论。
+   */
+  browserResult?: {
+    outcome: 'COMPLETED' | 'INCOMPLETE';
+    output: string;
+    evidenceRefs: string[];
+  };
 };
 
 export interface EnrollNode {

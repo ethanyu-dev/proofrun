@@ -1,3 +1,4 @@
+import { validateBrowserTaskRequest } from '@proofrun/contracts';
 import { executionTimeline } from './modules/scheduling/timeline.js';
 import { TaskLifecycle } from './modules/tasks/lifecycle.js';
 import { dashboardStatistics } from './modules/reports/dashboard.js';
@@ -479,12 +480,33 @@ export async function buildApp(
       request.body,
     ),
   );
+  app.post(
+    '/v1/browser-tasks',
+    { preHandler: admin },
+    async (request, reply) => {
+      if (!validateBrowserTaskRequest(request.body))
+        throw new ApiError(
+          400,
+          'INVALID_BROWSER_TASK',
+          '需要有效任务身份、HTTP(S) 网址和任务目标，不接受执行配置',
+        );
+      return reply
+        .code(202)
+        .send(await coordinator.submitBrowser(request.body));
+    },
+  );
   app.post('/v1/tasks', { preHandler: admin }, async (request, reply) => {
     if (!validateVerificationTask(request.body))
       throw new ApiError(
         400,
         'INVALID_TASK',
         'Task does not match VerificationTask',
+      );
+    if (request.body.taskKind === 'browser')
+      throw new ApiError(
+        400,
+        'BROWSER_ENDPOINT_REQUIRED',
+        '浏览器任务请通过 /v1/browser-tasks 提交',
       );
     return reply.code(202).send(await coordinator.submit(request.body));
   });

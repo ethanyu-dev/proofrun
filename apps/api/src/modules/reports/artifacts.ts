@@ -732,6 +732,34 @@ export class ArtifactStore {
           );
       }
     }
+    // 任务类型由冻结定义决定；浏览器结果不能借用空验收集合获得验证通过。
+    const browser = context.definition.taskKind === 'browser';
+    if (browser) {
+      const result = report.browserResult;
+      const executed = report.executionDisposition === 'EXECUTED';
+      if (
+        !result ||
+        report.verdict !== null ||
+        report.criteria.length ||
+        !result.output.trim() ||
+        result.output !== report.summary ||
+        result.outcome !== (executed ? 'COMPLETED' : 'INCOMPLETE') ||
+        (executed && !result.evidenceRefs.length) ||
+        new Set(result.evidenceRefs).size !== result.evidenceRefs.length ||
+        result.evidenceRefs.some((id) => !included.has(id) || !evidence.has(id))
+      )
+        throw new ApiError(
+          422,
+          'INVALID_REPORT',
+          '浏览器任务须交付结果正文和本次执行的有效证据，不能提交验收通过结论',
+        );
+    } else if (report.browserResult) {
+      throw new ApiError(
+        422,
+        'INVALID_REPORT',
+        '验证任务不能提交浏览器任务结果',
+      );
+    }
     const verdict = report.criteria.some((c) => c.verdict === 'FAILED')
       ? 'FAILED'
       : report.criteria.every((c) => c.verdict === 'PASSED')
@@ -739,7 +767,7 @@ export class ArtifactStore {
         : 'INCONCLUSIVE';
     const executed = report.executionDisposition === 'EXECUTED';
     // 执行受阻仍可保留已校验的独立结论；总 verdict 保持 null，不伪装整体验收完成。
-    if (report.verdict !== (executed ? verdict : null))
+    if (!browser && report.verdict !== (executed ? verdict : null))
       throw new ApiError(
         422,
         'INVALID_REPORT',

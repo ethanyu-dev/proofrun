@@ -1,3 +1,4 @@
+import { BrowserTaskResult } from '../components/browser-task-result';
 import { Button } from '../components/ui/button';
 import { RequestMemberships } from '../components/request-memberships';
 import {
@@ -42,8 +43,16 @@ export function ReportDetailPage({ api, id }: { api: ApiClient; id: string }) {
   return (
     <div className="report-page">
       <PageHeader
-        title="验证报告"
-        description="核对本次结论、验收范围与原始证据。"
+        title={
+          resource.data?.definition.taskKind === 'browser'
+            ? '浏览器任务结果'
+            : '验证报告'
+        }
+        description={
+          resource.data?.definition.taskKind === 'browser'
+            ? '查看交付正文和执行证据。'
+            : '核对本次结论、验收范围与原始证据。'
+        }
       >
         <Button asChild variant="outline">
           <a className="button button-secondary" href="#/tasks">
@@ -60,7 +69,9 @@ export function ReportDetailPage({ api, id }: { api: ApiClient; id: string }) {
       <RefreshBar {...resource} />
       <ErrorNotice message={resource.error} />
       {resource.data ? (
-        resource.data.definition.comparison ? (
+        resource.data.definition.taskKind === 'browser' ? (
+          <BrowserTaskResult api={api} task={resource.data} />
+        ) : resource.data.definition.comparison ? (
           <PairedReportDetails key={id} api={api} task={resource.data} />
         ) : (
           <ReportDetails api={api} task={resource.data} />

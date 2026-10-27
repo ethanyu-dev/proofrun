@@ -1,6 +1,7 @@
 /**
  * 按稳定 case 身份去重并取最新可见运行，再截取首次提交时间；不能连接请求成员，否则复用会重复计数。
  * 历史双跑沿用 Console 的 JEV 优先规则，两个执行组仍在用量查询中分别计费。
+ * 通用浏览器任务不进入验证数量、运行量和用量统计。
  * 只读取判定需要的字段，避免把模型正文与证据载入看板。
  */
 export const DASHBOARD_CASES_SQL = `
@@ -15,6 +16,7 @@ WITH candidates AS (
   FROM pr_tasks t JOIN candidates c ON c.identity=coalesce('case:' || (t.definition#>>'{caseV2Definition,caseId}'), 'comparison:' || (t.definition#>>'{comparison,id}'), 'task:' || t.id)
   LEFT JOIN pr_tasks p ON p.id=t.definition#>>'{comparison,sourceTaskId}'
   WHERE coalesce(t.definition->>'purpose','') <> 'cleanup'
+    AND coalesce(t.definition->>'taskKind','') <> 'browser'
     AND NOT EXISTS (SELECT 1 FROM pr_case_cleanups c WHERE c.task_id=t.id)
   GROUP BY c.identity
 )
@@ -42,14 +44,14 @@ WITH usage AS (
     (record->>'promptTokens')::bigint AS prompt,
     (record->>'completionTokens')::bigint AS completion,
     1::bigint AS calls, 0 AS legacy
-  FROM pr_model_calls m JOIN pr_executions e ON e.id=m.execution_id JOIN pr_tasks t ON t.id=e.task_id WHERE t.deleted_at IS NULL AND m.created_at >= $1::timestamptz AND m.created_at < $2::timestamptz
+  FROM pr_model_calls m JOIN pr_executions e ON e.id=m.execution_id JOIN pr_tasks t ON t.id=e.task_id WHERE coalesce(t.definition->>'taskKind','') <> 'browser' AND t.deleted_at IS NULL AND m.created_at >= $1::timestamptz AND m.created_at < $2::timestamptz
   UNION ALL
   SELECT t.finished_at, 'execution',
     (t.report#>>'{executionDetails,promptTokens}')::bigint,
     (t.report#>>'{executionDetails,completionTokens}')::bigint,
     coalesce((t.report#>>'{executionDetails,modelCalls}')::bigint,0), 1
   FROM pr_tasks t
-  WHERE t.deleted_at IS NULL AND t.finished_at >= $1::timestamptz AND t.finished_at < $2::timestamptz
+  WHERE coalesce(t.definition->>'taskKind','') <> 'browser' AND t.deleted_at IS NULL AND t.finished_at >= $1::timestamptz AND t.finished_at < $2::timestamptz
     AND t.report ? 'executionDetails'
     AND jsonb_typeof(t.report->'executionDetails')='object'
     AND NOT EXISTS (SELECT 1 FROM pr_executions e JOIN pr_model_calls m ON m.execution_id=e.id WHERE e.task_id=t.id)
@@ -68,7 +70,7 @@ WITH candidates AS (
 )
 SELECT to_char(min(t.created_at) AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD') AS date
 FROM pr_tasks t JOIN candidates c ON c.identity=coalesce(t.definition#>>'{comparison,id}',t.id)
-WHERE t.deleted_at IS NULL AND coalesce(t.definition->>'purpose','') <> 'cleanup'
+WHERE coalesce(t.definition->>'taskKind','') <> 'browser' AND t.deleted_at IS NULL AND coalesce(t.definition->>'purpose','') <> 'cleanup'
   AND NOT EXISTS(SELECT 1 FROM pr_case_cleanups c WHERE c.task_id=t.id)
 GROUP BY coalesce(t.definition#>>'{comparison,id}',t.id)
 HAVING min(t.created_at) >= $1::timestamptz AND min(t.created_at) < $2::timestamptz`;

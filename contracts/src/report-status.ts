@@ -3,6 +3,8 @@ import type { VerificationReport } from './generated/verification-report.js';
 
 /** 只携带步骤归属；列表无需读取描述、证据正文或完整任务定义。 */
 export interface ReportScope {
+  /** 通用任务不计算验收计数或通过率。 */
+  taskKind?: 'browser' | null;
   cleanupStepIds?: readonly string[];
   steps?: readonly { stepId?: string }[];
   acceptanceCriteria: readonly { id: string; stepId?: string }[];
@@ -28,7 +30,8 @@ export function summarizeReport(
   criterionIds: readonly string[],
   scope?: ReportScope,
 ): Pick<TaskDetail, 'reportStatus' | 'criteriaCounts'> {
-  if (!report) return { reportStatus: null, criteriaCounts: null };
+  if (!report || scope?.taskKind === 'browser')
+    return { reportStatus: null, criteriaCounts: null };
   const cleanup = new Set(scope?.cleanupStepIds ?? []);
   const separateCleanup = cleanup.size > 0 && !!scope?.steps?.length;
   const cleanupCriteria = new Set(

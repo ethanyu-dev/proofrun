@@ -204,6 +204,7 @@ export class TaskReader {
             'q',
             'reportOnly',
             'ungrouped',
+            'taskKind',
           ].includes(key),
       )
     )
@@ -216,6 +217,8 @@ export class TaskReader {
     const q = ((query.q as string | undefined) ?? '').trim();
     const reportOnly = query.reportOnly === 'true';
     const ungrouped = query.ungrouped === 'true';
+    const taskKind = query.taskKind;
+    if (taskKind !== undefined && taskKind !== 'browser') throw invalid();
     if (
       !Number.isInteger(limit) ||
       limit < 1 ||
@@ -228,7 +231,13 @@ export class TaskReader {
         !['true', 'false'].includes(query.reportOnly as string))
     )
       throw invalid();
-    const filter = JSON.stringify([state ?? '', q, reportOnly, ungrouped]);
+    const filter = JSON.stringify([
+      state ?? '',
+      q,
+      reportOnly,
+      ungrouped,
+      ...(taskKind ? [taskKind] : []),
+    ]);
     let cursor: Cursor | null = null;
     if (query.cursor !== undefined) {
       try {
@@ -277,13 +286,14 @@ export class TaskReader {
       >(
         `SELECT id,left(definition->>'objective',240) AS objective,definition#>>'{environment,nodePool}' AS node_pool,
         definition#>>'{target,url}' AS target_url,definition#>>'{caseV2Definition,caseId}' AS "caseId",definition->>'parentTaskId' AS "parentTaskId",
-        definition->>'executionMode' AS "executionMode",definition->'comparison' AS comparison,state,created_at,finished_at,archived_at,
+        definition->>'taskKind' AS "taskKind",definition->>'executionMode' AS "executionMode",definition->'comparison' AS comparison,state,created_at,finished_at,archived_at,
         CASE WHEN report IS NULL THEN NULL ELSE jsonb_build_object(
           'executionDisposition', report->'executionDisposition', 'verdict', report->'verdict',
           'steps', (SELECT coalesce(jsonb_agg(jsonb_build_object('stepId',s->'stepId','status',s->'status')),'[]'::jsonb) FROM jsonb_array_elements(report->'steps') s),
           'criteria', (SELECT coalesce(jsonb_agg(jsonb_build_object('criterionId',c->'criterionId','verdict',c->'verdict')),'[]'::jsonb) FROM jsonb_array_elements(report->'criteria') c)) END AS report_facts,
         ARRAY(SELECT c->>'id' FROM jsonb_array_elements(definition->'acceptanceCriteria') c) AS criterion_ids,
         jsonb_build_object(
+          'taskKind', definition->'taskKind',
           'cleanupStepIds', coalesce(definition->'cleanupStepIds','[]'::jsonb),
           'steps', (SELECT coalesce(jsonb_agg(jsonb_build_object('stepId',s->'stepId')),'[]'::jsonb) FROM jsonb_array_elements(definition->'steps') s),
           'acceptanceCriteria', (SELECT coalesce(jsonb_agg(jsonb_build_object('id',c->'id','stepId',c->'stepId')),'[]'::jsonb) FROM jsonb_array_elements(definition->'acceptanceCriteria') c)
@@ -294,6 +304,7 @@ export class TaskReader {
         to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_at
        FROM pr_tasks WHERE deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM pr_node_profiles p WHERE p.task_id=pr_tasks.id)
         AND (NOT $7::boolean OR NOT EXISTS(SELECT 1 FROM pr_request_runs a WHERE a.task_id=pr_tasks.id OR a.task_id=pr_tasks.definition->>'parentTaskId'))
+        AND ($8::text IS NULL OR definition->>'taskKind'=$8)
         AND ($1::text IS NULL OR state=$1)
         AND ($2::text IS NULL OR id ILIKE $2 OR definition->>'objective' ILIKE $2)
         AND (NOT $3::boolean OR report IS NOT NULL)
@@ -307,6 +318,7 @@ export class TaskReader {
           cursor?.id ?? null,
           limit + 1,
           ungrouped,
+          taskKind ?? null,
         ],
       )
     ).rows;

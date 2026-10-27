@@ -207,6 +207,18 @@ test(
         } finally {
           caseProfile.environment.nodePool = previousPool;
         }
+      } else if (definition.taskKind === 'browser') {
+        const previousPool = caseProfile.environment.nodePool;
+        try {
+          caseProfile.environment.nodePool = definition.environment.nodePool;
+          await api('POST', '/v1/browser-tasks', {
+            taskId: definition.taskId,
+            url: definition.target.url,
+            objective: definition.objective,
+          });
+        } finally {
+          caseProfile.environment.nodePool = previousPool;
+        }
       } else await api('POST', '/v1/tasks', definition);
       const server = await modelServer((...args) =>
         decide(...args, { execution, client }),
@@ -921,6 +933,35 @@ test(
           }),
           (error) => error.code === 'EXECUTION_EXPIRED',
         );
+      });
+      // 范围：真实精简 HTTP 提交、调度、Agent、报告落库和证据下载；网页和模型为夹具，不证明实际业务完成。
+      await suite.test('浏览器任务从两个业务字段执行到结果交付', async () => {
+        const definition = {
+          ...task('browser-goal-agent'),
+          taskKind: 'browser',
+          acceptanceCriteria: [],
+        };
+        const { report, stored } = await run(definition, (context) => ({
+          type: 'verification.finish',
+          summary: '夹具页面已读取，结果正文已交付。',
+          progress: {
+            requirements: context.task.requirements.map(({ id }) => ({
+              id,
+              status: 'complete',
+              summary: '目标已由夹具页面证据支持',
+              evidenceRefs: context.page.artifactRefs.map((a) => a.artifactId),
+            })),
+          },
+        }));
+        assert.equal(stored.state, 'COMPLETED');
+        assert.equal(stored.definition.taskKind, 'browser');
+        assert.equal(report.verdict, null);
+        assert.equal(stored.reportStatus, null);
+        assert.equal(stored.criteriaCounts, null);
+        assert.equal(stored.report.browserResult.outcome, 'COMPLETED');
+        assert.equal(stored.report.browserResult.output, report.summary);
+        assert.ok(stored.report.browserResult.evidenceRefs.length);
+        await verifyEvidence(stored.report);
       });
       // 范围：领取协议、DOM 归档、模型报告和幂等完成；不证明实际页面业务状态。
       await suite.test('任务领取到标准报告及会话回收', async () => {
