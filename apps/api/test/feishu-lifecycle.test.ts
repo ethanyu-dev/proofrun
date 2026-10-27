@@ -13,6 +13,10 @@ import {
   type FeishuTransport,
 } from '../src/modules/notifications/feishu.js';
 import { readCase } from '../src/modules/notifications/source.js';
+import {
+  registerRequest,
+  registerMembers,
+} from '../src/modules/requests/registration.js';
 import { task, until } from './fixture.js';
 
 /** 本地协议夹具凭据，不使用任何部署配置或外部群。 */
@@ -174,6 +178,38 @@ test(
         }
       });
       return `request:${requestId}`;
+    }
+    /** 使用真实登记事务替换夹具任务；可注入失败验证通知抑制记录与成员一起回滚。 */
+    async function rerun(
+      key: string,
+      caseId: string,
+      next: string,
+      rollback = false,
+    ) {
+      const registration = {
+        requestId: key.slice('request:'.length),
+        replaceRuns: true,
+        title: '批量验证',
+        hash: digest(next),
+        rerunParameters: { caseIds: [{ sourceCaseId: caseId, runId: next }] },
+      };
+      await db.transaction(async (client) => {
+        assert.equal(await registerRequest(client, registration), true);
+        const definition = (
+          await client.query(
+            `UPDATE pr_tasks SET definition=jsonb_set(definition,'{caseV2Definition}',jsonb_build_object('caseId',$2::text)) WHERE id=$1 RETURNING definition`,
+            [next, caseId],
+          )
+        ).rows[0].definition;
+        await registerMembers(
+          client,
+          registration,
+          [definition],
+          new Set([next]),
+        );
+        if (rollback) throw new Error('fixture-rollback');
+      });
+      return registration;
     }
     /** 模拟已建立的浏览器会话和存活执行者，不调用真实浏览器。 */
     async function activate(id: string) {
@@ -355,6 +391,143 @@ test(
           );
         },
       );
+
+      // 范围：真实重跑登记事务与通知扫描，旧失败任务不得重新独立推送；执行状态和飞书由夹具模拟。
+      await suite.test(
+        '请求内单 case 重跑不补发旧任务卡片，新运行结束后才汇总',
+        async () => {
+          const old = await create();
+          const other = await create();
+          const key = await request([old, other]);
+          await finish(old, 'ERROR', 'FAILED');
+          await finish(other);
+          await sync(key, 2);
+          const before = remote.sends.length;
+          const next = await create();
+          const registration = await rerun(key, old, next);
+          await activate(next);
+          for (let i = 0; i < 6; i++) await tick();
+          assert.equal(
+            (await messages(old)).length,
+            0,
+            '旧任务不能变回独立 Case',
+          );
+          assert.equal(
+            (await messages(next)).length,
+            0,
+            '新任务仍由请求聚合通知',
+          );
+          const rerunKey = `${key}:${registration.hash}`;
+          const running = await sync(rerunKey, 1);
+          const submission = running[0]!;
+          assert.equal(remote.sends.length, before + 1);
+          assert.equal(
+            remote.cards.get(submission.message_id).header.title.content,
+            '自动化测试 · 执行中',
+          );
+          assert.equal(submission.event.kind, 'SUBMITTED');
+          assert.ok(
+            new Date(submission.event.at).getTime() >
+              new Date((await messages(key))[0]!.event.at).getTime(),
+          );
+          // 同一重跑重试和服务重启不得新建消息；保留未重跑成员的原结果。
+          await db.transaction(async (client) => {
+            assert.equal(await registerRequest(client, registration), false);
+          });
+          await service.close();
+          service = new CaseNotifications(db, config, log, remote);
+          await sync(rerunKey, 1);
+          assert.equal(remote.sends.length, before + 1);
+          await finish(next);
+          const completed = await sync(rerunKey, 2);
+          assert.equal(
+            completed.filter((row) => row.event.kind === 'COMPLETED').length,
+            1,
+          );
+          assert.equal(remote.sends.length, before + 2);
+          assert.equal((await messages(old)).length, 0);
+        },
+      );
+
+      // 范围：历史双组在首次扫描前连续重跑、事务回滚与独立运行隔离；不验证真实双执行器或群投递。
+      await suite.test(
+        '快速重跑保留全部旧组归属，失败切换不留下通知记录',
+        async () => {
+          const pair = randomUUID();
+          const old = await create(pair, 'llm');
+          const sibling = await create(pair, 'jev');
+          const key = await request([old]);
+          await db.query(
+            'UPDATE pr_verification_request_arms SET task_id=$2 WHERE request_id=$1',
+            [key.slice('request:'.length), sibling],
+          );
+          await finish(old, 'ERROR', 'FAILED');
+          await finish(sibling);
+          const next = await create();
+          await assert.rejects(rerun(key, old, next, true), /fixture-rollback/);
+          assert.equal(
+            (
+              await db.query('SELECT 1 FROM pr_feishu_runs WHERE run_key=$1', [
+                pair,
+              ])
+            ).rowCount,
+            0,
+          );
+          const first = await rerun(key, old, next);
+          const latest = await create();
+          const second = await rerun(key, old, latest);
+          await activate(latest);
+          // 同 case 的真正独立运行不能被按 caseId 一并屏蔽。
+          const standalone = await create();
+          await db.query(
+            `UPDATE pr_tasks SET definition=jsonb_set(definition,'{caseV2Definition}',jsonb_build_object('caseId',$2::text)) WHERE id=$1`,
+            [standalone, old],
+          );
+          const latestKey = `${key}:${second.hash}`;
+          await sync(latestKey, 1);
+          await sync(standalone, 1);
+          for (let i = 0; i < 6; i++) await tick();
+          for (const retired of [pair, next, key, `${key}:${first.hash}`])
+            assert.equal((await messages(retired)).length, 0);
+          await finish(latest);
+          await finish(standalone);
+          await sync(latestKey, 2);
+          await sync(standalone, 2);
+        },
+      );
+
+      // 范围：已有 HITL 消息的活动请求被重跑替换后停止旧轮次，新 HITL 只引用新任务；外部执行均为夹具。
+      await suite.test('活动请求重跑不会把新任务拼入旧人工卡片', async () => {
+        const old = await create();
+        const key = await request([old]);
+        await activate(old);
+        await control.change(old, WORKER, 'request', 0, '旧运行等待登录');
+        const original = await sync(key, 2);
+        const cards = original.map((row) =>
+          JSON.stringify(remote.cards.get(row.message_id)),
+        );
+        const next = await create();
+        const registration = await rerun(key, old, next);
+        const rerunKey = `${key}:${registration.hash}`;
+        await activate(next);
+        await control.change(next, WORKER, 'request', 0, '新运行等待登录');
+        const current = await sync(rerunKey, 2);
+        assert.ok(
+          current.some(
+            (row) => row.event.kind === 'HITL' && row.event.taskId === next,
+          ),
+        );
+        assert.deepEqual(
+          original.map((row) =>
+            JSON.stringify(remote.cards.get(row.message_id)),
+          ),
+          cards,
+        );
+        assert.equal((await messages(old)).length, 0);
+        await finish(old, 'CANCELLED');
+        await finish(next);
+        await sync(rerunKey, 3);
+      });
 
       // 范围：新请求复用仍待人工的旧任务、提交顺序和缺报告终态；不验证公共 API 或真实飞书时序。
       await suite.test(
