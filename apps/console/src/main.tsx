@@ -111,7 +111,7 @@ function App() {
   )?.[1];
   const taskId = TASK_ROUTE.exec(path.split('?')[0]!)?.[1];
   const browserTaskId = /^\/browser-tasks\/([A-Za-z0-9_-]{1,128})$/.exec(
-    path,
+    path.split('?')[0]!,
   )?.[1];
   const reportId = REPORT_ROUTE.exec(path.split('?')[0]!)?.[1];
   const requestRoute =
@@ -136,7 +136,8 @@ function App() {
     page = <TaskSubmitPage api={api} initialKind="browser" />;
   else if (path === '/tasks/new') page = <TaskSubmitPage api={api} />;
   else if (browserTaskId)
-    page = <TaskDetailPage key={browserTaskId} api={api} id={browserTaskId} />;
+    // 实时入口重新选择当前执行，避免沿用上次查看的历史操作。
+    page = <TaskDetailPage key={path} api={api} id={browserTaskId} />;
   else if (reportId)
     page = <ReportDetailPage key={reportId} api={api} id={reportId} />;
   else if (taskId) page = <TaskDetailPage key={taskId} api={api} id={taskId} />;

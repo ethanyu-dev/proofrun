@@ -275,9 +275,11 @@ export function TaskEvidence({ api, task }: TaskSectionProps) {
         <section className="panel">
           <h2>全部证据</h2>
           <p className="muted">
-            {report
-              ? '本组报告未附带证据。'
-              : '尚未生成报告，证据清单将在报告就绪后显示。'}
+            {task.definition.taskKind === 'browser'
+              ? '本次任务尚无可展示的证据。'
+              : report
+                ? '本组报告未附带证据。'
+                : '尚未生成报告，证据清单将在报告就绪后显示。'}
           </p>
         </section>
       )}

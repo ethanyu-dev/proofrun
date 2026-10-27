@@ -13,14 +13,31 @@ import {
   time,
 } from '../components/ui';
 import { OutcomeStatus } from '../components/execution-outcome';
+import {
+  ALL_FILTER_VALUE,
+  SelectField,
+  SelectItem,
+} from '../components/select-field';
+
+/** 筛选对应任务生命周期；已结束包含完成或受阻，不等同于目标达成。 */
+const BROWSER_TASK_STATES = {
+  QUEUED: '排队中',
+  RUNNING: '执行中',
+  COMPLETED: '已结束',
+  CANCELLED: '已取消',
+  TIMED_OUT: '已超时',
+  ERROR: '执行错误',
+};
 
 /** 服务端按显式任务类型筛选后分页，避免客户端过滤漏项或混入历史验证。 */
 export function BrowserTaskListPage({ api }: { api: ApiClient }) {
   const [draft, setDraft] = useState('');
   const [search, setSearch] = useState('');
+  const [state, setState] = useState('');
   const [cursors, setCursors] = useState<(string | null)[]>([null]);
   const params = new URLSearchParams({ taskKind: 'browser', limit: '25' });
   if (search) params.set('q', search);
+  if (state) params.set('state', state);
   if (cursors.at(-1)) params.set('cursor', cursors.at(-1)!);
   const resource = useResource<TaskList>(
     api,
@@ -33,52 +50,101 @@ export function BrowserTaskListPage({ api }: { api: ApiClient }) {
     setCursors([null]);
   };
   return (
-    <>
+    <div className="request-list-page">
       <PageHeader
         title="浏览器任务"
         description="按目标操作浏览器，查看交付结果和执行证据。"
       >
         <Button asChild>
-          <a href="#/browser-tasks/new">提交浏览器任务</a>
+          <a className="button button-primary" href="#/browser-tasks/new">
+            提交浏览器任务
+          </a>
         </Button>
       </PageHeader>
-      <form className="toolbar" onSubmit={submit}>
-        <Input
-          aria-label="搜索浏览器任务"
-          placeholder="搜索任务目标或 ID"
-          maxLength={160}
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-        />
-        <Button variant="outline">搜索</Button>
-      </form>
+      <div className="toolbar">
+        <form className="search-form" onSubmit={submit}>
+          <Input
+            aria-label="搜索浏览器任务"
+            placeholder="搜索任务目标或 ID"
+            maxLength={160}
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+          />
+          <Button variant="outline">搜索</Button>
+        </form>
+        <label>
+          执行状态{' '}
+          <SelectField
+            label="执行状态"
+            value={state || ALL_FILTER_VALUE}
+            onValueChange={(value) => {
+              setState(value === ALL_FILTER_VALUE ? '' : value);
+              setCursors([null]);
+            }}
+          >
+            <SelectItem value={ALL_FILTER_VALUE}>全部</SelectItem>
+            {Object.entries(BROWSER_TASK_STATES).map(([value, label]) => (
+              <SelectItem key={value} value={value}>
+                {label}
+              </SelectItem>
+            ))}
+          </SelectField>
+        </label>
+      </div>
       <RefreshBar {...resource} />
       <ErrorNotice message={resource.error} />
       {!resource.data ? (
         <Empty title={resource.loading ? '正在读取任务…' : '任务读取失败'} />
       ) : !resource.data.tasks.length ? (
-        <Empty title="暂无浏览器任务" />
+        <Empty title="暂无匹配的浏览器任务">
+          可调整筛选条件，或提交新的浏览器任务。
+        </Empty>
       ) : (
         <div className="request-list">
           {resource.data.tasks.map((task) => (
-            <article key={task.id} className="panel">
-              <div className="section-heading">
-                <h2>
-                  <a href={`#/browser-tasks/${encodeURIComponent(task.id)}`}>
-                    {task.objective}
+            <article key={task.id} className="request-list-card">
+              <header className="request-card-heading">
+                <div className="request-card-title">
+                  <div className="request-card-title-line">
+                    <h2>
+                      <a
+                        href={`#/browser-tasks/${encodeURIComponent(task.id)}`}
+                      >
+                        {task.objective}
+                      </a>
+                    </h2>
+                    {task.executionOutcome ? (
+                      <OutcomeStatus outcome={task.executionOutcome} />
+                    ) : (
+                      <Status
+                        value={
+                          task.state === 'COMPLETED' ? '已结束' : task.state
+                        }
+                      />
+                    )}
+                  </div>
+                  <div className="request-card-meta">
+                    <span className="wrap">{task.target_url}</span>
+                    <span>创建于 {time(task.created_at)}</span>
+                  </div>
+                </div>
+                <div className="request-card-actions">
+                  <a
+                    className="request-detail-link"
+                    href={`#/browser-tasks/${encodeURIComponent(task.id)}`}
+                  >
+                    查看详情 <span aria-hidden="true">↗</span>
                   </a>
-                </h2>
-                {task.executionOutcome ? (
-                  <OutcomeStatus outcome={task.executionOutcome} />
-                ) : (
-                  <Status value={task.state} />
-                )}
-              </div>
-              <p className="muted wrap">{task.target_url}</p>
-              <p className="muted">{time(task.created_at)}</p>
-              <a href={`#/browser-tasks/${encodeURIComponent(task.id)}`}>
-                查看结果与执行过程
-              </a>
+                  {task.state === 'RUNNING' && (
+                    <a
+                      className="request-detail-link"
+                      href={`#/browser-tasks/${encodeURIComponent(task.id)}?view=live`}
+                    >
+                      实时画面 <span aria-hidden="true">↗</span>
+                    </a>
+                  )}
+                </div>
+              </header>
             </article>
           ))}
         </div>
@@ -101,6 +167,6 @@ export function BrowserTaskListPage({ api }: { api: ApiClient }) {
           下一页
         </Button>
       </div>
-    </>
+    </div>
   );
 }
