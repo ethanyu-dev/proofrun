@@ -29,6 +29,18 @@ export async function replaceMemberRuns(
   request: RequestRegistration,
   tasks: VerificationTask[],
 ) {
+  // 切换前为旧成员保留已结束的通知轮次。否则脱离 pr_request_runs 后，
+  // 扫描器会把历史失败任务重新当作独立 Case，补发提交和完成两张卡片。
+  // 与成员替换同事务；未启用通知的目的地以后也不会补发早于启用时间的任务。
+  await client.query(
+    `INSERT INTO pr_feishu_runs(destination_id,run_key,settled_at)
+     SELECT DISTINCT d.id,COALESCE(t.definition#>>'{comparison,id}',t.id),statement_timestamp()
+     FROM pr_request_runs a JOIN pr_tasks t ON t.id=a.task_id
+     CROSS JOIN pr_feishu_destinations d
+     WHERE a.request_id=$1 AND a.case_id=ANY($2::text[])
+     ON CONFLICT(destination_id,run_key) DO UPDATE SET settled_at=COALESCE(pr_feishu_runs.settled_at,EXCLUDED.settled_at)`,
+    [request.requestId, tasks.map((task) => task.caseV2Definition!.caseId)],
+  );
   for (const task of tasks) {
     const caseId = task.caseV2Definition!.caseId;
     const changed = await client.query(

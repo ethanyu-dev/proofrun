@@ -17,21 +17,33 @@ export interface RequestView extends CaseView {
 export async function readRequest(
   db: Database,
   requestId: string,
+  // 重跑摘要确定通知轮次；旧轮次不允许读取替换后的任务状态。
+  rerunHash: string | null = null,
 ): Promise<{
   view: RequestView;
   events: CaseEvent[];
-}> {
+} | null> {
   return db.transaction(async (client) => {
     await client.query(
       'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY',
     );
     const request = (
-      await client.query<{ title: string; created_at: Date }>(
-        'SELECT title,created_at FROM pr_verification_requests WHERE request_id=$1',
+      await client.query<{
+        title: string;
+        created_at: Date;
+        rerun_hash: string | null;
+      }>(
+        `SELECT r.title,COALESCE(rr.created_at,r.created_at) AS created_at,rr.definition_hash AS rerun_hash
+         FROM pr_verification_requests r
+         LEFT JOIN LATERAL (
+           SELECT definition_hash,created_at FROM pr_request_reruns WHERE request_id=r.request_id
+           ORDER BY created_at DESC,definition_hash DESC LIMIT 1
+         ) rr ON true WHERE r.request_id=$1`,
         [requestId],
       )
     ).rows[0];
     if (!request) throw new Error('通知对应的请求不存在');
+    if (request.rerun_hash !== rerunHash) return null;
     const members = (
       await client.query<{ case_id: string; task_ids: string[] }>(
         `SELECT c.case_id,array_agg(a.task_id ORDER BY a.task_id) AS task_ids

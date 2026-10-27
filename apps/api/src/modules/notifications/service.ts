@@ -133,11 +133,15 @@ export class CaseNotifications {
     await this.initialize();
     await this.db.query(
       `INSERT INTO pr_feishu_runs(destination_id,run_key)
-       SELECT $1, $3||r.request_id FROM pr_verification_requests r
+       SELECT $1, $3||r.request_id||COALESCE(':'||rr.definition_hash,'') FROM pr_verification_requests r
+       LEFT JOIN LATERAL (
+         SELECT definition_hash,created_at FROM pr_request_reruns WHERE request_id=r.request_id
+         ORDER BY created_at DESC,definition_hash DESC LIMIT 1
+       ) rr ON true
        JOIN pr_feishu_destinations d ON d.id=$1
-       WHERE r.created_at>=d.started_at
-       AND NOT EXISTS(SELECT 1 FROM pr_feishu_runs n WHERE n.destination_id=$1 AND n.run_key=$3||r.request_id)
-       ORDER BY r.created_at,r.request_id LIMIT $2 ON CONFLICT DO NOTHING`,
+       WHERE COALESCE(rr.created_at,r.created_at)>=d.started_at
+       AND NOT EXISTS(SELECT 1 FROM pr_feishu_runs n WHERE n.destination_id=$1 AND n.run_key=$3||r.request_id||COALESCE(':'||rr.definition_hash,''))
+       ORDER BY COALESCE(rr.created_at,r.created_at),r.request_id LIMIT $2 ON CONFLICT DO NOTHING`,
       [this.destination, DISCOVERY_LIMIT, REQUEST_RUN_PREFIX],
     );
     await this.db.query(
@@ -163,9 +167,22 @@ export class CaseNotifications {
       "UPDATE pr_feishu_runs SET next_at=clock_timestamp()+$3*interval '1 millisecond' WHERE destination_id=$1 AND run_key=$2",
       [this.destination, run.run_key, SCAN_MS],
     );
-    const { view, events } = run.run_key.startsWith(REQUEST_RUN_PREFIX)
-      ? await readRequest(this.db, run.run_key.slice(REQUEST_RUN_PREFIX.length))
+    // requestId 不允许冒号；后缀为本轮重跑的幂等摘要，首次提交沿用原轮次键。
+    const [requestId, rerunHash] = run.run_key
+      .slice(REQUEST_RUN_PREFIX.length)
+      .split(':');
+    const snapshot = run.run_key.startsWith(REQUEST_RUN_PREFIX)
+      ? await readRequest(this.db, requestId!, rerunHash ?? null)
       : await readCase(this.db, run.run_key);
+    // 请求已切换到新轮次时停止旧队列，不能将新状态写入旧轮次或补发旧事件。
+    if (!snapshot) {
+      await this.db.query(
+        'UPDATE pr_feishu_runs SET settled_at=clock_timestamp() WHERE destination_id=$1 AND run_key=$2',
+        [this.destination, run.run_key],
+      );
+      return;
+    }
+    const { view, events } = snapshot;
     await this.db.transaction(async (client) => {
       for (const event of events)
         await client.query(
