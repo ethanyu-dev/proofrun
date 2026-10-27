@@ -49,6 +49,13 @@ import type { DecisionInput, DecisionModel } from '../model/chat.js';
 import { modelTraceFault } from '../model/request.js';
 import { executionStrategy } from '../model/strategy.js';
 import { observation, type Observation } from '../evidence/observation.js';
+import { type NetworkSelection } from '../evidence/network-view.js';
+import {
+  NetworkReads,
+  retainNetworkSelection,
+  MAX_NETWORK_READS,
+  type NetworkReadDecision,
+} from '../evidence/network-reads.js';
 import { waitForEvidence } from '../evidence/delivery.js';
 import { AgentFault, pause, transient } from '../http.js';
 import { LeaseGuard } from './lease.js';
@@ -244,6 +251,12 @@ class Execution {
   private criteria: CriteriaLedger;
   /** 面向模型的局部定义，原始任务快照始终保持不变。 */
   private currentTask: VerificationTask | undefined;
+  /** 仅展开最近一次网络查询；观察身份不同后不携带旧详情。 */
+  private networkSelection: NetworkSelection | undefined;
+  /** 最近批次中的其它读取只投影一次批次，不累计所有详情。 */
+  private networkBatchSelections: NetworkSelection[] = [];
+  /** 每个步骤重新创建，真实网络快照不变时不会因 observe 或交替查询重置。 */
+  private networkReads = new NetworkReads();
   /** 最终交付与人工交接冲突时只重交报告，不重复执行已完成操作。 */
   private sequenceOutcome: VerificationReport | undefined;
 
@@ -760,6 +773,11 @@ class Execution {
       interactionProgress: this.interactions.view(4000),
       budgetRemaining,
       current: this.current!,
+      ...(this.networkSelection
+        ? { networkSelection: this.networkSelection }
+        : {}),
+      networkBatchSelections: this.networkBatchSelections,
+      networkReads: this.networkReads.view(this.current!),
       changes: this.changes,
       evidence: [...this.currentEvidence().values()],
       history: this.history,
@@ -1623,6 +1641,9 @@ class Execution {
     let errors = 0;
     let workflowRecoveries = 0;
     let repeatedRecords = 0;
+    this.networkReads = new NetworkReads();
+    this.networkSelection = undefined;
+    this.networkBatchSelections = [];
     // 收尾只进入一次；协议纠错仍在同一只读阶段内消耗原额度，不能重新探索。
     let finalReview = false;
     let settling = false;
@@ -1941,6 +1962,23 @@ class Execution {
         }
         this.allowance?.assertTime();
         const decision = output.decision;
+        const additionalReads = output.additionalNetworkReads ?? [];
+        if (
+          additionalReads.length &&
+          (additionalReads.length >= MAX_NETWORK_READS ||
+            [decision, ...additionalReads].some(
+              (item) =>
+                !['network.requests', 'network.request_detail'].includes(
+                  item.type,
+                ) ||
+                !validateAgentDecision(item) ||
+                item.progress !== undefined,
+            ))
+        )
+          throw new AgentFault(
+            'INVALID_MODEL_DECISION',
+            '批量工具调用只允许至多四个纯网络读取，整批未执行',
+          );
         const progress = decision.progress;
         const decidedCriteria = progress?.criteria ?? [];
         if (!validateAgentDecision(decision))
@@ -1956,7 +1994,9 @@ class Execution {
                   'verification.finish',
                 ]
               : ['verification.record']
-          ).includes(decision.type)
+          )
+            .concat(['network.requests', 'network.request_detail'])
+            .includes(decision.type)
         )
           return this.blocked(STALLED_SUMMARY, 'NO_PROGRESS');
         if (
@@ -2064,6 +2104,36 @@ class Execution {
           repeatedRecords = 0;
         }
 
+        if (
+          decision.type === 'network.requests' ||
+          decision.type === 'network.request_detail'
+        ) {
+          if (savedChanged) this.networkReads.progressed();
+          const reads = this.networkReads.read(this.current!, [
+            decision,
+            ...additionalReads,
+          ] as NetworkReadDecision[]);
+          if (!reads)
+            return this.blocked(
+              '网络读取反复返回已读结果（包括列表与详情交替），未取得新的验收进展',
+              'NO_PROGRESS',
+            );
+          for (const read of reads)
+            this.networkSelection = retainNetworkSelection(
+              this.networkSelection,
+              read,
+            );
+          this.networkBatchSelections =
+            reads.length > 1 ? reads.slice(0, -1) : [];
+          this.feedback =
+            '网络证据读取已完成：page.network 为最近结果，additionalResults 为同批其它结果，state.networkReads 保留已读查询（包括零匹配）。重复查询不会补采证据；请登记现有结论，缺少证据时说明无法确认。';
+          errors = 0;
+          // 收尾也可读取已有证据，但下一轮仍重新检查收尾状态、原时间和模型额度。
+          finalReview = false;
+          continue;
+        }
+        if (savedChanged) this.networkReads.progressed();
+        this.networkBatchSelections = [];
         if (decision.type === 'browser.act') this.operation(decision);
         // 本轮登记的引文也参与防重；有明确重查原因时仍保留失败前置检查和原动作预算。
         if (decision.type === 'browser.act' && decision.action === 'click') {

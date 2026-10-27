@@ -48,7 +48,11 @@ export function decisionTools(
                 'verification.block',
               ]
             : ['verification.record', 'verification.block']
-          ).includes(tool.type)) &&
+          )
+            .concat(['network.requests', 'network.request_detail'])
+            .includes(tool.type)) &&
+        (!tool.type.startsWith('network.') ||
+          !!context.page.network?.evidenceRefs.length) &&
         (tool.type !== 'verification.intervene' ||
           context.task.permissions.allowIntervention) &&
         (tool.type !== 'browser.cookies.clear' ||
@@ -66,6 +70,13 @@ export function decisionTools(
         allOf?: object[];
       };
       parameters.properties.progress = structuredClone(progress);
+      if (tool.type.startsWith('network.') && context.page.network) {
+        parameters.properties.observationId = {
+          type: 'string',
+          const: context.page.network.observationId,
+          description: '当前已采集网络快照身份，读取不刷新页面。',
+        };
+      }
       if (
         context.task.kind === 'browser' &&
         tool.type === 'verification.finish'

@@ -1,4 +1,10 @@
+import type { NetworkReadReceipt } from '../evidence/network-reads.js';
 import { evidenceExcerpt } from '../model/evidence-excerpt.js';
+import {
+  networkView,
+  trimNetworkView,
+  type NetworkSelection,
+} from '../evidence/network-view.js';
 import type { VerificationReport, VerificationTask } from '@proofrun/contracts';
 import type { BrowserOperation } from '../client.js';
 import type { Observation } from '../evidence/observation.js';
@@ -14,6 +20,10 @@ import { AgentFault } from '../http.js';
 /** 只保留有界历史正文；历史元素编号永远不作为当前操作身份。 */
 const HISTORY_LIMIT = 8;
 const HISTORY_CHARS = 20_000;
+/** 先为正文保留可读空间，再裁剪可分页列表；极小总预算仍允许继续缩减。 */
+const BODY_RESERVE_CHARS = 4_000;
+/** 正文低于此值时不再牺牲证据语义，固定内容仍超限则明确拒绝。 */
+const MIN_BODY_CHARS = 256;
 const HISTORICAL_TARGET = /\s*\[target=[^\]]+\]|\bref=[^,\]\s]+/g;
 
 /** 已执行命令的模型可见摘要，不包含调用权限。 */
@@ -78,6 +88,12 @@ export interface ContextInput {
   interactionProgress?: ReturnType<InteractionProgress['view']>;
   budgetRemaining: { actions: number; modelCalls: number; timeMs: number };
   current: Observation;
+  /** 本轮主动读取的网络列表或详情；新观察自动使旧选择失效。 */
+  networkSelection?: NetworkSelection;
+  /** 同一模型回复中其它纯读取的结果，仅保留最近批次。 */
+  networkBatchSelections?: NetworkSelection[];
+  /** 当前网络快照中的有界读取回执，保留零匹配和已读身份。 */
+  networkReads?: NetworkReadReceipt[];
   changes: ObservationChanges | undefined;
   evidence: VerificationReport['artifacts'];
   history: RecentOperation[];
@@ -160,6 +176,7 @@ function contextData(input: ContextInput) {
         ? (input.verificationReview.reason ?? 'stalled')
         : null,
       criteria: structuredClone(input.recordedCriteria ?? []),
+      networkReads: structuredClone(input.networkReads ?? []),
       conditions: [
         ...input.preconditions.map((item) => ({
           ...structuredClone(item),
@@ -194,7 +211,16 @@ function contextData(input: ContextInput) {
       tabs: structuredClone(current.tabs),
       viewport: structuredClone(current.viewport),
       atomic: current.atomic,
-      network: structuredClone(current.network),
+      network: networkView(
+        {
+          ...current,
+          artifactRefs: current.artifactRefs.filter((ref) =>
+            allowed.has(ref.artifactId),
+          ),
+        },
+        input.networkSelection,
+        input.networkBatchSelections,
+      ),
       runtime: structuredClone(current.runtime),
       artifactRefs: current.artifactRefs.filter((ref) =>
         allowed.has(ref.artifactId),
@@ -286,24 +312,31 @@ export function boundContext(
   context: DecisionContextData,
   maxContextChars: number,
 ) {
+  // 只读原文保存在执行器，不发两份正文；每次缩减都重新从同一原文取片段。
+  const originalText = context.page.text;
+  const objective = [
+    context.task.description,
+    ...context.task.criteria.map((item) => item.expectedResult),
+  ].join(' ');
+  let bodyBudget = originalText.length;
+  const shrinkBody = (floor: number) => {
+    bodyBudget = Math.max(floor, Math.floor(bodyBudget / 2));
+    context.page.text = evidenceExcerpt(originalText, objective, bodyBudget);
+    context.page.coverage.text.truncated = true;
+  };
   let text = JSON.stringify(context);
   while (text.length > maxContextChars) {
     if (context.history.excerpts.length) {
       context.history.excerpts.shift();
       context.history.omittedExcerpts++;
-    } else if (context.page.text.length > 256) {
-      context.page.text = evidenceExcerpt(
-        context.page.text,
-        [
-          context.task.background,
-          context.task.description,
-          ...context.task.criteria.map((item) => item.expectedResult),
-        ].join(' '),
-        Math.floor(context.page.text.length / 2),
-      );
-      context.page.coverage.text.truncated = true;
-    } else if (trimRuntimeLists(context.page.runtime, context.page.network)) {
+    } else if (bodyBudget > BODY_RESERVE_CHARS) {
+      shrinkBody(BODY_RESERVE_CHARS);
+    } else if (trimRuntimeLists(context.page.runtime)) {
       // 保留摘要和附件引用；禁止把裁剪后的列表当作全量检查。
+    } else if (trimNetworkView(context.page.network)) {
+      // 网络请求详情不会被机械截断，列表的剩余记录仍可分页读取。
+    } else if (bodyBudget > MIN_BODY_CHARS) {
+      shrinkBody(MIN_BODY_CHARS);
     } else if (
       context.state.readings?.items.some((item) => item.text.length > 80)
     ) {
