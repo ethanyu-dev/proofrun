@@ -2,6 +2,7 @@
 //! CLI 结果不确定时结束该会话，避免后续动作与潜在副作用并发。
 mod cookies;
 mod dom;
+mod drag;
 mod external_account;
 #[cfg(test)]
 mod motion_tests;
@@ -403,6 +404,29 @@ impl Engine {
                     .await?;
                 }
                 match action {
+                    "drag" => {
+                        let endpoint = self
+                            .cli(vec!["get".into(), "cdp-url".into()], remaining())
+                            .await?;
+                        let tabs = self
+                            .cli(vec!["tab".into(), "list".into()], remaining())
+                            .await?;
+                        let target = tabs["tabs"]
+                            .as_array()
+                            .and_then(|tabs| tabs.iter().find(|tab| tab["active"] == true))
+                            .and_then(|tab| tab["targetId"].as_str())
+                            .ok_or_else(|| Fault::rejected("DRAG_TARGET", "当前标签页不可用"))?;
+                        let endpoint = endpoint["cdpUrl"].as_str().ok_or_else(|| {
+                            Fault::rejected("DRAG_ENDPOINT", "当前浏览器不支持拖动")
+                        })?;
+                        let mut dom = dom::Dom::connect(endpoint).await?;
+                        dom.drag(
+                            target,
+                            raw["points"].as_array().unwrap(),
+                            Duration::from_millis(remaining()),
+                        )
+                        .await?;
+                    }
                     "click" => {
                         self.cli(
                             vec!["mouse".into(), "down".into(), "left".into()],
@@ -1046,6 +1070,7 @@ pub fn validate(command: &BrowserCommand, writes: bool) -> Result<()> {
             let value = serde_json::to_value(command).unwrap();
             let action = value["action"].as_str().unwrap_or("");
             let valid = match action {
+                "drag" => drag::valid(&value),
                 "click" | "scroll" => {
                     ["x", "y"].iter().all(|key| {
                         value[key]

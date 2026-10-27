@@ -1233,6 +1233,8 @@ summary {
   /* 保持图片本身比例，不引入 object-fit 留白，坐标始终映射到真实画面。 */
   box-shadow: 0 0 0 1px var(--color-border);
   touch-action: none;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 .hitl-screen:focus {
   outline: 3px solid #2563eb;

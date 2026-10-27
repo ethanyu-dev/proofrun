@@ -392,6 +392,34 @@ async fn native_dom_preserves_language_and_clicks_visible_portion() {
     dom.clear_cookies(target, &json!({"host":"fixture.test","names":["locale"]}))
         .await
         .unwrap();
+    // 范围：真实 Chromium 原生滑块收到按住移动与释放，事件可信；不访问或通过真实验证码。
+    dom.call(Some(&session), "Runtime.evaluate", json!({"expression": "document.body.innerHTML='<input id=slider type=range min=0 max=100 value=0 style=\"position:fixed;left:0;top:0;width:300px;height:40px;margin:0\">';window.dragEvents=[];for(const type of ['mousedown','mousemove','mouseup'])document.addEventListener(type,e=>window.dragEvents.push({type:e.type,buttons:e.buttons,trusted:e.isTrusted}));"})).await.unwrap();
+    let points = vec![
+        json!({"x":10,"y":20,"atMs":0}),
+        json!({"x":100,"y":20,"atMs":80}),
+        json!({"x":250,"y":20,"atMs":160}),
+    ];
+    dom.drag(target, &points, Duration::from_secs(3))
+        .await
+        .unwrap();
+    let slider = dom.call(Some(&session), "Runtime.evaluate", json!({"expression":"({value:Number(document.querySelector('#slider').value),events:window.dragEvents})","returnByValue":true})).await.unwrap();
+    let slider = &slider["result"]["value"];
+    assert!(slider["value"].as_u64().unwrap() > 70, "{slider}");
+    let events = slider["events"].as_array().unwrap();
+    assert_eq!(
+        events.iter().filter(|e| e["type"] == "mousedown").count(),
+        1
+    );
+    assert_eq!(events.iter().filter(|e| e["type"] == "mouseup").count(), 1);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| e["type"] == "mousemove" && e["buttons"] == 1)
+            .count(),
+        2
+    );
+    assert_eq!(events.last().unwrap()["buttons"], 0);
+    assert!(events.iter().all(|e| e["trusted"] == true));
     chrome.kill().await.unwrap();
     chrome.wait().await.unwrap();
 }

@@ -504,7 +504,7 @@ export interface SaveAuthentication {
  */
 export interface BrowserInput {
   type: 'browser.input';
-  action: 'click' | 'text' | 'press' | 'scroll';
+  action: 'click' | 'text' | 'press' | 'scroll' | 'drag';
   x?: number;
   y?: number;
   value?: string;
@@ -514,6 +514,29 @@ export interface BrowserInput {
    * 平台分配的标签页分组身份，不是模型指定的活动页；同一 profile 内独立保存观察引用。
    */
   tabScope?: string;
+  /**
+   * 人工拖动的有界视口轨迹；松手后整段提交，首点 atMs 为 0，时间单调不减，执行中失败也尝试释放左键。
+   *
+   * @minItems 2
+   * @maxItems 256
+   */
+  points?: [
+    {
+      x: number;
+      y: number;
+      atMs: number;
+    },
+    {
+      x: number;
+      y: number;
+      atMs: number;
+    },
+    ...{
+      x: number;
+      y: number;
+      atMs: number;
+    }[],
+  ];
 }
 /**
  * 开始或停止 Chromium trace，路径由节点生成，停止后按原证据链上传。
