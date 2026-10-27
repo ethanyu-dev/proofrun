@@ -32,6 +32,7 @@ export function StepPlayback({
   task: TaskDetail;
   execution: TaskDetail['executions'][number];
 }) {
+  const browser = task.definition.taskKind === 'browser';
   const active =
     task.state === 'RUNNING' &&
     ['STARTING', 'RUNNING'].includes(execution.state);
@@ -41,100 +42,138 @@ export function StepPlayback({
   const live = active && selection === null;
   const step = steps.find((s) => s.id === selection) ?? steps[0];
   return (
-    <div className="execution-workspace">
-      <nav className="execution-steps" aria-label="执行步骤">
-        {active && (
-          <Button
-            variant={live ? 'secondary' : 'ghost'}
-            onClick={() => setSelection(null)}
-            aria-current={live ? 'true' : undefined}
-          >
-            实时画面
-          </Button>
-        )}
-        <h2>步骤</h2>
-        {steps.map((item, index) => (
-          <button
-            type="button"
-            className="execution-step"
-            key={item.id}
-            aria-current={!live && item.id === step?.id ? 'step' : undefined}
-            onClick={() => setSelection(item.id)}
-          >
-            <span className="execution-step-title">
-              <strong>
-                {item.id === 'unassigned' ? '其他操作' : `Step ${index + 1}`}
-                {task.definition.cleanupStepIds?.includes(item.id)
-                  ? ' · 清理'
-                  : ''}
-              </strong>
-              <Status
-                value={
-                  item.result?.status ??
-                  (item.id === 'unassigned' ? '已记录' : 'PENDING')
-                }
-              />
-            </span>
-            <span className="execution-step-description">
-              {item.description}
-            </span>
-            <small>
-              {item.screenshots.length} 张截图 · {item.commands.length} 条操作
-            </small>
-          </button>
-        ))}
-      </nav>
-      <section
-        className="execution-stage"
-        aria-label={live ? '实时交互' : '步骤回放'}
-      >
-        {live ? (
-          <>
-            <div className="section-heading">
-              <h2>实时画面</h2>
-            </div>
-            <ExecutionControl api={api} task={task} execution={execution} />
-            <LivePage api={api} execution={execution} active={active} />
-            <p className="muted">
-              {steps.find((s) => s.result?.status === 'RUNNING')?.description ??
-                '正在准备执行…'}
+    <>
+      {/* 人工处理属于当前执行，不随浏览器任务的画面与记录切换隐藏。 */}
+      {browser && (
+        <ExecutionControl api={api} task={task} execution={execution} />
+      )}
+      <div className="execution-workspace">
+        <nav
+          className="execution-steps"
+          aria-label={browser ? '执行记录' : '执行步骤'}
+        >
+          {active && (
+            <Button
+              variant={live ? 'secondary' : 'ghost'}
+              onClick={() => setSelection(null)}
+              aria-current={live ? 'true' : undefined}
+            >
+              实时画面
+            </Button>
+          )}
+          <h2>{browser ? '执行记录' : '步骤'}</h2>
+          {steps.map((item, index) => (
+            <button
+              type="button"
+              className="execution-step"
+              key={item.id}
+              aria-current={!live && item.id === step?.id ? 'step' : undefined}
+              onClick={() => setSelection(item.id)}
+            >
+              <span className="execution-step-title">
+                <strong>
+                  {browser
+                    ? '操作记录'
+                    : item.id === 'unassigned'
+                      ? '其他操作'
+                      : `Step ${index + 1}`}
+                  {task.definition.cleanupStepIds?.includes(item.id)
+                    ? ' · 清理'
+                    : ''}
+                </strong>
+                <Status
+                  value={
+                    item.result?.status ??
+                    (item.id === 'unassigned' ? '已记录' : 'PENDING')
+                  }
+                />
+              </span>
+              <span className="execution-step-description">
+                {item.description}
+              </span>
+              <small>
+                {item.screenshots.length} 张截图 · {item.commands.length} 条操作
+              </small>
+            </button>
+          ))}
+        </nav>
+        <section
+          className="execution-stage"
+          aria-label={live ? '实时交互' : browser ? '操作回放' : '步骤回放'}
+        >
+          {live ? (
+            <>
+              <div className="section-heading">
+                <h2>实时画面</h2>
+              </div>
+              {!browser && (
+                <ExecutionControl api={api} task={task} execution={execution} />
+              )}
+              <LivePage api={api} execution={execution} active={active} />
+              <p className="muted">
+                {browser
+                  ? execution.control_mode === 'HUMAN'
+                    ? '等待人工处理，完成后继续执行任务。'
+                    : execution.control_mode === 'REQUESTED'
+                      ? '正在交接浏览器控制权…'
+                      : timeline.commands.length
+                        ? `最近操作：${actionLabel(timeline.commands.at(-1)!)}`
+                        : execution.state === 'STARTING'
+                          ? '正在启动浏览器…'
+                          : '正在执行任务，等待操作记录…'
+                  : (steps.find((s) => s.result?.status === 'RUNNING')
+                      ?.description ?? '正在准备执行…')}
+              </p>
+            </>
+          ) : step ? (
+            <StepRecording
+              key={step.id}
+              api={api}
+              step={step}
+              browser={browser}
+            />
+          ) : (
+            <p className="muted">尚无步骤记录。</p>
+          )}
+          <ErrorNotice message={timeline.error} />
+          {timeline.loading && (
+            <p role="status" className="muted">
+              正在同步操作记录…
             </p>
-          </>
-        ) : step ? (
-          <StepRecording key={step.id} api={api} step={step} />
-        ) : (
-          <p className="muted">尚无步骤记录。</p>
-        )}
-        <ErrorNotice message={timeline.error} />
-        {timeline.loading && (
-          <p role="status" className="muted">
-            正在同步操作记录…
-          </p>
-        )}
-        {timeline.error && (
-          <Button variant="outline" onClick={timeline.refresh}>
-            重新读取操作
-          </Button>
-        )}
-        {live && (
-          <OperationList
-            commands={timeline.commands.slice(-12)}
-            onScreenshot={(id) =>
-              setSelection(
-                steps.find((item) =>
-                  item.screenshots.some((image) => image.id === id),
-                )?.id ?? null,
-              )
-            }
-          />
-        )}
-      </section>
-    </div>
+          )}
+          {timeline.error && (
+            <Button variant="outline" onClick={timeline.refresh}>
+              重新读取操作
+            </Button>
+          )}
+          {live && (
+            <OperationList
+              commands={timeline.commands.slice(-12)}
+              onScreenshot={(id) =>
+                setSelection(
+                  steps.find((item) =>
+                    item.screenshots.some((image) => image.id === id),
+                  )?.id ?? null,
+                )
+              }
+            />
+          )}
+        </section>
+      </div>
+    </>
   );
 }
 
 /** 单步骤截图和操作共用选择状态，操作产生的截图可以直接定位。 */
-function StepRecording({ api, step }: { api: ApiClient; step: PlaybackStep }) {
+function StepRecording({
+  api,
+  step,
+  browser,
+}: {
+  api: ApiClient;
+  step: PlaybackStep;
+  browser: boolean;
+}) {
   const [selected, setSelected] = useState<string>();
   const screen = useRef<HTMLDivElement>(null);
   const index = Math.max(
@@ -145,7 +184,13 @@ function StepRecording({ api, step }: { api: ApiClient; step: PlaybackStep }) {
   return (
     <>
       <div className="section-heading">
-        <h2>{step.id === 'unassigned' ? '其他操作' : step.id}</h2>
+        <h2>
+          {browser
+            ? '操作记录'
+            : step.id === 'unassigned'
+              ? '其他操作'
+              : step.id}
+        </h2>
         {step.result && <Status value={step.result.status} />}
       </div>
       <p className="execution-step-instruction">{step.description}</p>
@@ -175,9 +220,11 @@ function StepRecording({ api, step }: { api: ApiClient; step: PlaybackStep }) {
           </>
         ) : (
           <div className="execution-image-empty">
-            {step.result?.status === 'PENDING' || !step.result
-              ? '此步骤尚无截图记录'
-              : '此步骤没有保存截图'}
+            {browser
+              ? '本次执行尚无截图记录'
+              : step.result?.status === 'PENDING' || !step.result
+                ? '此步骤尚无截图记录'
+                : '此步骤没有保存截图'}
           </div>
         )}
       </div>

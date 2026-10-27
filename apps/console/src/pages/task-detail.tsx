@@ -9,13 +9,15 @@ import { StepPlayback } from '../components/step-playback';
 import { Button } from '../components/ui/button';
 import { Empty, ErrorNotice, PageHeader } from '../components/ui';
 
-/** 任务入口仅承载实时交互与步骤回放，不再挂载旧详情、报告或历史对照模块。 */
+/** 浏览器任务聚合操作与交付结果；验证任务继续只展示执行过程。 */
 export function TaskDetailPage({ api, id }: { api: ApiClient; id: string }) {
   const resource = useResource<TaskDetail>(
     api,
     `/v1/tasks/${encodeURIComponent(id)}`,
   );
   const task = resource.data;
+  const browser = task?.definition.taskKind === 'browser';
+  const active = task?.state === 'QUEUED' || task?.state === 'RUNNING';
   const requestId = sourceRequestId();
   return (
     <>
@@ -46,7 +48,7 @@ export function TaskDetailPage({ api, id }: { api: ApiClient; id: string }) {
           重新读取任务
         </Button>
       )}
-      {task?.definition.taskKind === 'browser' && (
+      {task && browser && !active && (
         <BrowserTaskResult api={api} task={task} />
       )}
       {task ? (
@@ -54,6 +56,7 @@ export function TaskDetailPage({ api, id }: { api: ApiClient; id: string }) {
       ) : (
         <Empty title={resource.loading ? '正在读取执行…' : '无法读取执行'} />
       )}
+      {task && browser && active && <BrowserTaskResult api={api} task={task} />}
     </>
   );
 }

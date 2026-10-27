@@ -1,4 +1,3 @@
-import { BrowserTaskResult } from '../components/browser-task-result';
 import { Button } from '../components/ui/button';
 import { RequestMemberships } from '../components/request-memberships';
 import {
@@ -6,7 +5,7 @@ import {
   ExecutionOutcomeDetails,
 } from '../components/execution-outcome';
 import { TaskIdentity } from '../components/task-identity';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { TaskDetail } from '@proofrun/contracts';
 import { ApiClient } from '../api';
 import { useResource } from '../use-resource';
@@ -40,19 +39,35 @@ export function ReportDetailPage({ api, id }: { api: ApiClient; id: string }) {
     api,
     `/v1/tasks/${encodeURIComponent(id)}`,
   );
+  const browser = resource.data?.definition.taskKind === 'browser';
+  // 旧书签依据明确类型跳转；缺少标记的历史任务继续读取原验证报告。
+  useEffect(() => {
+    if (browser)
+      window.location.replace(`#/browser-tasks/${encodeURIComponent(id)}`);
+  }, [browser, id]);
+  if (browser)
+    return (
+      <Empty title="正在打开浏览器任务…">
+        <a href={`#/browser-tasks/${encodeURIComponent(id)}`}>查看任务详情</a>
+      </Empty>
+    );
+  if (!resource.data)
+    return (
+      <>
+        <ErrorNotice message={resource.error} />
+        <Empty title={resource.loading ? '正在读取任务…' : '无法读取任务'} />
+        {resource.error && (
+          <Button variant="outline" onClick={resource.refresh}>
+            重新读取任务
+          </Button>
+        )}
+      </>
+    );
   return (
     <div className="report-page">
       <PageHeader
-        title={
-          resource.data?.definition.taskKind === 'browser'
-            ? '浏览器任务结果'
-            : '验证报告'
-        }
-        description={
-          resource.data?.definition.taskKind === 'browser'
-            ? '查看交付正文和执行证据。'
-            : '核对本次结论、验收范围与原始证据。'
-        }
+        title="验证报告"
+        description="核对本次结论、验收范围与原始证据。"
       >
         <Button asChild variant="outline">
           <a className="button button-secondary" href="#/tasks">
@@ -68,20 +83,10 @@ export function ReportDetailPage({ api, id }: { api: ApiClient; id: string }) {
       <RequestMemberships api={api} taskId={id} />
       <RefreshBar {...resource} />
       <ErrorNotice message={resource.error} />
-      {resource.data ? (
-        resource.data.definition.taskKind === 'browser' ? (
-          <BrowserTaskResult api={api} task={resource.data} />
-        ) : resource.data.definition.comparison ? (
-          <PairedReportDetails key={id} api={api} task={resource.data} />
-        ) : (
-          <ReportDetails api={api} task={resource.data} />
-        )
+      {resource.data.definition.comparison ? (
+        <PairedReportDetails key={id} api={api} task={resource.data} />
       ) : (
-        <Empty title={resource.loading ? '正在读取报告…' : '无法读取报告'}>
-          {resource.loading
-            ? undefined
-            : '请检查任务身份、访问凭据和服务连接。'}
-        </Empty>
+        <ReportDetails api={api} task={resource.data} />
       )}
     </div>
   );
