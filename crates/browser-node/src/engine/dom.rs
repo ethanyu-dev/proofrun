@@ -1,6 +1,8 @@
 //! 通过会话私有 CDP 连接读取原生 DOM；元素身份绑定实际 backend node，不按名称重找替代节点。
 #[path = "dom_cookies.rs"]
 mod cookie_cleanup;
+#[path = "dom_drag.rs"]
+mod drag_input;
 #[path = "dom_inspection.rs"]
 mod inspection;
 #[path = "dom_network.rs"]

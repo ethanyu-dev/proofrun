@@ -90,7 +90,9 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
     setUnableResult('');
     setRuntimeEvidence(undefined);
   }, [id, token]);
-  const [busy, setBusy] = useState(false);
+  const [inputBusy, setBusy] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const busy = inputBusy || dragging;
   const [checked, setChecked] = useState<number[]>([]);
   const [text, setText] = useState('');
   const socket = useRef<HitlConnection | null>(null);
@@ -300,6 +302,8 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
     flush,
     submit: enqueue,
     release: () => setRemoteFocused(false),
+    dragging: setDragging,
+    error: setError,
   });
   return (
     <main className="hitl-page">
@@ -324,6 +328,7 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
               <img
                 ref={screen}
                 className="hitl-screen"
+                draggable={false}
                 aria-disabled={!interactive}
                 onFocus={() => setRemoteFocused(true)}
                 onBlur={() => {
@@ -351,7 +356,8 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
                   });
                 }}
                 onKeyDown={(event) => {
-                  if (!interactive || event.nativeEvent.isComposing) return;
+                  if (!interactive || dragging || event.nativeEvent.isComposing)
+                    return;
                   if (
                     KEYS.has(event.key) ||
                     ((event.ctrlKey || event.metaKey) &&
@@ -514,7 +520,7 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
                 ))}
               </div>
               <p className="muted note">
-                点击画面操作；中文与粘贴可使用输入框。
+                点击画面操作；拖动后松手提交，画面随后更新。中文与粘贴可使用输入框。
               </p>
               {state?.runtimeEvidenceAvailable && (
                 <div>

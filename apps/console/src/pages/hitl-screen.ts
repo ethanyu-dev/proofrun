@@ -1,29 +1,11 @@
 import { useEffect, useRef, type RefObject } from 'react';
 import type { NodeCommand } from '@proofrun/contracts';
+import { bindHitlPointer, screenPoint } from './hitl-pointer';
+export { screenPoint } from './hitl-pointer';
 
 /** 与协议滚动上限一致；行模式滚轮按常见行高换算为 CSS 像素。 */
 const SCROLL_LIMIT = 2000;
 const LINE_HEIGHT = 16;
-
-/** 保持缩放后坐标在真实视口内，避免图片边缘舍入越界。 */
-export function screenPoint(
-  clientX: number,
-  clientY: number,
-  rect: Pick<DOMRect, 'left' | 'top' | 'width' | 'height'>,
-  width: number,
-  height: number,
-) {
-  return {
-    x: Math.max(
-      0,
-      Math.min(width - 1, ((clientX - rect.left) * width) / rect.width),
-    ),
-    y: Math.max(
-      0,
-      Math.min(height - 1, ((clientY - rect.top) * height) / rect.height),
-    ),
-  };
-}
 
 /** 只在画面持有焦点时锁住宿主页面；不影响下面表单的正常滚动。 */
 export function useHitlScreen({
@@ -34,6 +16,8 @@ export function useHitlScreen({
   flush,
   submit,
   release,
+  dragging,
+  error,
 }: {
   screen: RefObject<HTMLImageElement | null>;
   interactive: boolean;
@@ -42,10 +26,12 @@ export function useHitlScreen({
   flush: () => void;
   submit: (command: NodeCommand['command']) => boolean;
   release: () => void;
+  dragging: (active: boolean) => void;
+  error: (message: string) => void;
 }) {
   // 回调读取当前连接与队列，避免每一帧重新绑定全局监听器。
-  const handlers = useRef({ flush, submit, release });
-  handlers.current = { flush, submit, release };
+  const handlers = useRef({ flush, submit, release, dragging, error });
+  handlers.current = { flush, submit, release, dragging, error };
   useEffect(() => {
     const element = screen.current;
     if (!interactive || !element) {
@@ -53,6 +39,16 @@ export function useHitlScreen({
       handlers.current.release();
       return;
     }
+    let pointerActive = false;
+    const unbindPointer = bindHitlPointer(element, width, height, {
+      flush: () => handlers.current.flush(),
+      submit: (command) => handlers.current.submit(command),
+      changed: (active) => {
+        pointerActive = active;
+        handlers.current.dragging(active);
+      },
+      error: (message) => handlers.current.error(message),
+    });
     const leave = () => {
       element.blur();
       handlers.current.release();
@@ -64,7 +60,7 @@ export function useHitlScreen({
       if (document.activeElement !== element) return;
       // React 的 wheel 监听可能为 passive，必须原生注册才能阻止宿主页面滚动。
       event.preventDefault();
-      if (event.target !== element) return;
+      if (event.target !== element || pointerActive) return;
       event.stopPropagation();
       handlers.current.flush();
       const multiplier =
@@ -97,6 +93,7 @@ export function useHitlScreen({
     window.addEventListener('blur', leave);
     document.addEventListener('visibilitychange', leave);
     return () => {
+      unbindPointer();
       document.removeEventListener('wheel', wheel);
       document.removeEventListener('pointerdown', outside, true);
       window.removeEventListener('blur', leave);

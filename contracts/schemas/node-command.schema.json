@@ -384,7 +384,7 @@
               "const": "browser.input"
             },
             "action": {
-              "enum": ["click", "text", "press", "scroll"]
+              "enum": ["click", "text", "press", "scroll", "drag"]
             },
             "x": {
               "type": "number",
@@ -415,6 +415,34 @@
               "type": "string",
               "pattern": "^[A-Za-z0-9_-]{1,80}$",
               "description": "平台分配的标签页分组身份，不是模型指定的活动页；同一 profile 内独立保存观察引用。"
+            },
+            "points": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 256,
+              "description": "人工拖动的有界视口轨迹；松手后整段提交，首点 atMs 为 0，时间单调不减，执行中失败也尝试释放左键。",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "x": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 16384
+                  },
+                  "y": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 16384
+                  },
+                  "atMs": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 8000
+                  }
+                },
+                "required": ["x", "y", "atMs"]
+              }
             }
           },
           "required": ["type", "action"],

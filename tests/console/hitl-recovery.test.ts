@@ -182,6 +182,70 @@ test('人工页面没有首帧时仍可导航，超时可重连且不重放操�
       sockets[4]!.sent.filter((m) => m.type === 'command').length,
       0,
     );
+    // 范围：真实页面绑定按缩放坐标提交单条拖动，期间禁止交还，后续 click 不重复提交；WebSocket 仍为夹具。
+    const screen = container.querySelector('img.hitl-screen')!;
+    assert.equal(screen.getAttribute('draggable'), 'false');
+    screen.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 640, height: 360 }) as DOMRect;
+    await act(async () =>
+      screen.dispatchEvent(
+        new window.PointerEvent('pointerdown', {
+          bubbles: true,
+          cancelable: true,
+          pointerId: 1,
+          isPrimary: true,
+          button: 0,
+          buttons: 1,
+          clientX: 100,
+          clientY: 100,
+        }),
+      ),
+    );
+    assert.equal(button('完成，继续任务').disabled, true);
+    assert.equal(
+      sockets[4]!.sent.filter((m) => m.type === 'command').length,
+      0,
+    );
+    await act(async () => {
+      window.dispatchEvent(
+        new window.PointerEvent('pointermove', {
+          pointerId: 1,
+          buttons: 1,
+          clientX: 200,
+          clientY: 100,
+        }),
+      );
+      window.dispatchEvent(
+        new window.PointerEvent('pointerup', {
+          pointerId: 1,
+          button: 0,
+          clientX: 200,
+          clientY: 100,
+        }),
+      );
+      screen.dispatchEvent(
+        new window.MouseEvent('click', {
+          bubbles: true,
+          detail: 1,
+          clientX: 200,
+          clientY: 100,
+        }),
+      );
+    });
+    const drag = sockets[4]!.sent.filter((m) => m.type === 'command');
+    assert.equal(drag.length, 1);
+    assert.equal(drag[0].command.action, 'drag');
+    assert.deepEqual(drag[0].command.points[0], { x: 200, y: 200, atMs: 0 });
+    assert.equal(drag[0].command.points.at(-1).x, 400);
+    await act(async () =>
+      sockets[4]!.receive({
+        type: 'result',
+        commandId: drag[0].commandId,
+        status: 'SUCCEEDED',
+        effect: 'APPLIED',
+      }),
+    );
+    assert.equal(button('完成，继续任务').disabled, false);
     // 范围：读取只读证据不会伪造待办确认，倒计时取实际等待期限而非四小时链接。
     await act(async () =>
       sockets[4]!.receive({
