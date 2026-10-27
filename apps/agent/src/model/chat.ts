@@ -13,6 +13,8 @@ import type { AgentConfig } from '../config.js';
 import { AgentFault, jsonRequest } from '../http.js';
 import { modelRequest } from './request.js';
 import { reasoningParameters, toolChoice } from './reasoning.js';
+import { isModelToolCall, networkBatch } from './network-batch.js';
+import type { NetworkReadDecision } from '../evidence/network-reads.js';
 
 /** 将封闭协议的各分支映射成独立工具，避免供应商遗漏嵌套联合对象的外层字段。 */
 const MODEL_TOOLS = agentDecisionSchema.oneOf.map(
@@ -65,6 +67,8 @@ export interface DecisionInput {
 /** 一次模型调用的结构化结果，token 数仅来自服务回复。 */
 export interface DecisionOutput {
   decision: AgentDecision;
+  /** 同一真实模型回复中的其余纯网络读取，执行器整批校验后本地处理。 */
+  additionalNetworkReads?: NetworkReadDecision[];
   promptTokens: number;
   completionTokens: number;
 }
@@ -156,10 +160,7 @@ export class ChatModel implements DecisionModel {
         finish_reason?: string;
         message?: {
           role?: string;
-          tool_calls?: Array<{
-            type?: string;
-            function?: { name?: string; arguments?: string };
-          }>;
+          tool_calls?: unknown;
         };
       }>;
       usage?: { prompt_tokens?: unknown; completion_tokens?: unknown };
@@ -170,16 +171,22 @@ export class ChatModel implements DecisionModel {
         ? value
         : 0;
     const choice = raw?.choices?.[0];
-    const calls = choice?.message?.tool_calls;
+    const rawCalls = choice?.message?.tool_calls;
+    const calls: unknown[] | undefined = Array.isArray(rawCalls)
+      ? rawCalls
+      : undefined;
+    const firstCall = calls?.[0];
     if (
       calls?.length === 1 &&
-      calls[0]?.function?.name === 'verification_intervene' &&
+      isModelToolCall(firstCall) &&
+      firstCall.function.name === 'verification_intervene' &&
       !context.task.permissions.allowIntervention
     )
       throw new AgentFault('INTERVENTION_DISABLED', '当前任务未授权人工介入');
     if (
       calls?.length === 1 &&
-      calls[0]?.function?.name === 'browser_act' &&
+      isModelToolCall(firstCall) &&
+      firstCall.function.name === 'browser_act' &&
       context.budget?.actions === 0
     )
       throw new AgentFault(
@@ -190,7 +197,8 @@ export class ChatModel implements DecisionModel {
       );
     if (
       calls?.length === 1 &&
-      calls[0]?.function?.name === 'browser_observe' &&
+      isModelToolCall(firstCall) &&
+      firstCall.function.name === 'browser_observe' &&
       !availableTools.some((tool) => tool.type === 'browser.observe')
     )
       throw new AgentFault(
@@ -198,11 +206,28 @@ export class ChatModel implements DecisionModel {
         '页面连续观察没有新增事实，当前应登记已有验收结果、执行实际动作或明确受阻，不能继续重复 observe。',
       );
     if (
+      choice?.message?.role === 'assistant' &&
+      choice.finish_reason !== 'length' &&
+      calls &&
+      calls.length > 1
+    ) {
+      const [decision, ...additionalNetworkReads] = networkBatch(
+        calls,
+        availableTools,
+      );
+      return {
+        decision: decision!,
+        additionalNetworkReads,
+        promptTokens: tokens(raw.usage?.prompt_tokens),
+        completionTokens: tokens(raw.usage?.completion_tokens),
+      };
+    }
+    if (
       choice?.message?.role !== 'assistant' ||
       !calls ||
       calls.length !== 1 ||
-      calls[0]?.type !== 'function' ||
-      !availableTools.some((tool) => tool.name === calls[0]?.function?.name) ||
+      !isModelToolCall(firstCall) ||
+      !availableTools.some((tool) => tool.name === firstCall.function.name) ||
       choice.finish_reason === 'length'
     )
       throw new AgentFault(
@@ -211,7 +236,7 @@ export class ChatModel implements DecisionModel {
       );
     let parsed: unknown;
     try {
-      parsed = JSON.parse(calls[0].function?.arguments ?? '');
+      parsed = JSON.parse(firstCall.function.arguments);
     } catch {
       throw new AgentFault('INVALID_MODEL_DECISION', '模型工具参数不是 JSON');
     }
@@ -221,7 +246,7 @@ export class ChatModel implements DecisionModel {
         '工具参数必须是 JSON 对象',
       );
     const tool = availableTools.find(
-      (tool) => tool.name === calls[0]?.function?.name,
+      (tool) => tool.name === firstCall.function.name,
     )!;
     // 动作类型由已声明的工具名决定，参数中的同名字段也不能覆盖它。
     if ('type' in parsed)

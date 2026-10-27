@@ -26,6 +26,66 @@
       "additionalProperties": false,
       "properties": {
         "type": {
+          "const": "network.request_detail"
+        },
+        "observationId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "当前 page.network.observationId；分页与详情只读取该次快照。"
+        },
+        "progress": {
+          "$ref": "#/definitions/progress"
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "从网络摘要列表获取的请求 ID。"
+        }
+      },
+      "required": ["type", "observationId", "requestId"],
+      "description": "只读查看一个请求已采集的脱敏元数据与证据引用；不会重放请求，未采集正文不可补造。"
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "network.requests"
+        },
+        "observationId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "当前 page.network.observationId；分页与详情只读取该次快照。"
+        },
+        "progress": {
+          "$ref": "#/definitions/progress"
+        },
+        "urlContains": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "按已脱敏 URL 子串筛选，不是正则表达式。"
+        },
+        "status": {
+          "type": ["integer", "null"],
+          "minimum": 100,
+          "maximum": 599,
+          "description": "按状态码筛选；null 表示未收到响应。"
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "筛选结果偏移；省略为 0，每页最多 20 条。"
+        }
+      },
+      "required": ["type", "observationId"],
+      "description": "只读查询已采集网络请求的摘要列表；不会导航、重新取证或发出 HTTP 请求。"
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
           "const": "browser.act"
         },
         "action": {

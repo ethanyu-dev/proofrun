@@ -1,13 +1,16 @@
 /** 从任务文字提取检索词，排除 URL，避免整站导航词压过业务主题。 */
 const TASK_TERMS = /[\p{L}\p{N}][\p{L}\p{N}._-]{2,}/gu;
+/** 小预算不足以容纳多段定位标记，直接保留原文前缀，避免退化成单字符片段。 */
+const MIN_EXCERPT_CHARS = 384;
 
-/** 长页面按任务相关段落选取；完整当前页仍由执行器提供给文本模型。 */
+/** 长页面按任务相关片段摘录；完整原文保留于执行器及证据，摘录不补造未采集信息。 */
 export function evidenceExcerpt(
   text: string,
   objective: string,
   limit = 16000,
 ): string {
   if (text.length <= limit) return text;
+  if (limit < MIN_EXCERPT_CHARS) return text.slice(0, Math.max(0, limit));
   const terms = [
     ...new Set(
       (objective.replace(/https?:\/\/\S+/g, '').match(TASK_TERMS) ?? []).map(

@@ -13,6 +13,38 @@ export type AgentDecision =
       progress?: Progress;
     }
   | {
+      type: 'network.request_detail';
+      /**
+       * 当前 page.network.observationId；分页与详情只读取该次快照。
+       */
+      observationId: string;
+      progress?: Progress;
+      /**
+       * 从网络摘要列表获取的请求 ID。
+       */
+      requestId: string;
+    }
+  | {
+      type: 'network.requests';
+      /**
+       * 当前 page.network.observationId；分页与详情只读取该次快照。
+       */
+      observationId: string;
+      progress?: Progress;
+      /**
+       * 按已脱敏 URL 子串筛选，不是正则表达式。
+       */
+      urlContains?: string;
+      /**
+       * 按状态码筛选；null 表示未收到响应。
+       */
+      status?: number | null;
+      /**
+       * 筛选结果偏移；省略为 0，每页最多 20 条。
+       */
+      offset?: number;
+    }
+  | {
       type: 'browser.act';
       /**
        * 受限的浏览器动作；任一动作都可能产生业务副作用。
