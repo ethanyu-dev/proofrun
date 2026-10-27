@@ -277,7 +277,11 @@ class Execution {
       unsubscribe();
       if (guardOwner.complete) await this.guard.close();
     };
-    this.workflow = new Workflow(grant.task.objective, undefined, undefined);
+    this.workflow = new Workflow(
+      grant.task.objective,
+      grant.task.taskKind === 'browser' ? 'browser-goal' : undefined,
+      undefined,
+    );
     this.criteria = new CriteriaLedger(grant.task.acceptanceCriteria);
     this.stepResults = (grant.task.steps ?? []).map((step) => ({
       stepId: step.stepId!,
@@ -325,7 +329,7 @@ class Execution {
     code: string | null,
   ): VerificationReport {
     const verdict =
-      disposition !== 'EXECUTED'
+      disposition !== 'EXECUTED' || this.task.taskKind === 'browser'
         ? null
         : criteria.some((c) => c.verdict === 'FAILED')
           ? 'FAILED'
@@ -341,6 +345,24 @@ class Execution {
       summary,
       criteria,
       artifacts: [...this.evidence.values()],
+      ...(this.task.taskKind === 'browser'
+        ? {
+            browserResult: {
+              outcome:
+                disposition === 'EXECUTED'
+                  ? ('COMPLETED' as const)
+                  : ('INCOMPLETE' as const),
+              output: summary,
+              evidenceRefs: [
+                ...new Set(
+                  this.workflow
+                    .view()
+                    .steps.flatMap((item) => item.evidenceRefs),
+                ),
+              ].filter((id) => this.evidence.has(id)),
+            },
+          }
+        : {}),
       executionDetails: {
         ...this.details,
         commandIds: [...this.details.commandIds],
@@ -1002,6 +1024,23 @@ class Execution {
     ledger = this.criteria,
   ): VerificationReport {
     const invalid = () => ledger.invalid('完成结果缺少本步骤新取得的执行证据');
+    // 普通浏览器任务也必须先登记原目标的完成证据，不能利用空验收账本直接结束。
+    if (this.task.taskKind === 'browser') {
+      const requirements = this.workflow.view().steps;
+      if (
+        !decision.summary.trim() ||
+        !requirements.length ||
+        requirements.some(
+          (item) =>
+            item.status !== 'recorded' ||
+            !item.evidenceRefs.length ||
+            item.evidenceRefs.some((id) => !this.evidence.has(id)),
+        )
+      )
+        throw ledger.invalid(
+          '浏览器任务须在 progress.requirements 中登记原目标完成情况和有效证据，再用 summary 交付结果正文',
+        );
+    }
     const pending = ledger.pending();
     if (pending.length) throw ledger.invalid(`尚未登记：${pending.join('、')}`);
     if (this.grant.task.steps) {

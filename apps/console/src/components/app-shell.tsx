@@ -10,6 +10,7 @@ const NAVIGATION = [
     label: '验证任务',
     prefixes: ['/tasks', '/requests', '/reports', '/request-reports'],
   },
+  { href: '/browser-tasks', label: '浏览器任务', prefixes: ['/browser-tasks'] },
   { href: '/nodes', label: '执行节点', prefixes: ['/nodes', '/node-profiles'] },
 ];
 

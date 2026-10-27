@@ -221,6 +221,29 @@
       },
       "required": ["outcome", "reason", "decidedAt"],
       "description": "仅由人工处理服务写入；执行器不能伪造人为无法执行的结论。"
+    },
+    "browserResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outcome", "output", "evidenceRefs"],
+      "description": "浏览器任务的交付正文和证据，不作为验证通过结论。",
+      "properties": {
+        "outcome": {
+          "enum": ["COMPLETED", "INCOMPLETE"]
+        },
+        "output": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidenceRefs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
     }
   },
   "$schema": "http://json-schema.org/draft-07/schema#",
@@ -230,27 +253,89 @@
   "allOf": [
     {
       "if": {
+        "required": ["browserResult"],
         "properties": {
-          "executionDisposition": {
-            "const": "EXECUTED"
-          }
-        },
-        "required": ["executionDisposition"]
+          "browserResult": {}
+        }
       },
       "then": {
         "properties": {
-          "lifecycle": {
-            "const": "COMPLETED"
-          },
-          "verdict": {
-            "enum": ["PASSED", "FAILED", "INCONCLUSIVE"]
-          }
-        }
-      },
-      "else": {
-        "properties": {
           "verdict": {
             "type": "null"
+          },
+          "criteria": {
+            "type": "array",
+            "maxItems": 0
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "executionDisposition": {
+                  "const": "EXECUTED"
+                }
+              },
+              "required": ["executionDisposition"]
+            },
+            "then": {
+              "properties": {
+                "lifecycle": {
+                  "const": "COMPLETED"
+                },
+                "browserResult": {
+                  "type": "object",
+                  "properties": {
+                    "outcome": {
+                      "const": "COMPLETED"
+                    },
+                    "evidenceRefs": {
+                      "type": "array",
+                      "minItems": 1
+                    }
+                  }
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "browserResult": {
+                  "type": "object",
+                  "properties": {
+                    "outcome": {
+                      "const": "INCOMPLETE"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "else": {
+        "if": {
+          "properties": {
+            "executionDisposition": {
+              "const": "EXECUTED"
+            }
+          },
+          "required": ["executionDisposition"]
+        },
+        "then": {
+          "properties": {
+            "lifecycle": {
+              "const": "COMPLETED"
+            },
+            "verdict": {
+              "enum": ["PASSED", "FAILED", "INCONCLUSIVE"]
+            }
+          }
+        },
+        "else": {
+          "properties": {
+            "verdict": {
+              "type": "null"
+            }
           }
         }
       }

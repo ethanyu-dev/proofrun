@@ -1,3 +1,5 @@
+import { browserTask } from '../tasks/browser-task.js';
+import type { BrowserTaskRequest } from '@proofrun/contracts';
 import { supportsCapabilities } from '@proofrun/contracts';
 import { recoverableFocusFailure } from '@proofrun/contracts';
 import { assertSupportedSession, usesLocalIdentity } from '../sessions/plan.js';
@@ -96,6 +98,24 @@ export class Coordinator {
     private readonly reader: TaskReader,
   ) {
     this.externalAccounts = new ExternalAccounts(db, config.devPass);
+  }
+
+  /** 重试沿用首次冻结的配置；同一身份不能改变业务输入或挪用历史任务。 */
+  async submitBrowser(input: BrowserTaskRequest) {
+    const existing = (
+      await this.db.query<{ definition: VerificationTask }>(
+        'SELECT definition FROM pr_tasks WHERE id=$1',
+        [input.taskId],
+      )
+    ).rows[0]?.definition;
+    if (
+      existing &&
+      (existing.taskKind !== 'browser' ||
+        existing.objective !== input.objective ||
+        existing.target.url !== input.url)
+    )
+      throw new ApiError(409, 'TASK_CONFLICT', '任务身份已绑定另一份定义');
+    return this.submit(existing ?? browserTask(input, this.config));
   }
 
   /** 接收上层定义的任务快照；相同身份只允许相同定义。 */

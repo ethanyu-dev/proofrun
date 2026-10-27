@@ -135,6 +135,7 @@ function contextData(input: ContextInput) {
   const requirements = input.workflow?.steps ?? [];
   return {
     task: {
+      kind: input.task.taskKind ?? 'verification',
       background: input.background,
       stepId: step?.stepId,
       description: step?.description ?? input.task.objective,

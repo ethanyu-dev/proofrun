@@ -66,6 +66,17 @@ export function decisionTools(
         allOf?: object[];
       };
       parameters.properties.progress = structuredClone(progress);
+      if (
+        context.task.kind === 'browser' &&
+        tool.type === 'verification.finish'
+      ) {
+        parameters.properties.summary = {
+          type: 'string',
+          minLength: 1,
+          description:
+            '交付原目标要求的结果正文，含查询数据、表格、来源或操作结果。',
+        };
+      }
       // record 的必填 progress 已由 Contracts 定义；这里只补充 finish 的阶段约束。
       if (
         tool.type === 'verification.finish' &&

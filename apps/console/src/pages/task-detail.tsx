@@ -1,3 +1,4 @@
+import { BrowserTaskResult } from '../components/browser-task-result';
 import { useState } from 'react';
 import type { TaskDetail } from '@proofrun/contracts';
 import { ApiClient } from '../api';
@@ -19,7 +20,9 @@ export function TaskDetailPage({ api, id }: { api: ApiClient; id: string }) {
   return (
     <>
       <PageHeader
-        title="执行过程"
+        title={
+          task?.definition.taskKind === 'browser' ? '浏览器任务' : '执行过程'
+        }
         description={task?.definition.objective ?? ''}
       >
         {task && <TaskExecutionStatus task={task} />}
@@ -28,7 +31,9 @@ export function TaskDetailPage({ api, id }: { api: ApiClient; id: string }) {
             href={
               requestId
                 ? `#/requests/${encodeURIComponent(requestId)}`
-                : '#/tasks'
+                : task?.definition.taskKind === 'browser'
+                  ? '#/browser-tasks'
+                  : '#/tasks'
             }
           >
             {requestId ? '返回来源请求' : '返回任务'}
@@ -40,6 +45,9 @@ export function TaskDetailPage({ api, id }: { api: ApiClient; id: string }) {
         <Button variant="outline" onClick={resource.refresh}>
           重新读取任务
         </Button>
+      )}
+      {task?.definition.taskKind === 'browser' && (
+        <BrowserTaskResult api={api} task={task} />
       )}
       {task ? (
         <ExecutionView key={task.id} api={api} task={task} />

@@ -78,6 +78,10 @@ export interface TaskSummary {
    */
   evidenceCount: number | null;
   executionOutcome?: ExecutionOutcome;
+  /**
+   * 显式浏览器任务标记；历史任务为 null 或缺省。
+   */
+  taskKind?: 'browser' | null;
 }
 /**
  * 历史双组对比身份，仅供读取原执行记录；新任务不接受此字段，重跑创建 LLM 单组。

@@ -398,6 +398,10 @@
     "rerunSession": {
       "$ref": "session-request.schema.json",
       "description": "本次重跑显式提交的会话配置，用于运行幂等检查；只保存在新运行，省略表示未覆盖。"
+    },
+    "taskKind": {
+      "const": "browser",
+      "description": "通用浏览器任务；缺省保持历史验证任务语义。"
     }
   },
   "$schema": "http://json-schema.org/draft-07/schema#",
@@ -408,24 +412,51 @@
     {
       "if": {
         "properties": {
-          "purpose": {
-            "const": "cleanup"
+          "taskKind": {
+            "const": "browser"
           }
         },
-        "required": ["purpose"]
+        "required": ["taskKind"]
       },
       "then": {
-        "required": ["steps", "parentTaskId"],
         "properties": {
-          "steps": {},
-          "parentTaskId": {}
+          "acceptanceCriteria": {
+            "type": "array",
+            "maxItems": 0
+          },
+          "steps": false,
+          "caseDefinition": false,
+          "caseV2Definition": false,
+          "profilePlan": false,
+          "comparison": false,
+          "purpose": false,
+          "parentTaskId": false,
+          "cleanupStepIds": false,
+          "stepBudget": false
         }
       },
       "else": {
-        "properties": {
-          "acceptanceCriteria": {
-            "minItems": 1,
-            "type": "array"
+        "if": {
+          "properties": {
+            "purpose": {
+              "const": "cleanup"
+            }
+          },
+          "required": ["purpose"]
+        },
+        "then": {
+          "required": ["steps", "parentTaskId"],
+          "properties": {
+            "steps": {},
+            "parentTaskId": {}
+          }
+        },
+        "else": {
+          "properties": {
+            "acceptanceCriteria": {
+              "minItems": 1,
+              "type": "array"
+            }
           }
         }
       }

@@ -85,16 +85,17 @@ test('单个 v2 case 提交后直达任务详情，批量保留列表入口', as
   assert.equal(await submitCaseBatch(api, cases, signal), '/tasks');
 });
 
-// 范围：默认显示 v2 粘贴入口与三项默认行为，保留 v1 入口；不证明点击提交或业务执行成功。
+// 范围：默认显示 v2 粘贴入口与三项默认行为，替换 v1 入口为浏览器任务；不证明点击提交或业务执行成功。
 test('提交页默认只要求粘贴 v2 JSON', () => {
   const html = renderToStaticMarkup(
     createElement(TaskSubmitPage, { api: new ApiClient('fixture') }),
   );
   assert.match(html, /role="tab" aria-selected="true"[^>]*>v2 Schema 提交/);
-  assert.match(html, /v1 兼容入口/);
+  assert.match(html, /浏览器任务/);
+  assert.doesNotMatch(html, /v1 兼容入口|表单模式|JSON 模式/);
   assert.match(html, /id="case-definition"/);
-  assert.equal((html.match(/<textarea/g) ?? []).length, 1);
-  assert.doesNotMatch(html, /任务目标|验收项 ID|最大动作次数/);
+  assert.equal((html.match(/id="case-definition"/g) ?? []).length, 1);
+  assert.doesNotMatch(html, /验收项 ID|最大动作次数/);
   for (const label of [
     '使用 LLM 单组执行',
     '按测试身份来源准备独立会话',

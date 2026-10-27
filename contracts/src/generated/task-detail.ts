@@ -204,6 +204,10 @@ export type VerificationTask = {
     requiredCapabilities?: ('runtimeEvidenceV1' | 'networkDetailsV1' | 'focusRecoveryV1')[];
   };
   rerunSession?: SessionRequest1;
+  /**
+   * 通用浏览器任务；缺省保持历史验证任务语义。
+   */
+  taskKind?: 'browser';
 };
 export type CaseStep = {
   /**
@@ -636,6 +640,14 @@ export type VerificationReport = {
     outcome: 'UNEXECUTABLE';
     reason: string;
     decidedAt: string;
+  };
+  /**
+   * 浏览器任务的交付正文和证据，不作为验证通过结论。
+   */
+  browserResult?: {
+    outcome: 'COMPLETED' | 'INCOMPLETE';
+    output: string;
+    evidenceRefs: string[];
   };
 };
 

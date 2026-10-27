@@ -154,6 +154,10 @@
           },
           "executionOutcome": {
             "$ref": "execution-outcome.schema.json"
+          },
+          "taskKind": {
+            "enum": ["browser", null],
+            "description": "显式浏览器任务标记；历史任务为 null 或缺省。"
           }
         },
         "title": "TaskSummary"

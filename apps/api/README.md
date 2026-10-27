@@ -247,3 +247,13 @@ Console 与 API 通过同源部署或开发代理通信，本批不开放跨源�
 API 不再代理实时画面或 HITL 输入。`POST /v1/hitl/bootstrap` 用处理链接换取会话限定的节点地址和一次性凭据；`POST /v1/admin/executions/:id/live` 为管理员签发只读画面凭据。Node 经主 WSS 连接接收能力摘要，客户端再连接节点 `/hitl/control`、`/hitl/frames` 或 `/live/frames`。人工结果和完成事件经可靠节点通道持久化，操作摘要同时进入活动记录与时间线。
 
 调度只读取节点的 `admission` 作为候选提示，并串行同节点创建握手；最终准入由 Node 检查 CPU/内存。迁移 036 删除历史 `capacity` 列，节点心跳和列表契约同步移除此字段；`occupied` 仅用于占用展示和候选排序，不设固定并发上限。`NODE_CAPACITY` 排队原因表示节点暂不接收新任务。Case 内的 `profilePlan.maxConcurrency` 保持不变。域名唯一配置来源是节点 `public_url`，具体迁移见[部署说明](../../deploy/README.md#节点直连域名与升级)。
+
+## 通用浏览器任务
+
+`POST /v1/browser-tasks` 使用 Admin 认证，正文为 `{ "taskId": "browser-稳定重试身份", "url": "https://example.com", "objective": "查询价格并整理为表格" }`，返回 202 和任务详情。不接受环境、预算、验收项等客户端配置；内部冻结 `taskKind: browser`、LLM 模式和空验收集合。
+
+调度位置与人工权限优先使用 `caseProfile.environment` 的 id、nodePool、allowIntervention，预算优先使用 `caseProfile.budget`。未配置时使用 default/internal、允许人工辅助、二十分钟和一百次动作；不继承登录快照。相同 taskId 和业务输入重试沿用首次冻结的配置；身份冲突返回 409。重跑沿用原配置并创建新任务身份。
+
+通过 `GET /v1/tasks?taskKind=browser` 搜索和分页，详情、重跑、取消、删除及证据继续复用原任务接口。浏览器结果保存在 `report.browserResult`，包含 `outcome: COMPLETED | INCOMPLETE`、`output` 和 `evidenceRefs`，`verdict`、`reportStatus`、`criteriaCounts` 均为 null。完成必须交付正文及本次执行的证据；API 检查证据归属和协议一致性，不独立证明模型的业务判断。验证看板不纳入浏览器任务的数量与用量。
+
+未带 taskKind 的历史任务和 v2 Case 继续采用原验收语义，完整内部提交入口不能绕过浏览器任务的服务端配置。此次变更复用 JSON 定义与报告存储，无须数据迁移；API、Agent 和 Console 应配套部署，旧 Agent 不支持浏览器任务完成协议。

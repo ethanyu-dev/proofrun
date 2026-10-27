@@ -257,3 +257,10 @@ export {
   requiresActiveServiceWorker,
   activeServiceWorkerObserved,
 } from './runtime-readiness.js';
+
+export type { BrowserTaskRequest } from './generated/browser-task-request.js';
+import type { BrowserTaskRequest } from './generated/browser-task-request.js';
+/** 精简入口拒绝客户端覆盖预算、权限和内部任务结构。 */
+export const validateBrowserTaskRequest = ajv.compile<BrowserTaskRequest>(
+  readSchema('browser-task-request'),
+);

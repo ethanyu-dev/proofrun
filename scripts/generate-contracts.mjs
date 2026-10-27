@@ -24,6 +24,7 @@ const names = [
   'request-rerun',
   'verification-case',
   'case-result',
+  'browser-task-request',
   'verification-task',
   'verification-report',
   'node-command',
