@@ -10,6 +10,7 @@ import {
 } from '@proofrun/contracts/dashboard';
 import { ApiClient } from '../../apps/console/src/api.ts';
 import { DashboardPage } from '../../apps/console/src/pages/dashboard.tsx';
+import { RequestListPage } from '../../apps/console/src/pages/request-list.tsx';
 import { dashboardTokens } from '../../apps/console/src/components/dashboard-charts.tsx';
 
 /** 使用控制台自己的 React，HTTP 数据由本测试注入。 */
@@ -70,6 +71,7 @@ test('看板按周期读取，错误与未上报用量明确展示', async (cont
     window,
     document: window.document,
     location: window.location,
+    HTMLFormElement: window.HTMLFormElement,
     IS_REACT_ACT_ENVIRONMENT: true,
   };
   const prior = new Map(
@@ -96,6 +98,8 @@ test('看板按周期读取，错误与未上报用量明确展示', async (cont
   let delayed: (() => void) | undefined;
   context.mock.method(api, 'json', async (path: string) => {
     paths.push(path);
+    if (path.startsWith('/v2/requests'))
+      return { requests: [], nextCursor: null };
     if (fail) throw new Error('统计连接失败');
     if (defer) {
       defer = false;
@@ -120,6 +124,17 @@ test('看板按周期读取，错误与未上报用量明确展示', async (cont
     await act(async () => root.render(createElement(DashboardPage, { api })));
     assert.match(paths[0]!, /period=week/);
     assert.match(container.textContent!, /暂无已结束 Case/);
+    assert.match(container.textContent!, /Case 整体通过率/);
+    assert.match(container.textContent!, /请求内 Case 数/);
+    const rangeLink = () =>
+      [...container.querySelectorAll('a')].find(
+        (link) => link.textContent === '查看本周期验证任务',
+      )!;
+    const week = dashboardRange('week', dashboardToday());
+    assert.equal(
+      rangeLink().getAttribute('href'),
+      `#/tasks?startDate=${week.startDate}&endDate=${week.endDate}`,
+    );
     assert.match(container.textContent!, /未上报/);
     assert.match(container.textContent!, /1 次用量不完整/);
     assert.equal(
@@ -129,6 +144,11 @@ test('看板按周期读取，错误与未上报用量明确展示', async (cont
     );
     await act(async () => button('月').click());
     assert.match(paths.at(-1)!, /period=month/);
+    const month = dashboardRange('month', dashboardToday());
+    assert.equal(
+      rangeLink().getAttribute('href'),
+      `#/tasks?startDate=${month.startDate}&endDate=${month.endDate}`,
+    );
     assert.equal(
       container.querySelectorAll('.dashboard-daily tbody tr').length,
       dashboardRange('month', dashboardToday()).days.length,
@@ -168,6 +188,32 @@ test('看板按周期读取，错误与未上报用量明确展示', async (cont
     assert.equal(
       container.querySelectorAll('.dashboard-daily tbody tr').length,
       1,
+    );
+    // 范围：看板日期条件传入任务页并在搜索后保留；HTTP 返回为空夹具，不验证数据库。
+    await act(async () =>
+      root.render(
+        createElement(RequestListPage, {
+          api,
+          query: 'startDate=2024-03-04&endDate=2024-03-10',
+        }),
+      ),
+    );
+    assert.match(paths.at(-1)!, /startDate=2024-03-04&endDate=2024-03-10/);
+    assert.match(
+      container.textContent!,
+      /请求创建日期：2024-03-04 — 2024-03-10（北京时间）/,
+    );
+    await act(async () =>
+      container
+        .querySelector('form')!
+        .dispatchEvent(
+          new window.Event('submit', { bubbles: true, cancelable: true }),
+        ),
+    );
+    assert.match(paths.at(-1)!, /startDate=2024-03-04&endDate=2024-03-10/);
+    assert.equal(
+      container.querySelector('a[href="#/tasks"]')?.textContent,
+      '查看全部任务',
     );
   } finally {
     await act(async () => root.unmount());

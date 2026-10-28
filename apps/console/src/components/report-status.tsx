@@ -12,8 +12,8 @@ export function ReportProgress({
       className="report-progress"
       aria-label={
         counts
-          ? `通过 ${counts.passed} 项，共 ${counts.total} 项`
-          : '尚无验证统计'
+          ? `验收项通过 ${counts.passed} 项，共 ${counts.total} 项`
+          : '尚无验收项统计'
       }
     >
       {counts ? `${counts.passed} / ${counts.total}` : '— / —'}

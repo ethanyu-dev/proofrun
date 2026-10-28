@@ -176,6 +176,19 @@ const document = {
               schema: { enum: ['QUEUED', 'IN_PROGRESS', 'FINISHED'] },
             },
             {
+              name: 'startDate',
+              in: 'query',
+              description:
+                '北京时间请求创建起始日（含），须与 endDate 同时提供。',
+              schema: { type: 'string', format: 'date' },
+            },
+            {
+              name: 'endDate',
+              in: 'query',
+              description: '北京时间请求创建截止日（含），不得早于 startDate。',
+              schema: { type: 'string', format: 'date' },
+            },
+            {
               name: 'reportStatus',
               in: 'query',
               schema: { enum: ['PASSED', 'FAILED', 'INCONCLUSIVE'] },

@@ -13,8 +13,8 @@ export function CaseVerificationProgress({ member }: { member: RequestCase }) {
   return (
     <div className="case-verification-progress">
       <span className="case-pass-count">
+        <span className="muted">验收项通过</span>
         <ReportProgress counts={caseVerificationProgress(member)} />
-        <span className="muted">通过</span>
       </span>
       <VerificationStatusBadge
         status={requestCaseVerification(member).status}

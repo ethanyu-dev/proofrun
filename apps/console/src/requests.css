@@ -361,7 +361,7 @@
 /* 每行保留通过数、验证结论和执行状态，避免跨 case 查找对应关系。 */
 .request-preview-member .case-verification-progress {
   display: grid;
-  grid-template-columns: 96px 88px 128px;
+  grid-template-columns: 140px 88px 128px;
   gap: 10px;
   align-items: center;
   justify-items: center;

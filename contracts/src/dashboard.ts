@@ -8,9 +8,9 @@ const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 /** 看板选择的是自然周期，趋势始终按天展示。 */
 export type DashboardPeriod = 'day' | 'week' | 'month';
 
-/** 同一首次提交日期内的逻辑 Case；重跑沿用身份并更新当前结果。 */
+/** 按请求创建日归属的 Case 展示行；结果来自各请求当前关联的运行。 */
 export interface DashboardCases {
-  /** 去重后的提交量；历史无 Case 定义的普通任务按一个 Case 计。 */
+  /** 请求成员数；共享 Case 在不同请求中分别计数，与任务页展示行一致。 */
   total: number;
   /** 所选执行组已终止的数量，包括取消、错误及无结论。 */
   finished: number;
@@ -42,11 +42,11 @@ export interface DashboardUsage {
 
 /** 日明细与周期汇总使用相同字段，周期通过率重新按总数计算。 */
 export interface DashboardMetrics {
-  /** 本周期未删除的运行次数，双跑两组合并一次。 */
+  /** 本周期创建且仍被可见请求关联的运行数，复用及双跑合并一次。 */
   runs: number;
-  /** 按首次提交日归属的 Case 当前结果。 */
+  /** 按请求创建日归属的 Case 当前关联结果。 */
   cases: DashboardCases;
-  /** 所有执行组和清理过程的调用，按服务端接收调用的日期归属。 */
+  /** 当前关联运行的全部执行组及清理调用，按服务端接收调用日归属。 */
   execution: DashboardUsage;
   /** 验证执行总用量，不沿请求关联重复累计。 */
   tokens: DashboardUsage;

@@ -49,11 +49,14 @@ export function DashboardPage({ api }: { api: ApiClient }) {
     <div className="dashboard-page">
       <PageHeader
         title="验证看板"
-        description="从验证规模、通过情况到模型用量，按天追踪项目运行。"
+        description="按验证任务中的请求统计 Case，使用各请求当前关联运行的结果。"
       >
         <Button asChild variant="outline">
-          <a className="button button-secondary" href="#/tasks">
-            查看验证任务
+          <a
+            className="button button-secondary"
+            href={`#/tasks?${new URLSearchParams({ startDate: range.startDate, endDate: range.endDate })}`}
+          >
+            查看本周期验证任务
           </a>
         </Button>
         <Button asChild variant="default">
@@ -144,7 +147,7 @@ export function DashboardPage({ api }: { api: ApiClient }) {
         <>
           <div className="dashboard-kpis">
             <article className="panel dashboard-kpi">
-              <span>提交 Case 数</span>
+              <span>请求内 Case 数</span>
               <strong>{NUMBER_FORMAT.format(summary.cases.total)}</strong>
               <p>
                 已结束 {NUMBER_FORMAT.format(summary.cases.finished)} · 进行中{' '}
@@ -152,7 +155,7 @@ export function DashboardPage({ api }: { api: ApiClient }) {
               </p>
             </article>
             <article className="panel dashboard-kpi">
-              <span>通过 Case 数</span>
+              <span>整体通过 Case 数</span>
               <strong>{NUMBER_FORMAT.format(summary.cases.passed)}</strong>
               <p>
                 失败 {NUMBER_FORMAT.format(summary.cases.failed)} · 无完整结论{' '}
@@ -160,11 +163,11 @@ export function DashboardPage({ api }: { api: ApiClient }) {
               </p>
             </article>
             <article className="panel dashboard-kpi">
-              <span>Case 通过率</span>
+              <span>Case 整体通过率</span>
               <strong>{dashboardRate(summary.cases.passRate)}</strong>
               <p>
                 {summary.cases.finished
-                  ? `${summary.cases.passed} 通过 / ${summary.cases.finished} 已结束`
+                  ? `${summary.cases.passed} 个整体通过 / ${summary.cases.finished} 个已结束 Case`
                   : '暂无已结束 Case'}
               </p>
             </article>
@@ -184,12 +187,13 @@ export function DashboardPage({ api }: { api: ApiClient }) {
           </div>
           {summary.cases.total === 0 && summary.tokens.calls === 0 && (
             <p className="dashboard-empty" role="status">
-              本周期暂无 Case 提交或模型调用。可切换上一周期查看历史记录。
+              本周期暂无请求内 Case 或关联模型调用。可切换上一周期查看历史记录。
             </p>
           )}
           <p>
-            本周期运行次数：{NUMBER_FORMAT.format(summary.runs ?? 0)}
-            （包含重跑，已删除运行不计入）
+            本周期创建的当前关联运行数：
+            {NUMBER_FORMAT.format(summary.runs ?? 0)}
+            （跨请求复用去重，不含已替换的历史运行）
           </p>
           <DashboardCharts days={data.days} today={today} onDay={showDay} />
           <section
@@ -198,7 +202,9 @@ export function DashboardPage({ api }: { api: ApiClient }) {
           >
             <div className="dashboard-section-heading">
               <h2 id="usage-heading">用量构成</h2>
-              <span className="muted">全部执行组 · 包含重试与清理</span>
+              <span className="muted">
+                当前关联运行 · 全部执行组及清理 · 按调用发生日
+              </span>
             </div>
             <div className="table-scroll">
               <table>
@@ -258,12 +264,12 @@ export function DashboardPage({ api }: { api: ApiClient }) {
                 <thead>
                   <tr>
                     <th>日期</th>
-                    <th>提交 Case</th>
+                    <th>请求内 Case</th>
                     <th>通过</th>
                     <th>失败</th>
                     <th>无完整结论</th>
                     <th>进行中</th>
-                    <th>通过率</th>
+                    <th>Case 整体通过率</th>
                     <th>合计 Tokens</th>
                   </tr>
                 </thead>
@@ -321,23 +327,25 @@ export function DashboardPage({ api }: { api: ApiClient }) {
             <summary>统计口径与数据完整性</summary>
             <ul>
               <li>
-                Case
-                按首次提交日归属，显示当前结果；历史结果可能随执行完成而更新。一个普通任务计为一个
-                Case，独立清理任务不计入 Case 数。
+                Case 按请求创建日归属，与验证任务页的 Case 展示行一致。同一 Case
+                被多个请求复用时，每个请求分别计数；未关联请求的任务不计入。
               </li>
               <li>
-                相同 case
-                只计一次，取最新未删除运行的结果；运行次数另计。历史双跑仅以 JEV
-                组判定 Case，缺少 JEV 时沿用实际组。
+                结果取各请求当前关联的未删除运行；独立重跑不会替换请求结果。历史双跑优先
+                JEV，缺少 JEV 时沿用实际组。历史周期也显示当前关联结果。
               </li>
               <li>
-                通过率 = 通过 Case / 已结束
+                Case 整体通过率 = 整体通过 Case / 已结束
                 Case。已结束包含失败、受阻、取消、异常及证据不足；排队和执行中不计入分母。周、月按总数计算，不能平均每日通过率。
+                验收项通过数（如 5/9）表示单个 Case 的业务验收进度，不代表该
+                Case 整体通过。
               </li>
               <li>
-                Tokens
-                按服务端接收调用的日期累计，包含所有执行组、清理及失败重试。跨日执行的
-                Tokens 与 Case 提交日期可能不同。
+                运行量和 Tokens
+                仅统计可见请求当前关联运行，跨请求复用按实际执行去重。
+                运行量按运行创建日、Tokens
+                按服务端接收调用日归属，包含全部执行组、清理及失败重试； 与 Case
+                的请求创建日可能不同，被替换的历史运行不计入。
               </li>
               <li>
                 删除的运行及其清理用量不计入统计。缺失的用量不按零估算；有缺失时合计只代表已知部分。旧报告无调用明细时按结束日回填，既无明细也无汇总的历史消耗无法统计。
