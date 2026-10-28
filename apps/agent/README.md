@@ -91,8 +91,8 @@ export PROOFRUN_AGENT_MODEL_MS=120000
 | `src/model/chat.ts`           | Chat Completions 工具协议适配              |
 | `src/execution/runner.ts`     | 执行循环、预算、验收和报告                 |
 | `src/execution/lease.ts`      | 独立续租、截止时间与撤权                   |
-| `src/evidence/observation.ts` | 观察结构校验                               |
-| `src/evidence/delivery.ts`    | 证据独立等待预算、撤权与超时诊断           |
+
+证据结构校验、变化跟踪和网络读取由 [共享执行核心](../../packages/execution-core/README.md) 的 `src/evidence/` 提供；证据等待、撤权与超时诊断由 [共享执行驱动](../../packages/execution-driver/README.md) 的 `src/evidence/delivery.ts` 提供。Agent 直接引用共享包。
 
 验证范围与运行命令见 [测试入口与覆盖边界](../../tests/README.md)。
 

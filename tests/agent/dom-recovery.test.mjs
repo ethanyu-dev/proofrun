@@ -4,7 +4,7 @@ import { compileStepBudget } from '../../contracts/dist/index.js';
 import { execute } from '../../apps/agent/dist/execution/runner.js';
 import { ChatModel } from '../../apps/agent/dist/model/chat.js';
 import { AgentFault } from '../../apps/agent/dist/http.js';
-import { observation } from '../../apps/agent/dist/evidence/observation.js';
+import { observation } from '../../packages/execution-core/dist/evidence/observation.js';
 import { config, grant, FakeControl, finish, modelServer } from './fixture.mjs';
 
 /** 独立业务步骤与清理使用真实预算编译器，浏览器和模型决策仍为脚本夹具。 */

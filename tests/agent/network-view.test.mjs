@@ -5,13 +5,13 @@ import {
   networkView,
   selectNetwork,
   trimNetworkView,
-} from '../../apps/agent/dist/evidence/network-view.js';
+} from '../../packages/execution-core/dist/evidence/network-view.js';
 import { decisionContext } from '../../apps/agent/dist/execution/context.js';
 import { Workflow } from '../../apps/agent/dist/execution/workflow.js';
 import {
   NetworkReads,
   retainNetworkSelection,
-} from '../../apps/agent/dist/evidence/network-reads.js';
+} from '../../packages/execution-core/dist/evidence/network-reads.js';
 import { ChatModel } from '../../apps/agent/dist/model/chat.js';
 import { execute } from '../../apps/agent/dist/execution/runner.js';
 import { config, grant, FakeControl, finish, modelServer } from './fixture.mjs';

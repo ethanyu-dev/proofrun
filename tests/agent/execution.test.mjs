@@ -1272,7 +1272,7 @@ test('显式旧模式与历史对照均不能进入新执行', async () => {
     { code: 'EXECUTION_MODE_RETIRED' },
   );
 });
-import { ObservationTracker } from '../../apps/agent/dist/evidence/changes.js';
+import { ObservationTracker } from '../../packages/execution-core/dist/evidence/changes.js';
 
 /** 使用显式比较键模拟采集结果；真实节点身份稳定性另由 Chromium 用例验证。 */
 function deltaPage(targets, text = '表单', extra = {}) {

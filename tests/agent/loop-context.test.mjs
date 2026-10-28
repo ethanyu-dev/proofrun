@@ -7,7 +7,7 @@ import {
 } from '../../apps/agent/dist/execution/context.js';
 import { ChatModel } from '../../apps/agent/dist/model/chat.js';
 import { Workflow } from '../../apps/agent/dist/execution/workflow.js';
-import { observation } from '../../apps/agent/dist/evidence/observation.js';
+import { observation } from '../../packages/execution-core/dist/evidence/observation.js';
 import { config, grant, FakeControl, modelServer } from './fixture.mjs';
 
 /** 复用 Contracts 已固定的 AJV 校验出站 schema，不新增测试专用依赖。 */
