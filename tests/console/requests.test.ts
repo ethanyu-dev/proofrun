@@ -300,6 +300,8 @@ test('case 直接展开，只展示选定执行的通过数和状态', () => {
     createElement(RequestCasePreview, { value, reports: true }),
   );
   assert.match(preview, /1 \/ 1/);
+  assert.match(preview, /验收项通过/);
+  assert.match(preview, /aria-label="验收项通过 1 项，共 1 项"/);
   assert.match(preview, /执行完成/);
   assert.match(preview, /#\/request-reports\/r/);
   assert.doesNotMatch(preview, /<details|展开关联|LLM|JEV|执行次数|报告已交付/);

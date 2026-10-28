@@ -12,6 +12,10 @@ import {
   type ReportScope,
 } from '@proofrun/contracts';
 import { Database } from '../../db.js';
+import {
+  caseVerificationCounts,
+  caseVerificationStatus,
+} from '@proofrun/contracts/request-verification';
 import { ApiError } from '../../domain.js';
 import {
   DASHBOARD_CASES_SQL,
@@ -120,6 +124,7 @@ export async function dashboardStatistics(
       state: string;
       scope: ReportScope;
       report: ReportFacts | null;
+      step_criteria: ReportFacts['criteria'];
     }>(DASHBOARD_CASES_SQL, [range.from, range.until]);
     for (const row of cases.rows) {
       const counts = byDate.get(row.date)!.cases;
@@ -129,13 +134,25 @@ export async function dashboardStatistics(
         continue;
       }
       counts.finished++;
-      const status = summarizeReport(
+      const report = summarizeReport(
         row.report,
         row.scope.acceptanceCriteria.map((c) => c.id),
         row.scope,
-      ).reportStatus;
-      if (status === 'PASSED') counts.passed++;
-      else if (status === 'FAILED') counts.failed++;
+      );
+      const status = caseVerificationStatus(
+        false,
+        row.report !== null,
+        report.reportStatus,
+        // 与任务页一样，缺最终报告时保留已落库步骤中的明确失败，但部分通过不能成为整体通过。
+        caseVerificationCounts(
+          row.scope.acceptanceCriteria
+            .filter((c) => !row.scope.cleanupStepIds?.includes(c.stepId ?? ''))
+            .map((c) => c.id),
+          row.report?.criteria ?? row.step_criteria,
+        ),
+      );
+      if (status === 'success') counts.passed++;
+      else if (status === 'failure' || status === 'partial') counts.failed++;
       else counts.inconclusive++;
     }
     const usage = await client.query<UsageRow>(DASHBOARD_USAGE_SQL, [

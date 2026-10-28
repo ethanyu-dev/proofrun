@@ -309,8 +309,9 @@ test(
       assert.equal((await call('/v2/requests')).json().requests.length, 1);
       const dashboard = await call('/v1/admin/statistics?period=day');
       assert.equal(dashboard.statusCode, 200, dashboard.body);
-      assert.equal(dashboard.json().summary.cases.total, 2);
-      assert.equal(dashboard.json().summary.runs, 2);
+      // 看板只计请求关联的验证运行，旧独立验证任务与浏览器任务均不混入。
+      assert.equal(dashboard.json().summary.cases.total, 1);
+      assert.equal(dashboard.json().summary.runs, 1);
       await call(`/v1/tasks/${INPUT.taskId}/cancel`, {});
       const rerun = await call(`/v1/tasks/${INPUT.taskId}/rerun`, {
         runId: 'browser-rerun',

@@ -46,7 +46,7 @@ export function DashboardCharts({
       >
         <div className="dashboard-section-heading">
           <h2 id="case-chart-title">Case 日趋势</h2>
-          <span className="muted">每日提交 · 当前结果</span>
+          <span className="muted">按请求创建日 · 当前关联结果</span>
         </div>
         <div className="dashboard-legend">
           {CASE_SERIES.map(([key, label]) => (

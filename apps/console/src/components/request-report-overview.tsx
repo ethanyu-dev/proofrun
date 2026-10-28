@@ -29,7 +29,7 @@ export function RequestReportOverview({ value }: { value: RequestResultV2 }) {
               {counts.success}
               <span> / {counts.total}</span>
             </strong>
-            <span>Case 通过</span>
+            <span>Case 整体通过</span>
           </div>
           <dl>
             {(

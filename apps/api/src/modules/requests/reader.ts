@@ -1,4 +1,5 @@
 import type { PoolClient } from 'pg';
+import { dashboardRange, validDashboardDate } from '@proofrun/contracts';
 import type {
   RequestResultV2,
   RequestList,
@@ -104,9 +105,15 @@ export class RequestReader {
     if (
       Object.keys(query).some(
         (k) =>
-          !['q', 'executionStatus', 'reportStatus', 'limit', 'cursor'].includes(
-            k,
-          ),
+          ![
+            'q',
+            'executionStatus',
+            'reportStatus',
+            'limit',
+            'cursor',
+            'startDate',
+            'endDate',
+          ].includes(k),
       ) ||
       Object.values(query).some((v) => typeof v !== 'string')
     )
@@ -115,16 +122,29 @@ export class RequestReader {
     const executionStatus = (query.executionStatus as string) ?? '';
     const reportStatus = (query.reportStatus as string) ?? '';
     const limit = query.limit === undefined ? 25 : Number(query.limit);
+    // 看板下钻沿用北京时间闭开区间；两端必须同时提供，避免隐式扩大统计范围。
+    const startDate = (query.startDate as string) ?? '';
+    const endDate = (query.endDate as string) ?? '';
     if (
       q.length > 160 ||
       !['', 'QUEUED', 'IN_PROGRESS', 'FINISHED'].includes(executionStatus) ||
       !['', 'PASSED', 'FAILED', 'INCONCLUSIVE'].includes(reportStatus) ||
       !Number.isInteger(limit) ||
       limit < 1 ||
-      limit > 100
+      limit > 100 ||
+      ((query.startDate !== undefined || query.endDate !== undefined) &&
+        (!validDashboardDate(startDate) ||
+          !validDashboardDate(endDate) ||
+          startDate > endDate))
     )
       throw invalid();
-    const filter = JSON.stringify([q, executionStatus, reportStatus]);
+    const filter = JSON.stringify([
+      q,
+      executionStatus,
+      reportStatus,
+      startDate,
+      endDate,
+    ]);
     let cursor: { at: string; id: string; filter: string } | null = null;
     if (query.cursor) {
       try {
@@ -161,6 +181,14 @@ export class RequestReader {
         values.push(value);
         return `$${values.length}`;
       };
+      if (startDate) {
+        filters.push(
+          `s.created_at >= ${parameter(dashboardRange('day', startDate).from)}::timestamptz`,
+        );
+        filters.push(
+          `s.created_at < ${parameter(dashboardRange('day', endDate).until)}::timestamptz`,
+        );
+      }
       if (q) {
         const pattern = parameter(`%${q.replace(LIKE_ESCAPE, '\\$&')}%`);
         filters.push(

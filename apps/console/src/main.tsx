@@ -119,9 +119,11 @@ function App() {
   let page;
   if (!api) page = <Connect onConnect={connected} autoRestore={autoRestore} />;
   else if (path === '/dashboard') page = <DashboardPage api={api} />;
-  else if (path === '/tasks' || path === '/reports')
+  else if (['/tasks', '/reports'].includes(path.split('?')[0]!))
     // 旧报告列表地址继续可访问，统一展示任务列表和逐请求报告入口。
-    page = <RequestListPage api={api} />;
+    page = (
+      <RequestListPage key={path} api={api} query={path.split('?')[1] ?? ''} />
+    );
   else if (requestRoute)
     page = (
       <RequestDetailPage

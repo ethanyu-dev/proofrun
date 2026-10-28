@@ -203,12 +203,13 @@ test('稳定 case 运行历史与软删除集成', { timeout: 60_000 }, async (s
       );
       const after = await statistics();
       assert.equal(after.summary.cases.total, before.summary.cases.total);
-      assert.equal(after.summary.runs, before.summary.runs + 1);
+      assert.deepEqual(after.summary, before.summary);
       await finish('case-run-second');
-      assert.equal((await statistics()).summary.cases.passed, 1);
+      // 独立 Case 没有关联请求，完成重跑也不能进入验证任务看板。
+      assert.deepEqual((await statistics()).summary, before.summary);
     });
-    // 范围：删除最新运行回退旧结果、排除旧汇总用量、重复删除幂等；不物理清理文件。
-    await suite.test('删除最新运行回退并排除统计', async () => {
+    // 范围：删除独立运行回退旧结果且不影响请求看板、重复删除幂等；不物理清理文件。
+    await suite.test('删除独立运行回退且不影响请求看板', async () => {
       const before = await statistics();
       const removed = await call('/v1/tasks/case-run-second/delete', {});
       assert.equal(removed.statusCode, 200, removed.body);
@@ -225,12 +226,7 @@ test('稳定 case 运行历史与软删除集成', { timeout: 60_000 }, async (s
         409,
       );
       const after = await statistics();
-      assert.equal(after.summary.cases.failed, 1);
-      assert.equal(after.summary.runs, before.summary.runs - 1);
-      assert.equal(
-        after.summary.tokens.totalTokens,
-        before.summary.tokens.totalTokens - 60,
-      );
+      assert.deepEqual(after.summary, before.summary);
       assert.ok(
         (
           await sql.query(
@@ -386,6 +382,65 @@ test('稳定 case 运行历史与软删除集成', { timeout: 60_000 }, async (s
       );
       assert.equal((await read('/v2/cases/request-case/runs')).runs.length, 2);
     });
+    // 范围：HTTP 原请求内重跑、独立重跑及删除当前关联后的看板一致性；报告为夹具，不运行浏览器。
+    await suite.test(
+      '请求内重跑同步看板，删除当前运行不回退到未关联历史',
+      async () => {
+        await submit('dashboard-current', ['dashboard-case']);
+        await finish('case-v2-dashboard-case', 'FAILED');
+        const before = (await statistics()).summary;
+        const rerun = await call('/v2/requests/dashboard-current/rerun', {
+          caseIds: [
+            { sourceCaseId: 'dashboard-case', runId: 'dashboard-current-run' },
+          ],
+        });
+        assert.equal(rerun.statusCode, 202, rerun.body);
+        const pending = (await statistics()).summary;
+        assert.equal(pending.cases.total, before.cases.total);
+        assert.equal(pending.cases.failed, before.cases.failed - 1);
+        assert.equal(pending.cases.pending, before.cases.pending + 1);
+        assert.equal(pending.runs, before.runs);
+        assert.equal(
+          pending.tokens.totalTokens,
+          before.tokens.totalTokens - 120,
+        );
+        await finish('case-run-dashboard-current-run');
+        const passed = (await statistics()).summary;
+        assert.equal(passed.cases.passed, before.cases.passed + 1);
+        assert.equal(
+          passed.tokens.totalTokens,
+          pending.tokens.totalTokens + 60,
+        );
+        const independent = await call('/v2/cases/dashboard-case/rerun', {
+          runId: 'dashboard-independent',
+        });
+        assert.equal(independent.statusCode, 202, independent.body);
+        await finish('case-run-dashboard-independent', 'FAILED');
+        assert.deepEqual((await statistics()).summary, passed);
+        assert.equal(
+          (await read('/v2/requests/dashboard-current')).cases[0].arms[0]
+            .taskId,
+          'case-run-dashboard-current-run',
+        );
+        assert.equal(
+          (await call('/v1/tasks/case-run-dashboard-current-run/delete', {}))
+            .statusCode,
+          200,
+        );
+        assert.equal(
+          (await read('/v2/requests/dashboard-current')).caseCount,
+          0,
+        );
+        const deleted = (await statistics()).summary;
+        assert.equal(deleted.cases.total, passed.cases.total - 1);
+        assert.equal(deleted.cases.passed, passed.cases.passed - 1);
+        assert.equal(deleted.runs, passed.runs - 1);
+        assert.equal(
+          deleted.tokens.totalTokens,
+          passed.tokens.totalTokens - 60,
+        );
+      },
+    );
     // 范围：旧独立清理、真实调用记录及会话关闭闸门；节点和调用均为数据库夹具。
     await suite.test('旧清理随整轮删除，未关闭会话拒绝删除', async () => {
       await submit('cleanup-request', ['cleanup-case']);
