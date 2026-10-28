@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { InteractionProgress } from '../../apps/agent/dist/execution/interaction-progress.js';
-import { execute } from '../../apps/agent/dist/execution/runner.js';
+import { InteractionProgress } from '../../packages/execution-core/dist/execution/interaction-progress.js';
+import { execute } from '../../packages/execution-driver/dist/execution/runner.js';
 import { config, grant, FakeControl, finish } from './fixture.mjs';
 
 /** 用独立面板和悬浮控件构造观察，不代表真实站点 DOM。 */
@@ -115,7 +115,7 @@ test('阅读进度只绑定当前目标，已读点击必须说明重查原因',
 // 范围：重查声明不绕过点击失败围栏，非法理由不修改工作流；不验证自然语言理由是否符合业务要求。
 test('重查理由仍须经过工作流与浏览器前置校验', async () => {
   const { Workflow } =
-    await import('../../apps/agent/dist/execution/workflow.js');
+    await import('../../packages/execution-core/dist/execution/workflow.js');
   const workflow = new Workflow('核对展开和收起');
   for (const revisitReason of ['', '   ', 123, '长'.repeat(601)])
     assert.throws(() => workflow.apply({ revisitReason }, new Set()), {
@@ -199,7 +199,7 @@ test('滚动改变可见矩形后允许有界点击恢复', () => {
 // 范围：大量子项不会挤爆模型上下文，裁剪只作用于副本；不模拟供应商 token 计费。
 test('子项进度可裁剪但执行器保留完整报告来源', async () => {
   const { decisionContext } =
-    await import('../../apps/agent/dist/execution/context.js');
+    await import('../../packages/execution-core/dist/execution/context.js');
   const { grant } = await import('./fixture.mjs');
   const observation = {
     ...page(),
@@ -278,7 +278,7 @@ test('FAQ 引文只规范化空白，已登记子项重复提交保留首次原�
 // 范围：裁剪不会丢失已登记身份或修改输入；超长原文不能靠归一化绕过引文上限，不覆盖供应商上下文限制。
 test('裁剪保留全部已登记身份且不污染输入进度', async () => {
   const { decisionContext } =
-    await import('../../apps/agent/dist/execution/context.js');
+    await import('../../packages/execution-core/dist/execution/context.js');
   const { grant } = await import('./fixture.mjs');
   const observation = {
     ...page(),

@@ -6,14 +6,14 @@ import {
   selectNetwork,
   trimNetworkView,
 } from '../../packages/execution-core/dist/evidence/network-view.js';
-import { decisionContext } from '../../apps/agent/dist/execution/context.js';
-import { Workflow } from '../../apps/agent/dist/execution/workflow.js';
+import { decisionContext } from '../../packages/execution-core/dist/execution/context.js';
+import { Workflow } from '../../packages/execution-core/dist/execution/workflow.js';
 import {
   NetworkReads,
   retainNetworkSelection,
 } from '../../packages/execution-core/dist/evidence/network-reads.js';
 import { ChatModel } from '../../apps/agent/dist/model/chat.js';
-import { execute } from '../../apps/agent/dist/execution/runner.js';
+import { execute } from '../../packages/execution-driver/dist/execution/runner.js';
 import { config, grant, FakeControl, finish, modelServer } from './fixture.mjs';
 
 /** 合成的已脱敏网络观察，含相同地址重复请求、重定向和未响应条目。 */

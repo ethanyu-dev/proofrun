@@ -2,9 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { compileStepBudget } from '../../contracts/dist/index.js';
 import { AgentFault } from '../../apps/agent/dist/http.js';
-import { SettlementBudget } from '../../apps/agent/dist/execution/settlement-budget.js';
+import { SettlementBudget } from '../../packages/execution-core/dist/execution/settlement-budget.js';
 import { ChatModel } from '../../apps/agent/dist/model/chat.js';
-import { execute } from '../../apps/agent/dist/execution/runner.js';
+import { execute } from '../../packages/execution-driver/dist/execution/runner.js';
 import { config, grant, FakeControl, finish, modelServer } from './fixture.mjs';
 
 /** 合成两个独立标准，用于验证结果保存顺序，不验证模型判断内容的准确率。 */

@@ -4,9 +4,9 @@ import { createRequire } from 'node:module';
 import {
   decisionContext,
   rememberObservation,
-} from '../../apps/agent/dist/execution/context.js';
+} from '../../packages/execution-core/dist/execution/context.js';
 import { ChatModel } from '../../apps/agent/dist/model/chat.js';
-import { Workflow } from '../../apps/agent/dist/execution/workflow.js';
+import { Workflow } from '../../packages/execution-core/dist/execution/workflow.js';
 import { observation } from '../../packages/execution-core/dist/evidence/observation.js';
 import { config, grant, FakeControl, modelServer } from './fixture.mjs';
 

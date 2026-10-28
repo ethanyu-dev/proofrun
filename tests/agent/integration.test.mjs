@@ -16,7 +16,7 @@ import {
 } from '../../apps/api/test/fixture.ts';
 import { ControlClient } from '../../apps/agent/dist/client.js';
 import { ChatModel } from '../../apps/agent/dist/model/chat.js';
-import { execute } from '../../apps/agent/dist/execution/runner.js';
+import { execute } from '../../packages/execution-driver/dist/execution/runner.js';
 import { compileStepBudget } from '../../contracts/dist/index.js';
 import { pause } from '../../apps/agent/dist/http.js';
 import { config as agentConfig, finish, modelServer } from './fixture.mjs';

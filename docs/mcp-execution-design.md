@@ -27,7 +27,7 @@
 | `apps/api/src/modules/cases/structured.ts`        | Case 编译、稳定步骤与验收项身份、预算与 profilePlan | 无副作用预检、执行主体冻结、预览响应         |
 | `apps/api/src/modules/cases/v2.ts` 与 `requests/` | 幂等提交、运行历史、请求关联和原子重跑              | 明确来源运行的重跑、提交回执快照、调用方授权 |
 | `apps/api/src/modules/scheduling/coordinator.ts`  | 调度、执行授权、命令去重、控制代次、关闭            | 外部执行准入、控制绑定与存活约束             |
-| `apps/agent/src/execution/`                       | setup 门禁、步骤编排、进度账本、预算、恢复边界      | 从模型循环抽离，并迁移到共享服务持有权威状态 |
+| `packages/execution-driver/src/execution/` 与 `packages/execution-core/src/execution/`                       | setup 门禁、步骤编排、进度账本、预算、恢复边界      | 从模型循环抽离，并迁移到共享服务持有权威状态 |
 | `packages/execution-core/src/evidence/`           | 观察校验、证据范围、网络视图                        | 面向 MCP 的有界投影与资源读取                |
 | `apps/api/src/modules/reports/`                   | 证据归属、摘要校验、报告一致性                      | 外部执行来源及未知用量表达                   |
 | `/v1/browser-tasks`                               | `taskId / url / objective` 委托执行                 | 当前没有直接控制会话，也不支持新版身份参数   |
@@ -286,7 +286,7 @@ MCP 查询能力、状态、操作结果、既有网络证据和附件可标 rea
 
 新增 `packages/execution-core` 保存不依赖 HTTP、数据库、模型供应商和 MCP SDK 的领域规则；新增 `apps/api/src/modules/execution-runtime` 承担持久化编排和驱动。API 是状态所有者，core 不自行开定时器或连接数据库。
 
-第二阶段实现额外拆出 `packages/execution-driver`，承载带 I/O 的 runner/profile-runner、租约观察及证据等待，通过端口注入宿主实现。API 运行时持有这个驱动，版本 0 Agent 也复用它；Agent 的执行模块仍保留兼容导出，证据模块直接引用共享包。下面为职责分类，实际纯规则继续使用原 `execution/` 模块名，避免为目录重排复制状态机。阶段转换与动作编排位于 driver，账本、门禁、上下文、预算与报告聚合位于 core。内部启动/决定协议、版本冻结和故障关闭约定见 API README。
+第二阶段实现额外拆出 `packages/execution-driver`，承载带 I/O 的 runner/profile-runner、租约观察及证据等待，通过端口注入宿主实现。API 运行时持有这个驱动，版本 0 Agent 也复用它；Agent 的执行与证据模块直接引用共享包。下面为职责分类，实际纯规则继续使用原 `execution/` 模块名，避免为目录重排复制状态机。阶段转换与动作编排位于 driver，账本、门禁、上下文、预算与报告聚合位于 core。内部启动/决定协议、版本冻结和故障关闭约定见 API README。
 
 | 目标模块                            | 当前来源                                             | 职责与边界                                                                      |
 | ----------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------- |
@@ -598,8 +598,8 @@ Codex 支持 Streamable HTTP MCP、Bearer 环境变量和工具白名单；参�
 ## 12 实现依据
 
 - [现有 Case API v2](public-api-v2.md) 与 [Case 编译](../apps/api/src/modules/cases/structured.ts)。
-- [分组编译](../contracts/src/profile-plan.ts)、[逐步预算](../contracts/src/step-budget.ts) 与 [分组执行](../apps/agent/src/execution/profile-runner.ts)。
-- [执行循环与上下文](agent-loop-simplification-design.md)、[当前 runner](../apps/agent/src/execution/runner.ts) 与 [固定条件检查](../apps/agent/src/execution/policy-checks.ts)。
+- [分组编译](../contracts/src/profile-plan.ts)、[逐步预算](../contracts/src/step-budget.ts) 与 [分组执行](../packages/execution-driver/src/execution/profile-runner.ts)。
+- [执行循环与上下文](agent-loop-simplification-design.md)、[当前 runner](../packages/execution-driver/src/execution/runner.ts) 与 [固定条件检查](../packages/execution-core/src/execution/policy-checks.ts)。
 - [控制面命令和完成校验](../apps/api/src/modules/scheduling/coordinator.ts)、[人工控制](../apps/api/src/modules/scheduling/control.ts) 与 [报告证据服务](../apps/api/src/modules/reports/README.md)。
 - [外部账号](../apps/api/src/modules/account-providers/README.md)、[浏览器任务定义](../apps/api/src/modules/tasks/browser-task.ts) 与 [内部 worker 客户端](../apps/agent/src/client.ts)。
 - [OpenAI 官方 MCP 配置文档](https://learn.chatgpt.com/docs/extend/mcp?surface=cli) 与 [MCP TypeScript SDK 服务端文档](https://ts.sdk.modelcontextprotocol.io/server)。

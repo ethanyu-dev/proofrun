@@ -4,7 +4,7 @@
 
 `ports.ts`、`model.ts` 定义执行器需要的端口。这里不连接数据库、HTTP、MCP 或模型供应商，也不开启后台定时器。带等待、观察、状态转换、命令派发及 profile 并发的编排在 `@proofrun/execution-driver`；纯规则不自行驱动浏览器。
 
-构建运行 `pnpm build:execution`。`tests/agent` 的证据回归直接引用本包构建产物，其余规则仍通过 Agent 兼容导出验证，`tests/agent/runtime-integration.test.mjs` 比较新旧适配路径。模拟模型和节点的测试不代表真实浏览器验收。
+构建运行 `pnpm build:execution`。`tests/agent` 的执行规则与证据回归直接引用本包构建产物，`tests/agent/runtime-integration.test.mjs` 比较新旧适配路径。模拟模型和节点的测试不代表真实浏览器验收。
 
 ## 执行证据
 

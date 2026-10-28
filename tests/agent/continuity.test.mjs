@@ -4,9 +4,9 @@ import {
   compileProfilePlan,
   compileStepBudget,
 } from '../../contracts/dist/index.js';
-import { execute } from '../../apps/agent/dist/execution/runner.js';
+import { execute } from '../../packages/execution-driver/dist/execution/runner.js';
 import { ChatModel } from '../../apps/agent/dist/model/chat.js';
-import { OperationJournal } from '../../apps/agent/dist/execution/operation-journal.js';
+import { OperationJournal } from '../../packages/execution-core/dist/execution/operation-journal.js';
 import { config, grant, FakeControl, finish, modelServer } from './fixture.mjs';
 
 /** 构造已规范化的连续步骤；测试不连接业务网站或真实身份服务。 */

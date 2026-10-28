@@ -39,7 +39,6 @@ export type {
   DecisionOutput,
   DecisionModel,
 } from '@proofrun/execution-core/model';
-export { decisionData } from '@proofrun/execution-core/model';
 import {
   decisionData,
   type DecisionInput,

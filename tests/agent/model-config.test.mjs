@@ -1,4 +1,4 @@
-import { decisionContext } from '../../apps/agent/dist/execution/context.js';
+import { decisionContext } from '../../packages/execution-core/dist/execution/context.js';
 import { grant } from './fixture.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';

@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { compileStepBudget } from '../../contracts/dist/index.js';
-import { execute } from '../../apps/agent/dist/execution/runner.js';
+import { execute } from '../../packages/execution-driver/dist/execution/runner.js';
 import { ChatModel } from '../../apps/agent/dist/model/chat.js';
-import { Workflow } from '../../apps/agent/dist/execution/workflow.js';
+import { Workflow } from '../../packages/execution-core/dist/execution/workflow.js';
 import { config, grant, FakeControl, finish, modelServer } from './fixture.mjs';
 
 /** 只模拟控制权交接及新观察；不代表真实账号、登录态或网页角色的验收。 */

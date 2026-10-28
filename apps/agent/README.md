@@ -89,8 +89,8 @@ export PROOFRUN_AGENT_MODEL_MS=120000
 | `src/client.ts`               | 控制面请求、命令幂等重送、证据下载         |
 | `src/http.ts`                 | 限额读取、超时和错误脱敏                   |
 | `src/model/chat.ts`           | Chat Completions 工具协议适配              |
-| `src/execution/runner.ts`     | 执行循环、预算、验收和报告                 |
-| `src/execution/lease.ts`      | 独立续租、截止时间与撤权                   |
+
+执行循环、分组调度与租约管理由 [共享执行驱动](../../packages/execution-driver/README.md) 提供，执行约束见[执行循环说明](../../packages/execution-driver/src/execution/README.md)。
 
 证据结构校验、变化跟踪和网络读取由 [共享执行核心](../../packages/execution-core/README.md) 的 `src/evidence/` 提供；证据等待、撤权与超时诊断由 [共享执行驱动](../../packages/execution-driver/README.md) 的 `src/evidence/delivery.ts` 提供。Agent 直接引用共享包。
 
@@ -100,7 +100,7 @@ export PROOFRUN_AGENT_MODEL_MS=120000
 
 新任务仅支持 `llm`。JEV、双跑新建、`planned-v1`/`legacy` 路由、强制局部 plan、字段值缓存、候选排序和额外审查请求已移除。每一轮直接调用一个 LLM；原始要求、setup 门禁、验收账本与浏览器副作用检查继续由程序约束。
 
-`execution/context.ts` 生成唯一模型投影：
+`@proofrun/execution-core/execution/context` 生成唯一模型投影：
 
 | 模块     | 内容                                                       |
 | -------- | ---------------------------------------------------------- |
@@ -116,12 +116,12 @@ export PROOFRUN_AGENT_MODEL_MS=120000
 
 工具按阶段、权限、当前目标和预算提供。`verification_environment` 不再开放：环境意图在 API 接收阶段冻结。PREPARING / CHECKING 仍分别完成准备和条件核验，READY 后才开始对应业务。预算尾部只允许整理已有结果，不重新开放浏览器动作或增加模型调用。
 
-`prompts/decision.ts` 维护核心规则及阶段提示，`prompts/recovery.ts` 和 `prompts/settlement.ts` 维护有界纠错反馈。工具用途提示在 `prompts/tools.ts`，工具结构由 `model/tools.ts` 生成；适配器只请求和解析，不能另建上下文。完整字段删除清单见[简化设计](../../docs/agent-loop-simplification-design.md)。
+`prompts/decision.ts` 维护核心规则及阶段提示，`packages/execution-driver/src/prompts/` 下的 `recovery.ts`、`action-replay.ts` 和 `settlement.ts` 维护恢复、人工交还与收尾反馈。工具用途提示在 `prompts/tools.ts`，工具结构由 `model/tools.ts` 生成；适配器只请求和解析，不能另建上下文。完整字段删除清单见[简化设计](../../docs/agent-loop-simplification-design.md)。
 
 ## 身份与临时 profile
 
 Agent 直接领取执行任务，不再调用本地身份选择接口。每次任务创建全新浏览器 profile；需要自动账号时，由 API 通过 DevPass 获取材料并绑定租约。访客和人工会话不加载账号材料；注入成功仍不是登录证明。HITL 只修改当前会话并交还控制，不保存登录基准、不重启浏览器。
 
-profile 分组指同一临时浏览器下的独占 tab。组内串行、组间模型调用可并行，浏览器命令通过统一队列串行派发。`profile-runner.ts` 的 snapshots 队列保存步骤结果，不是浏览器 profile 快照。租约、账号容量和物理关闭确认仍保留。
+profile 分组指同一临时浏览器下的独占 tab。组内串行、组间模型调用可并行，浏览器命令通过统一队列串行派发。`@proofrun/execution-driver/execution/profile-runner` 的 snapshots 队列保存步骤结果，不是浏览器 profile 快照。租约、账号容量和物理关闭确认仍保留。
 
 升级时同时更新 API、Agent 和 Node；Node 必须声明 `ephemeralProfiles`。历史 JEV/双跑报告继续可读，旧任务不自动迁移；重跑创建 LLM 新运行，不重新执行旧引擎。移除旧策略和 TypeSafe 环境变量，节点移除 `base_profile_directory`。

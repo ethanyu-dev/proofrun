@@ -1,10 +1,10 @@
 import { allowedDecisionTypes } from '@proofrun/execution-core/execution/allowed-decisions';
 import { TOOL_DESCRIPTIONS } from '../prompts/tools.js';
-import type { DecisionContextData } from '../execution/context.js';
+import type { DecisionContextData } from '@proofrun/execution-core/execution/context';
 import type { AgentDecision } from '@proofrun/contracts';
 import { agentDecisionSchema } from '@proofrun/contracts';
 import { constrainEvidenceRefs } from './evidence-refs.js';
-import { SCROLL_DIRECTIONS } from '../execution/scroll-distance.js';
+import { SCROLL_DIRECTIONS } from '@proofrun/execution-core/execution/scroll-distance';
 
 /** 供应商接口只表达本轮能力，不增加控制面权限。 */
 export interface DecisionTool {

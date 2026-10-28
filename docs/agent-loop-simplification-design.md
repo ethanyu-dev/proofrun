@@ -97,11 +97,11 @@ API 持久化可选 StepResult.requirements，验证唯一要求身份、证据�
 
 | 文件                       | 当前职责                                         |
 | -------------------------- | ------------------------------------------------ |
-| `prompts/decision.ts`      | 公共任务、浏览器、证据规则，按阶段与收尾状态装配 |
-| `prompts/tools.ts`         | 工具用途及证据引用说明                           |
-| `prompts/recovery.ts`      | 当前使用的恢复反馈模板                           |
-| `prompts/action-replay.ts` | 人工交接后的防重放反馈                           |
-| `prompts/settlement.ts`    | 收尾修复反馈                                     |
+| `apps/agent/src/prompts/decision.ts`      | 公共任务、浏览器、证据规则，按阶段与收尾状态装配 |
+| `apps/agent/src/prompts/tools.ts`         | 工具用途及证据引用说明                           |
+| `packages/execution-driver/src/prompts/recovery.ts`      | 当前使用的恢复反馈模板                           |
+| `packages/execution-driver/src/prompts/action-replay.ts` | 人工交接后的防重放反馈                           |
+| `packages/execution-driver/src/prompts/settlement.ts`    | 收尾修复反馈                                     |
 
 工具机器协议仍由 Contracts 提供，Agent 的 tools.ts 收紧本轮能力与枚举及 progress 引用范围，并覆盖模型用途说明。身份选择不是浏览器循环中的隐藏子调用。
 

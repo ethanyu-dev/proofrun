@@ -4,7 +4,7 @@ import {
   evaluateChecks,
   mergeChecks,
   sessionIdentityFacts,
-} from '../../apps/agent/dist/execution/identity.js';
+} from '../../packages/execution-core/dist/execution/identity.js';
 
 /** 本地观察夹具只验证前置门禁，不证明真实网页权限或账号绑定状态。 */
 const page = {
@@ -142,7 +142,7 @@ test('人工确认不能跨控制代次复用，缺失观察不证明不存在',
 // 范围：版本混用时拒绝旧本地身份计划，避免丢失账号约束后继续执行；不启动浏览器或调用真实账号来源。
 test('旧本地身份计划不能在新 Agent 上降级执行', async () => {
   const { executionStrategy } =
-    await import('../../apps/agent/dist/model/strategy.js');
+    await import('../../packages/execution-core/dist/model/strategy.js');
   const base = {
     version: 1,
     mode: 'manual',
