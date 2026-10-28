@@ -30,7 +30,7 @@ export const executionMcpCatalog: readonly ExecutionTool[] = [
     request: 'view',
     scope: 'runs:read',
     description:
-      '读取本调用方控制上下文、当前观察/targets、预算、allowedActions、pendingOperation 和报告。可读取正式验证绑定；不刷新观察、不续期。只有 nextAction=ACT 时提交新决定。',
+      '读取本调用方控制上下文、当前观察/targets、预算、allowedActions、pendingOperation 和报告。可读取正式验证绑定；不刷新观察、不续期。只有 nextAction=ACT 时提交新决定。budget.timeMs/decisionTimeMs 持续递减；decisionDeadlineAt 是本轮提交期限，touch 不延长它。coverage 标明裁剪，按 artifactRefs 用 evidence_read 分页取回原始已采集内容。',
   },
   {
     name: 'browser_session_touch',
@@ -86,7 +86,7 @@ export const executionMcpCatalog: readonly ExecutionTool[] = [
     decisionType: 'network.requests',
     scope: 'browser:control',
     description:
-      '读取当前观察已采集的脱敏网络摘要。外层 observationId 绑定 page；decision.observationId 取 page.network.observationId。支持有界分页，不发送新 HTTP 请求；会消耗决定额度并推进上下文版本。',
+      '读取当前观察已采集的脱敏网络摘要。外层 observationId 绑定 page；decision.observationId 取 page.network.observationId。支持有界分页；capture.coverage 仅说明显式范围内的完整性，全局 complete=false 或范围排除项不能证明无请求。不发送新 HTTP 请求；会消耗决定额度并推进上下文版本。',
   },
   {
     name: 'browser_network_detail',
@@ -110,7 +110,7 @@ export const executionMcpCatalog: readonly ExecutionTool[] = [
     scope: 'runs:read',
     taskKind: 'verification',
     description:
-      '读取正式验证的当前步骤、阶段、原始标准、观察、证据引用、预算及允许动作。不续期。PREPARING→CHECKING→VERIFYING→CLEANUP 由平台推进；最终读取报告、清理及 closureVerified。',
+      '读取正式验证的当前步骤、阶段、原始标准、观察、证据引用、预算及允许动作。不续期。PREPARING→CHECKING→VERIFYING→CLEANUP 由平台推进；最终读取报告、清理及 closureVerified。budget.decisionDeadlineAt 是本轮提交期限；SETTLEMENT_REQUIRED 时先 record 已有结论再 finish/block，不能继续浏览器操作。每个独立验收项确认后及时 record，避免超时丢失未提交结论。',
   },
   {
     name: 'verification_touch_controller',

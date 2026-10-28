@@ -44,8 +44,15 @@ export class NetworkReads {
 
   /** 新的网络事实才切换快照；调用者取得的新观察仍需要通过 observationId 校验。 */
   private sync(page: Observation) {
+    const network = structuredClone(page.network);
+    // 快照时间随每次观察增长，不代表新请求或覆盖边界改变；其余覆盖字段仍参与事实身份。
+    if (network && typeof network === 'object' && !Array.isArray(network)) {
+      const coverage = (network as Record<string, unknown>).coverage;
+      if (coverage && typeof coverage === 'object' && !Array.isArray(coverage))
+        delete (coverage as Record<string, unknown>).capturedAt;
+    }
     const scope = createHash('sha256')
-      .update(JSON.stringify([page.url, page.network]))
+      .update(JSON.stringify([page.url, network]))
       .digest('hex');
     if (scope === this.scope) return;
     this.scope = scope;

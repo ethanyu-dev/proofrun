@@ -252,10 +252,24 @@ test(
             vt = (await verification.listTools()).tools;
           assert.equal(bt.length, 16);
           assert.equal(vt.length, 16);
+          // 范围：两套真实 MCP 目录交付计时和证据边界，文案不会替代服务端校验。
+          assert.match(
+            bt.find((t) => t.name === 'browser_session_get').description,
+            /decisionDeadlineAt/,
+          );
+          assert.match(
+            vt.find((t) => t.name === 'verification_get_context').description,
+            /SETTLEMENT_REQUIRED/,
+          );
+          assert.match(
+            bt.find((t) => t.name === 'browser_network_list').description,
+            /capture.coverage/,
+          );
           for (const tool of executionMcpTools) {
             const actual = [...bt, ...vt].find((t) => t.name === tool.name);
             assert.ok(actual);
             assert.deepEqual(actual.inputSchema, tool.inputSchema);
+            assert.equal(actual.description, tool.description);
             assert.ok(!JSON.stringify(actual).includes('$ref'));
             assert.equal(actual.annotations.idempotentHint, true);
             assert.equal(

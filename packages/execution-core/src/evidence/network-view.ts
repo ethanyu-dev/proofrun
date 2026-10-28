@@ -118,6 +118,15 @@ function singleNetworkView(page: Observation, selection?: NetworkSelection) {
       complete: source.complete === true,
       truncated: source.truncated === true,
       redacted: source.redacted === true,
+      // 全局 complete 与明确窗口的覆盖分别表达；旧节点没有范围说明时仍保持未知。
+      coverage:
+        source.coverage && typeof source.coverage === 'object'
+          ? structuredClone(source.coverage)
+          : {
+              scope: 'unknown',
+              complete: false,
+              reasons: ['COVERAGE_UNAVAILABLE'],
+            },
     },
     evidenceRefs,
     total: entries.length,

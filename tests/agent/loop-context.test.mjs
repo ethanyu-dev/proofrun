@@ -434,3 +434,51 @@ test('不可聚焦目标仍可点击，但不能用于定向按键', async () =>
     await server.close();
   }
 });
+
+// 范围：复现大表格控件重复正文挤占 64K 上下文；不以夹具证明真实页面完整或目标可点击。
+test('重复控件面板先压缩，保留正文、网络页和取回完整证据的提示', async () => {
+  const { args, current } = await input();
+  current.text = '当前价格管理弹窗和完整检查正文。'.repeat(80);
+  current.targets = Array.from({ length: 70 }, (_, index) => ({
+    ...current.targets[0],
+    target: `dom-${index}`,
+    name: `操作 ${index}`,
+    disclosure: {
+      relation: 'aria-controls',
+      expanded: true,
+      visible: true,
+      text: '重复表格正文'.repeat(1000),
+      truncated: false,
+    },
+  }));
+  current.network = {
+    requests: Array.from({ length: 20 }, (_, i) => ({
+      url: `https://fixture.test/api/${i}`,
+      method: 'GET',
+      status: 200,
+    })),
+  };
+  current.artifactRefs.push({
+    kind: 'NETWORK',
+    artifactId: 'network',
+    sha256: 'a'.repeat(64),
+  });
+  args.evidence.push({
+    kind: 'NETWORK',
+    id: 'network',
+    sha256: 'a'.repeat(64),
+  });
+  const before = structuredClone(current);
+  const result = decisionContext({ ...args, maxContextChars: 64000 });
+  assert(result.text.length <= 64000);
+  assert.equal(result.context.page.text, current.text);
+  assert.equal(result.context.page.network.requests.length, 20);
+  assert(result.context.page.targets.length >= 8);
+  assert.equal(result.context.page.coverage.controls.detailsTruncated, true);
+  assert.match(result.context.page.coverage.recovery, /evidence_read/);
+  assert.equal(
+    result.context.page.coverage.text.originalChars,
+    current.text.length,
+  );
+  assert.deepEqual(current, before);
+});

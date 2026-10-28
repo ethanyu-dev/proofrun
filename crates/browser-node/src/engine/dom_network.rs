@@ -21,9 +21,66 @@ pub(super) struct NetworkCapture {
     console_truncated: bool,
     /// 最近一次受限公开图片探测，单独标注凭据和采集位置。
     last_probe: Option<Value>,
+    /// 全部订阅确认之后才允许声明新导航的窗口覆盖。
+    ready: bool,
+    /// 只记订阅后观察到的非重定向起点，由快照中的真实 frame/loader 再核对。
+    navigation_starts: VecDeque<(String, String)>,
+    /// 认证失效清空时重设窗口起点，不跨身份沿用完整性。
+    started_at: u64,
+}
+
+/// 使用 UTC 毫秒标明观察边界；授权计时仍由其他模块的单调时钟承担。
+fn capture_time() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 impl NetworkCapture {
+    /// 完整性只适用于订阅后、当前主文档 loader 的 HTTP 请求元数据，不表示整站或未来无请求。
+    fn coverage(&self, frame: &Value, navigation: &Value) -> Value {
+        let started = self.ready
+            && self.navigation_starts.iter().any(|(f, n)| {
+                frame.as_str() == Some(f.as_str()) && navigation.as_str() == Some(n.as_str())
+            });
+        let mut reasons = Vec::new();
+        if !started {
+            reasons.push("NAVIGATION_START_NOT_OBSERVED");
+        }
+        if self.truncated {
+            reasons.push("HISTORY_TRUNCATED");
+        }
+        json!({"scope":"current-main-document-loader-http","complete":reasons.is_empty(),"reasons":reasons,
+            "startedAt":self.started_at,"capturedAt":capture_time(),"navigationId":navigation,
+            "excludedScopes":["other-tabs","child-frame-loaders","workers","websockets","response-bodies","future-events"]})
+    }
+    /// 错误完整性只覆盖当前渲染连接的订阅窗口，不包含其他进程或订阅前事件。
+    fn console_coverage(&self) -> Value {
+        let mut reasons = Vec::new();
+        if !self.ready {
+            reasons.push("SUBSCRIPTION_NOT_READY");
+        }
+        if self.console_truncated {
+            reasons.push("HISTORY_TRUNCATED");
+        }
+        json!({"scope":"active-renderer-error-events-since-subscription","complete":reasons.is_empty(),
+            "eventTypes":["Runtime.exceptionThrown","Runtime.consoleAPICalled:error","Runtime.consoleAPICalled:assert"],
+            "startedAt":self.started_at,"capturedAt":capture_time(),"reasons":reasons,
+            "excludedScopes":["before-subscription","other-tabs","out-of-process-iframes","workers","browser-log-domain","other-console-types","future-events"]})
+    }
+
+    /// 身份切换撤销旧证据及覆盖起点；订阅连接保持可用，迟到重定向不能恢复旧窗口完整性。
+    fn invalidate(&mut self) {
+        self.entries.clear();
+        self.truncated = false;
+        self.console.clear();
+        self.console_truncated = false;
+        self.last_probe = None;
+        self.navigation_starts.clear();
+        self.started_at = capture_time();
+    }
+
     /// 请求与响应以 Chromium 身份关联；重定向逐跳保留，最终响应只更新最新一跳。
     pub(super) fn event(&mut self, event: &Value) {
         if event["sessionId"] != self.session {
@@ -33,12 +90,16 @@ impl NetworkCapture {
         if ["Runtime.exceptionThrown", "Runtime.consoleAPICalled"]
             .contains(&event["method"].as_str().unwrap_or(""))
         {
-            if event["method"] == "Runtime.exceptionThrown" || p["type"] == "error" {
+            if event["method"] == "Runtime.exceptionThrown"
+                || matches!(p["type"].as_str(), Some("error" | "assert"))
+            {
                 // 不序列化任意 Console 对象；保留错误类型、位置及有界文本。
                 let message = if event["method"] == "Runtime.exceptionThrown" {
                     p["exceptionDetails"]["text"]
                         .as_str()
                         .unwrap_or("uncaught exception")
+                } else if p["type"] == "assert" {
+                    "console.assert"
                 } else {
                     "console.error"
                 };
@@ -51,6 +112,19 @@ impl NetworkCapture {
             return;
         }
         if event["method"] == "Network.requestWillBeSent" {
+            // redirectResponse 表示这是链中后续一跳；缺失首跳时不能据此补认导航完整。
+            if self.ready
+                && p["type"] == "Document"
+                && p.get("redirectResponse").is_none()
+                && let (Some(frame), Some(loader)) = (p["frameId"].as_str(), p["loaderId"].as_str())
+                && !loader.is_empty()
+            {
+                self.navigation_starts
+                    .push_back((frame.into(), loader.into()));
+                if self.navigation_starts.len() > NETWORK_HISTORY {
+                    self.navigation_starts.pop_front();
+                }
+            }
             if let Some(previous) = self
                 .entries
                 .iter_mut()
@@ -103,12 +177,7 @@ impl Dom {
     /// 认证相关输入前排空旧事件，再清除所有旧请求；迟到响应不能复活旧账号的事实。
     pub(crate) async fn network_invalidate(&mut self) -> Result<()> {
         self.network_snapshot().await?;
-        let capture = self.network.as_mut().unwrap();
-        capture.entries.clear();
-        capture.truncated = false;
-        capture.console.clear();
-        capture.console_truncated = false;
-        capture.last_probe = None;
+        self.network.as_mut().unwrap().invalidate();
         Ok(())
     }
 
@@ -123,12 +192,18 @@ impl Dom {
             console: VecDeque::new(),
             console_truncated: false,
             last_probe: None,
+            ready: false,
+            navigation_starts: VecDeque::new(),
+            started_at: capture_time(),
         });
         self.call(Some(&session), "Runtime.enable", json!({}))
             .await?;
         self.call(Some(&session), "Page.enable", json!({})).await?;
         self.call(Some(&session), "Network.enable", json!({}))
             .await?;
+        let capture = self.network.as_mut().unwrap();
+        capture.ready = true;
+        capture.started_at = capture_time();
         Ok(())
     }
 
@@ -146,8 +221,9 @@ impl Dom {
             .filter(|entry| &entry["navigationId"] == navigation)
             .cloned()
             .collect();
+        let coverage = capture.coverage(&tree["frameTree"]["frame"]["id"], navigation);
         Ok(
-            json!({"requests":requests,"navigationId":navigation,"targetId":capture.target,"scope":"tab-navigation","truncated":capture.truncated,"complete":false,"redacted":true,"probe":capture.last_probe}),
+            json!({"requests":requests,"navigationId":navigation,"targetId":capture.target,"scope":"tab-navigation","truncated":capture.truncated,"complete":false,"coverage":coverage,"redacted":true,"probe":capture.last_probe}),
         )
     }
 }
@@ -225,7 +301,8 @@ impl Dom {
     pub(crate) fn console_snapshot(&self) -> Value {
         match self.network.as_ref() {
             Some(c) => {
-                json!({"scope":"active-tab-renderer-since-subscription","entries":c.console,"truncated":c.console_truncated,"complete":false})
+                json!({"scope":"active-tab-renderer-since-subscription","entries":c.console,"truncated":c.console_truncated,"complete":false,
+                    "coverage":c.console_coverage()})
             }
             None => json!({"status":"unavailable"}),
         }
@@ -299,6 +376,7 @@ impl Dom {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -313,6 +391,9 @@ mod tests {
             console: VecDeque::new(),
             console_truncated: false,
             last_probe: None,
+            ready: false,
+            navigation_starts: VecDeque::new(),
+            started_at: capture_time(),
         };
         for i in 0..=NETWORK_HISTORY {
             capture.event(&json!({"sessionId":"s","method":"Network.requestWillBeSent","params":{"requestId":i.to_string(),"loaderId":"n","frameId":"f","wallTime":1,"request":{"url":"https://fixture.test/api?token=secret","method":"GET","headers":{"Authorization":"secret"},"postData":"secret"}}}));
@@ -341,6 +422,9 @@ mod tests {
             console: VecDeque::new(),
             console_truncated: false,
             last_probe: None,
+            ready: false,
+            navigation_starts: VecDeque::new(),
+            started_at: capture_time(),
         };
         capture.event(&json!({"sessionId":"s","method":"Network.requestWillBeSent","params":{"requestId":"r","loaderId":"n","request":{"url":"https://site.test/start","method":"GET"}}}));
         capture.event(&json!({"sessionId":"s","method":"Network.requestWillBeSent","params":{"requestId":"r","loaderId":"n","redirectResponse":{"status":307,"headers":{"Location":"https://user:secret@site.test/end?token=secret","Set-Cookie":"secret"}},"request":{"url":"https://site.test/end","method":"GET"}}}));
@@ -367,19 +451,195 @@ mod tests {
         }
     }
 
-    /// 真实隔离 Chromium 与本地 HTTP 验证初始请求跨观察保留、刷新隔离、兄弟 tab 排除；不连接业务站点或模型。
+    // 范围：协议事件夹具检查范围完整性的前提，不能代表生产事件流无丢失。
+    #[test]
+    fn scoped_coverage_requires_observed_navigation_and_untruncated_history() {
+        let mut capture = NetworkCapture {
+            session: "s".into(),
+            target: "t".into(),
+            entries: VecDeque::new(),
+            truncated: false,
+            console: VecDeque::new(),
+            console_truncated: false,
+            last_probe: None,
+            ready: false,
+            navigation_starts: VecDeque::new(),
+            started_at: capture_time(),
+        };
+        let event = json!({"sessionId":"s","method":"Network.requestWillBeSent","params":{
+            "requestId":"r","type":"Document","frameId":"f","loaderId":"n",
+            "request":{"url":"https://fixture.test/","method":"GET"}}});
+        assert_eq!(
+            capture.console_coverage()["reasons"],
+            json!(["SUBSCRIPTION_NOT_READY"])
+        );
+        capture.event(&event);
+        capture.ready = true;
+        assert_eq!(capture.console_coverage()["complete"], true);
+        for _ in 0..=CONSOLE_HISTORY {
+            capture.event(&json!({"sessionId":"s","method":"Runtime.consoleAPICalled","params":{"type":"error"}}));
+        }
+        assert_eq!(capture.console.len(), CONSOLE_HISTORY);
+        assert_eq!(capture.console_coverage()["complete"], false);
+        assert_eq!(
+            capture.console_coverage()["reasons"],
+            json!(["HISTORY_TRUNCATED"])
+        );
+        assert_eq!(
+            capture.coverage(&json!("f"), &json!("n"))["complete"],
+            false
+        );
+        capture.event(&event);
+        let coverage = capture.coverage(&json!("f"), &json!("n"));
+        assert_eq!(coverage["complete"], true);
+        assert_eq!(coverage["scope"], "current-main-document-loader-http");
+        assert_eq!(
+            capture.coverage(&json!("other"), &json!("n"))["complete"],
+            false
+        );
+        assert_eq!(
+            capture.coverage(&json!("f"), &json!("old"))["complete"],
+            false
+        );
+        capture.truncated = true;
+        assert_eq!(
+            capture.coverage(&json!("f"), &json!("n"))["reasons"],
+            json!(["HISTORY_TRUNCATED"])
+        );
+        capture.navigation_starts.clear();
+        assert_eq!(
+            capture.coverage(&json!("f"), &json!("n"))["reasons"],
+            json!(["NAVIGATION_START_NOT_OBSERVED", "HISTORY_TRUNCATED"])
+        );
+    }
+
+    /// 合成已订阅的单目标采集器，复用真实事件与失效逻辑，不模拟 CDP 传输。
+    fn ready_capture() -> NetworkCapture {
+        NetworkCapture {
+            session: "s".into(),
+            target: "t".into(),
+            entries: VecDeque::new(),
+            truncated: false,
+            console: VecDeque::new(),
+            console_truncated: false,
+            last_probe: None,
+            ready: true,
+            navigation_starts: VecDeque::new(),
+            started_at: capture_time(),
+        }
+    }
+
+    // 范围：缺失首跳、订阅未就绪、身份清空和完整重定向链；协议夹具不代表生产请求流完整。
+    #[test]
+    fn redirect_continuation_never_establishes_navigation_coverage() {
+        let start = json!({"sessionId":"s","method":"Network.requestWillBeSent","params":{
+            "requestId":"r","type":"Document","frameId":"f","loaderId":"n",
+            "request":{"url":"https://fixture.test/start","method":"GET"}}});
+        let mut redirect = start.clone();
+        redirect["params"]["redirectResponse"] =
+            json!({"status":302,"headers":{"Location":"/end"}});
+        redirect["params"]["request"]["url"] = json!("https://fixture.test/end");
+        let mut late = ready_capture();
+        late.event(&redirect);
+        assert_eq!(late.entries.len(), 1);
+        assert_eq!(late.coverage(&json!("f"), &json!("n"))["complete"], false);
+        assert_eq!(
+            late.coverage(&json!("f"), &json!("n"))["reasons"],
+            json!(["NAVIGATION_START_NOT_OBSERVED"])
+        );
+        let mut not_ready = ready_capture();
+        not_ready.ready = false;
+        not_ready.event(&start);
+        not_ready.ready = true;
+        not_ready.event(&redirect);
+        assert_eq!(
+            not_ready.coverage(&json!("f"), &json!("n"))["complete"],
+            false
+        );
+        let mut full = ready_capture();
+        full.event(&start);
+        full.event(&redirect);
+        assert_eq!(full.entries.len(), 2);
+        assert_eq!(full.entries[0]["status"], 302);
+        assert_eq!(full.coverage(&json!("f"), &json!("n"))["complete"], true);
+        full.invalidate();
+        full.event(&redirect);
+        assert_eq!(full.entries.len(), 1);
+        assert_eq!(full.coverage(&json!("f"), &json!("n"))["complete"], false);
+        // 清空后只有新的非重定向导航首跳可以建立自己的完整窗口。
+        let mut next = start;
+        next["params"]["loaderId"] = json!("next");
+        full.event(&next);
+        assert_eq!(full.coverage(&json!("f"), &json!("next"))["complete"], true);
+        assert_eq!(full.coverage(&json!("f"), &json!("n"))["complete"], false);
+    }
+
+    // 范围：断言错误、普通错误及异常均入账，忽略非错误类型/其他会话，并遵守容量与失效边界；不读取 Console 对象。
+    #[test]
+    fn console_assertions_are_captured_without_arguments() {
+        let mut capture = ready_capture();
+        for kind in ["log", "warn", "debug", "info", "trace", "assert", "error"] {
+            capture.event(
+                &json!({"sessionId":"s","method":"Runtime.consoleAPICalled","params":{
+                "type":kind,"timestamp":1,"args":[{"value":"secret"}]}}),
+            );
+        }
+        capture.event(&json!({"sessionId":"other","method":"Runtime.consoleAPICalled","params":{"type":"assert"}}));
+        capture.event(&json!({"sessionId":"s","method":"Runtime.exceptionThrown","params":{"exceptionDetails":{"text":"Uncaught","lineNumber":1}}}));
+        assert_eq!(capture.console.len(), 3);
+        assert_eq!(capture.console[0]["message"], "console.assert");
+        assert_eq!(capture.console[1]["message"], "console.error");
+        assert_eq!(capture.console[2]["kind"], "Runtime.exceptionThrown");
+        assert!(
+            !serde_json::to_string(&capture.console)
+                .unwrap()
+                .contains("secret")
+        );
+        assert_eq!(capture.console_coverage()["complete"], true);
+        assert!(
+            capture.console_coverage()["eventTypes"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("Runtime.consoleAPICalled:assert"))
+        );
+        for _ in 0..CONSOLE_HISTORY {
+            capture.event(&json!({"sessionId":"s","method":"Runtime.consoleAPICalled","params":{"type":"assert"}}));
+        }
+        assert_eq!(capture.console.len(), CONSOLE_HISTORY);
+        assert_eq!(capture.console_coverage()["complete"], false);
+        capture.invalidate();
+        assert!(capture.console.is_empty());
+        assert_eq!(capture.console_coverage()["complete"], true);
+    }
+
+    /// 真实隔离 Chromium 与本地 HTTP 验证断言采集、重定向缺口、跨观察保留和 tab 隔离；不连接业务站点或模型。
     #[tokio::test]
     #[ignore = "需要显式提供独立测试用 Chromium 路径"]
     async fn native_network_preserves_initial_response_and_navigation_scope() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
+        let redirect_seen = Arc::new(tokio::sync::Notify::new());
+        let redirect_release = Arc::new(tokio::sync::Notify::new());
+        let seen = redirect_seen.clone();
+        let release = redirect_release.clone();
         let server = tokio::spawn(async move {
             loop {
                 let (mut socket, _) = listener.accept().await.unwrap();
+                let seen = seen.clone();
+                let release = release.clone();
                 tokio::spawn(async move {
                     let mut request = [0u8; 8192];
                     let n = socket.read(&mut request).await.unwrap();
                     let request = String::from_utf8_lossy(&request[..n]);
+                    let path = request.split_whitespace().nth(1).unwrap_or("");
+                    if path == "/pending-redirect" || path == "/redirect" {
+                        if path == "/pending-redirect" {
+                            seen.notify_one();
+                            release.notified().await;
+                        }
+                        socket.write_all(b"HTTP/1.1 302 Found\r\nLocation: /redirected\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap();
+                        return;
+                    }
                     let body = if request.starts_with("GET /api") {
                         "{}"
                     } else {
@@ -460,6 +720,32 @@ mod tests {
         })
         .await
         .unwrap();
+        dom.call(Some(&session), "Runtime.evaluate", json!({"expression":"console.assert(true, 'silent'); console.assert(false, 'private-assert'); console.error('private-error');"})).await.unwrap();
+        let console = dom.console_snapshot();
+        assert_eq!(
+            console["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|e| e["message"] == "console.assert")
+                .count(),
+            1
+        );
+        assert_eq!(
+            console["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|e| e["message"] == "console.error")
+                .count(),
+            1
+        );
+        assert!(!console.to_string().contains("private-"));
+        assert_eq!(dom.console_snapshot()["complete"], false);
+        assert_eq!(dom.console_snapshot()["coverage"]["complete"], true);
+        assert_eq!(first["complete"], false);
+        assert_eq!(first["coverage"]["complete"], true);
+        assert_eq!(first["coverage"]["navigationId"], first["navigationId"]);
         let second = dom.network_snapshot().await.unwrap();
         for request in first["requests"].as_array().unwrap() {
             // favicon 等异步请求可能在两次观察之间收到响应；身份和已知事实必须保留，
@@ -494,6 +780,10 @@ mod tests {
         );
         // 人工输入前失效同导航的旧请求；之后的迟到响应不能重新证明旧身份。
         dom.network_invalidate().await.unwrap();
+        assert_eq!(
+            dom.network_snapshot().await.unwrap()["coverage"]["complete"],
+            false
+        );
         assert!(
             dom.network_snapshot().await.unwrap()["requests"]
                 .as_array()
@@ -504,6 +794,113 @@ mod tests {
                     .unwrap()
                     .iter()
                     .any(|old| old["requestId"] == entry["requestId"]))
+        );
+        // 独立导航连接使采集器能在真实首跳尚未返回时失效；后续 302 不得补认缺失首跳。
+        let mut navigator = Dom::connect(&format!("ws://127.0.0.1:{}{}", lines[0], lines[1]))
+            .await
+            .unwrap();
+        let nav_session = navigator.attach(target).await.unwrap();
+        let pending_url = format!("{url}/pending-redirect");
+        let navigation = tokio::spawn(async move {
+            navigator
+                .call(
+                    Some(&nav_session),
+                    "Page.navigate",
+                    json!({"url":pending_url}),
+                )
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(5), redirect_seen.notified())
+            .await
+            .unwrap();
+        // Page.getFrameTree 会等待挂起的导航提交；通过浏览器级往返排空真实首跳事件，
+        // 再调用同一底层失效函数模拟采集窗口切断，不声称生产人工输入能打断挂起导航。
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                dom.call(None, "Browser.getVersion", json!({}))
+                    .await
+                    .unwrap();
+                if dom
+                    .network
+                    .as_ref()
+                    .unwrap()
+                    .entries
+                    .iter()
+                    .any(|r| r["url"] == format!("{url}/pending-redirect"))
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(30)).await;
+            }
+        })
+        .await
+        .unwrap();
+        dom.network.as_mut().unwrap().invalidate();
+        redirect_release.notify_one();
+        tokio::time::timeout(Duration::from_secs(5), navigation)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let partial = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let snapshot = dom.network_snapshot().await.unwrap();
+                if snapshot["requests"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|r| r["url"] == format!("{url}/redirected") && r["status"] == 200)
+                {
+                    break snapshot;
+                }
+                tokio::time::sleep(Duration::from_millis(30)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(partial["coverage"]["complete"], false);
+        assert_eq!(
+            partial["coverage"]["reasons"],
+            json!(["NAVIGATION_START_NOT_OBSERVED"])
+        );
+        assert!(
+            !partial["requests"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["url"] == format!("{url}/pending-redirect"))
+        );
+        // 同一采集器随后观察到新导航的真实首跳，完整重定向链仍可证明范围内完整。
+        dom.call(
+            Some(&session),
+            "Page.navigate",
+            json!({"url":format!("{url}/redirect")}),
+        )
+        .await
+        .unwrap();
+        let full = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let snapshot = dom.network_snapshot().await.unwrap();
+                if snapshot["requests"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|r| r["url"] == format!("{url}/redirected") && r["status"] == 200)
+                {
+                    break snapshot;
+                }
+                tokio::time::sleep(Duration::from_millis(30)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(full["coverage"]["complete"], true);
+        assert!(
+            full["requests"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["url"] == format!("{url}/redirect") && r["status"] == 302)
         );
         dom.call(
             Some(&session),

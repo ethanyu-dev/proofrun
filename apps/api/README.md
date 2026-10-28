@@ -388,6 +388,10 @@ Browser MCP 在原 6 个任务工具上增加 10 个操作工具；Verification 
 
 原 `browser_operation_get` / `verification_operation_get` 同时接受任务操作和直接执行操作的 UUID，保留两种既有回执形状。HTTP 和 MCP 的同一 operationId、同一底层参数共享幂等结果；更换工具不能绕过权限、类型限制或幂等冲突。所有决定工具 `readOnlyHint=false`，包括消耗决定额度的观察和网络读取；上下文读取为 true。MCP 的成功响应仅表示操作已登记，需查询原 operationId。
 
+读取上下文时，以 `budget.timingState=live` 的 `timeMs`（步骤余额）、`decisionTimeMs`（本轮提交余额）及 `stepDeadlineAt/decisionDeadlineAt`（UTC）安排调用；inactive 表示历史帧。GET 和 touch 均不增加步骤预算。`SETTLEMENT_REQUIRED` 提示进入只读收尾，应先保存已有结论，再 finish/block；每项独立验收取得证据后应及时 record，不等待整步最后一刻。
+
+`page.coverage` 区分源采集与投影裁剪，包含正文原始/返回字符数及控件细节裁剪标记；按 artifactRefs 使用 evidence_read 分页取回原始已采集内容，旧附件目标不能用于操作。`page.network.capture.coverage` 提供显式范围、完整性、窗口时间和排除项；范围内 complete 不表示全页面完整，也不表示已读完所有分页。旧节点返回 COVERAGE_UNAVAILABLE，空筛选结果不能自动成为“无请求”的通过依据。详见[真实联调修复设计](../../docs/mcp-execution-design.md#13-生产-mcp-联调反馈与修复设计2026-10-28)。
+
 Codex 通过 MCP 完成正式验证：
 
 1. 在两套端点读取 tools/list 和 capabilities；授权同一 principal 的两个 channel。可分别使用 Browser 和 Verification 凭据，跨工具附带进度时使用同时具备两个 control scope 的凭据。
