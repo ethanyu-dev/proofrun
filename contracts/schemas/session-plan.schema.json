@@ -150,6 +150,10 @@
     "reducedMotion": {
       "type": "boolean",
       "description": "本次会话是否偏好减少动画；省略时新执行默认 true，动画验收可显式设为 false。历史缺失字段不代表已启用。"
+    },
+    "profileSource": {
+      "enum": ["empty", "node-default"],
+      "description": "新运行冻结的浏览器初始来源；缺省保持历史空白语义。访客与外部账号仅允许 empty。"
     }
   },
   "required": [
@@ -210,6 +214,22 @@
           "requirements": {
             "type": "array",
             "minItems": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "mode": {
+            "enum": ["guest", "external"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "profileSource": {
+            "const": "empty"
           }
         }
       }

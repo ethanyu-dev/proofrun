@@ -127,6 +127,15 @@ export class SimulatedNode {
   /** 完整 profile 能力仅用于新版控制面协议测试，磁盘复制由真实浏览器用例覆盖。 */
   fullProfile = false;
   ephemeralProfiles = true;
+  /** 默认声明新版复制能力，模板内容仍由真实浏览器测试验证。 */
+  nodeDefaultProfileVersion: 1 | undefined = 1;
+  defaultProfile: {
+    version: string;
+    updatedAt: string;
+    sessionId: string;
+  } | null = null;
+  profileSaveFailure = false;
+  holdProfileSave = false;
   /** 仅模拟外部材料与期限协议，真实注入由节点浏览器测试覆盖。 */
   externalAccounts = false;
   /** 用于验证控制面拒绝缺少外部注入证明的回执。 */
@@ -282,7 +291,11 @@ export class SimulatedNode {
         fence: c.fence,
         state: 'ACTIVE',
       })),
+      defaultProfile: this.defaultProfile,
       capabilities: {
+        ...(this.nodeDefaultProfileVersion
+          ? { nodeDefaultProfileVersion: this.nodeDefaultProfileVersion }
+          : {}),
         profileTabs: true,
         environmentProof: true,
         reducedMotion: this.reducedMotion,
@@ -426,7 +439,11 @@ export class SimulatedNode {
     }
     if (kind === 'browser.auth.save' && this.restartOnAuthSave)
       for (const relay of this.relays) relay.close();
-    if (kind === 'browser.wait') return;
+    if (
+      kind === 'browser.wait' ||
+      (kind === 'session.profile.publish' && this.holdProfileSave)
+    )
+      return;
     if (kind === 'session.close') {
       if (this.ignoreClose) return;
       if (!this.holdClosedEvent) this.closed(command.sessionId);
@@ -461,6 +478,24 @@ export class SimulatedNode {
           ? { reducedMotion: operation.reducedMotion }
           : {}),
       };
+    if (operation.type === 'session.open' && operation.profileMode) {
+      Object.assign(data.environmentProof as object, {
+        profileSource: 'node-default',
+        initialState: this.defaultProfile ? 'node-default' : 'empty',
+        authRestored: !!this.defaultProfile,
+        ...(this.defaultProfile ? { profile: this.defaultProfile } : {}),
+      });
+    }
+    if (kind === 'session.profile.publish' && !this.profileSaveFailure) {
+      this.defaultProfile = {
+        version: randomUUID(),
+        updatedAt: new Date().toISOString(),
+        sessionId: command.sessionId,
+      };
+      data.profile = this.defaultProfile;
+      data.saved = true;
+      this.heartbeat();
+    }
     if (kind === 'session.control') data.authRevision = control?.auth ?? 0;
     if (kind === 'browser.identity.prepare')
       Object.assign(data, {
@@ -508,7 +543,9 @@ export class SimulatedNode {
           status: 'PENDING',
         },
       ];
-    const saveFailed = this.authSaveFailure && kind === 'browser.auth.save';
+    const saveFailed =
+      (this.authSaveFailure && kind === 'browser.auth.save') ||
+      (this.profileSaveFailure && kind === 'session.profile.publish');
     const click =
       operation.type === 'browser.act' && operation.action === 'click';
     const preparationFailed = click && this.domActionPreparationFailures > 0;

@@ -195,7 +195,10 @@ export type VerificationTask = {
        * @maxItems 64
        */
       basis: string[];
-      resolverVersion: 1;
+      /**
+       * 版本 2 默认使用节点模板，版本 1 保留历史空白/自动账号语义。
+       */
+      resolverVersion: 1 | 2;
     };
     evidenceKinds: ('DOM' | 'SCREENSHOT' | 'NETWORK' | 'TRACE' | 'RUNTIME')[];
     /**
@@ -587,6 +590,10 @@ export type SessionPlan = {
    * 本次会话是否偏好减少动画；省略时新执行默认 true，动画验收可显式设为 false。历史缺失字段不代表已启用。
    */
   reducedMotion?: boolean;
+  /**
+   * 新运行冻结的浏览器初始来源；缺省保持历史空白语义。访客与外部账号仅允许 empty。
+   */
+  profileSource?: 'empty' | 'node-default';
 };
 /**
  * 省略或 auto 时按 case 自动准备身份，优先 DevPass、无账号则人工介入；可显式约束身份，禁止携带密码或 Cookie。

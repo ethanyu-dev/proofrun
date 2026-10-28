@@ -21,14 +21,15 @@ export async function identitySummary(
           )
         ).rows[0]
       : undefined;
-  const externalOpen = plan.external
-    ? (
-        await db.query(
-          "SELECT c.result,c.created_at,c.completed_at,t.error->>'code' AS task_error FROM pr_commands c JOIN pr_executions e ON e.id=c.execution_id JOIN pr_tasks t ON t.id=e.task_id WHERE e.task_id=$1 AND c.kind='session.open' ORDER BY c.created_at DESC LIMIT 1",
-          [taskId],
-        )
-      ).rows[0]
-    : undefined;
+  const externalOpen =
+    plan.external || plan.profileSource === 'node-default'
+      ? (
+          await db.query(
+            "SELECT c.result,c.created_at,c.completed_at,t.error->>'code' AS task_error FROM pr_commands c JOIN pr_executions e ON e.id=c.execution_id JOIN pr_tasks t ON t.id=e.task_id WHERE e.task_id=$1 AND c.kind='session.open' ORDER BY c.created_at DESC LIMIT 1",
+            [taskId],
+          )
+        ).rows[0]
+      : undefined;
   return {
     ...(external
       ? {
@@ -47,7 +48,9 @@ export async function identitySummary(
     identityRef: external?.account_id ?? null,
     label: plan.external
       ? `DevPass · ${external?.account_id ?? '等待分配'}`
-      : null,
+      : plan.profileSource === 'node-default'
+        ? '节点默认登录状态'
+        : null,
     leaseState: plan.external
       ? !external || (external.state === 'REQUESTED' && !external.lease_id)
         ? 'WAITING'
@@ -66,8 +69,17 @@ export async function identitySummary(
               : external?.state === 'REVIEW'
                 ? 'ERROR'
                 : 'PENDING'
-        : 'NOT_REQUESTED',
-      source: plan.external ? 'cookies' : 'none',
+        : plan.profileSource === 'node-default' &&
+            externalOpen?.result?.data?.environmentProof?.initialState ===
+              'node-default'
+          ? 'LOADED'
+          : 'NOT_REQUESTED',
+      source: plan.external
+        ? 'cookies'
+        : externalOpen?.result?.data?.environmentProof?.initialState ===
+            'node-default'
+          ? 'profile'
+          : 'none',
       reasonCode: plan.external
         ? (external?.reason ?? externalOpen?.task_error ?? null)
         : (plan.automatic?.fallbackReason ?? null),

@@ -4363,6 +4363,9 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
     await suite.test('任务重跑保留历史并防止重复创建', async () => {
       const original = task(`offline-${randomUUID()}`);
       await submit(original);
+      const frozen = (await api('GET', `/v1/tasks/${original.taskId}`)).data
+        .definition;
+      assert.equal(frozen.sessionPlan.profileSource, 'node-default');
       await api('POST', `/v1/tasks/${original.taskId}/cancel`, {});
       const runId = `rerun-${randomUUID()}`;
       const path = `/v1/tasks/${original.taskId}/rerun`;
@@ -4380,7 +4383,7 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       assert.deepEqual((await api('POST', path, { runId })).data, first.data);
       const fresh = (await api('GET', `/v1/tasks/${runId}`)).data;
       assert.deepEqual(fresh.definition, {
-        ...original,
+        ...frozen,
         taskId: runId,
         executionMode: 'llm',
       });

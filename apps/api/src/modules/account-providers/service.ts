@@ -81,7 +81,11 @@ export class ExternalAccounts {
   /** 自动会话按原始平台和精确 origin 询问 DevPass；账号范围仍由供应方的调用方授权约束。 */
   prepare(task: VerificationTask): void {
     const session = task.sessionPlan;
-    if (!session?.automatic?.loginRequired || session.automatic.fallbackReason)
+    if (
+      session?.profileSource === 'node-default' ||
+      !session?.automatic?.loginRequired ||
+      session.automatic.fallbackReason
+    )
       return;
     if (!this.config) {
       useManualSession(task, 'DEVPASS_NOT_CONFIGURED');

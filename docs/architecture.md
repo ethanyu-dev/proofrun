@@ -1,6 +1,6 @@
 # 架构与职责
 
-v2 在创建会话前解析环境并冻结 executionPlan，证据能力覆盖验收项和 setup/cleanup 的固定 policyChecks。访客使用空白 profile，节点回传绑定会话的准备证明；调度阶段校验计划版本和所需能力，Agent 不在运行中重选环境。
+v2 在创建会话前解析环境并冻结 executionPlan，证据能力覆盖验收项和 setup/cleanup 的固定 policyChecks。普通任务复制分配节点的默认 profile，明确访客与 DevPass 使用空白目录；节点回传绑定会话及模板版本的准备证明；调度阶段校验计划版本和所需能力，Agent 不在运行中重选环境。
 
 网络订阅按真实 tab 保持连接，观察不清空初始请求；requestId 关联响应，navigationId 隔离主文档。固定证据检查与模型业务判定分开，缺少网络证据不能由页面渲染或人工完成替代。控制面分别持久化控制权版本和认证版本，稳定条件键决定人工确认的复用；步骤保留环境处理历史及最终阻塞现场。
 
@@ -90,9 +90,9 @@ setup 首先处于 PREPARING，Agent 可执行 description 要求的浏览器操
 
 人工请求先绑定请求组 tab，再暂停整个 profile。处理页逐项保存条件确认后交还控制权，保留当前浏览器且不保存登录基准；管理员直接恢复不产生确认。所有活动组丢弃旧观察和在途模型决定，已进入 verification 的组先重查 policy。人工确认只覆盖本次列出的条件，不自动证明未展示的账号角色或产品行为。
 
-新任务不生成独立清理任务或资源锁；cleanup 属于 profile，等所有业务组结束且全部环境门禁就绪后串行执行一次；任一准备或环境重查受阻则跳过清理。清理失败单独报告，不覆盖业务结论。最终报告聚合各组结果与证据后才关闭浏览器；核实关闭后删除临时 profile。案例不发布或恢复节点快照，身份材料由独立身份来源提供。
+新任务不生成独立清理任务或资源锁；cleanup 属于 profile，等所有业务组结束且全部环境门禁就绪后串行执行一次；任一准备或环境重查受阻则跳过清理。清理失败单独报告，不覆盖业务结论。最终报告聚合各组结果与证据后才关闭浏览器；核实关闭后删除临时 profile。普通案例可在启动时复制节点默认模板，但绝不回写；只有 Console 节点维护入口可显式发布模板，具体生命周期见 [节点说明](../crates/browser-node/README.md)。
 
-升级需要 API、Agent、Console 和 Browser Node 同步支持。新任务只交给声明 `profileTabsVersion=1` 的 worker 与同时声明 `profileTabs=true`、`ephemeralProfiles=true` 的节点；旧版本不能领取它们。协议新增字段均可选，旧冻结任务及报告仍可读取。
+升级需要 API、Agent、Console 和 Browser Node 同步支持。新任务只交给声明 `profileTabsVersion=1` 的 worker 与同时声明 `profileTabs=true`、`ephemeralProfiles=true` 的节点；旧版本不能领取它们。默认模板任务还要求节点声明 `nodeDefaultProfileVersion=1`。协议新增字段均可选，旧冻结任务缺少 `profileSource` 时保持原空白行为，读取不会迁移；v2 重跑按当前规则编译。
 
 ### 交互子项与有限恢复
 

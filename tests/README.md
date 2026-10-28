@@ -71,6 +71,8 @@ node tests/browser-node/validate-events.mjs /absolute/path/to/events.jsonl
 
 能力场景见 `browser-node/capabilities_smoke.py`，包含当前截图视觉点击及同视口新增覆盖层后的拒绝；登录与网络场景见 `browser-node/auth_network_smoke.py`。身份场景验证禁止保存和跨会话隔离，网络证据只有有界脱敏元数据，不保证捕获完整。
 
+节点默认模板可运行 `cargo build --locked -p proofrun-node && python3 tests/browser-node/node_default_profile_smoke.py`。设置 `PROOFRUN_AGENT_BROWSER_BIN` 指向 0.38.1 的 agent-browser，`PROOFRUN_CHROME_BIN` 指向 Chrome。该测试在隔离临时目录和两个本机站点核验会话 Cookie、localStorage、IndexedDB 保存恢复、任务副本不回写及新旧版本隔离；不访问真实账号，不替代 Linux/systemd 或生产网站验收。`apps/api/test/node-profiles.test.ts` 使用真实 PostgreSQL/HTTP 和模拟节点覆盖维护与发布状态机；`tests/console/node-profile.test.ts`、`hitl-recovery.test.ts` 覆盖入口、保存状态与交互恢复。
+
 人工输入网络隔离回归见 `browser-node/input_network_smoke.py`，使用同样的引擎与 Chrome 环境变量。真实浏览器的后台标签页阻塞二十二秒、前台接口持续等待时，验证前台点击完成、新请求证据保留及独立写入计数；不访问生产网站，也不证明某次线上超时的唯一原因。该场景已纳入完整 Linux 回归。
 
 ## Console 与真实环境

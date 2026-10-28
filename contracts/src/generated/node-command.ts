@@ -223,6 +223,9 @@ export type BrowserCommand =
           [k: string]: unknown;
         };
       };
+    }
+  | {
+      type: 'session.profile.publish';
     };
 
 /**
@@ -367,6 +370,10 @@ export interface OpenSession {
    * 浏览器启动前应用的减少动画偏好；省略时节点默认 true，false 明确使用正常动画偏好。
    */
   reducedMotion?: boolean;
+  /**
+   * 复制节点已发布模板；maintenance 仅用于管理员维护，缺省为空白会话。
+   */
+  profileMode?: 'node-default' | 'maintenance';
 }
 /**
  * 延长仍然有效的会话租约，不排在浏览器操作队列后。

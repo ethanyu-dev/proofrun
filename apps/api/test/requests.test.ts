@@ -917,10 +917,10 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
           if (index) {
             assert.equal(
               current.sessionPlan.automatic.fallbackReason,
-              'DEVPASS_NOT_CONFIGURED',
+              undefined,
             );
-            assert.equal(current.sessionPlan.requirements.length, 1);
-            assert.equal(current.sessionPlan.requirements[0].method, 'manual');
+            assert.equal(current.sessionPlan.profileSource, 'node-default');
+            assert.equal(current.sessionPlan.requirements.length, 0);
           }
         }
         assert.deepEqual(
@@ -943,8 +943,8 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
         ).rows[0].plan;
         assert.equal(
           plan.requirements.length,
-          1,
-          '再次重跑不继承上一轮临时人工门禁',
+          0,
+          '模板任务不凭空增加人工确认，登录要求仍由原始步骤核验',
         );
       },
     );
@@ -1092,14 +1092,14 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
           runId: 'identity-inherited',
         });
         assert.equal(inherited.statusCode, 202, inherited.body);
-        // 未显式覆盖的新重跑重新判断需求；原步骤不需要登录，因此不会继承上一轮人工会话。
+        // 未显式覆盖的新重跑使用节点模板副本；不会继承上一轮任务的人工会话。
         assert.equal(
           (
             await sql.query(
               "SELECT definition#>>'{sessionPlan,mode}' mode FROM pr_tasks WHERE id='case-run-identity-inherited'",
             )
           ).rows[0].mode,
-          'guest',
+          'manual',
         );
         assert.deepEqual(
           (

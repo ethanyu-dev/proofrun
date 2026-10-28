@@ -1,3 +1,4 @@
+import type { NodeProfiles } from '../nodes/profiles.js';
 import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import {
@@ -28,6 +29,7 @@ export class HitlService {
     private readonly db: Database,
     private readonly config: ApiConfig,
     private readonly control: ExecutionControl,
+    private readonly profiles?: NodeProfiles,
   ) {}
 
   /** 返回的处理链接是 API 入口凭证，不能直接作为节点凭证使用。 */
@@ -75,6 +77,54 @@ export class HitlService {
       ).rows[0];
       if (!link || digest(token) !== link.token_hash)
         throw new ApiError(401, 'HITL_INVALID', '处理链接无效');
+      const maintenance = (
+        await client.query(
+          `SELECT p.*,s.closure_verified,t.state AS task_state,t.error FROM pr_node_profiles p
+         JOIN pr_executions e ON e.task_id=p.task_id JOIN pr_sessions s ON s.execution_id=e.id
+         JOIN pr_tasks t ON t.id=p.task_id WHERE p.id=$1 AND p.managed`,
+          [id],
+        )
+      ).rows[0];
+      if (
+        maintenance &&
+        (maintenance.publish_state !== 'IDLE' ||
+          maintenance.task_state !== 'RUNNING')
+      ) {
+        if (
+          maintenance.closure_verified &&
+          maintenance.publish_state !== 'SAVING'
+        ) {
+          return {
+            state: (maintenance.publish_state === 'SAVED'
+              ? {
+                  type: 'completed',
+                  authStatus: 'saved',
+                  profileMaintenance: true,
+                }
+              : {
+                  type: 'unable',
+                  profileMaintenance: true,
+                  reason:
+                    maintenance.publish_state === 'DISCARDED'
+                      ? '已放弃修改，默认模板保持不变'
+                      : `模板未确认保存：${maintenance.failure_code ?? maintenance.error?.code ?? '维护已结束'}`,
+                }) as HitlServer,
+          };
+        }
+        return {
+          state: {
+            type: 'state',
+            taskId: maintenance.task_id,
+            reason: '正在保存模板并等待关闭确认',
+            items: [],
+            mode: 'REQUESTED',
+            expiresAt: link.expires_at.toISOString(),
+            canSaveAuth: false,
+            profileMaintenance: true,
+            finalizing: true,
+          } as HitlServer,
+        };
+      }
       if (link.completed_at) {
         if (!link.unable_reason) {
           const transition = (
@@ -144,6 +194,7 @@ export class HitlService {
           ),
         ).toISOString(),
         canSaveAuth: false,
+        ...(maintenance ? { profileMaintenance: true } : {}),
         targetUrl: context.definition.target.url,
         runtimeEvidenceAvailable: taskEvidenceKinds(
           context.definition,
@@ -305,6 +356,11 @@ export class HitlService {
       return;
     const completion = event.completion;
     if (completion.type === 'unable') {
+      if (
+        this.profiles &&
+        (await this.profiles.complete(client, link.id, true))
+      )
+        return;
       await this.control.unable(
         context.id,
         event.controlRevision,
@@ -327,6 +383,8 @@ export class HitlService {
           !link.condition_keys.every((k: string) => keys!.includes(k))))
     )
       throw new ApiError(422, 'HITL_CONFIRMATION_REQUIRED', '待办确认不完整');
+    if (this.profiles && (await this.profiles.complete(client, link.id)))
+      return;
     await this.control.change(
       context.id,
       null,

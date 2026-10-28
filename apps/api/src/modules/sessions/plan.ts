@@ -55,6 +55,7 @@ export function resolveSession(
     version: 1,
     reducedMotion: selection.reducedMotion ?? true,
     mode: selection.mode,
+    profileSource: selection.mode === 'manual' ? 'node-default' : 'empty',
     candidates: [],
     requirements: structuredClone(selection.requirements ?? []),
     preparationMs: PREPARATION_MS,

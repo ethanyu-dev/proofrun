@@ -292,6 +292,8 @@ test(
           ),
         );
         node.ignoreClose = true;
+        // 主动取消前停止夹具续租，避免把预期终止误当作下一子用例的后台故障。
+        for (const w of workers.splice(0)) await w.close();
         await api('/v2/cases/recovery/cancel', {});
         await until(
           async () => {
@@ -492,7 +494,10 @@ test(
       fixture.state.capacity = 20;
       fixture.state.dropGet = true;
       const original = example('auto-recovery');
-      delete original.session;
+      original.session = {
+        mode: 'auto',
+        external: { provider: 'devpass', platform: original.platform },
+      };
       original.steps[0]!.policy = ['必须登录后查看成员页面'];
       await api('/v2/cases', [original]);
       await claim();
@@ -533,7 +538,10 @@ test(
         fixture.state.unavailable = reason;
         const id = `auto-${reason.toLowerCase()}`;
         const original = example(id);
-        delete original.session;
+        original.session = {
+          mode: 'auto',
+          external: { provider: 'devpass', platform: original.platform },
+        };
         original.steps[0]!.policy = ['必须登录后查看成员页面'];
         const before = structuredClone(original);
         await api('/v2/cases', [original]);

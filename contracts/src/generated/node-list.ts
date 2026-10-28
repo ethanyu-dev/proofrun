@@ -45,6 +45,14 @@ export interface NodeSummary {
     reserveBytes?: number;
     [k: string]: unknown;
   } | null;
+  /**
+   * 节点已发布的默认模板元数据；不包含登录材料。空值表示尚未初始化。
+   */
+  default_profile?: {
+    version: string;
+    updatedAt: string;
+    sessionId: string;
+  } | null;
 }
 /**
  * 节点进程上报的编译身份；用于排查部署版本，不作为授权或能力判断依据。

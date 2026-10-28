@@ -28,7 +28,7 @@ import { NodeGateway } from './modules/nodes/gateway.js';
 import { ArtifactStore } from './modules/reports/artifacts.js';
 import { Coordinator } from './modules/scheduling/coordinator.js';
 import { ExecutionControl } from './modules/scheduling/control.js';
-import { HistoricalNodeProfiles } from './modules/nodes/profiles.js';
+import { NodeProfiles } from './modules/nodes/profiles.js';
 import { HitlService } from './modules/hitl/service.js';
 import { CaseNotifications } from './modules/notifications/service.js';
 import { TaskReader } from './modules/tasks/reader.js';
@@ -122,8 +122,8 @@ export async function buildApp(
     app.log,
   );
   coordinator.gateway = gateway;
-  const nodeProfiles = new HistoricalNodeProfiles(db, coordinator);
-  const hitl = new HitlService(db, config, control);
+  const nodeProfiles = new NodeProfiles(db, config, coordinator);
+  const hitl = new HitlService(db, config, control, nodeProfiles);
   coordinator.humanEvent = (client, nodeId, event) =>
     hitl.receive(client, nodeId, event);
   const live = new LiveService(
@@ -306,20 +306,16 @@ export async function buildApp(
       return routing.save(request.params.id, request.body);
     },
   );
-  // 退役入口继续鉴权；历史会话只保留读取和通用任务关闭，不再维护专属通道。
-  app.post<{ Params: { id: string } }>(
+  // 管理员维护固定节点的默认模板，浏览器交互复用 HITL。
+  app.post<{ Params: IdParams }>(
     '/v1/nodes/:id/profile',
     { preHandler: admin },
-    () => {
-      throw new ApiError(410, 'NODE_PROFILE_RETIRED', '节点模板维护已停用');
-    },
+    (request) => nodeProfiles.create(request.params.id, request.body),
   );
-  app.get<{ Params: { id: string } }>(
+  app.get<{ Params: IdParams }>(
     '/v1/nodes/:id/profile',
     { preHandler: admin },
-    () => {
-      throw new ApiError(410, 'NODE_PROFILE_RETIRED', '节点模板维护已停用');
-    },
+    (request) => nodeProfiles.current(request.params.id),
   );
   app.get<{ Params: { id: string } }>(
     '/v1/node-profiles/:id',
@@ -867,6 +863,7 @@ export async function buildApp(
     if (stopped || ticking) return;
     ticking = coordinator
       .tick()
+      .then(() => nodeProfiles.tick())
       .then(() => external.tick())
       .catch((error) => {
         app.log.error({ err: error }, '调度扫描失败');

@@ -57,6 +57,10 @@
         "runtimeEvidenceAvailable": {
           "type": "boolean",
           "description": "当前会话已启用运行时取证。"
+        },
+        "profileMaintenance": {
+          "type": "boolean",
+          "description": "管理员维护节点模板，完成后发布并关闭，不恢复自动任务。"
         }
       },
       "required": [
@@ -155,6 +159,10 @@
         "authStatus": {
           "enum": ["saved", "newer", "disabled"],
           "description": "已保存、保留其他会话更新的快照、或未启用登录复用。"
+        },
+        "profileMaintenance": {
+          "type": "boolean",
+          "description": "模板维护结果，保存和物理关闭已由控制面核实。"
         }
       },
       "required": ["type"]
@@ -168,6 +176,10 @@
         },
         "reason": {
           "type": "string"
+        },
+        "profileMaintenance": {
+          "type": "boolean",
+          "description": "模板维护结果，保存和物理关闭已由控制面核实。"
         }
       },
       "required": ["type", "reason"]
