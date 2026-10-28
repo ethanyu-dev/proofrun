@@ -40,6 +40,10 @@ export type HitlServer =
        * 当前会话已启用运行时取证。
        */
       runtimeEvidenceAvailable?: boolean;
+      /**
+       * 管理员维护节点模板，完成后发布并关闭，不恢复自动任务。
+       */
+      profileMaintenance?: boolean;
     }
   | {
       type: 'frame';
@@ -76,8 +80,16 @@ export type HitlServer =
        * 已保存、保留其他会话更新的快照、或未启用登录复用。
        */
       authStatus?: 'saved' | 'newer' | 'disabled';
+      /**
+       * 模板维护结果，保存和物理关闭已由控制面核实。
+       */
+      profileMaintenance?: boolean;
     }
   | {
       type: 'unable';
       reason: string;
+      /**
+       * 模板维护结果，保存和物理关闭已由控制面核实。
+       */
+      profileMaintenance?: boolean;
     };

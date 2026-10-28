@@ -1,3 +1,4 @@
+import { NodeDefaultProfile } from '../components/node-default-profile';
 import { toast } from 'sonner';
 import { Modal } from '../components/modal';
 import { Button } from '../components/ui/button';
@@ -253,6 +254,7 @@ export function NodesPage({ api }: { api: ApiClient }) {
                     ))}
                   </ul>
                 </section>
+                <NodeDefaultProfile api={api} node={node} />
                 <NodeRoutingSummary
                   node={node}
                   edit={(node) => {

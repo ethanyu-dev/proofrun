@@ -53,6 +53,8 @@ struct Work {
 }
 /// 一个已预留容量的本机会话及其独立控制路径。
 pub struct Session {
+    /// 非空才复制节点模板；维护会话额外拥有发布权。
+    profile_mode: Option<String>,
     /// 控制面授予的租约身份。
     pub lease_id: String,
     /// 与租约绑定的栅栏值，阻止旧执行者继续操作。
@@ -284,6 +286,16 @@ impl Sessions {
         let (closed_tx, closed) = watch::channel(None);
         let raw = serde_json::to_value(&command.command).unwrap();
         let external_account = raw.get("externalAccount").cloned();
+        let profile_mode = raw
+            .get("profileMode")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        if profile_mode.is_some() && external_account.is_some() {
+            return Err(Fault::rejected(
+                "PROFILE_ACCOUNT_CONFLICT",
+                "外部账号不能继承节点模板",
+            ));
+        }
         if external_account.is_some()
             && (raw.get("authState").is_some()
                 || raw.get("identitySeed").is_some()
@@ -314,6 +326,7 @@ impl Sessions {
             ));
         }
         let session = Arc::new(Session {
+            profile_mode,
             lease_id,
             fence,
             control: std::sync::Mutex::new(crate::control::Control::default()),
@@ -355,6 +368,17 @@ impl Sessions {
         );
         if !status.accepting {
             return Err(Fault::rejected("RESOURCE_UNAVAILABLE", status.reason));
+        }
+        if session.profile_mode.as_deref() == Some("maintenance")
+            && entries.values().any(|s| {
+                s.profile_mode.as_deref() == Some("maintenance")
+                    && !matches!(&*s.closed.borrow(), Some(Ok(())))
+            })
+        {
+            return Err(Fault::rejected(
+                "PROFILE_MAINTENANCE_BUSY",
+                "节点已有未关闭的维护会话",
+            ));
         }
         self.store.reserve(record.clone()).await.map_err(|e| {
             let code = match e.downcast_ref::<crate::store::AdmissionError>() {
@@ -487,6 +511,12 @@ async fn start(
     };
     host.send(host::Input::Init {
         config: EngineConfig {
+            default_profile_root: session
+                .profile_mode
+                .as_ref()
+                .map(|_| config.home.join("default-profile")),
+            profile_maintenance: session.profile_mode.as_deref() == Some("maintenance"),
+            profile_owner: record.session_id.clone(),
             binary: config.agent_browser_bin.clone(),
             chrome: config.chrome_bin.clone(),
             reduced_motion: session.reduced_motion,
@@ -843,6 +873,7 @@ mod external_tests {
         let (renew, _) = watch::channel(now + 1_000);
         let (_, closed) = watch::channel(None);
         let session = Session {
+            profile_mode: None,
             lease_id: "fixture".into(),
             fence: 1,
             control: std::sync::Mutex::new(crate::control::Control::default()),

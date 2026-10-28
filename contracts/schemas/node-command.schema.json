@@ -205,6 +205,10 @@
             "reducedMotion": {
               "type": "boolean",
               "description": "浏览器启动前应用的减少动画偏好；省略时节点默认 true，false 明确使用正常动画偏好。"
+            },
+            "profileMode": {
+              "enum": ["node-default", "maintenance"],
+              "description": "复制节点已发布模板；maintenance 仅用于管理员维护，缺省为空白会话。"
             }
           },
           "required": ["type", "leaseRequestId", "leaseTtlMs", "maxDurationMs"],
@@ -693,6 +697,17 @@
             }
           },
           "required": ["type", "revision", "grant"]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "session.profile.publish"
+            }
+          },
+          "required": ["type"],
+          "description": "仅维护会话在人工完成冻结输入后发布模板，不向模型或人工输入开放。"
         }
       ]
     },

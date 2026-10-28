@@ -17,6 +17,8 @@ const FIRST_FRAME_MS = 10_000;
 
 /** 当前介入的授权与待办，只通过认证连接获得。 */
 interface State {
+  /** 维护模板完成后发布并关闭，不交还自动任务。 */
+  profileMaintenance?: boolean;
   /** 当前任务标识，仅用于处理者确认归属。 */
   taskId: string;
   /** Agent 提交的介入原因。 */
@@ -82,6 +84,7 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
   const [freshFrame, setFreshFrame] = useState(false);
   const [frameTimedOut, setFrameTimedOut] = useState(false);
   const [done, setDone] = useState(false);
+  const [profileMaintenance, setProfileMaintenance] = useState(false);
   useEffect(() => {
     setFrame(undefined);
     setState(undefined);
@@ -192,6 +195,8 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
       id: id ?? '',
       token: token ?? '',
       message: (message) => {
+        if ('profileMaintenance' in message && message.profileMaintenance)
+          setProfileMaintenance(true);
         if (message.type === 'state') {
           setState(message);
           setConnected(true);
@@ -309,8 +314,19 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
     <main className="hitl-page">
       {done ? (
         <section className="panel hitl-done">
-          <h1>{unableResult ? '人为判定无法执行' : '处理已完成'}</h1>
-          <p>{unableResult || '浏览器已交还 Agent，可以关闭此页。'}</p>
+          <h1>
+            {profileMaintenance
+              ? '维护已结束'
+              : unableResult
+                ? '人为判定无法执行'
+                : '处理已完成'}
+          </h1>
+          <p>
+            {unableResult ||
+              (profileMaintenance
+                ? '默认登录状态已保存，浏览器已关闭。'
+                : '浏览器已交还 Agent，可以关闭此页。')}
+          </p>
           <Button
             variant="default"
             className="button button-primary"
@@ -580,7 +596,10 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
                     {new Date(
                       state.waitDeadline ?? state.expiresAt,
                     ).toLocaleString()}{' '}
-                    前处理 。完成后继续执行任务。
+                    前处理。
+                    {state.profileMaintenance
+                      ? '保存后更新节点默认登录状态。'
+                      : '完成后继续执行任务。'}
                     <strong
                       className={
                         Date.parse(state.waitDeadline ?? state.expiresAt) -
@@ -672,7 +691,7 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
                     }, COMPLETION_ACK_MS);
                   }}
                 >
-                  完成，继续任务
+                  {profileMaintenance ? '保存并关闭' : '完成，继续任务'}
                 </Button>
                 <Button
                   variant="outline"
@@ -686,7 +705,7 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
                   }
                   onClick={() => setUnable((value) => !value)}
                 >
-                  无法处理
+                  {profileMaintenance ? '放弃修改' : '无法处理'}
                 </Button>
               </div>
               {unable && (
@@ -728,13 +747,14 @@ export function HitlPage({ id, token }: { id: string; token?: string }) {
                       }, COMPLETION_ACK_MS);
                     }}
                   >
-                    确认无法执行
+                    {profileMaintenance ? '确认放弃并关闭' : '确认无法执行'}
                   </Button>
                 </div>
               )}
               <p className="muted note">
-                完成后自动关闭。离开页面不会恢复
-                Agent；到期后请从任务页重新打开。
+                {profileMaintenance
+                  ? '可在地址栏依次打开多个网站登录。离开页面不会保存；请点击保存并关闭。'
+                  : '完成后自动关闭。离开页面不会恢复 Agent；到期后请从任务页重新打开。'}
               </p>
             </aside>
           </div>

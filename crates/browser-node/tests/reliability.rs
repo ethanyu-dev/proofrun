@@ -210,6 +210,9 @@ async fn excessive_cli_output_is_bounded() {
 async fn empty_engine_binary_is_not_reported_as_success() {
     let home = tempfile::tempdir().unwrap();
     let mut engine = Engine::new(EngineConfig {
+        default_profile_root: None,
+        profile_maintenance: false,
+        profile_owner: String::new(),
         external_account: None,
         binary: "/usr/bin/false".into(),
         chrome: None,

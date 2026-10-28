@@ -52,7 +52,7 @@ export function resolveExecutionPlan(
       'ENVIRONMENT_CONFIG_CONFLICT',
       '访客要求与显式会话或其他准备要求冲突，请拆分 case 或调整 session',
     );
-  // 自动会话只有明确登录需求才进入账号准备；普通页面检查固定使用访客环境。
+  // 普通自动会话继承节点模板；只有明确访客要求才使用空白会话。
   const loginRequired =
     !!input.session?.external ||
     !!input.session?.requirements?.length ||
@@ -64,7 +64,7 @@ export function resolveExecutionPlan(
       ].some(needsAccount),
     );
   const mode =
-    explicit === 'guest' || (!explicit && (guest.length || !loginRequired))
+    explicit === 'guest' || (!explicit && guest.length > 0)
       ? 'guest'
       : 'configured';
   const kinds = new Set(evidenceKinds);
@@ -99,7 +99,7 @@ export function resolveExecutionPlan(
       mode,
       source: explicit ? 'explicit' : guest.length ? 'inferred' : 'default',
       basis: (guest.length ? guest : authenticated).slice(0, 64),
-      resolverVersion: 1,
+      resolverVersion: 2,
     },
     evidenceKinds: [...kinds],
     requiredCapabilities: required,

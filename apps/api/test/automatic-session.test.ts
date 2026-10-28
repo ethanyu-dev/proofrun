@@ -70,8 +70,22 @@ test('自动会话不会因标题式文案、登录按钮或 expected 获取账�
       false,
       description,
     );
-    assert.equal(task.sessionPlan?.mode, 'guest', description);
-    assert.equal(task.executionPlan?.environment.mode, 'guest', description);
+    const guest = description === '保持未登录访客状态';
+    assert.equal(
+      task.sessionPlan?.mode,
+      guest ? 'guest' : 'manual',
+      description,
+    );
+    assert.equal(
+      task.sessionPlan?.profileSource,
+      guest ? 'empty' : 'node-default',
+      description,
+    );
+    assert.equal(
+      task.executionPlan?.environment.mode,
+      guest ? 'guest' : 'configured',
+      description,
+    );
     assert.equal(task.sessionPlan?.external, undefined, description);
     assert.ok(
       validateVerificationTask(task),
@@ -80,25 +94,19 @@ test('自动会话不会因标题式文案、登录按钮或 expected 获取账�
   }
 });
 
-// 范围：按 case 平台与精确源查询，不要求前端提供账号池，也不把登录条件编造成页面文本检查。
-test('需要登录时自动准备 DevPass 查询并保留原始步骤', () => {
+// 范围：普通登录需求使用节点模板，保留原始条件；不访问 DevPass 或证明网站登录。
+test('普通自动任务默认使用节点模板且不申请 DevPass', () => {
   const original = input('使用测试账号登录后查看页面');
   const before = structuredClone(original);
   const task = compileCase(original, PROFILE);
   new ExternalAccounts({} as Database, PROVIDER).prepare(task);
-  assert.equal(task.sessionPlan?.mode, 'external');
-  assert.deepEqual(task.sessionPlan?.external?.selector, {
-    provider: 'devpass',
-    platform: 'example',
-  });
-  assert.equal(task.sessionPlan?.external?.origin, 'https://example.test');
-  assert.ok(task.sessionPlan!.external!.durationSeconds > 60);
+  assert.equal(task.sessionPlan?.mode, 'manual');
+  assert.equal(task.sessionPlan?.profileSource, 'node-default');
+  assert.equal(task.sessionPlan?.external, undefined);
+  assert.equal(task.sessionPlan?.automatic?.fallbackReason, undefined);
   assert.deepEqual(task.caseV2Definition, before);
   assert.deepEqual(original, before);
-  assert.ok(
-    validateVerificationTask(task),
-    JSON.stringify(validateVerificationTask.errors),
-  );
+  assert.ok(validateVerificationTask(task));
 });
 
 // 范围：未配置来源及预算不适合外部账号时要求人工确认，原角色条件不丢失；不验证真人登录。
@@ -107,6 +115,7 @@ test('自动身份无法使用 DevPass 时保留身份约束并转人工', () =>
     const original = input('必须登录');
     original.session = {
       mode: 'auto',
+      external: { provider: 'devpass', platform: 'example' },
       requirements: [
         {
           id: 'member',
@@ -196,6 +205,10 @@ test('登录和账号身份前置条件统一判断，冲突不静默选择身�
 // 范围：人工确认条件不与业务条件同名，重复准备不追加条件；不模拟真实人工页面。
 test('自动人工确认保留步骤条件且避免条件 ID 冲突', () => {
   const original = input('必须登录');
+  original.session = {
+    mode: 'auto',
+    external: { provider: 'devpass', platform: 'example' },
+  };
   original.steps[0]!.preconditions = [
     {
       id: 'automatic-login',

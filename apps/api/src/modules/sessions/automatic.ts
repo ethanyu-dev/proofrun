@@ -8,6 +8,8 @@ export function useManualSession(task: VerificationTask, reason: string): void {
   const plan = task.sessionPlan!;
   if (!plan.automatic?.loginRequired || plan.automatic.fallbackReason) return;
   plan.mode = 'manual';
+  // DevPass 降级仍保持空白来源，不能静默切换为节点已有账号。
+  plan.profileSource = 'empty';
   delete plan.external;
   plan.automatic.fallbackReason = reason;
   const ids = new Set([

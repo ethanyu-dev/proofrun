@@ -112,6 +112,26 @@
                 "minimum": 0
               }
             }
+          },
+          "default_profile": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "properties": {
+              "version": {
+                "type": "string",
+                "pattern": "^[a-f0-9-]{36}$"
+              },
+              "updatedAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "sessionId": {
+                "type": "string",
+                "maxLength": 128
+              }
+            },
+            "required": ["version", "updatedAt", "sessionId"],
+            "description": "节点已发布的默认模板元数据；不包含登录材料。空值表示尚未初始化。"
           }
         },
         "title": "NodeSummary"

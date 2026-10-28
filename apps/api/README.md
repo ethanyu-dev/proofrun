@@ -305,6 +305,10 @@ Console 与 API 通过同源部署或开发代理通信，本批不开放跨源�
 
 ## 人工控制与维护
 
+节点默认 profile 的管理接口均使用管理员鉴权：`POST /v1/nodes/:id/profile` 接收 `{ "url": "https://example.com" }` 并返回维护身份，`GET /v1/nodes/:id/profile` 返回该节点未关闭的维护身份；`GET /v1/node-profiles/:id` 返回状态和 HITL 入口，`POST /v1/node-profiles/:id/close` 放弃尚未提交保存的维护副本。保存使用现有 HITL 完成动作，不开放普通浏览器发布命令。
+
+维护不会排队交给 Worker。保存状态为 `IDLE / SAVING / SAVED / FAILED / DISCARDED`，物理关闭独立返回 `closed`；节点列表的 `default_profile` 仅含版本、更新时间和维护会话 ID。迁移 `042-node-default-profile.sql` 保留历史维护记录，API 启动时自动执行。API、Console、Node 需要一并升级；普通模板任务只调度到声明 `nodeDefaultProfileVersion=1` 的节点。新任务冻结来源，实际模板版本在节点创建会话时确定；旧冻结定义不回填。
+
 人工交接、操作代次与登录状态见 [HITL 说明](../../docs/hitl.md)，网络证据见 [报告模块](src/modules/reports/README.md)，节点轮换与维护 CLI 见 [部署说明](../../deploy/README.md)。管理员入口位于 `/v1/admin/executions/:id/{activity,intervene,control,commands}`；worker 的安全点确认入口为 `/v1/executions/:id/control`。复用 ControlRequest Schema，不接受调用者指定 fence、session 或租约。
 
 独立免登录 HITL 处理页、实时浏览器画面、受限输入和完成交接现已接入，使用与验证边界见 [HITL 说明](../../docs/hitl.md)。
@@ -349,7 +353,7 @@ API 不再代理实时画面或 HITL 输入。`POST /v1/hitl/bootstrap` 用处�
 
 `POST /v1/browser-tasks` 使用 Admin 认证，正文为 `{ "taskId": "browser-稳定重试身份", "url": "https://example.com", "objective": "查询价格并整理为表格" }`，返回 202 和任务详情。不接受环境、预算、验收项等客户端配置；内部冻结 `taskKind: browser`、LLM 模式和空验收集合。
 
-调度位置与人工权限优先使用 `caseProfile.environment` 的 id、nodePool、allowIntervention，预算优先使用 `caseProfile.budget`。未配置时使用 default/internal、允许人工辅助、二十分钟和一百次动作；不继承登录快照。相同 taskId 和业务输入重试沿用首次冻结的配置；身份冲突返回 409。重跑沿用原配置并创建新任务身份。
+调度位置与人工权限优先使用 `caseProfile.environment` 的 id、nodePool、allowIntervention，预算优先使用 `caseProfile.budget`。未配置时使用 default/internal、允许人工辅助、二十分钟和一百次动作；浏览器任务仍使用空白会话。普通验证任务默认复制分配节点的默认 profile，明确访客和 DevPass 保持空白会话。相同 taskId 和业务输入重试沿用首次冻结的配置；身份冲突返回 409。重跑沿用原配置并创建新任务身份。
 
 通过 `GET /v1/tasks?taskKind=browser` 搜索和分页，详情、重跑、取消、删除及证据继续复用原任务接口。浏览器结果保存在 `report.browserResult`，包含 `outcome: COMPLETED | INCOMPLETE`、`output` 和 `evidenceRefs`，`verdict`、`reportStatus`、`criteriaCounts` 均为 null。完成必须交付正文及本次执行的证据；API 检查证据归属和协议一致性，不独立证明模型的业务判断。验证看板不纳入浏览器任务的数量与用量。
 

@@ -73,6 +73,14 @@ test(
         body: JSON.stringify(definition),
       });
       assert.equal(submitted.status, 202);
+      // 故障前后比较已冻结定义，包括默认模板策略；不把提交原文当作编译结果。
+      const frozen = await fetch(
+        `${bases[active]}/v1/tasks/${definition.taskId}`,
+        {
+          headers: { authorization: `Bearer ${ADMIN}` },
+        },
+      ).then((r) => r.json());
+      assert.equal(frozen.definition.sessionPlan.profileSource, 'node-default');
       const node = new SimulatedNode(bases[active]!, 'ha-fixture');
       nodes.push(node);
       await node.pair(ADMIN);
@@ -98,7 +106,7 @@ test(
         { headers: { authorization: `Bearer ${ADMIN}` } },
       );
       assert.equal(restored.status, 200);
-      assert.deepEqual((await restored.json()).definition, definition);
+      assert.deepEqual((await restored.json()).definition, frozen.definition);
       assert.equal(
         (
           await fetch(`${bases[standby]}/v1/tasks/${definition.taskId}`, {

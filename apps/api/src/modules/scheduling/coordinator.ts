@@ -13,6 +13,7 @@ import {
   registerMembers,
   type RequestRegistration,
 } from '../requests/registration.js';
+import { resolveSession } from '../sessions/plan.js';
 import { staleRenewal } from './renewal.js';
 import { taskEvidenceKinds } from '@proofrun/contracts';
 import { authorizeCookieCleanup } from './cookie-cleanup.js';
@@ -227,13 +228,27 @@ export class Coordinator {
           '任务身份已绑定另一种执行方式',
         );
       for (const task of tasks) {
-        const hash = digest(canonical(task));
+        const originalHash = digest(canonical(task));
+        // 普通验证入口也冻结模板来源；历史重提按原始摘要兼容，不改写已有运行。
+        const definition =
+          task.taskKind !== 'browser' && !task.sessionPlan
+            ? {
+                ...task,
+                sessionPlan: resolveSession(
+                  task.executionPlan?.environment.mode === 'guest'
+                    ? { mode: 'guest' }
+                    : undefined,
+                  task.target.url,
+                ),
+              }
+            : task;
+        const hash = digest(canonical(definition));
         await client.query(
           `INSERT INTO pr_tasks(id,definition,definition_hash,state,deadline_at,runtime_version)
           VALUES($1,$2,$3,'QUEUED',clock_timestamp()+$4*interval '1 millisecond',$5) ON CONFLICT(id) DO NOTHING`,
           [
             task.taskId,
-            task,
+            definition,
             hash,
             task.budget.timeoutMs,
             this.config.executionRuntimeVersion ?? 0,
@@ -245,7 +260,7 @@ export class Coordinator {
         );
         if (existing.rows[0]?.deleted_at)
           throw new ApiError(409, 'TASK_DELETED', '该运行已删除，不能重新提交');
-        if (existing.rows[0]?.definition_hash !== hash)
+        if (![hash, originalHash].includes(existing.rows[0]?.definition_hash))
           throw new ApiError(
             409,
             'TASK_CONFLICT',
@@ -436,7 +451,7 @@ export class Coordinator {
       const tasks = await client.query<{ id: string }>(
         `SELECT candidate.id FROM unnest($1::text[]) AS pool(name)
         CROSS JOIN LATERAL (SELECT id,created_at FROM pr_tasks WHERE state='QUEUED'
-          AND (runtime_version=0 OR $8) AND executor_kind=CASE WHEN $9::text IS NULL THEN 'builtin' ELSE 'external' END AND ($9::text IS NULL OR (id=$9 AND EXISTS(SELECT 1 FROM pr_external_controllers c WHERE c.run_id=pr_tasks.id AND c.state='ACTIVE' AND c.idle_deadline_at>clock_timestamp()))) AND deadline_at>clock_timestamp() AND definition#>>'{environment,nodePool}'=pool.name AND ($3 OR NOT (definition ? 'steps')) AND ($4 OR NOT (definition ? 'stepBudget')) AND ($5 OR NOT (definition ? 'sessionPlan')) AND ($6 OR NOT (definition ? 'profilePlan')) AND ($7 OR NOT (definition ? 'executionPlan'))
+          AND (runtime_version=0 OR $8) AND executor_kind=CASE WHEN $9::text IS NULL THEN 'builtin' ELSE 'external' END AND ($9::text IS NULL OR (id=$9 AND EXISTS(SELECT 1 FROM pr_external_controllers c WHERE c.run_id=pr_tasks.id AND c.state='ACTIVE' AND c.idle_deadline_at>clock_timestamp()))) AND deadline_at>clock_timestamp() AND definition#>>'{environment,nodePool}'=pool.name AND ($3 OR NOT (definition ? 'steps')) AND ($4 OR NOT (definition ? 'stepBudget')) AND ($5 OR NOT (definition ? 'sessionPlan') OR (NOT (definition ? 'steps') AND definition#>>'{sessionPlan,profileSource}'='node-default' AND definition#>>'{sessionPlan,mode}'='manual' AND definition#>'{sessionPlan,requirements}'='[]'::jsonb)) AND ($6 OR NOT (definition ? 'profilePlan')) AND ($7 OR NOT (definition ? 'executionPlan'))
           ORDER BY created_at,id LIMIT $2) candidate ORDER BY candidate.created_at,candidate.id`,
         [
           pools,
@@ -482,7 +497,17 @@ export class Coordinator {
           task.environment.nodePool,
           targetHostname(task.target.url),
         );
-        if (task.sessionPlan && identityVersion !== 1 && identityVersion !== 2)
+        if (
+          task.sessionPlan &&
+          identityVersion !== 1 &&
+          identityVersion !== 2 &&
+          !(
+            !task.steps &&
+            task.sessionPlan.mode === 'manual' &&
+            task.sessionPlan.profileSource === 'node-default' &&
+            !task.sessionPlan.requirements.length
+          )
+        )
           continue;
         if (task.profilePlan && profileTabsVersion !== 1) continue;
         const placement = identityPlacement(task, routedNode);
@@ -681,6 +706,9 @@ export class Coordinator {
               context,
               {
                 type: 'session.open',
+                ...(task.sessionPlan?.profileSource === 'node-default'
+                  ? { profileMode: 'node-default' as const }
+                  : {}),
                 ...(heartbeat.capabilities.reducedMotion === true
                   ? { reducedMotion: task.sessionPlan?.reducedMotion ?? true }
                   : {}),
@@ -753,6 +781,8 @@ export class Coordinator {
       (!task.sessionPlan?.external ||
         heartbeat.capabilities.externalAccounts === true) &&
       heartbeat.capabilities.ephemeralProfiles === true &&
+      (task.sessionPlan?.profileSource !== 'node-default' ||
+        heartbeat.capabilities.nodeDefaultProfileVersion === 1) &&
       (task.sessionPlan?.reducedMotion === undefined ||
         heartbeat.capabilities.reducedMotion === true) &&
       (!task.executionPlan ||
@@ -1434,7 +1464,7 @@ export class Coordinator {
         );
     }
     await client.query(
-      'UPDATE pr_nodes SET node_epoch=$2,capabilities=$3,inventory=$4,runtime=$5,public_url=$6,admission=$7,last_seen_at=clock_timestamp() WHERE id=$1',
+      'UPDATE pr_nodes SET node_epoch=$2,capabilities=$3,inventory=$4,runtime=$5,public_url=$6,admission=$7,default_profile=$8,last_seen_at=clock_timestamp() WHERE id=$1',
       [
         connection.nodeId,
         heartbeat.nodeEpoch,
@@ -1444,6 +1474,7 @@ export class Coordinator {
         heartbeat.runtime ?? null,
         heartbeat.publicUrl ? directOrigin(heartbeat.publicUrl) : null,
         heartbeat.admission ?? null,
+        heartbeat.defaultProfile ?? null,
       ],
     );
     const sessions = await client.query(
@@ -1563,6 +1594,8 @@ export class Coordinator {
       event.operationStatus === 'FAILED' &&
       event.effect === 'NOT_STARTED' &&
       event.error?.code === 'RESOURCE_UNAVAILABLE' &&
+      request.command.type === 'session.open' &&
+      request.command.profileMode !== 'maintenance' &&
       context.execution_state === 'STARTING' &&
       context.task_state === 'RUNNING'
     ) {
@@ -1674,6 +1707,34 @@ export class Coordinator {
               context,
               'ERROR',
               'MOTION_PREFERENCE_MISMATCH',
+            );
+            return;
+          }
+        }
+        // 模板复制回执必须绑定本会话；未初始化只能明确返回空白，不能伪装为已继承。
+        if (
+          request.command.type === 'session.open' &&
+          request.command.profileMode
+        ) {
+          const proof = event.data?.environmentProof as
+            Record<string, any> | undefined;
+          if (
+            proof?.sessionId !== request.sessionId ||
+            proof?.profileSource !== 'node-default' ||
+            !(
+              (proof.initialState === 'empty' &&
+                proof.authRestored === false &&
+                !proof.profile) ||
+              (proof.initialState === 'node-default' &&
+                proof.authRestored === true &&
+                typeof proof.profile?.version === 'string')
+            )
+          ) {
+            await stopExecution(
+              client,
+              context,
+              'ERROR',
+              'PROFILE_PROOF_MISMATCH',
             );
             return;
           }

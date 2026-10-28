@@ -187,7 +187,7 @@ steps 按实际执行顺序包含清理步骤；cleanup 仍提供 taskId、statu
 
 ## 会话来源
 
-`session.mode` 仅接受 `guest`、`manual`、`external`。省略时按访客准备要求生成 guest，否则使用人工临时会话，不调用账号选择 Agent。需要自动账号时显式选择 DevPass，提供 platform、poolId 或 accountId，以及 requirements；具体配置见 [DevPass 说明](../apps/api/src/modules/account-providers/README.md)。本地 identity/pool/auto 与 identityRef/poolRef 已移除，不能用于新提交或重跑。人工介入只影响当前临时会话，不保存为后续任务的登录来源。
+`session.mode` 仅接受 `guest`、`manual`、`external`。省略时按明确访客准备要求生成 guest，否则使用 manual 并从分配节点的默认 profile 复制独立会话，不调用账号选择 Agent。guest 与 external 均从空白目录开始。需要自动账号时显式选择 DevPass，提供 platform、poolId 或 accountId，以及 requirements；具体配置见 [DevPass 说明](../apps/api/src/modules/account-providers/README.md)。本地 identity/pool/auto 与 identityRef/poolRef 已移除，不能用于新提交或重跑。任务内人工介入只影响当前临时会话，不保存为后续任务的登录来源。维护默认 profile 须使用 Console 节点管理入口；保存后仅后续创建的普通会话使用新版本。
 
 ### 重跑时重新配置会话
 

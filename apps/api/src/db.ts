@@ -52,6 +52,7 @@ const MIGRATIONS = [
   '039-public-task-access.sql',
   '040-execution-runtime.sql',
   '041-external-execution.sql',
+  '042-node-default-profile.sql',
 ];
 
 /** 所有业务事务使用同一连接；独占连接单独维护控制面实例锁。 */

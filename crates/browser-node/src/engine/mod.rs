@@ -6,6 +6,7 @@ mod drag;
 mod external_account;
 #[cfg(test)]
 mod motion_tests;
+mod profile;
 mod scroll;
 mod visual;
 
@@ -60,6 +61,15 @@ fn default_reduced_motion() -> bool {
 /// 单个 session-host 的引擎启动参数，不携带节点机器凭据。
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EngineConfig {
+    /// 默认模板存储仅由节点构造，公共协议不能指定磁盘路径。
+    #[serde(default)]
+    pub default_profile_root: Option<PathBuf>,
+    /// 仅维护会话具有发布权，普通任务只能读取模板。
+    #[serde(default)]
+    pub profile_maintenance: bool,
+    /// 发布回执绑定控制面的原会话身份。
+    #[serde(default)]
+    pub profile_owner: String,
     /// 固定版本 CLI 的绝对路径。
     pub binary: PathBuf,
     /// 可选的 Chrome 绝对路径。
@@ -115,6 +125,8 @@ pub struct EngineConfig {
 }
 /// 一场浏览器会话的 CLI 适配器和最近一次观察的临时目标映射。
 pub struct Engine {
+    /// 本会话复制的版本，缺省表示节点尚未初始化模板。
+    template_version: Option<crate::profiles::ProfileVersion>,
     /// 每个 setup 分组独占一个标签页，数据仍属于同一 profile。
     scopes: HashMap<String, scopes::TabState>,
     /// 网络连接按真实 target 隔离，独立于每次观察重建的 DOM 连接。
@@ -143,7 +155,10 @@ pub struct Engine {
 impl Engine {
     /// 建立隔离目录并写入固定的 agent-browser 配置。
     pub fn new(config: EngineConfig) -> anyhow::Result<Self> {
-        if config.auth_state.is_some()
+        if (config.default_profile_root.is_some() && config.external_account.is_some())
+            || (config.profile_maintenance
+                && (config.default_profile_root.is_none() || config.profile_owner.is_empty()))
+            || config.auth_state.is_some()
             || config.restore_auth
             || config.restore_auth_if_present
             || config.auth_snapshot_id.is_some()
@@ -183,6 +198,7 @@ impl Engine {
             serde_json::to_vec(&options)?,
         )?;
         Ok(Self {
+            template_version: None,
             scopes: HashMap::new(),
             networks: HashMap::new(),
             active_scope: None,
@@ -226,11 +242,13 @@ impl Engine {
     /// 创建本会话独立浏览器，并打开内部空白页作为初始状态。
     pub async fn open(&mut self, timeout_ms: u64) -> Result<Value> {
         let deadline = process::boot_ms() + timeout_ms;
+        self.restore_default_profile(deadline).await?;
         self.cli(
             vec!["open".into(), "about:blank".into()],
             deadline.saturating_sub(process::boot_ms()),
         )
         .await?;
+        self.restore_session_cookies(deadline).await?;
         // 先回读浏览器实际偏好，失败即终止初始化，不把配置意图当作生效证据。
         let motion = self
             .cli(
@@ -282,6 +300,14 @@ impl Engine {
             }
         }
         let mut proof = json!({"authRestored":false,"initialState":"empty","reducedMotion":self.config.reduced_motion});
+        if self.config.default_profile_root.is_some() {
+            proof["profileSource"] = json!("node-default");
+        }
+        if let Some(version) = &self.template_version {
+            proof["initialState"] = json!("node-default");
+            proof["authRestored"] = json!(true);
+            proof["profile"] = json!(version);
+        }
         if let Some(account) = &self.config.external_account {
             proof["initialState"] = json!("external");
             proof["externalAccount"] = account.clone();
@@ -941,6 +967,7 @@ impl Engine {
                     Ok(json!({"written":true}))
                 }
             }
+            BrowserCommand::SessionProfilePublish => self.publish_default_profile(timeout_ms).await,
             BrowserCommand::BrowserAuthSave { .. } => {
                 Err(Fault::rejected("AUTH_SAVE_RETIRED", "案例不再保存身份基准"))
             }

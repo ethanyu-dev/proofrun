@@ -296,6 +296,14 @@ impl Controller {
             send(socket, json!({"type":"completed","authStatus":"disabled"})).await?;
             return Ok(false);
         }
+        // 维护完成必须经控制面确认发布和物理关闭；直连仅通知进入查询阶段。
+        if self.grant.state["profileMaintenance"] == true && pending.is_some() {
+            let mut state = self.grant.state.clone();
+            state["mode"] = json!("REQUESTED");
+            state["finalizing"] = json!(true);
+            send(socket, state).await?;
+            return Ok(false);
+        }
         if let Some(event) = pending
             && event["completion"]["type"] == "unable"
             && !self

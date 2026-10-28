@@ -162,7 +162,10 @@ impl Node {
         let occupied: Vec<_> = records.into_iter().map(|record| json!({
             "sessionId":record.session_id,"state":record.state,"leaseId":record.lease_id,"fence":record.fence
         })).collect();
-        let mut heartbeat = json!({"type":"node.heartbeat","protocolVersion":"0.1","nodeId":self.id,"nodeEpoch":self.epoch,"runtime":crate::version::current(),"leaseRequestId":request,"pool":self.config.pool,"admission":admission,"limits":{"maxLeaseMs":self.config.max_lease_ms,"maxSessionMs":self.config.max_session_ms},"occupied":occupied,"capabilities":{"observe":true,"screenshot":true,"conditionWait":true,"writeActions":self.config.allow_unverified_writes,"engineWritesVerified":false,"networkEvidence":true,"runtimeEvidenceVersion":1,"networkDetailsVersion":1,"focusRecoveryVersion":1,"environmentProof":true,"authState":false,"liveView":true,"directHitl":self.config.public_url.is_some(),"renewableSessions":true,"identityPreparation":false,"fullProfile":false,"reducedMotion":true,"ephemeralProfiles":true,"externalAccounts":true,"nodeProfileManagement":false,"cookieCleanup":true,"profileTabs":true,"trace":true}});
+        let mut heartbeat = json!({"type":"node.heartbeat","protocolVersion":"0.1","nodeId":self.id,"nodeEpoch":self.epoch,"runtime":crate::version::current(),"leaseRequestId":request,"pool":self.config.pool,"admission":admission,"limits":{"maxLeaseMs":self.config.max_lease_ms,"maxSessionMs":self.config.max_session_ms},"occupied":occupied,"capabilities":{"observe":true,"screenshot":true,"conditionWait":true,"writeActions":self.config.allow_unverified_writes,"engineWritesVerified":false,"networkEvidence":true,"runtimeEvidenceVersion":1,"networkDetailsVersion":1,"focusRecoveryVersion":1,"environmentProof":true,"authState":false,"liveView":true,"directHitl":self.config.public_url.is_some(),"renewableSessions":true,"identityPreparation":false,"fullProfile":false,"reducedMotion":true,"ephemeralProfiles":true,"externalAccounts":true,"nodeProfileManagement":true,"nodeDefaultProfileVersion":1,"cookieCleanup":true,"profileTabs":true,"trace":true}});
+        heartbeat["defaultProfile"] = json!(crate::profiles::current(
+            &self.config.home.join("default-profile")
+        )?);
         if let Some(url) = &self.config.public_url {
             heartbeat["publicUrl"] = json!(url);
         }
@@ -273,7 +276,10 @@ impl Node {
                 | BrowserCommand::SessionControl { .. }
         );
         // 操作许可持有到结果落盘，不能仅凭 CLI 调用结束就放行下一条动作。
-        let permit = if matches!(command.command, BrowserCommand::SessionControl { .. }) {
+        let permit = if matches!(
+            command.command,
+            BrowserCommand::SessionControl { .. } | BrowserCommand::SessionProfilePublish
+        ) {
             match &session {
                 Some(s) => s.acquire_control(command.timeout_ms).await.map(Some),
                 None => Ok(None),
@@ -527,6 +533,18 @@ impl Node {
                     return Ok(
                         json!({"controlled":true,"authRevision":session.control.lock().unwrap().auth_revision}),
                     );
+                }
+                if matches!(operation, BrowserCommand::SessionProfilePublish) {
+                    let control = session.control.lock().unwrap();
+                    if !control.human
+                        || !control.finalizing
+                        || control.revision != command.control_revision.unwrap_or(0)
+                    {
+                        return Err(Fault::rejected(
+                            "PROFILE_PUBLISH_FORBIDDEN",
+                            "维护完成尚未确认",
+                        ));
+                    }
                 }
                 engine::validate(operation, self.config.allow_unverified_writes)?;
                 session.execute(operation.clone(), command_deadline).await

@@ -1,4 +1,3 @@
-import { useResource } from './use-resource';
 import {
   StrictMode,
   Suspense,
@@ -58,6 +57,11 @@ const TaskSubmitPage = lazy(() =>
 );
 const NodesPage = lazy(() =>
   import('./pages/nodes').then((module) => ({ default: module.NodesPage })),
+);
+const NodeProfilePage = lazy(() =>
+  import('./pages/node-profile').then((module) => ({
+    default: module.NodeProfilePage,
+  })),
 );
 const HitlPage = lazy(() =>
   import('./pages/hitl').then((module) => ({ default: module.HitlPage })),
@@ -144,9 +148,7 @@ function App() {
     page = <ReportDetailPage key={reportId} api={api} id={reportId} />;
   else if (taskId) page = <TaskDetailPage key={taskId} api={api} id={taskId} />;
   else if (nodeProfileId)
-    page = (
-      <HistoricalProfileLink key={nodeProfileId} api={api} id={nodeProfileId} />
-    );
+    page = <NodeProfilePage key={nodeProfileId} api={api} id={nodeProfileId} />;
   else if (path === '/nodes') page = <NodesPage api={api} />;
   else
     page = (
@@ -199,23 +201,3 @@ createRoot(root).render(
     />
   </StrictMode>,
 );
-
-/** 旧书签只指向原任务，状态、取消及关闭事实沿用通用任务页面。 */
-function HistoricalProfileLink({ api, id }: { api: ApiClient; id: string }) {
-  const resource = useResource<{ taskId: string }>(
-    api,
-    `/v1/node-profiles/${id}`,
-    false,
-  );
-  return (
-    <section className="panel">
-      <p>节点模板维护已停用，历史会话请通过原任务查看或关闭。</p>
-      {resource.error && <p role="alert">{resource.error}</p>}
-      {resource.data && (
-        <a href={`#/tasks/${encodeURIComponent(resource.data.taskId)}`}>
-          查看原任务
-        </a>
-      )}
-    </section>
-  );
-}

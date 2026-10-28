@@ -120,22 +120,22 @@ API 持久化可选 StepResult.requirements，验证唯一要求身份、证据�
 | 旧计划/JEV/setup/页面通用大段 prompt                                    | 上述七个实际使用的提示词文件                            |
 | 新建 JEV/双跑、Console 对照按钮、部署旧模式开关                         | 新建及重跑 llm；历史对照只读                            |
 | 案例 HITL saveAuth/published、保存后重启和 tab 重建                     | 当前会话确认后直接交还控制权                            |
-| profile_snapshots、版本竞争发布、基准复制、为保存合并 trace             | 临时浏览器正常取证与关闭                                |
-| 登录状态导入/删除 CLI、默认模板自动回退                                 | 每次从明确身份输入材料建立会话                          |
-| NodeProfiles 新建与 Console 模板维护交互                                | 新建返回 410；历史状态可读、遗留会话可关闭              |
+| 任务内 profile_snapshots、为保存合并 trace、保存后重启                  | 任务只操作副本；节点维护另行显式发布模板                |
+| 登录状态导入/删除 CLI、身份失败后隐式切换模板                           | 冻结 profileSource，访客和 DevPass 保持空白隔离         |
+| 旧 NodeProfiles 保存槽与案例身份绑定                                    | Console 节点默认模板维护，独立于案例 HITL               |
 | auth bindings 调度读写、authState 下发、基于基准的节点偏好              | 身份/显式路由约束和账号租约；节点要求 ephemeralProfiles |
 
 这里的删除是架构收敛，不把所有旧机制都宣称为无用代码。无法说明收益的模型辅助视图不再长期维护同义副本；原始权限、预算和执行事实保留。
 
 ## 身份与 profile 生命周期
 
-每个新会话创建临时浏览器目录，消费 Cookie 种子、已有登录配方或外部 DevPass 材料；当前 DevPass 支持 browser_cookies，没有新增完整目录下载协议。材料私密投递，种子消费后删除。访客不绑定账号。
+每个新会话创建独立临时浏览器目录。普通验证冻结 `profileSource=node-default`，启动时从分配节点的默认模板复制；访客和 DevPass 冻结 `profileSource=empty`。DevPass 只注入当前会话，材料私密投递，种子消费后删除。
 
-人工处理只修改当前浏览器，不保存可供下一案例恢复的 profile，不发布新身份、不重启当前浏览器。下次任务重新获取材料；缺材料进入授权的人工/阻塞流程，不借用节点默认模板或静默切换账号。
+任务内人工处理只修改当前浏览器，不发布新身份、不重启当前浏览器。Console 节点维护入口复用 HITL，但明确保存时关闭 Chrome 并原子发布默认模板。后续新会话复制新版本，运行中的副本不受影响。复制和保存不证明网站登录有效，仍由原始身份要求与 setup policy 核验。
 
 以下内容保留：profilePlan/executeProfile 的分组编排、临时 user-data-dir、输入材料版本、身份选择、账号并发限制、authRevision、DevPass 硬到期、物理关闭后释放账号、StepResult 保存队列。它们分别有明确执行职责，不属于浏览器 profile 持久化。
 
-旧数据库列、旧报告、历史模型调用用途和旧基准文件不做破坏性删除。兼容解码保留部分旧字段用于明确拒绝，不能恢复旧运行路径。browser.auth.save 返回退役错误，旧模板入口不再创建任务。
+旧数据库列、旧报告、历史模型调用用途和旧基准文件不做破坏性删除。兼容解码保留部分旧字段用于明确拒绝，不能恢复旧运行路径。browser.auth.save 返回退役错误；新节点模板能力通过独立版本声明准入，旧冻结任务缺少 profileSource 时保持原语义。
 
 ## 升级与验证
 

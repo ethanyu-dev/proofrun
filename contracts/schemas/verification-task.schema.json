@@ -374,7 +374,8 @@
               }
             },
             "resolverVersion": {
-              "const": 1
+              "enum": [1, 2],
+              "description": "版本 2 默认使用节点模板，版本 1 保留历史空白/自动账号语义。"
             }
           }
         },

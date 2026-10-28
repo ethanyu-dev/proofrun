@@ -41,9 +41,11 @@ target/release/proofrun-node --config deploy/node.example.toml serve
 
 ## 临时身份会话
 
-每个执行从空 profile 启动，能力标记为 `ephemeralProfiles`。仅 DevPass 材料可在启动时注入当前会话，种子文件用后删除；已移除本地 Cookie／密码配方及 `identity_library_file` 配置；运行时仍核验页面身份与授权条件。HITL 完成后保持当前浏览器，不复制、发布、保存或恢复完整 profile。
+新验证任务默认复制分配节点的默认 profile，之后在独立临时目录运行，能力标记为 `ephemeralProfiles` 和 `nodeDefaultProfileVersion=1`。明确访客与 DevPass 使用空白目录；DevPass 材料只注入当前会话，种子文件用后删除。默认模板尚未初始化时正常创建空白副本；复制失败不降级为访客。运行时仍核验页面身份和授权条件，复制成功不代表网站登录有效。
 
-`browser.auth.save`、`authState` 恢复、节点默认模板和 `auth-import/auth-forget` 已停用。部署时删除 `base_profile_directory`；旧本地基准文件不会由本次改造自动删除。完整目录仅作为当前执行的隔离资源，仍由物理关闭和保留策略回收。
+Console 节点页提供默认 profile 维护入口，沿用 HITL 的画面、导航和输入。维护副本可依次登录多个网站；点击“保存并关闭”后导出会话 Cookie 补充状态，关闭 Chrome，完整复制并原子发布到 `<home>/default-profile`。指针只含版本、更新时间和维护会话身份，目录及登录材料留在节点。新建会话读取最新已发布版本，正在运行的任务不受影响。单节点只允许一个未关闭的维护会话；复制和发布共用文件锁，拒绝过期基准及符号链接。模板限制 2 GiB、100000 个文件，发布前回收更旧版本和未完成暂存；当前版本及最近基准保留至下次发布。
+
+普通任务及任务内 HITL 永不回写模板，结束后仍按物理关闭流程删除临时目录。维护放弃或失败保留原模板，保存状态与会话关闭状态分别展示。`browser.auth.save`、旧 `authState` 恢复、`auth-import/auth-forget`、本地 Cookie／密码配方仍停用；不恢复 `base_profile_directory` 或 `identity_library_file` 配置。旧基准文件不会自动迁移或删除。
 
 ## 模块
 

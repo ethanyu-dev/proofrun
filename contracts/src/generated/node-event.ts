@@ -120,6 +120,10 @@ export type NodeEvent =
         runtimeEvidenceVersion?: number;
         networkDetailsVersion?: number;
         focusRecoveryVersion?: number;
+        /**
+         * 支持节点默认模板隔离复制和维护发布。
+         */
+        nodeDefaultProfileVersion?: 1;
       };
       /**
        * 节点接受的租约和会话硬期限上限，控制面不得超额授权。
@@ -137,6 +141,14 @@ export type NodeEvent =
         availableBytes: number;
         reserveBytes: number;
       };
+      /**
+       * 节点已发布的默认模板元数据；不包含登录材料。空值表示尚未初始化。
+       */
+      defaultProfile?: {
+        version: string;
+        updatedAt: string;
+        sessionId: string;
+      } | null;
     }
   | {
       type: 'protocol.error';
