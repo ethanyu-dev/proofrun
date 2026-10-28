@@ -92,6 +92,10 @@
         },
         "executionPlanVersion": {
           "const": 1
+        },
+        "runtimeVersion": {
+          "const": 1,
+          "description": "可只执行模型决定，由服务端 runtime 管理版本 1 运行。"
         }
       },
       "required": ["type", "workerId"]

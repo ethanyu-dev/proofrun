@@ -102,8 +102,26 @@ export class Coordinator {
 
   /** 重试沿用首次冻结的配置；同一身份不能改变业务输入或挪用历史任务。 */
   async submitBrowser(input: BrowserTaskRequest) {
+    return this.submit(await this.browserDefinition(input, this.db));
+  }
+
+  /** 公共接入的归属、回执和入队共用调用方事务；不在提交前启动浏览器。 */
+  async submitBrowserInTransaction(
+    input: BrowserTaskRequest,
+    client: PoolClient,
+  ) {
+    const task = await this.browserDefinition(input, client);
+    this.validateSubmission(task);
+    await this.enqueue([task], task.taskId, client);
+  }
+
+  /** 两种入口使用同一业务定义和重试检查，客户端不能覆盖平台配置。 */
+  private async browserDefinition(
+    input: BrowserTaskRequest,
+    query: Pick<Database, 'query'>,
+  ) {
     const existing = (
-      await this.db.query<{ definition: VerificationTask }>(
+      await query.query<{ definition: VerificationTask }>(
         'SELECT definition FROM pr_tasks WHERE id=$1',
         [input.taskId],
       )
@@ -115,11 +133,18 @@ export class Coordinator {
         existing.target.url !== input.url)
     )
       throw new ApiError(409, 'TASK_CONFLICT', '任务身份已绑定另一份定义');
-    return this.submit(existing ?? browserTask(input, this.config));
+    return existing ?? browserTask(input, this.config);
   }
 
   /** 接收上层定义的任务快照；相同身份只允许相同定义。 */
   async submit(task: VerificationTask) {
+    this.validateSubmission(task);
+    await this.enqueue([task], task.taskId);
+    return this.reader.task(task.taskId);
+  }
+
+  /** 内部和公共浏览器入口共用准入限制；外部事务不能绕过平台预算或任务类型校验。 */
+  private validateSubmission(task: VerificationTask) {
     assertSupportedSession(task.sessionPlan);
     if (task.resourceKey !== undefined)
       throw new ApiError(
@@ -176,13 +201,15 @@ export class Coordinator {
         'UNSUPPORTED_EVIDENCE',
         'This release supports DOM, SCREENSHOT, NETWORK and TRACE evidence',
       );
-    await this.enqueue([task], task.taskId);
-    return this.reader.task(task.taskId);
   }
 
   /** 同一提交身份跨模式互斥；整批事务回滚，不能在第二组冲突时遗留第一组。 */
-  private async enqueue(tasks: VerificationTask[], identity: string) {
-    await this.db.transaction(async (client) => {
+  private async enqueue(
+    tasks: VerificationTask[],
+    identity: string,
+    transaction?: PoolClient,
+  ) {
+    const write = async (client: PoolClient) => {
       await client.query(
         'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
         [identity],
@@ -202,9 +229,15 @@ export class Coordinator {
       for (const task of tasks) {
         const hash = digest(canonical(task));
         await client.query(
-          `INSERT INTO pr_tasks(id,definition,definition_hash,state,deadline_at)
-          VALUES($1,$2,$3,'QUEUED',clock_timestamp()+$4*interval '1 millisecond') ON CONFLICT(id) DO NOTHING`,
-          [task.taskId, task, hash, task.budget.timeoutMs],
+          `INSERT INTO pr_tasks(id,definition,definition_hash,state,deadline_at,runtime_version)
+          VALUES($1,$2,$3,'QUEUED',clock_timestamp()+$4*interval '1 millisecond',$5) ON CONFLICT(id) DO NOTHING`,
+          [
+            task.taskId,
+            task,
+            hash,
+            task.budget.timeoutMs,
+            this.config.executionRuntimeVersion ?? 0,
+          ],
         );
         const existing = await client.query(
           'SELECT definition_hash,deleted_at FROM pr_tasks WHERE id=$1',
@@ -219,15 +252,18 @@ export class Coordinator {
             'Task identity already binds another definition',
           );
       }
-    });
+    };
+    if (transaction) await write(transaction);
+    else await this.db.transaction(write);
   }
 
   /** 整批原子入队；锁按身份排序，交叉批次不会因请求顺序形成死锁。 */
   async submitCaseBatch(
     tasks: VerificationTask[],
     request?: RequestRegistration,
+    transaction?: PoolClient,
   ) {
-    await this.db.transaction(async (client) => {
+    const write = async (client: PoolClient) => {
       if (request && !(await registerRequest(client, request))) return;
       const created = new Set<string>();
       for (const task of [...tasks].sort((a, b) =>
@@ -280,13 +316,21 @@ export class Coordinator {
         created.add(task.taskId);
         assertCaseExecution(task);
         await client.query(
-          `INSERT INTO pr_tasks(id,definition,definition_hash,state,deadline_at)
-          VALUES($1,$2,$3,'QUEUED',clock_timestamp()+$4*interval '1 millisecond')`,
-          [task.taskId, task, digest(canonical(task)), task.budget.timeoutMs],
+          `INSERT INTO pr_tasks(id,definition,definition_hash,state,deadline_at,runtime_version)
+          VALUES($1,$2,$3,'QUEUED',clock_timestamp()+$4*interval '1 millisecond',$5)`,
+          [
+            task.taskId,
+            task,
+            digest(canonical(task)),
+            task.budget.timeoutMs,
+            this.config.executionRuntimeVersion ?? 0,
+          ],
         );
       }
       if (request) await registerMembers(client, request, tasks, created);
-    });
+    };
+    if (transaction) await write(transaction);
+    else await this.db.transaction(write);
   }
 
   /** 步骤快照随执行令牌写入；只允许当前执行的证据和完整原步骤集合。 */
@@ -377,6 +421,8 @@ export class Coordinator {
     identityVersion?: number,
     profileTabsVersion?: number,
     executionPlanVersion?: number,
+    runtimeVersion?: number,
+    externalRunId?: string,
   ) {
     const live = this.gateway.live();
     if (!live.length) return { execution: null };
@@ -390,7 +436,7 @@ export class Coordinator {
       const tasks = await client.query<{ id: string }>(
         `SELECT candidate.id FROM unnest($1::text[]) AS pool(name)
         CROSS JOIN LATERAL (SELECT id,created_at FROM pr_tasks WHERE state='QUEUED'
-          AND deadline_at>clock_timestamp() AND definition#>>'{environment,nodePool}'=pool.name AND ($3 OR NOT (definition ? 'steps')) AND ($4 OR NOT (definition ? 'stepBudget')) AND ($5 OR NOT (definition ? 'sessionPlan')) AND ($6 OR NOT (definition ? 'profilePlan')) AND ($7 OR NOT (definition ? 'executionPlan'))
+          AND (runtime_version=0 OR $8) AND executor_kind=CASE WHEN $9::text IS NULL THEN 'builtin' ELSE 'external' END AND ($9::text IS NULL OR (id=$9 AND EXISTS(SELECT 1 FROM pr_external_controllers c WHERE c.run_id=pr_tasks.id AND c.state='ACTIVE' AND c.idle_deadline_at>clock_timestamp()))) AND deadline_at>clock_timestamp() AND definition#>>'{environment,nodePool}'=pool.name AND ($3 OR NOT (definition ? 'steps')) AND ($4 OR NOT (definition ? 'stepBudget')) AND ($5 OR NOT (definition ? 'sessionPlan')) AND ($6 OR NOT (definition ? 'profilePlan')) AND ($7 OR NOT (definition ? 'executionPlan'))
           ORDER BY created_at,id LIMIT $2) candidate ORDER BY candidate.created_at,candidate.id`,
         [
           pools,
@@ -400,6 +446,8 @@ export class Coordinator {
           identityVersion === 1 || identityVersion === 2,
           profileTabsVersion === 1,
           executionPlanVersion === 1,
+          runtimeVersion === 1,
+          externalRunId ?? null,
         ],
       );
       for (const candidate of tasks.rows) {
@@ -407,12 +455,14 @@ export class Coordinator {
           await client.query<{
             definition: VerificationTask;
             deadline_at: Date;
+            runtime_version: number;
           }>(
-            "SELECT definition,deadline_at FROM pr_tasks WHERE id=$1 AND state='QUEUED' AND deadline_at>clock_timestamp() FOR UPDATE SKIP LOCKED",
+            "SELECT definition,deadline_at,runtime_version FROM pr_tasks WHERE id=$1 AND state='QUEUED' AND deadline_at>clock_timestamp() FOR UPDATE SKIP LOCKED",
             [candidate.id],
           )
         ).rows[0];
         if (!row) continue;
+        if (row.runtime_version === 1 && runtimeVersion !== 1) continue;
         const task = row.definition;
         if (usesLocalIdentity(task.sessionPlan)) {
           await recordQueueReason(client, task.taskId, 'IDENTITY_UNAVAILABLE');
@@ -674,6 +724,9 @@ export class Coordinator {
               leaseToken: token,
               leaseExpiresAt: leaseEnd,
               taskDeadlineAt: row.deadline_at,
+              ...(row.runtime_version === 1
+                ? { runtimeVersion: 1 as const }
+                : {}),
               sessionId: context.session_id,
               nodeId: context.node_id,
               state: 'STARTING',
@@ -1125,24 +1178,25 @@ export class Coordinator {
 
   /** 任务取消不会把已发送操作改写成未执行；浏览器清理可以晚于任务终态。 */
   async cancel(id: string) {
-    await this.db.transaction(async (client) => {
-      const queued = await client.query(
-        "UPDATE pr_tasks SET state='CANCELLED',finished_at=clock_timestamp() WHERE id=$1 AND state='QUEUED' RETURNING id",
-        [id],
-      );
-      if (queued.rowCount) return;
-      const execution = (
-        await client.query('SELECT id FROM pr_executions WHERE task_id=$1', [
-          id,
-        ])
-      ).rows[0];
-      if (execution) {
-        const context = await executionContext(client, execution.id as string);
-        if (context.task_state === 'RUNNING')
-          await stopExecution(client, context, 'CANCELLED', 'TASK_CANCELLED');
-      }
-    });
+    await this.db.transaction((client) => this.cancelInTransaction(id, client));
     return this.reader.task(id);
+  }
+
+  /** 指定运行的取消可与公共操作回执原子提交，不重新解析 Case 的最新运行。 */
+  async cancelInTransaction(id: string, client: PoolClient) {
+    const queued = await client.query(
+      "UPDATE pr_tasks SET state='CANCELLED',finished_at=clock_timestamp() WHERE id=$1 AND state='QUEUED' RETURNING id",
+      [id],
+    );
+    if (queued.rowCount) return;
+    const execution = (
+      await client.query('SELECT id FROM pr_executions WHERE task_id=$1', [id])
+    ).rows[0];
+    if (execution) {
+      const context = await executionContext(client, execution.id as string);
+      if (context.task_state === 'RUNNING')
+        await stopExecution(client, context, 'CANCELLED', 'TASK_CANCELLED');
+    }
   }
 
   /** 完成报告经过证据归属与标准覆盖校验；提交成功后立即撤销新的操作权限。 */

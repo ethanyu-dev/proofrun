@@ -1,0 +1,255 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RuntimeRequest",
+  "description": "内部 worker 只能请求决策与提交一次结果，不接受浏览器命令或最终报告。",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "start"
+        },
+        "config": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "model": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "vision": {
+              "type": "boolean"
+            },
+            "commandMs": {
+              "type": "integer",
+              "minimum": 100,
+              "maximum": 120000
+            },
+            "evidenceMs": {
+              "type": "integer",
+              "minimum": 100,
+              "maximum": 300000
+            },
+            "maxTurns": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "maxContextChars": {
+              "type": "integer",
+              "minimum": 4000,
+              "maximum": 256000
+            }
+          },
+          "required": [
+            "model",
+            "vision",
+            "commandMs",
+            "evidenceMs",
+            "maxTurns",
+            "maxContextChars"
+          ]
+        }
+      },
+      "required": ["type", "config"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "decision"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "outcome": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "output": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "decision": {
+                      "$ref": "agent-decision.schema.json"
+                    },
+                    "additionalNetworkReads": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "$ref": "agent-decision.schema.json"
+                      }
+                    },
+                    "promptTokens": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "completionTokens": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": ["decision", "promptTokens", "completionTokens"]
+                }
+              },
+              "required": ["output"]
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "error": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "pattern": "^[A-Z_]{1,80}$"
+                    },
+                    "status": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 599
+                    },
+                    "message": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4000,
+                      "description": "仅允许 AgentFault 的安全业务反馈；禁止原始异常、供应商正文和密钥。"
+                    }
+                  },
+                  "required": ["code", "status"]
+                }
+              },
+              "required": ["error"]
+            }
+          ]
+        }
+      },
+      "required": ["type", "revision", "outcome"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "trace_start"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "request": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "model": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "purpose": {
+              "const": "DECISION"
+            },
+            "request": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1500000
+            },
+            "requestSha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "imagesOmitted": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1
+            }
+          },
+          "required": [
+            "model",
+            "purpose",
+            "request",
+            "requestSha256",
+            "imagesOmitted"
+          ]
+        }
+      },
+      "required": ["type", "revision", "request"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "trace_finish"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "result": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "finishedAt": {
+              "type": ["string", "null"],
+              "format": "date-time",
+              "description": "worker 收到回复或错误的时间，未收到回执时为空。"
+            },
+            "status": {
+              "enum": ["PENDING", "RECEIVED", "ERROR"],
+              "description": "仅表示请求接收状态，收到回复不等于模型决定有效或业务验收通过。"
+            },
+            "response": {
+              "type": ["string", "null"],
+              "maxLength": 600000,
+              "description": "供应商返回的 choices、answers、usage 等已选择字段 JSON，未接收或清理后为空。"
+            },
+            "error": {
+              "type": ["string", "null"],
+              "maxLength": 200,
+              "description": "稳定错误码，不保存带地址或凭据的原始异常文本。"
+            },
+            "promptTokens": {
+              "type": ["integer", "null"],
+              "minimum": 0,
+              "description": "供应商返回的输入用量，未报告则为空。"
+            },
+            "completionTokens": {
+              "type": ["integer", "null"],
+              "minimum": 0,
+              "description": "供应商返回的输出用量，未报告则为空。"
+            },
+            "elapsedMs": {
+              "type": ["integer", "null"],
+              "minimum": 0,
+              "description": "一次供应商请求的耗时，不含记录交付。"
+            }
+          },
+          "required": [
+            "finishedAt",
+            "status",
+            "response",
+            "error",
+            "promptTokens",
+            "completionTokens",
+            "elapsedMs"
+          ]
+        }
+      },
+      "required": ["type", "revision", "result"]
+    }
+  ]
+}

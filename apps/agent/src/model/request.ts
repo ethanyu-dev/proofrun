@@ -5,8 +5,6 @@ import { AgentFault } from '../http.js';
 
 /** 回复只保留供应商模型版本、决定与用量字段，不保存传输头、认证配置或供应商诊断附属数据。 */
 const RESPONSE_FIELDS = ['model', 'choices', 'usage'] as const;
-/** 只传播稳定错误码，禁止把底层异常正文、URL 或凭据带入报告。 */
-const ERROR_CODE = /^[A-Z_]{1,80}$/;
 
 /** 从供应商用量中读取已报告的安全整数；缺失值不伪造为真实零用量。 */
 function tokens(value: unknown): number | null {
@@ -96,33 +94,5 @@ export async function modelRequest(
   return result;
 }
 
-/** 存档失败继续阻止派发，仅补充可安全展示的 HTTP 状态与稳定错误码。 */
-export function modelTraceFault(
-  error: unknown,
-  phase: 'start' | 'finish',
-): AgentFault {
-  if (
-    error instanceof AgentFault &&
-    error.code.startsWith('STEP_') &&
-    error.code.endsWith('_BUDGET_EXCEEDED')
-  )
-    return error;
-  const details: string[] = [];
-  if (error instanceof AgentFault) {
-    if (
-      Number.isInteger(error.status) &&
-      error.status >= 400 &&
-      error.status <= 599
-    )
-      details.push(`HTTP ${error.status}`);
-    if (ERROR_CODE.test(error.code)) details.push(error.code);
-  }
-  const message =
-    phase === 'start'
-      ? '模型请求上下文未能存档，停止派发新请求'
-      : '模型回复未能存档，请检查该次调用记录';
-  return new AgentFault(
-    'MODEL_TRACE_UNAVAILABLE',
-    `${message}${details.length ? `（${details.join('；')}）` : ''}`,
-  );
-}
+/** 兼容原错误映射入口。 */
+export { modelTraceFault } from '@proofrun/execution-core/faults';

@@ -14,6 +14,14 @@ export type { VerificationTask, VerificationReport };
 export type { NodeCommand } from './generated/node-command.js';
 export const protocolVersion = '0.1' as const;
 export {
+  taskMcpTools,
+  taskMcpOutputSchema,
+  validateMcpTaskCall,
+  validateMcpTaskResult,
+  validateMcpArguments,
+} from './mcp.js';
+export type { McpTaskCall, McpTaskResult } from './mcp.js';
+export {
   recoverableObservationFailure,
   recoverableFocusFailure,
 } from './observation-failure.js';
@@ -264,3 +272,38 @@ import type { BrowserTaskRequest } from './generated/browser-task-request.js';
 export const validateBrowserTaskRequest = ajv.compile<BrowserTaskRequest>(
   readSchema('browser-task-request'),
 );
+
+ajv.addSchema(agentDecisionSchema, 'agent-decision.schema.json');
+import type { RuntimeRequest } from './generated/runtime-request.js';
+export type { RuntimeRequest };
+/** 内部运行时只接受封闭决定协议，授权与版本由 runtime 事务核验。 */
+export const validateRuntimeRequest = ajv.compile<RuntimeRequest>(
+  readSchema('runtime-request'),
+);
+
+import type { ExternalExecutionRequest } from './generated/external-execution-request.js';
+export type { ExternalExecutionRequest };
+/** 公共执行只接受有限意图，权限与观察版本仍由事务核验。 */
+export const externalExecutionRequestSchema = readSchema(
+  'external-execution-request',
+);
+export const validateExternalExecutionRequest =
+  ajv.compile<ExternalExecutionRequest>(externalExecutionRequestSchema);
+
+import type { ExternalExecutionResult } from './generated/external-execution-result.js';
+export type { ExternalExecutionResult };
+/** 公开控制视图和操作回执使用独立契约，不混入任务级提交回执。 */
+export const externalExecutionResultSchema = readSchema(
+  'external-execution-result',
+);
+export const validateExternalExecutionResult =
+  ajv.compile<ExternalExecutionResult>(externalExecutionResultSchema);
+
+export {
+  executionMcpCatalog,
+  executionMcpTools,
+  executionMcpOperationSchema,
+  validateExecutionMcpArguments,
+} from './mcp-execution.js';
+
+export type { ExecutionTool } from './mcp-execution.js';

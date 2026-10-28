@@ -577,6 +577,10 @@ export interface StepResult {
       maxActions: number;
       maxModelCalls: number;
     };
+    /**
+     * 外部决定计数；不代表平台模型调用。
+     */
+    decisionCalls?: number;
   };
   /**
    * @maxItems 64

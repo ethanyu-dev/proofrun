@@ -60,7 +60,9 @@ def until(read, accept=bool, timeout=25):
 
 class Harness:
     """持有本次测试独占的服务、节点、执行租约和临时磁盘。"""
-    def __init__(self):
+    def __init__(self, runtime_version=0):
+        # 手工协议夹具保留旧执行路径；真实 Agent 场景显式验证服务端驱动。
+        self.runtime_version = runtime_version
         self.root = Path(tempfile.mkdtemp(prefix='proofrun-control-plane-'))
         self.nodes = []
         self.process = None
@@ -75,6 +77,7 @@ class Harness:
         env = dict(os.environ, PROOFRUN_API_HOST='127.0.0.1', PROOFRUN_API_PORT='4121',
                    PROOFRUN_PUBLIC_URL=BASE, PROOFRUN_ADMIN_TOKEN=ADMIN,
                    PROOFRUN_WORKER_TOKEN=WORKER,
+                   PROOFRUN_EXECUTION_RUNTIME_VERSION=str(self.runtime_version),
                    PROOFRUN_ARTIFACT_DIRECTORY=str(self.root / 'artifacts'))
         with (self.root / 'api.log').open('ab') as log:
             self.process = subprocess.Popen(['node', '/workspace/apps/api/dist/main.js'], env=env,

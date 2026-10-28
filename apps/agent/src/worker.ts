@@ -5,6 +5,7 @@ import type { AgentConfig } from './config.js';
 import { execute } from './execution/runner.js';
 import { AgentFault, pause } from './http.js';
 import { ChatModel } from './model/chat.js';
+import { executeRuntime } from './runtime.js';
 
 /** workerId 最长 128 字符，为分隔符和每次领取的 UUID 留出空间。 */
 const WORKER_PREFIX_LENGTH = 91;
@@ -16,7 +17,7 @@ async function runExecution(
   grant: ExecutionGrant,
   signal: AbortSignal,
 ): Promise<void> {
-  const report = await execute(
+  const report = await (grant.runtimeVersion === 1 ? executeRuntime : execute)(
     config,
     client,
     new ChatModel(config),

@@ -4,6 +4,101 @@ ProofRun 的最小控制面：接收上层已定义的任务，持久化全局�
 
 上层调用方只需 [Case API](../../docs/public-api.md)，或导入 [OpenAPI](../../contracts/public-api.openapi.json)。平台维护者先设置 [case 执行配置](../../docs/case-platform-config.md)。下文的任务、worker、节点运维和 Console 接口属于内部协议。
 
+## 共享执行运行时（版本 1）
+
+新入队任务默认冻结 `runtime_version=1`、`executor_kind=builtin`。API 持有共享执行器、账本、观察/动作、分组门禁和报告组装；内置 Worker 持有模型供应商配置，只续租、领取模型上下文、保存模型审计并提交一次决定。API 不读取模型密钥。共享模块见 [execution-core](../../packages/execution-core/README.md) 和 [execution-driver](../../packages/execution-driver/README.md)。
+
+内部接口使用单次 execution lease token，不能使用公共 MCP principal：
+
+| 接口                                                    | 请求与响应                                                                                                                                                                                                         |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `POST /v1/executions/:id/runtime`                       | `{type:"start",config:{model,vision,commandMs,evidenceMs,maxTurns,maxContextChars}}`；冻结非秘密配置，重复相同请求不启动第二个驱动                                                                                 |
+| `GET /v1/executions/:id/runtime?afterRevision=0`        | `state:ACTIVE/FINISHED/LOST`、最多一帧 `decisions`、最终 `report`；GET 不续租                                                                                                                                      |
+| `POST /v1/executions/:id/runtime/decisions/:decisionId` | `{type:"trace_start",revision,request}` → `{type:"trace_finish",revision,result}` → `{type:"decision",revision,outcome:{output\|error}}`；严格字段见 [Schema](../../contracts/schemas/runtime-request.schema.json) |
+
+决定帧包含 `id/revision/text/modelDeadlineAt/imageArtifact?`。text 为既有七模块上下文；图片按引用读取，不把 base64 存入帧。模型请求存档完成前不能派发，回复存档完成前不能提交决定。每帧的阶段摘要、控制/认证代次和最终决定均持久化；相同消息重送复用结果，异体重送返回 `IDEMPOTENCY_CONFLICT`，旧版本返回 `REVISION_CONFLICT`，控制权变化返回 `CONTROL_CHANGED`。合法 progress 在下一动作前保存。操作意图先落库，实际命令仍由原 `pr_commands` outbox、预算准入与节点幂等处理。
+
+版本 1 禁止通过旧 worker 的 commands、steps、complete、intervene、control、model-calls 写入接口绕过共享层；管理员介入、节点协议和真正的 Worker 心跳保持原入口。API 自身不会替失联 Worker 续租。正常完成与续租撤权竞争时，Worker 只短暂读取最终报告。API 重启会保留已知回执和部分结果，以 `EXECUTION_RUNTIME_LOST` 关闭遗留版本 1 运行，不重放业务步骤。
+
+分批升级先部署新 API 并设 `PROOFRUN_EXECUTION_RUNTIME_VERSION=0`，再部署支持 `runtimeVersion:1` 的 Worker，最后切换为 `1`（部署默认值）。新 Worker 的领取字段需要新版 API，不能先连到未升级的严格校验入口。配置仅影响之后新建运行；原有记录保持版本 0，新 Worker 仍兼容旧路径，旧 Worker 不能领取版本 1。迁移是增量 SQL；回退新入队策略不删除审计数据。程序化 `buildApp` 未指定版本时沿用版本 0，以保持既有嵌入式调用和测试行为。外部执行固定使用版本 1，由外部 controller supervisor 续租；直接操作见下文。操作级 MCP 工具已注册，复用同一外部执行服务。
+
+运行 `PROOFRUN_TEST_DATABASE_URL=... pnpm test:agent:integration` 检查真实 API/数据库/HTTP 模型适配闭环；模型结论和 WebSocket 节点来自夹具，不代表生产站点验收。
+
+## 任务级 MCP 与 v3 API
+
+第一阶段提供两个 Streamable HTTP MCP：`/mcp/browser` 委托浏览器任务，`/mcp/verification` 委托结构化 Case 验证。两者复用现有 Case 编译、请求归属、调度、取消、报告和证据服务；不启动另一套 worker，不在 API 内调用模型。默认 `executor.kind=builtin`；验证提交也支持 `external`，由外部 Agent 通过两套 MCP 的操作工具或下文 HTTP API 直接执行。两套目录各有 16 个工具，发现结果按凭据 scope 过滤。
+
+默认关闭。API 启动前设置 `PROOFRUN_MCP_CREDENTIALS_FILE`，指向权限 `0600` 的普通 JSON 文件，最多 100 条记录。每个令牌独立随机生成至少 32 字节，客户端保存原令牌，服务端配置只保存其 SHA-256 小写十六进制摘要。以下占位值须替换为真实摘要：
+
+```json
+[
+  {
+    "principalId": "upstream-ci",
+    "tokenSha256": "替换为64位小写SHA256摘要",
+    "channels": ["browser", "verification"],
+    "scopes": [
+      "browser:delegate",
+      "verification:submit",
+      "runs:read",
+      "evidence:read",
+      "runs:cancel"
+    ]
+  }
+]
+```
+
+凭据文件不进入仓库。配置变更/轮换需要重启 API；同一 `principalId` 可配置不同令牌与不同 scopes，资源归属保持稳定。管理员/worker 令牌不会自动获得 MCP 权限，公共令牌也不能访问管理员入口。旧 API 创建的资源不会自动认领。不同 principal 的读取统一返回 404，已绑定资源的身份冲突返回 409，自己的已删除资源返回 410。
+
+权限同时约束 `tools/list` 和实际调用：`browser:delegate` 允许浏览器提交；`verification:submit` 允许预检、提交、重跑；`runs:read` 允许请求/运行/操作读取；`evidence:read` 允许证据工具、资源和下载；`runs:cancel` 允许取消。能力发现需有效凭据；写入还检查资源归属。生产入口使用 HTTPS，代理保留公开 Host；带 Origin 的请求仅接受配置的 API/Console origin。
+
+| Browser 工具               | 参数                                                                            | 行为                                                   |
+| -------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `browser_get_capabilities` | `url?`, `runId?`                                                                | 返回实现、配置限制及未检查项，不探测目标 URL           |
+| `browser_task_submit`      | `taskKey`, `url`, `objective`                                                   | 复用浏览器任务服务；第一阶段拒绝 session/预算/节点覆盖 |
+| `browser_task_get`         | `runId`, `view?:summary\|full`, `cursor?`, `limit?`                             | 读取明确运行；browserResult 与验证 PASSED 分开         |
+| `browser_task_cancel`      | `runId`, `operationId`, `reason?`                                               | 取消指定运行；不表示物理关闭已完成                     |
+| `browser_evidence_read`    | `runId`, `evidenceId`, `representation?:metadata\|content`, `offset?`, `limit?` | 默认元数据，按归属读取已交付证据                       |
+| `browser_operation_get`    | `operationId`                                                                   | 找回已提交的取消操作回执                               |
+
+| Verification 工具               | 参数                                                                                                                                                                                         | 行为                                                         |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `verification_get_capabilities` | `entry?`, `executor?`                                                                                                                                                                        | 返回 Case 约束、证据及身份支持；实时资源未探测时明确 unknown |
+| `verification_validate_cases`   | `requestId`, `title?`, `cases`, `executor?`                                                                                                                                                  | 只读预检；返回字段错误、分组、逐步预算和取证需求             |
+| `verification_submit_cases`     | 与预检相同                                                                                                                                                                                   | 整批原子提交；回执逐项区分 created/reused                    |
+| `verification_get_request`      | `requestId`, `view?:summary\|report`, `cursor?`, `limit?`                                                                                                                                    | 当前成员、绑定版本与汇总/逐项结果                            |
+| `verification_get_run`          | `runId`, `view?:summary\|full`, `cursor?`, `limit?`                                                                                                                                          | 历史运行也可读取，不切换到 Case 最新运行                     |
+| `verification_cancel_run`       | `runId`, `operationId`, `reason?`                                                                                                                                                            | 精确取消；列出本调用方的受影响请求，超过 100 条显式标记截断  |
+| `verification_rerun_cases`      | `requestId`, `operationId`, `expectedRequestRevision`, `items:[{caseId,sourceRunId,runKey}]`, `executor?`, `budgetMode?:current\|original`, `timeBudget?:{stepTimeoutMs?,cleanupTimeoutMs?}` | 原子创建新运行并替换所选请求成员；拒绝过期来源/版本          |
+| `verification_read_evidence`    | 同浏览器证据工具                                                                                                                                                                             | 单独安装验证 MCP 也能取证                                    |
+| `verification_operation_get`    | `operationId`                                                                                                                                                                                | 找回取消/重跑回执                                            |
+
+`requestId/taskKey/caseId/runKey` 使用 1–80 位字母数字、下划线或短横线；`runId` 上限 160。`operationId` 为 UUID。每批 1–32 个 Case，总请求上限 2MiB，Case 使用现有 v2 Schema。默认 executor 为 builtin；验证预检/提交允许 external，并要求 verification:control。任务级浏览器委托和重跑仍只支持 builtin；未知字段会拒绝。`objective` 为 1–20000 字符非空文本，URL 只接受 HTTP(S)。详细输入/输出由 [共享 Schema](../../contracts/schemas/mcp-task-call.schema.json) 生成；MCP 每个工具有独立、自包含的 inputSchema/outputSchema。错误输出包含 `code/message/retryable`，并设置 `isError`；业务失败仍是正常结果数据。
+
+提交使用稳定 taskKey/requestId，重试返回首次冻结的回执；同键不同输入返回 `IDEMPOTENCY_CONFLICT`。Case 可被同一 principal 的多个请求复用，reused 不表示重新验证。builtin 新验证通过重跑：先读取请求返回的 `requestRevision`（当前成员绑定的 SHA-256，不是递增整数），再携带准确的 sourceRunId、新 runKey 和稳定 operationId。回执查询、重试不会重新执行操作；来源版本冲突需刷新后重新决策。回执、归属、入队/取消/成员替换共用一个数据库事务，断线不自动取消，软删除不释放旧幂等键。
+
+摘要默认不含验收详情；full/report 的 `criteriaPage` 默认 25 条、最多 100 条，并受 96KiB 条目预算限制。`nextCursor` 绑定资源、视图与报告版本；收到 `CURSOR_STALE` 从第一页重读。`textTruncated` 表示摘要截短。任务状态、reportPhase、reportStatus、cleanup、closureVerified 分别读取，终态不能直接推断验收通过或会话已关闭。
+
+证据必须同时满足本 principal 的 run 归属、结果已引用、数据库 AVAILABLE，且 artifact 对应同一次运行；不能仅凭 artifactId 下载。DOM/NETWORK/RUNTIME 文本以 UTF-8 解码后的 JavaScript 字符串偏移分页，默认 20000、最大 100000；`sha256` 始终校验原始附件字节。截图最大 8MiB，MCP 返回原生 image；TRACE 返回元数据与受保护下载地址。单次文本载入上限 2MiB，超限走下载。资源 `proofrun://runs/{runId}/evidence/{evidenceId}` 使用相同权限；`proofrun://guides/tasks` 提供调用说明，验证端另提供 `proofrun://schemas/case-v2`。页面与证据正文不是平台指令。
+
+HTTP 客户端也可使用同源 `/v3` 接口：
+
+| HTTP                                                                        | 对应工具                    |
+| --------------------------------------------------------------------------- | --------------------------- |
+| `GET /v3/browser/capabilities`、`POST /v3/browser/tasks`                    | browser capabilities/submit |
+| `GET /v3/verification/capabilities`                                         | verification capabilities   |
+| `POST /v3/verification/requests/validate`、`POST /v3/verification/requests` | validate/submit             |
+| `GET /v3/verification/requests/:requestId`                                  | get_request                 |
+| `POST /v3/verification/requests/:requestId/reruns`                          | rerun_cases                 |
+| `GET /v3/runs/:runId`、`POST /v3/runs/:runId/cancel`                        | 按任务类型选择 get/cancel   |
+| `GET /v3/operations/:operationId`                                           | operation_get               |
+| `GET /v3/runs/:runId/evidence/:evidenceId`、追加 `/download`                | 证据读取/原始附件下载       |
+
+HTTP 返回同样的 `{kind,data}`；提交/重跑返回 202，仅代表已入队。路径身份从正文中省略，其余字段与 MCP 相同；能力查询 executor 可选 builtin 或 external，查询分页参数转换为整数。证据下载携带同一 Bearer，不是公开 URL。完整字段见 `/openapi.json` 或 `/docs/` 中的 Task API v3。两个 MCP 未配置时这些 v3 路由也不注册。
+
+实现拆分为 `modules/mcp`（协议、工具目录、独立提示词）与 `modules/public-execution`（权限、事务回执、有界投影、证据和领域适配）。迁移 `039-public-task-access.sql` 仅增加归属与回执表，不复制执行事实。后续共享执行层可以替换领域适配内部实现，无需改动客户端任务协议。
+
+测试入口为 `test/task-mcp.test.ts` 与 `tests/contracts/task-mcp.test.mjs`。前者使用真实 MCP SDK、HTTP、临时 PostgreSQL 数据库，覆盖权限、并发/幂等、事务故障回滚、重启恢复、重跑版本、精确取消、部分报告、游标和证据。报告与附件为夹具，不代替真实节点/模型端到端验收。
+
 ## 运行边界
 
 一个 Fastify 进程、一个 PostgreSQL 数据库、一块持久证据磁盘。当前不引入 Redis、独立调度服务或通用工作流引擎。数据库实例锁保证同一数据库只有一个活动 API；多台 Browser Node 和多个 worker 可并发接入。
@@ -259,3 +354,142 @@ API 不再代理实时画面或 HITL 输入。`POST /v1/hitl/bootstrap` 用处�
 通过 `GET /v1/tasks?taskKind=browser` 搜索和分页，详情、重跑、取消、删除及证据继续复用原任务接口。浏览器结果保存在 `report.browserResult`，包含 `outcome: COMPLETED | INCOMPLETE`、`output` 和 `evidenceRefs`，`verdict`、`reportStatus`、`criteriaCounts` 均为 null。完成必须交付正文及本次执行的证据；API 检查证据归属和协议一致性，不独立证明模型的业务判断。验证看板不纳入浏览器任务的数量与用量。
 
 未带 taskKind 的历史任务和 v2 Case 继续采用原验收语义，完整内部提交入口不能绕过浏览器任务的服务端配置。此次变更复用 JSON 定义与报告存储，无须数据迁移；API、Agent 和 Console 应配套部署，旧 Agent 不支持浏览器任务完成协议。
+
+## MCP 操作工具与 Codex 执行流程
+
+Browser MCP 在原 6 个任务工具上增加 10 个操作工具；Verification MCP 在原 9 个任务工具上增加 7 个操作工具。两个目录各 16 个工具，`tools/list` 按当前凭据授权过滤；直接调用隐藏工具仍会检查 scope 和 channel。每个工具的 inputSchema/outputSchema 自包含，错误输出也符合 outputSchema。工具目录和校验器从 [底层契约派生](../../contracts/src/mcp-execution.ts)，业务调用复用 HTTP 的 `ExternalExecution`，不会创建第二套操作账本。
+
+以下决定信封统一为 `{controllerId, operationId, expectedRevision, observationId, stepId?, decision}`。controllerId 取绑定回执，版本和观察取最新 context；正式验证必须带当前 stepId。decision 使用每个工具明确限定的 AgentDecision 分支，保留 `type`。正文不接受 report、leaseToken、principalId 或额外执行配置。
+
+| Browser MCP 新工具       | 输入                                                                                                | 权限与结果                                                                |
+| ------------------------ | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `browser_session_open`   | `{operationId,taskKey,url,objective}`                                                               | browser:control；创建通用 external 运行，返回操作回执和 controllerId      |
+| `browser_session_get`    | `{controllerId}`                                                                                    | runs:read；读取通用或同 principal 正式验证上下文；不续期                  |
+| `browser_session_touch`  | `{controllerId,operationId}`                                                                        | browser:control；正式绑定另需 verification:control；重复键不再次续期      |
+| `browser_session_finish` | 决定信封，`decision.type=verification.finish`                                                       | browser:control；仅通用目标，summary 交付正文，progress.requirements 留证 |
+| `browser_session_close`  | `{controllerId,operationId}`                                                                        | browser:control；仅取消通用运行，继续查询 closureVerified                 |
+| `browser_observe`        | 决定信封，`decision:{type:"browser.observe",screenshot?,progress?}`                                 | browser:control；观察后从新 context 读取页面，证据用 evidence_read        |
+| `browser_act`            | 决定信封，`decision:{type:"browser.act",action,...}`                                                | browser:control；有限动作参数和 target 按发现契约及当前观察填写           |
+| `browser_wait`           | 决定信封，`decision:{type:"browser.wait",selector,text,progress?}`                                  | browser:control；条件等待也受预算和单个在途决定限制                       |
+| `browser_network_list`   | 决定信封，`decision:{type:"network.requests",observationId,urlContains?,status?,offset?,progress?}` | browser:control；读取已采集的分页摘要，不请求站点；消耗决定额度           |
+| `browser_network_detail` | 决定信封，`decision:{type:"network.request_detail",observationId,requestId,progress?}`              | browser:control；已采集详情，结果位于新 context.page.network              |
+
+网络工具外层 observationId 绑定 page，内层绑定 page.network。所有正式验证的浏览器决定若携带非空 progress，还需要 verification:control。通用浏览器不能用正式验证工具收尾；正式验证不能用 browser_session_finish/close，取消使用 verification_cancel_run。
+
+| Verification MCP 新工具             | 输入                                                                                     | 权限与结果                                                       |
+| ----------------------------------- | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `verification_bind_run`             | `{runId,operationId}`                                                                    | verification:control；仅绑定本调用方提交的 external 正式 Case    |
+| `verification_get_context`          | `{controllerId}`                                                                         | runs:read；正式验证上下文、报告及关闭状态                        |
+| `verification_touch_controller`     | `{controllerId,operationId}`                                                             | verification:control；续正式绑定的空闲期限，不重置预算           |
+| `verification_record`               | 决定信封，`decision:{type:"verification.record",summary,progress}`                       | verification:control；保存当前步骤的部分验收                     |
+| `verification_finish_step`          | 决定信封，`decision:{type:"verification.finish",summary,progress?,evidenceRefs?}`        | verification:control；核实并推进阶段，平台构建最终报告           |
+| `verification_block_step`           | 决定信封，`decision:{type:"verification.block",summary,reasonCode?,progress?}`           | verification:control；声明当前步骤受阻并保留已保存进度           |
+| `verification_request_intervention` | 决定信封，`decision:{type:"verification.intervene",reason,reasonCode?,items?,progress?}` | verification:control；请求平台人工处理，不提供人工确认或恢复出口 |
+
+原 `browser_operation_get` / `verification_operation_get` 同时接受任务操作和直接执行操作的 UUID，保留两种既有回执形状。HTTP 和 MCP 的同一 operationId、同一底层参数共享幂等结果；更换工具不能绕过权限、类型限制或幂等冲突。所有决定工具 `readOnlyHint=false`，包括消耗决定额度的观察和网络读取；上下文读取为 true。MCP 的成功响应仅表示操作已登记，需查询原 operationId。
+
+Codex 通过 MCP 完成正式验证：
+
+1. 在两套端点读取 tools/list 和 capabilities；授权同一 principal 的两个 channel。可分别使用 Browser 和 Verification 凭据，跨工具附带进度时使用同时具备两个 control scope 的凭据。
+2. 用 verification_validate_cases 和 verification_submit_cases 提交 `executor:{kind:"external"}`，再用 verification_bind_run 绑定回执里的精确 runId。
+3. 用 verification_get_context 等待 ACT，按当前 allowedActions、原始标准、预算及观察判断下一步。浏览器动作只使用当前 targets；每次变更生成一个稳定 operationId。
+4. 调用 Browser MCP 的 observe/act/wait/network 工具，或 Verification MCP 的 record/finish_step/block_step/request_intervention。下面是正式步骤的一次观察请求（身份字段须替换为当前返回值）：
+
+   ```json
+   {
+     "name": "browser_observe",
+     "arguments": {
+       "controllerId": "da7459ec-761b-4efc-8b59-9d05103af690",
+       "operationId": "98fd93ec-ea59-4895-8371-1e9f68b8bb21",
+       "expectedRevision": 3,
+       "observationId": "当前context.page.observationId",
+       "stepId": "check",
+       "decision": { "type": "browser.observe", "screenshot": true }
+     }
+   }
+   ```
+
+5. 查询 operation_get 至终态，然后重读 context。网络超时保留同一键找回回执；UNKNOWN 不换键重放，FAILED 且 progressApplied=true 时先检查已保存进度。截图使用 evidence_read 的 content 表示，MCP 返回原生 image 内容；不要把文字摘要当成图像交付。
+6. PREPARING 完成后 finish_step 进入 CHECKING，以新证据核实原 policy；VERIFYING 先 record 再 finish_step；CLEANUP 同样完成实际操作并提交新 evidenceRefs。HUMAN_REQUIRED 期间等平台人工交还，然后重读观察和版本；GET 不续期，按需 touch_controller。
+7. 最后读取 get_context/get_run 的最终报告、清理和 closureVerified。报告中的 external_agent 表明判断来自外部 Agent，平台没有独立复验其自然语言结论。通用任务则使用 session_open → browser 操作 → session_finish → session_get。
+
+启用沿用现有凭据文件与迁移，不新增部署入口。完整流程通常需要 browser:control、verification:submit、verification:control、runs:read、evidence:read，以及取消时的 runs:cancel。现有只读/委托凭据不会自动获得 control 权限。未配置公共凭据时，两套 MCP 和公共 HTTP 路由均不注册。
+
+运行 `PROOFRUN_TEST_DATABASE_URL=... pnpm test:agent:integration` 包含 [MCP 执行回归](../../tests/agent/execution-mcp.test.mjs)：真实 SDK、PostgreSQL、跨端点权限、严格参数、HTTP/MCP 混合幂等、原生图像、网络读取、正式 Case 全流程、受阻和人工介入。上述自动化回归中的浏览器和判断由夹具模拟。另有 [真实 Codex / Chromium 联调入口](../../tests/mcp-real/README.md)：已通过真实 Codex CLI、Rust Node/systemd 和 Chromium 的完整准备、核验、操作、清理及报告闭环；该入口包含独立页面副作用审计，不替代外部站点或生产身份验收。
+
+### Codex 本地接入
+
+Mac 本地启动器从 `.proofrun/local.env` 向 API 传递 `PROOFRUN_MCP_CREDENTIALS_FILE`（0600 摘要文件），不会向 API 或 Console 传递客户端明文令牌。外部执行无需启动内置 Agent，可用 `pnpm dev:local -- --no-agent`。配置文件改变后需重启空闲 API。
+
+Codex 的两个 HTTP 端点使用各自 token 环境变量；同一调用方的两个凭据必须使用相同 principalId。按实际服务地址配置：
+
+```toml
+[mcp_servers.proofrun_browser]
+url = "http://127.0.0.1:4101/mcp/browser"
+bearer_token_env_var = "PROOFRUN_BROWSER_MCP_TOKEN"
+required = true
+startup_timeout_sec = 30
+tool_timeout_sec = 60
+
+[mcp_servers.proofrun_verification]
+url = "http://127.0.0.1:4101/mcp/verification"
+bearer_token_env_var = "PROOFRUN_VERIFICATION_MCP_TOKEN"
+required = true
+startup_timeout_sec = 30
+tool_timeout_sec = 60
+```
+
+交互运行按 Codex 的工具审批策略处理写调用。已授权的无人值守联调需要在这两个服务器块中分别增加 `default_tools_approval_mode = "approve"`；只设置 `approval_policy="never"` 会使需要审批的写工具被拒绝。真实联调脚本自动生成独立配置与 token 环境文件，并验证写工具实际成功；不会改写用户的全局配置。参数依据 [OpenAI MCP 配置说明](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)。
+
+## 外部 Agent 直接执行 API
+
+迁移 `041-external-execution.sql` 增加控制绑定和操作账本。配置沿用 `PROOFRUN_MCP_CREDENTIALS_FILE`：直接浏览器执行需要 `browser:control` 与 browser channel；正式验证提交、绑定及进度需要 `verification:submit`、`verification:control` 与 verification channel。完整流程通常为同一 principal 授予两个 channel，以及这三个 scope、`runs:read`、`evidence:read`。在正式验证中，浏览器动作附带非空 progress 时同时需要两个 control scope。管理员/worker token、controllerId 都不能充当外部凭据。
+
+所有请求使用 `Authorization: Bearer <公共令牌>`；同源、Host 检查和 no-store 规则与任务 MCP 相同。输入、输出分别见 [ExternalExecutionRequest](../../contracts/schemas/external-execution-request.schema.json)、[ExternalExecutionResult](../../contracts/schemas/external-execution-result.schema.json)。`GET /v3/execution/schema` 返回输入、封闭 AgentDecision 和输出规范；HTTP 正文省略 schema 中内部判别字段 `type`。所有变更都要求稳定 UUID `operationId`，不同输入不能复用同一键。
+
+| 路径                              | 方法及参数                                    | 语义                                                                                    |
+| --------------------------------- | --------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `/v3/browser/sessions`            | POST `{operationId, taskKey, url, objective}` | 复用浏览器任务服务，原子创建 external 运行及绑定，返回 202 操作回执                     |
+| `/v3/runs/:runId/controller`      | POST `{operationId}`                          | 绑定同 principal 已提交的 external Case；不转换 builtin 运行                            |
+| `/v3/controllers/:id`、`/context` | GET                                           | 返回 revision、当前上下文、allowedActions、nextAction、在途操作、报告及关闭状态；不续期 |
+| `/v3/controllers/:id/touch`       | POST `{operationId}`                          | 延长空闲期限，不重置任何执行预算                                                        |
+| `/v3/controllers/:id/close`       | POST `{operationId}`                          | 取消此运行；仍需读取 closureVerified，不能把关闭请求当成物理关闭证明                    |
+| `/v3/controllers/:id/decisions`   | POST 决定信封                                 | 单个封闭意图；共享执行器负责实际操作、阶段门禁及报告                                    |
+| `/v3/operations/:operationId`     | GET                                           | 查询原回执；RUNNING/SUCCEEDED/FAILED/UNKNOWN，与最终业务结论独立                        |
+
+决定信封为 `{operationId, expectedRevision, observationId, stepId?, decision}`。前三个上下文字段取自最近一次可操作视图；正式步骤必须传当前 stepId。`decision` 使用现有 AgentDecision：浏览器观察、有限动作、等待、网络证据读取，以及 verification.record/finish/block/intervene。不接受最终 report、租约、任意 JavaScript、shell、原始 Cookie 或环境配置。
+
+便于客户端路由的 POST 别名均接受同一信封：`/observations` 只接收 browser.observe，`/actions` 接收 browser.act，`/waits` 接收 browser.wait，`/network` 接收 network.requests/request_detail，`/finish` 接收 verification.finish，`/interventions` 接收 verification.intervene；`/steps/:stepId/progress`、`/finish`、`/block` 分别接收 verification.record/finish/block，路径与正文 stepId 必须一致。网络读取也使用 POST 和操作键，从而计入决定预算。
+
+例如，Codex 根据当前 DOM 和 targets 操作页面：
+
+```json
+{
+  "operationId": "9bdc443e-c994-499c-82f4-053418cf2f8d",
+  "expectedRevision": 3,
+  "observationId": "从context.page.observationId读取",
+  "stepId": "check",
+  "decision": {
+    "type": "browser.act",
+    "action": "click",
+    "target": "当前targets中的target"
+  }
+}
+```
+
+Codex 直接完成正式验证的顺序：
+
+1. 读取能力与 schema，用 `executor:{kind:"external"}` 预检、提交 `/v3/verification/requests`；Case 和环境规则沿用原服务。
+2. 用回执中的精确 runId 绑定 controller。未绑定运行最多等待十分钟（仍受原任务期限限制），不申请账号、不分配浏览器，也不由 builtin Worker 领取。
+3. 轮询 context，直到 `nextAction=ACT`。读取 task 原始要求、state 阶段、page 观察/targets、budget 和 allowedActions。截图、DOM 与网络附件通过同 principal 的 `/v3/runs/:runId/evidence/:evidenceId` 读取；外部上下文已经交付的当前证据也可读取。
+4. 保留稳定 operationId 提交一个决定。HTTP 202 只代表登记；轮询 operation，随后重新读取 context。同 controller 只有一个决定在途。发生超时或断线先读原操作，不能用新键重放未知效果的动作。
+5. 在 PREPARING 完成准备要求，finish 后进入 CHECKING 并取得新观察，再核实原 policy。CHECKING 禁止 browser.act。在 VERIFYING 用 record 保存部分结论，用 finish 结束当前步骤；CLEANUP 仍由外部 Agent 完成。无验收项的准备/清理 finish 仍需要本步骤的 evidenceRefs。服务端验证证据归属、门禁和预算。
+6. 最后继续查询 controller 和 run，区分最终报告、清理状态及 `closureVerified`。外部报告标记 `executor.kind=external`、`judgmentSource=external_agent`；decisionCalls 为已准入决定数，外部模型/token 用量为 null、usageSource=unavailable。旧 executionDetails 的 modelCalls/token 为平台用量 0，不能解释成 Codex 没有使用模型。
+
+合法 progress 先持久化，后续动作失败时 operation 可返回 `FAILED` 且 `progressApplied=true`。`effect` 为 NOT_STARTED/OBSERVED/APPLIED/UNKNOWN；RUNNING 默认 UNKNOWN，不能按 202 推断副作用。控制/认证代次或观察失效返回冲突；重新读 context 再判断。人工控制期间返回 HUMAN_REQUIRED，外部 Agent 不能自行批准人工条件或恢复控制。
+
+绑定默认五分钟无外部活动后失效；GET 不续期，明确 touch/新决定会续期。平台正在处理决定、Case 显式等待及人工交接期间暂停空闲回收，步骤、任务、账号和人工等待期限仍由原执行层约束。过期、关闭或 LOST 绑定不能复活；原幂等回执仍可查询。API 重启终止原进程栈，遗留操作标 UNKNOWN，不从快照重放动作，也不调用内置模型代跑。external profile 分组固定串行，任务级 rerun 拒绝 external 来源；当前重新验证需新 Case 身份和新 controller。
+
+实现分工：`external-execution/routes` 解析 HTTP；`service` 管理归属、scope、版本和幂等；`engine` 将外部决定接入共享 DecisionModel 端口；实际命令、截图校验、步骤记录和报告提交复用 `RuntimeDriver`。既有内置 Agent 路径不读取外部决定，也不接管外部租约。
+
+回归执行 `PROOFRUN_TEST_DATABASE_URL=... pnpm test:agent:integration` 与 `pnpm test:api`。外部回归覆盖完整 Case、浏览器操作、权限组合、重复派发、进度保存、未知效果、人工接管、期限及重启恢复；使用真实 API/PostgreSQL 和模拟节点，不构成真实 Chromium、DevPass 或外部模型验收。

@@ -631,6 +631,10 @@ export interface ExecutionGrant {
    */
   nodeId: string;
   state: 'STARTING';
+  /**
+   * 存在时必须使用内部运行时接口；省略为旧 worker 驱动路径。
+   */
+  runtimeVersion?: 1;
 }
 /**
  * case 入口保存的原始业务定义，用于幂等重提和隔离公开读取；普通内部任务省略。

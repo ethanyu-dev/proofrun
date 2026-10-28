@@ -17,8 +17,11 @@
 ```text
 apps/
   api/                 控制面：任务、节点、队列、租约、证据与报告
-  agent/               验证执行 Agent：根据已定义标准观察和操作浏览器
+  agent/               内置模型 Worker：领取任务、续租并提交模型决定（保留旧执行兼容路径）
   console/             控制台：任务、节点、证据报告、人工介入
+packages/
+  execution-core/      共享门禁、账本、上下文、证据与报告规则
+  execution-driver/    共享执行编排、观察/动作循环与分组清理
 crates/
   browser-node/        Rust 远端节点：主动连接、会话监管、agent-browser 适配
 contracts/
@@ -216,6 +219,8 @@ pnpm accept:task /absolute/path/to/verification-task.json
 
 停止时在 B–E 终端按 Ctrl+C；数据库可用 `docker compose -f deploy/postgres.compose.yml stop` 停止，保留数据卷。上述流程仅用于 Linux 单机开发；跨主机节点必须使用 HTTPS/WSS，不能将示例中的 `127.0.0.1` 直接带到 VM。完整环境变量见 [.env.example](.env.example)，生产服务模板见 [部署说明](deploy/README.md)。
 
+`pnpm test:agent:integration` 同时覆盖旧路径与服务端运行时的新旧行为比较、决定幂等及失效关闭。模拟节点与模型输出不代表真实浏览器验收。
+
 `pnpm check` 与构建不要求 PostgreSQL 或模型密钥。集成测试独立运行 `pnpm test:api` / `pnpm test:agent:integration` / `pnpm test:agent:linux`，见 [API 运行说明](apps/api/README.md)。
 
 ## Agent 循环与身份简化
@@ -234,6 +239,7 @@ pnpm accept:task /absolute/path/to/verification-task.json
 
 - [Agent 运行与模型配置](apps/agent/README.md)
 - [整体架构](docs/architecture.md)
+- [双 MCP 与外部验证执行设计](docs/mcp-execution-design.md)
 - [DevPass 外部账号配置与使用](apps/api/src/modules/account-providers/README.md#devpass-外部账号)
 - [Console 运行与业务页面](apps/console/README.md)
 - [Console 视觉规范与 x.ai 样式研究](docs/console-design.md)

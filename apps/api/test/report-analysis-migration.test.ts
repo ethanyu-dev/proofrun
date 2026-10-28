@@ -126,7 +126,17 @@ async function verifyMigration(historical: boolean) {
         ).rows,
         requests,
       );
-      assert.deepEqual((await db.query('SELECT * FROM pr_tasks')).rows, tasks);
+      // 新增执行版本只能为历史任务补版本 0，不得改变原定义、报告和其他事实。
+      assert.deepEqual(
+        (await db.query('SELECT * FROM pr_tasks')).rows,
+        tasks.map((row) => ({
+          ...row,
+          runtime_version: 0,
+          executor_kind: 'builtin',
+          binding_deadline_at: null,
+        })),
+      );
+
       assert.deepEqual(
         (await db.query('SELECT * FROM pr_executions')).rows,
         executions,

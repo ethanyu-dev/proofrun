@@ -3,6 +3,12 @@ import { format } from 'prettier';
 
 /** 对外文档仅包含上层调用入口；业务对象结构始终从共享 Schema 生成。 */
 const SCHEMAS = {
+  'external-execution-request': 'ExternalExecutionRequest',
+  'external-execution-result': 'ExternalExecutionResult',
+  'agent-decision': 'AgentDecision',
+  'mcp-task-call': 'McpTaskCall',
+  'mcp-task-result': 'McpTaskResult',
+  'public-error': 'PublicError',
   'external-account-selector': 'ExternalAccountSelector',
   'execution-outcome': 'ExecutionOutcome',
   'identity-check': 'IdentityCheck',
@@ -30,18 +36,20 @@ const TAG_V1 = 'Case API v1（兼容）';
 const MAX_RERUN_TIME_MS = 86_400_000;
 
 /** 当前源文件使用的关键字兼容 2020-12；移除旧方言和离线身份，改成文档内引用。 */
-function embed(value) {
-  if (Array.isArray(value)) return value.map(embed);
+function embed(value, owner) {
+  if (Array.isArray(value)) return value.map((item) => embed(item, owner));
   if (!value || typeof value !== 'object') return value;
   return Object.fromEntries(
     Object.entries(value).flatMap(([key, item]) => {
       if (key === '$schema' || key === '$id') return [];
       if (key === '$ref') {
+        if (item.startsWith('#/'))
+          return [[key, `#/components/schemas/${owner}/${item.slice(2)}`]];
         const name = SCHEMAS[item.replace('.schema.json', '')];
         if (!name) throw new Error(`未登记的公共 Schema 引用：${item}`);
         return [[key, `#/components/schemas/${name}`]];
       }
-      return [[key, embed(item)]];
+      return [[key, embed(item, owner)]];
     }),
   );
 }
@@ -89,6 +97,7 @@ for (const [file, name] of Object.entries(SCHEMAS)) {
         'utf8',
       ),
     ),
+    name,
   );
 }
 schemas.Error = object({
@@ -464,6 +473,195 @@ const document = {
     schemas,
   },
 };
+
+/** v3 的字段直接取工具输入契约，路径身份从正文移除；HTTP 与 MCP 不另写业务 Schema。 */
+const taskCalls = schemas.McpTaskCall.oneOf;
+const TASK_ROUTES = [
+  ['get', '/v3/browser/capabilities', 'browser_get_capabilities'],
+  ['post', '/v3/browser/tasks', 'browser_task_submit'],
+  ['get', '/v3/verification/capabilities', 'verification_get_capabilities'],
+  ['post', '/v3/verification/requests/validate', 'verification_validate_cases'],
+  ['post', '/v3/verification/requests', 'verification_submit_cases'],
+  ['get', '/v3/verification/requests/{requestId}', 'verification_get_request'],
+  [
+    'post',
+    '/v3/verification/requests/{requestId}/reruns',
+    'verification_rerun_cases',
+  ],
+  ['get', '/v3/runs/{runId}', 'verification_get_run'],
+  ['post', '/v3/runs/{runId}/cancel', 'verification_cancel_run'],
+  ['get', '/v3/operations/{operationId}', 'verification_operation_get'],
+  [
+    'get',
+    '/v3/runs/{runId}/evidence/{evidenceId}',
+    'verification_read_evidence',
+  ],
+];
+document.tags.unshift({
+  name: 'Task API v3',
+  description:
+    '按调用方归属与最小权限访问；须配置 MCP 凭据后启用。支持内置 Agent 委托，external 运行通过 Execution API 驱动。',
+});
+document.components.securitySchemes.TaskBearer = {
+  type: 'http',
+  scheme: 'bearer',
+  description:
+    'PROOFRUN_MCP_CREDENTIALS_FILE 中的摘要对应的原始令牌；管理员和 worker 令牌不自动获得权限。',
+};
+document.info.description =
+  '任务级外部接入使用 /v3 与两套 /mcp/browser、/mcp/verification；支持 builtin 委托和 external 直接执行。旧 /v1、/v2 保留管理员接口。' +
+  document.info.description;
+for (const [method, path, name] of TASK_ROUTES) {
+  const tool = taskCalls.find(
+    (branch) => branch.properties.name.const === name,
+  );
+  const input = structuredClone(tool.properties.arguments);
+  const pathKeys = [...path.matchAll(/\{([^}]+)\}/g)].map((match) => match[1]);
+  const parameters = pathKeys.map((key) => ({
+    name: key,
+    in: 'path',
+    required: true,
+    schema: input.properties[key],
+  }));
+  for (const key of pathKeys) {
+    delete input.properties[key];
+    input.required = input.required.filter((value) => value !== key);
+  }
+  if (method === 'get')
+    for (const [key, schema] of Object.entries(input.properties)) {
+      // GET 的第一阶段执行器固定为 builtin；对象查询不作为第二种编码协议发布。
+      if (key === 'executor') continue;
+      parameters.push({
+        name: key,
+        in: 'query',
+        required: input.required.includes(key),
+        schema,
+      });
+    }
+  const accepted = [
+    'browser_task_submit',
+    'verification_submit_cases',
+    'verification_rerun_cases',
+  ].includes(name);
+  document.paths[path] = {
+    [method]: {
+      operationId: `${name}_http`,
+      tags: ['Task API v3'],
+      summary: tool.description,
+      security: [{ TaskBearer: [] }],
+      parameters,
+      ...(method === 'post' ? { requestBody: body(input) } : {}),
+      responses: {
+        [accepted ? '202' : '200']: response(ref('McpTaskResult')),
+        default: response(
+          ref('PublicError'),
+          '错误按 code 与 retryable 处理；非业务 FAILED。',
+        ),
+      },
+    },
+  };
+}
+document.paths['/v3/runs/{runId}/evidence/{evidenceId}/download'] = {
+  get: {
+    operationId: 'downloadTaskEvidenceV3',
+    tags: ['Task API v3'],
+    summary: '下载本调用方运行已交付的原始证据',
+    security: [{ TaskBearer: [] }],
+    parameters: document.paths[
+      '/v3/runs/{runId}/evidence/{evidenceId}'
+    ].get.parameters.filter((item) => item.in === 'path'),
+    responses: {
+      200: {
+        description: '原始字节，ETag 为 SHA-256；需同一 Bearer 凭据。',
+        content: {
+          'image/png': { schema: { type: 'string', format: 'binary' } },
+          'application/json': { schema: {} },
+        },
+      },
+      default: response(ref('PublicError')),
+    },
+  },
+};
+/** 外部控制路由复用 AgentDecision 作为封闭意图，执行器拥有最终报告。 */
+document.tags.push({
+  name: 'Execution API v3',
+  description:
+    '外部 Agent 的控制上下文、有限动作和进度；需要独立 control scopes。',
+});
+const externalPaths = [
+  ['post', '/v3/browser/sessions', 'open'],
+  ['post', '/v3/runs/{runId}/controller', 'bind'],
+  ['get', '/v3/controllers/{id}', null],
+  ['get', '/v3/controllers/{id}/context', null],
+  ...['touch', 'close'].map((type) => [
+    'post',
+    `/v3/controllers/{id}/${type}`,
+    type,
+  ]),
+  ...[
+    'decisions',
+    'observations',
+    'actions',
+    'waits',
+    'network',
+    'finish',
+    'interventions',
+    'steps/{stepId}/progress',
+    'steps/{stepId}/finish',
+    'steps/{stepId}/block',
+  ].map((path) => ['post', `/v3/controllers/{id}/${path}`, 'decide']),
+];
+for (const [method, path, type] of externalPaths) {
+  const input = type
+    ? structuredClone(
+        schemas.ExternalExecutionRequest.oneOf.find(
+          (branch) => branch.properties.type.const === type,
+        ),
+      )
+    : null;
+  if (input) {
+    delete input.properties.type;
+    input.required = input.required.filter((key) => key !== 'type');
+  }
+  document.paths[path] = {
+    [method]: {
+      operationId: `external_${method}_${path.replace(/[^a-zA-Z0-9]+/g, '_')}`,
+      tags: ['Execution API v3'],
+      summary: type
+        ? `外部控制：${path.split('/').at(-1)}`
+        : '读取本调用方的控制上下文',
+      security: [{ TaskBearer: [] }],
+      parameters: [...path.matchAll(/\{([^}]+)\}/g)].map((match) => ({
+        name: match[1],
+        in: 'path',
+        required: true,
+        schema: { type: 'string' },
+      })),
+      ...(input ? { requestBody: body(input) } : {}),
+      responses: {
+        [method === 'post' && !['touch', 'close'].includes(type)
+          ? '202'
+          : '200']: response(ref('ExternalExecutionResult')),
+        default: response(ref('PublicError')),
+      },
+    },
+  };
+}
+document.paths['/v3/execution/schema'] = {
+  get: {
+    operationId: 'externalSchemas',
+    tags: ['Execution API v3'],
+    summary: '读取操作输入、封闭决定和输出契约',
+    security: [{ TaskBearer: [] }],
+    responses: {
+      200: response({ type: 'object' }),
+      default: response(ref('PublicError')),
+    },
+  },
+};
+document.paths['/v3/operations/{operationId}'].get.responses['200'] = response({
+  oneOf: [ref('McpTaskResult'), ref('ExternalExecutionResult')],
+});
 const output = await format(JSON.stringify(document), { parser: 'json' });
 if (process.argv.includes('--check')) {
   if ((await readFile(OUTPUT, 'utf8').catch(() => null)) !== output) {

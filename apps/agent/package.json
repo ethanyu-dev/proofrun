@@ -10,7 +10,9 @@
     "start": "node dist/main.js"
   },
   "dependencies": {
-    "@proofrun/contracts": "workspace:*"
+    "@proofrun/contracts": "workspace:*",
+    "@proofrun/execution-core": "workspace:*",
+    "@proofrun/execution-driver": "workspace:*"
   },
   "files": [
     "dist"

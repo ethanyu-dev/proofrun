@@ -1,0 +1,116 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ExternalExecutionRequest",
+  "description": "外部执行的控制和封闭意图；不接受内部租约或最终报告。",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "open"
+        },
+        "operationId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "taskKey": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,80}$"
+        },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https?://",
+          "maxLength": 4096
+        },
+        "objective": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20000
+        }
+      },
+      "required": ["type", "operationId", "taskKey", "url", "objective"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "bind"
+        },
+        "operationId": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": ["type", "operationId"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "touch"
+        },
+        "operationId": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": ["type", "operationId"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "close"
+        },
+        "operationId": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": ["type", "operationId"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "decide"
+        },
+        "operationId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "observationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "stepId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "decision": {
+          "$ref": "agent-decision.schema.json"
+        }
+      },
+      "required": [
+        "type",
+        "operationId",
+        "expectedRevision",
+        "observationId",
+        "decision"
+      ]
+    }
+  ]
+}

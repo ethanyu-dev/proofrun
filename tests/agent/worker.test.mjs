@@ -35,6 +35,8 @@ async function start(t, command = 'serve') {
     heldClaims: 0,
     events: [],
     unexpected: [],
+    runtimeReports: new Map(),
+    runtimeStarts: [],
   };
   let claimInFlight = 0;
   let maxClaimsInFlight = 0;
@@ -87,7 +89,16 @@ async function start(t, command = 'serve') {
         leaseExpiresAt: new Date(Date.now() + 1500).toISOString(),
         artifacts: [],
       };
-      if (!path) {
+      if (path === '/runtime' && request.method === 'POST') {
+        state.runtimeStarts.push(body);
+        send({ started: true, runtimeVersion: 1 });
+      } else if (path.startsWith('/runtime?')) {
+        send({
+          state: 'FINISHED',
+          decisions: [],
+          report: state.runtimeReports.get(id),
+        });
+      } else if (!path) {
         state.running.add(id);
         send(view);
       } else if (path === '/heartbeat') {
@@ -257,4 +268,38 @@ test('once 领取失败保留非零退出状态', async (t) => {
   assert.ok(
     fixture.state.events.some((event) => event.code === 'CLAIM_UNAVAILABLE'),
   );
+});
+
+// 范围：真实 CLI 按授权版本切换到决定 Worker，不访问旧写入路径；运行时报告为夹具，不执行模型或浏览器。
+test('once 的版本 1 授权使用共享运行时并上报结果', async (t) => {
+  const fixture = await start(t, 'once');
+  const execution = { ...grant(), runtimeVersion: 1 };
+  fixture.state.runtimeReports.set(execution.id, {
+    protocolVersion: '0.1',
+    taskId: execution.task.taskId,
+    lifecycle: 'COMPLETED',
+    executionDisposition: 'BLOCKED',
+    verdict: null,
+    summary: '夹具受阻',
+    criteria: [],
+    artifacts: [],
+  });
+  fixture.state.tasks.push(execution);
+  fixture.state.accepting = true;
+  assert.deepEqual(
+    await fixture.closed,
+    { code: 0, signal: null },
+    fixture.output(),
+  );
+  assert.equal(fixture.state.runtimeStarts.length, 1);
+  assert.equal(fixture.state.claims[0].body.runtimeVersion, 1);
+  assert.equal(fixture.state.runtimeStarts[0].config.model, 'fixture');
+  assert.equal(fixture.state.runtimeStarts[0].config.modelKey, undefined);
+  assert.equal(fixture.state.reports.size, 0);
+  assert.equal(
+    fixture.state.events.filter((event) => event.event === 'execution.reported')
+      .length,
+    1,
+  );
+  assert.deepEqual(fixture.state.unexpected, []);
 });

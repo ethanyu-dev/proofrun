@@ -43,7 +43,7 @@ cleanup() {
 trap cleanup EXIT
 cd "$root_dir"
 pnpm build:devpass
-pnpm --filter @proofrun/contracts build
+pnpm --filter @proofrun/contracts build && pnpm build:execution
 pnpm --filter @proofrun/api build
 if [[ "$real_agent" == true ]]; then pnpm --filter @proofrun/agent build; fi
 if [[ "${PROOFRUN_TEST_SKIP_IMAGE_BUILD:-false}" != true ]]; then
