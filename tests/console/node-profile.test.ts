@@ -3,7 +3,10 @@ import { createRequire } from 'node:module';
 import test from 'node:test';
 import { Window } from 'happy-dom';
 import { ApiClient } from '../../apps/console/src/api.ts';
-import { NodeDefaultProfile } from '../../apps/console/src/components/node-default-profile.tsx';
+import {
+  NodeDefaultProfile,
+  NodeProfileAction,
+} from '../../apps/console/src/components/node-default-profile.tsx';
 import { NodeProfilePage } from '../../apps/console/src/pages/node-profile.tsx';
 
 /** 使用实际组件与 DOM，API 为状态夹具；不代表真实节点或浏览器维护验收。 */
@@ -24,26 +27,46 @@ test('节点卡片只对支持模板的在线节点开放维护入口', () => {
   };
   const api = new ApiClient('fixture');
   const old = renderToStaticMarkup(
-    createElement(NodeDefaultProfile, { api, node }),
+    createElement(
+      'div',
+      null,
+      createElement(NodeDefaultProfile, { node }),
+      createElement(NodeProfileAction, { api, node }),
+    ),
   );
   assert.match(old, /disabled=""/);
-  assert.match(old, /节点未上报模板状态/);
+  assert.match(old, /未上报/);
+  const supportedNode = {
+    ...node,
+    capabilities: { nodeDefaultProfileVersion: 1 },
+    default_profile: {
+      version: 'fixture-version',
+      updatedAt: '2026-10-28T00:00:00Z',
+    },
+  };
   const active = renderToStaticMarkup(
-    createElement(NodeDefaultProfile, {
-      api,
-      node: {
-        ...node,
-        capabilities: { nodeDefaultProfileVersion: 1 },
-        default_profile: {
-          version: 'fixture-version',
-          updatedAt: '2026-10-28T00:00:00Z',
-        },
-      },
-    }),
+    createElement(
+      'div',
+      null,
+      createElement(NodeDefaultProfile, { node: supportedNode }),
+      createElement(NodeProfileAction, { api, node: supportedNode }),
+    ),
   );
-  assert.match(active, /维护登录状态/);
+  assert.match(active, /已保存/);
   assert.match(active, /fixture-version/);
+  assert.match(active, /维护登录状态/);
   assert.doesNotMatch(active, /disabled=""/);
+  for (const unavailable of [
+    { ...supportedNode, online: false },
+    { ...supportedNode, revoked_at: '2026-10-28T00:00:00Z' },
+  ]) {
+    assert.match(
+      renderToStaticMarkup(
+        createElement(NodeProfileAction, { api, node: unavailable }),
+      ),
+      /disabled=""/,
+    );
+  }
 });
 
 // 范围：真实组件先恢复已有会话，再读取维护/保存/关闭状态；HTTP 与发布结果为夹具。
@@ -98,7 +121,7 @@ test('维护入口恢复已有会话，保存未确认时不展示成功', async
   try {
     await act(async () =>
       root.render(
-        createElement(NodeDefaultProfile, {
+        createElement(NodeProfileAction, {
           api,
           node: {
             id: 'node',

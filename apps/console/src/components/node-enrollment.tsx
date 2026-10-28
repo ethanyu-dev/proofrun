@@ -1,3 +1,5 @@
+import { Modal } from './modal';
+import { DialogFooter } from './ui/dialog';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { useEffect, useRef, useState } from 'react';
@@ -51,17 +53,17 @@ export function NodeEnrollment({
     }
   };
   return (
-    <section className="panel" aria-label="注册执行节点">
-      <div className="section-heading">
-        <h2>{nodeId ? '轮换节点凭据' : '注册执行节点'}</h2>
-        <Button
-          variant="outline"
-          className="button button-secondary"
-          onClick={close}
-        >
-          关闭
-        </Button>
-      </div>
+    <Modal
+      title={nodeId ? '轮换节点凭据' : '注册执行节点'}
+      description={
+        nodeId
+          ? '生成一次性配对码，保留节点身份和执行账本。'
+          : '生成一次性配对码，将浏览器节点连接到控制面。'
+      }
+      className="node-management-dialog"
+      close={close}
+      busy={busy}
+    >
       <ErrorNotice message={error} />
       {!pairing ? (
         <form
@@ -69,11 +71,11 @@ export function NodeEnrollment({
             event.preventDefault();
             void submit();
           }}
-          className="control-form"
+          className="node-dialog-form"
         >
           {!nodeId && (
             <>
-              <label>
+              <label className="node-dialog-field">
                 节点名称
                 <Input
                   required
@@ -82,7 +84,7 @@ export function NodeEnrollment({
                   onChange={(e) => setName(e.target.value)}
                 />
               </label>
-              <label>
+              <label className="node-dialog-field">
                 节点池
                 <Input
                   required
@@ -94,13 +96,24 @@ export function NodeEnrollment({
               </label>
             </>
           )}
-          <Button
-            variant="default"
-            className="button button-primary"
-            disabled={busy || (!nodeId && !name.trim())}
-          >
-            {busy ? '签发中…' : '生成配对码'}
-          </Button>
+          {nodeId && (
+            <p className="node-dialog-note muted">
+              生成后，节点会在配对码有效期内暂停接收新任务。请准备好停机并在节点上完成凭据轮换。
+            </p>
+          )}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy}
+              onClick={close}
+            >
+              取消
+            </Button>
+            <Button type="submit" disabled={busy || (!nodeId && !name.trim())}>
+              {busy ? '签发中…' : '生成配对码'}
+            </Button>
+          </DialogFooter>
         </form>
       ) : (
         <>
@@ -113,7 +126,7 @@ export function NodeEnrollment({
             节点池：{pairing.pool} · 有效期至 {time(pairing.expiresAt)}
             ，仅可使用一次。
           </p>
-          <label>
+          <label className="node-dialog-field">
             配对码
             <Input
               className="mono"
@@ -132,8 +145,13 @@ export function NodeEnrollment({
             {nodeId ? ' --replace-credential' : ''}
           </pre>
           <p>配对成功后删除配对码文件，启动节点服务；节点将主动连接控制面。</p>
+          <DialogFooter>
+            <Button variant="outline" onClick={close}>
+              完成
+            </Button>
+          </DialogFooter>
         </>
       )}
-    </section>
+    </Modal>
   );
 }

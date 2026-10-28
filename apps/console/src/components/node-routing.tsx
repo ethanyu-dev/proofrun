@@ -1,3 +1,6 @@
+import { Globe } from 'lucide-react';
+import { Modal } from './modal';
+import { DialogFooter } from './ui/dialog';
 import { Button } from './ui/button';
 import { Textarea } from './ui/textarea';
 import { useEffect, useRef, useState } from 'react';
@@ -24,18 +27,12 @@ function hasRouting(node: ConsoleNode): node is NodeSummary {
 }
 
 /** 卡片保留旧版节点的其他能力，仅在完整配置可用时开放编辑。 */
-export function NodeRoutingSummary({
-  node,
-  edit,
-}: {
-  node: ConsoleNode;
-  edit: (node: NodeSummary) => void;
-}) {
+export function NodeRoutingSummary({ node }: { node: ConsoleNode }) {
   const available = hasRouting(node);
   return (
-    <section className="node-routing" aria-label="域名分发">
-      <div className="node-routing-content">
-        <h3>域名分发</h3>
+    <section className="node-setting-row" aria-label="域名分发">
+      <h3>域名分发</h3>
+      <div className="node-setting-content">
         {!available ? (
           <p className="muted note">
             控制面未返回完整域名配置，请更新并重启 API 后刷新。
@@ -50,17 +47,31 @@ export function NodeRoutingSummary({
           <p className="muted note">未绑定域名</p>
         )}
       </div>
-      <Button
-        variant="outline"
-        className="button button-secondary button-small"
-        disabled={!available}
-        onClick={() => {
-          if (hasRouting(node)) edit(node);
-        }}
-      >
-        配置域名
-      </Button>
     </section>
+  );
+}
+
+/** 管理区的域名入口沿用完整性检查，旧控制面不能写入未知配置版本。 */
+export function NodeRoutingAction({
+  node,
+  edit,
+}: {
+  node: ConsoleNode;
+  edit: (node: NodeSummary) => void;
+}) {
+  const available = hasRouting(node);
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      disabled={!available}
+      onClick={() => {
+        if (hasRouting(node)) edit(node);
+      }}
+    >
+      <Globe aria-hidden="true" />
+      配置域名
+    </Button>
   );
 }
 
@@ -118,72 +129,74 @@ export function NodeRoutingEditor({
     );
 
   return (
-    <section className="panel" aria-label="配置域名分发">
-      <div className="section-heading">
-        <h2>域名分发 · {node.name}</h2>
-        <Button
-          variant="outline"
-          className="button button-secondary"
-          disabled={busy}
-          onClick={close}
-        >
-          关闭
-        </Button>
-      </div>
-      <p>
-        节点池：{node.pool}。每行一个完整域名或通配符规则，例如
-        a.internal.example 或 *.internal.example，不含协议、端口或路径。
-      </p>
-      <p className="muted note">
-        仅匹配任务初始 URL 的域名。*.internal.example 匹配各级子域名，不匹配
-        internal.example
-        本身；普通域名只精确匹配。精确规则优先，其次选择后缀更长的通配符规则。匹配后固定到此节点；离线、满载、能力不足或指定身份节点冲突时等待至任务截止。每次执行使用独立临时会话；未匹配域名按资源池策略分配。
-      </p>
-      <ErrorNotice message={error} />
+    <Modal
+      title="配置域名"
+      description={`设置分配到 ${node.name} 的任务域名，节点池为 ${node.pool}。`}
+      className="node-management-dialog"
+      busy={busy}
+      close={close}
+    >
       <form
-        className="control-form"
+        className="node-dialog-form"
         onSubmit={(event) => {
           event.preventDefault();
           void submit();
         }}
       >
-        <label>
+        <label className="node-dialog-field">
           绑定域名
           <Textarea
             rows={5}
+            className="mono"
             value={text}
             disabled={busy || Boolean(node.revoked_at)}
             onChange={(event) => setText(event.target.value)}
             placeholder={'a.internal.example\n*.internal.example'}
           />
+          <span className="muted note">
+            每行一个域名，不含协议、端口或路径。清空并保存可解除绑定。
+          </span>
         </label>
-        <p className="muted note">
-          保存后对尚未分配的任务生效，正在执行的任务保持原节点。清空列表并保存可解除绑定。
-        </p>
+        <div className="node-dialog-note muted">
+          <p>支持通配符，例如 *.example.com；不包含 example.com 本身。</p>
+          <p>保存后对尚未分配的任务生效，正在执行的任务保持原节点。</p>
+          <details>
+            <summary>查看分配规则</summary>
+            <p>
+              仅匹配任务初始
+              URL。普通域名精确匹配，通配符匹配各级子域名；精确规则优先，其次选择后缀更长的通配符规则。匹配后固定到此节点，离线、满载、能力不足或身份节点冲突时等待至任务截止。未匹配域名按资源池策略分配，每次执行使用独立临时会话。
+            </p>
+          </details>
+        </div>
         {node.revoked_at && (
-          <p>
+          <p className="note">
             此节点已撤销，原绑定仍会阻止任务改派。请清空并保存，再到其他节点重新配置。
           </p>
         )}
-        <div className="page-actions">
+        <ErrorNotice message={error} />
+        <DialogFooter className="node-dialog-footer">
           <Button
-            variant="default"
-            className="button button-primary"
-            disabled={busy}
-          >
-            {busy ? '保存中…' : '保存域名配置'}
-          </Button>
-          <Button
-            variant="outline"
+            variant="ghost"
             type="button"
-            className="button button-secondary"
-            disabled={busy}
+            className="node-dialog-clear"
+            disabled={busy || !text}
             onClick={() => setText('')}
           >
             清空列表
           </Button>
-        </div>
+          <Button
+            variant="outline"
+            type="button"
+            disabled={busy}
+            onClick={close}
+          >
+            取消
+          </Button>
+          <Button type="submit" disabled={busy}>
+            {busy ? '保存中…' : '保存配置'}
+          </Button>
+        </DialogFooter>
       </form>
-    </section>
+    </Modal>
   );
 }

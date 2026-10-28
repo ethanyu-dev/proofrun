@@ -927,34 +927,40 @@ summary {
 .node-capability-unavailable {
   white-space: nowrap;
 }
-.node-routing {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+.node-setting-row {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  align-items: baseline;
   gap: 12px;
-  padding-block: 10px;
+  padding-block: 12px;
   border-top: 1px solid var(--color-border);
 }
-.node-routing-content {
+.node-setting-content {
+  min-width: 0;
+  font-size: 13px;
+}
+.node-setting-content p {
+  margin: 0;
+}
+.node-profile-state {
   display: flex;
   align-items: baseline;
   flex-wrap: wrap;
   gap: 4px 12px;
-  min-width: 0;
 }
-.node-routing-content > p,
-.node-domain-list {
-  margin: 0;
+.node-profile-state .muted {
+  font-size: 12px;
 }
-.node-routing > button {
-  flex-shrink: 0;
+.node-setting-content .node-profile-version {
+  margin-top: 4px;
+  font-size: 11px;
 }
 .node-domain-list {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   padding: 0;
-  margin-bottom: 0;
+  margin: 0;
   list-style: none;
   font-size: 12px;
 }
@@ -966,16 +972,16 @@ summary {
 }
 .node-footer {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 8px 16px;
-  /* 同行卡片随最长内容等高，剩余空间留在页脚上方，心跳与操作保持底部对齐。 */
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  /* 卡片内容长度不同时，管理区仍统一靠底部，心跳不挤占按钮空间。 */
   margin-top: auto;
-  padding-top: 8px;
+  padding-top: 12px;
   border-top: 1px solid var(--color-border);
 }
 .node-heartbeat {
+  margin: 0;
   font-size: 11px;
 }
 .node-heartbeat span {
@@ -986,23 +992,78 @@ summary {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-left: auto;
 }
-.node-actions .text-button {
-  min-height: 30px;
-  height: auto;
-  padding: 4px 8px;
+.node-actions [data-slot='button'] {
   font-size: 12px;
-  border-radius: var(--radius-control);
-}
-.node-actions .text-button:hover {
-  background: var(--color-secondary);
+  box-shadow: none;
 }
 .node-actions .node-revoke {
   color: var(--color-danger);
 }
 .node-actions .node-revoke:hover {
   background: var(--color-danger-surface);
+}
+/* 节点管理弹窗共用表单间距与操作栏，不叠加旧页面面板样式。 */
+.node-management-dialog {
+  width: min(520px, calc(100vw - 32px));
+  gap: 24px;
+}
+.node-management-dialog [data-slot='dialog-header'] {
+  text-align: left;
+  padding-right: 24px;
+}
+.node-management-dialog [data-slot='dialog-title'] {
+  margin: 0;
+  font-size: 18px;
+}
+.node-management-dialog [data-slot='dialog-description'] {
+  margin: 0;
+  line-height: 1.6;
+}
+.node-dialog-form {
+  display: grid;
+  gap: 20px;
+}
+.node-dialog-field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 500;
+}
+.node-dialog-field .note {
+  margin: 0;
+  font-weight: 400;
+}
+.node-dialog-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.node-dialog-note p {
+  margin: 0 0 4px;
+}
+.node-dialog-note summary {
+  cursor: pointer;
+}
+.node-dialog-note details p {
+  margin-top: 8px;
+}
+.node-management-dialog [data-slot='dialog-footer'] {
+  flex-direction: row;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--color-border);
+  padding-top: 16px;
+}
+.node-management-dialog :is(input, textarea):focus-visible {
+  /* 只保留一层清晰的键盘焦点，避免全局 outline 与组件 ring 重叠。 */
+  outline: 2px solid var(--color-muted);
+  outline-offset: 1px;
+  box-shadow: none;
+}
+.node-dialog-clear {
+  margin-right: auto;
 }
 .node-list-note {
   margin-top: 16px;
@@ -1012,8 +1073,17 @@ summary {
   .node-card.panel {
     padding: 14px;
   }
-  .node-routing {
-    flex-wrap: wrap;
+  .node-setting-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+  .node-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+  .node-dialog-clear {
+    margin-right: 0;
   }
 }
 .connect-page {
