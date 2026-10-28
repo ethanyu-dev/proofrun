@@ -205,6 +205,7 @@ test(
     definition.environment.nodePool = id;
     definition.budget.timeoutMs = 120_000;
     let submitted = false;
+    let frozenDefinition;
     for (const template of ['Caddyfile', 'Caddyfile.ha']) {
       const base = await startProxy(template);
       const index = await fetch(base);
@@ -239,14 +240,28 @@ test(
           body: JSON.stringify(definition),
         });
         assert.equal(result.status, 202);
-        await result.json();
+        frozenDefinition = (await result.json()).definition;
+        // 原始业务定义不变，新增来源在首次提交时冻结；此测试不证明节点已复制模板。
+        assert.deepEqual(frozenDefinition, {
+          ...definition,
+          sessionPlan: {
+            version: 1,
+            reducedMotion: true,
+            mode: 'manual',
+            profileSource: 'node-default',
+            candidates: [],
+            requirements: [],
+            preparationMs: 120_000,
+          },
+        });
         submitted = true;
       }
       const restored = await fetch(`${base}/v1/tasks/${definition.taskId}`, {
         headers: { authorization: `Bearer ${admin}` },
       });
       assert.equal(restored.status, 200);
-      assert.deepEqual((await restored.json()).definition, definition);
+      // 两种代理及 API 重启必须返回首次冻结的同一份定义。
+      assert.deepEqual((await restored.json()).definition, frozenDefinition);
       // 正常停止必须返回 0；先关闭代理，避免共享网络命名空间指向重启前的容器实例。
       await docker('rm', '-f', proxy);
       await docker('stop', '-t', '10', api);
