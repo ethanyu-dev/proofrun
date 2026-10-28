@@ -13,6 +13,7 @@ import {
   time,
 } from '../components/ui';
 import { OutcomeStatus } from '../components/execution-outcome';
+import { BrowserTaskDelete } from '../components/browser-task-delete';
 import {
   ALL_FILTER_VALUE,
   SelectField,
@@ -129,6 +130,15 @@ export function BrowserTaskListPage({ api }: { api: ApiClient }) {
                   </div>
                 </div>
                 <div className="request-card-actions">
+                  <BrowserTaskDelete
+                    api={api}
+                    task={task}
+                    onDeleted={() => {
+                      // 删除后回到首屏，避免当前游标页最后一项消失后留下空页。
+                      if (cursors.length > 1) setCursors([null]);
+                      else resource.refresh();
+                    }}
+                  />
                   <a
                     className="request-detail-link"
                     href={`#/browser-tasks/${encodeURIComponent(task.id)}`}
