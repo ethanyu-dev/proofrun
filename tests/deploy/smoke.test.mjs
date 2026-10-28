@@ -3,11 +3,16 @@ import test from 'node:test';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
+import {
+  checkPublicMcp,
+  publicCredentials,
+  PUBLIC_ORIGIN,
+} from './public-mcp.mjs';
 
 /** 固定代理镜像摘要，使路由回归不随 latest 标签漂移。 */
 const CADDY_IMAGE =
@@ -56,6 +61,12 @@ test(
     const admin = randomUUID(),
       worker = randomUUID(),
       password = randomUUID();
+    const publicToken = randomUUID();
+    await writeFile(
+      join(directory, 'mcp.json'),
+      JSON.stringify(publicCredentials(publicToken)),
+      { mode: 0o600 },
+    );
     // 清理仅针对本次创建的随机资源，不读取或修改现有预览服务。
     t.after(async () => {
       try {
@@ -135,6 +146,10 @@ test(
       '-e',
       `PROOFRUN_WORKER_TOKEN=${worker}`,
       '-e',
+      `PROOFRUN_PUBLIC_URL=${PUBLIC_ORIGIN}`,
+      '-e',
+      'PROOFRUN_MCP_CREDENTIALS_FILE=/data/mcp.json',
+      '-e',
       'PROOFRUN_API_HOST=0.0.0.0',
       '-e',
       'PROOFRUN_ARTIFACT_DIRECTORY=/data/artifacts',
@@ -203,6 +218,7 @@ test(
       assert.match(script.headers.get('content-type'), /javascript/);
       await script.arrayBuffer();
       assert.equal(await (await fetch(`${base}/tasks/fixture`)).text(), html);
+      await checkPublicMcp(base, publicToken);
       for (const path of ['/v1/tasks', '/v2/cases/nonexistent']) {
         const rejected = await fetch(base + path);
         assert.equal(
