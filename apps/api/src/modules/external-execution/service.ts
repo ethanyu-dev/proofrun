@@ -394,10 +394,12 @@ export class ExternalExecution {
         ? await executionContext(client, row.execution_id, { lock: false })
         : null;
       const current = row.context;
+      const timing = this.engine.timing(id, Number(row.revision));
       const ready =
         row.state === 'ACTIVE' &&
         row.idle_deadline_at.getTime() > Date.now() &&
         !!current &&
+        !!timing &&
         !!execution &&
         execution.control_mode === 'AUTO' &&
         Number(row.control_revision) === execution.control_revision &&
@@ -409,10 +411,18 @@ export class ExternalExecution {
             budget: {
               actions: current.budget.actions,
               timeMs: current.budget.timeMs,
+              ...timing,
+              timingState: timing ? 'live' : 'inactive',
               decisionCalls: current.budget.modelCalls,
             },
           }
         : null;
+      if (context && current?.state.settlement === 'budget')
+        context.feedback.push({
+          code: 'SETTLEMENT_REQUIRED',
+          message:
+            '已进入预算收尾；禁止浏览器操作。先保存已取得的部分结论，再完成或阻塞当前步骤；请以 decisionDeadlineAt 为本轮提交期限。',
+        });
       const pending = (
         await client.query(
           "SELECT id FROM pr_external_operations WHERE controller_id=$1 AND state='RUNNING'",
@@ -683,12 +693,25 @@ export class ExternalExecution {
     }
     if (accepted) {
       try {
-        this.engine.accept(id, input.operationId, input.decision);
+        this.engine.accept(
+          id,
+          input.operationId,
+          input.decision,
+          input.expectedRevision,
+        );
       } catch (error) {
-        // 提交后进程内等待已撤销时，保留未知回执；重试绝不再次派发。
+        // 版本/期限在事务期间变化时尚未唤醒驱动，可明确未开始；运行时丢失仍保守保留未知。
+        const notStarted =
+          error instanceof ApiError && error.code === 'REVISION_CONFLICT';
         await this.db.query(
-          "UPDATE pr_external_operations SET state='UNKNOWN',error_code='EXECUTION_RUNTIME_LOST',result=jsonb_build_object('effect','UNKNOWN') WHERE controller_id=$1 AND id=$2 AND state='RUNNING'",
-          [id, input.operationId],
+          "UPDATE pr_external_operations SET state=$3,error_code=$4,result=jsonb_build_object('effect',$5::text) WHERE controller_id=$1 AND id=$2 AND state='RUNNING'",
+          [
+            id,
+            input.operationId,
+            notStarted ? 'FAILED' : 'UNKNOWN',
+            notStarted ? 'REVISION_CONFLICT' : 'EXECUTION_RUNTIME_LOST',
+            notStarted ? 'NOT_STARTED' : 'UNKNOWN',
+          ],
         );
         throw error;
       }

@@ -24,6 +24,10 @@ const HISTORY_CHARS = 20_000;
 const BODY_RESERVE_CHARS = 4_000;
 /** 正文低于此值时不再牺牲证据语义，固定内容仍超限则明确拒绝。 */
 const MIN_BODY_CHARS = 256;
+/** 控件关联面板经常重复整张表格；保留短摘录，把正文额度留给页面与主动查询。 */
+const TARGET_EXCERPT_CHARS = 400;
+/** 深度裁剪正文和网络之前，优先保留当前排序的少量可操作控件。 */
+const TARGET_RESERVE = 8;
 const HISTORICAL_TARGET = /\s*\[target=[^\]]+\]|\bref=[^,\]\s]+/g;
 
 /** 已执行命令的模型可见摘要，不包含调用权限。 */
@@ -227,12 +231,20 @@ function contextData(input: ContextInput) {
       ),
       coverage: {
         capture: structuredClone(current.coverage ?? { status: 'unknown' }),
-        text: { truncated: current.truncated === true },
+        text: {
+          truncated: current.truncated === true,
+          originalChars: current.text.length,
+          returnedChars: current.text.length,
+        },
         controls: {
           observed: current.targets.length,
           returned: current.targets.length,
           omitted: 0,
+          detailsTruncated: false,
         },
+        /** 裁剪不丢弃原始附件；客户端按 artifactRefs 的 DOM/RUNTIME 身份分页读取。 */
+        recovery:
+          '裁剪只影响当前投影；原始已采集内容可按 artifactRefs 使用 evidence_read(content, offset, limit) 读取。旧附件目标不得用于当前操作。',
       },
     },
     history: {
@@ -307,7 +319,7 @@ function trimRuntimeLists(...values: unknown[]): boolean {
   return true;
 }
 
-/** 优先裁剪重复历史和页面正文；固定约束与关键回执装不下时明确失败。 */
+/** 优先裁剪重复历史和控件摘要，再压缩证据投影；固定约束与关键回执装不下时明确失败。 */
 export function boundContext(
   context: DecisionContextData,
   maxContextChars: number,
@@ -323,16 +335,50 @@ export function boundContext(
     bodyBudget = Math.max(floor, Math.floor(bodyBudget / 2));
     context.page.text = evidenceExcerpt(originalText, objective, bodyBudget);
     context.page.coverage.text.truncated = true;
+    context.page.coverage.text.returnedChars = context.page.text.length;
+  };
+  // 面板及容器名称属于重复摘要，先压缩这些细节，避免正文缩到 256 字后仍带着整表控件。
+  const shrinkTargets = () => {
+    let changed = false;
+    for (const target of context.page.targets) {
+      if (
+        target.disclosure &&
+        target.disclosure.text.length > TARGET_EXCERPT_CHARS
+      ) {
+        target.disclosure.text = target.disclosure.text.slice(
+          0,
+          TARGET_EXCERPT_CHARS,
+        );
+        target.disclosure.truncated = true;
+        changed = true;
+      }
+      if (target.name.length > TARGET_EXCERPT_CHARS) {
+        target.name = target.name.slice(0, TARGET_EXCERPT_CHARS);
+        changed = true;
+      }
+    }
+    if (changed) context.page.coverage.controls.detailsTruncated = true;
+    return changed;
   };
   let text = JSON.stringify(context);
   while (text.length > maxContextChars) {
     if (context.history.excerpts.length) {
       context.history.excerpts.shift();
       context.history.omittedExcerpts++;
+    } else if (shrinkTargets()) {
+      // 目标身份及操作列表不变，原始属性仍在执行器和 DOM 附件中。
     } else if (bodyBudget > BODY_RESERVE_CHARS) {
       shrinkBody(BODY_RESERVE_CHARS);
     } else if (trimRuntimeLists(context.page.runtime)) {
       // 保留摘要和附件引用；禁止把裁剪后的列表当作全量检查。
+    } else if (context.page.targets.length > TARGET_RESERVE) {
+      context.page.targets = context.page.targets.slice(
+        0,
+        Math.max(TARGET_RESERVE, Math.floor(context.page.targets.length / 2)),
+      );
+      context.page.coverage.controls.returned = context.page.targets.length;
+      context.page.coverage.controls.omitted =
+        context.page.coverage.controls.observed - context.page.targets.length;
     } else if (trimNetworkView(context.page.network)) {
       // 网络请求详情不会被机械截断，列表的剩余记录仍可分页读取。
     } else if (bodyBudget > MIN_BODY_CHARS) {

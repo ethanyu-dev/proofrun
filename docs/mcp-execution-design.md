@@ -603,3 +603,70 @@ Codex 支持 Streamable HTTP MCP、Bearer 环境变量和工具白名单；参�
 - [控制面命令和完成校验](../apps/api/src/modules/scheduling/coordinator.ts)、[人工控制](../apps/api/src/modules/scheduling/control.ts) 与 [报告证据服务](../apps/api/src/modules/reports/README.md)。
 - [外部账号](../apps/api/src/modules/account-providers/README.md)、[浏览器任务定义](../apps/api/src/modules/tasks/browser-task.ts) 与 [内部 worker 客户端](../apps/agent/src/client.ts)。
 - [OpenAI 官方 MCP 配置文档](https://learn.chatgpt.com/docs/extend/mcp?surface=cli) 与 [MCP TypeScript SDK 服务端文档](https://ts.sdk.modelcontextprotocol.io/server)。
+
+## 13 生产 MCP 联调反馈与修复设计（2026-10-28）
+
+联调原 Case 为 [POE 入口下线验证](https://proofrun.ethankit.com/#/requests/request-d88a62a5-4f3d-4588-bbfe-61e139977a99)，最近运行见 [实际报告](https://proofrun.ethankit.com/#/requests/mcp-request-dca3345a-fb7f-435c-93d7-e2a974a3848f)。这次完成了特权账号准备、列表检查、网络检查、禁用接口确认和部分弹窗检查，但没有完成全部验收。报告最终为 CANCELLED / INCONCLUSIVE，9 项标准中 PASSED 1、INCONCLUSIVE 4、SKIPPED 4，浏览器回收已确认。没有低权限账号，且不能确认哪一个模型有历史 POE 配置，这些是验收前提缺口，不能通过修改执行器补成通过。
+
+### 13.1 步骤超时：区分探索窗口、收尾窗口和空闲租约
+
+第 5 步实际打开并关闭了价格、Hugging Face、OpenRouter 弹窗，但未完成删除/导出确认框检查。接近五分钟期限时浏览器操作已经被限制；旧上下文仍显示约 63 秒余额，后续提交 block 时步骤已推进，返回 REVISION_CONFLICT。已有截图和原始证据保留了下来，但未及时提交的验收结论没有入账。
+
+代码中存在两个问题：外部执行适配器使用整段 context.budget.timeMs 等待，忽略共享驱动计算的 modelDeadline，可能吃掉原本预留的收尾时间；GET 返回冻结帧的余额，未扣除外部 Agent 思考、工具往返和排查耗时。客户端侧也需要在每项独立验收完成时及时 record，不能把所有结论积攒到最后。一次步骤包含过多交互时，后续 Case 应按独立可验收目标拆步，或者在派发前显式配置合适的时间预算。
+
+本次实现：
+
+- 引入单调时钟 DecisionWindow，保留步骤硬期限和本轮决定期限；探索等待到期产生 DECISION_WINDOW_EXPIRED，由共享循环发布新的只读收尾帧，使用原预算余额，不重放动作、不新增时长。
+- context.budget 返回实时 timeMs、decisionTimeMs、stepDeadlineAt、decisionDeadlineAt 和 timingState；期限与已提交 revision 绑定，避免并发读取混配新旧帧。GET 和 touch 都不重置步骤时间；touch 只续空闲期限。
+- 收尾帧提供 SETTLEMENT_REQUIRED 提示，要求 record 已有结论后 finish/block。旧 revision 必须重新读取，不能自动把旧进度挪到下一步。事务提交后唤醒前再次核对帧版本与期限，竞态切帧时拒绝旧决定并登记 FAILED / NOT_STARTED，不将它送入新帧。
+- 不自动把原始截图推断为通过，也不允许过期决定跨步骤补写。未来若要支持补写，需要另行设计证据归属、报告修订与审核协议。
+
+准备、清理阶段仍遵守原有阶段预算与人工处理约定。本次不扩大它们的动作权限，也不通过触碰控制句柄延长硬期限。
+
+### 13.2 上下文裁剪：优先消除重复摘要并暴露取证路径
+
+真实模型列表共有 96 行，分页取得的原始 DOM 约 67K 字符；仅凭有界上下文不能当作完整列表验收。原裁剪顺序先缩正文、运行时列表和网络页，最后才缩控件列表；大表格的 disclosure.text 和容器名称会反复携带相同正文，使有价值的正文和网络记录被过早挤掉。
+
+本次实现：仅在超限时先移除历史摘录，再缩控件关联面板文本及超长名称，然后缩正文与运行时摘要；在进一步牺牲网络页和正文保留段之前压缩控件数量。保留返回目标的身份与允许动作，原始观察和证据附件不被修改。coverage 增加 text.originalChars/returnedChars、controls.detailsTruncated 及恢复提示，调用方通过 artifactRefs 对原始已采集附件进行 evidence_read 分页。附件仍可能受源采集范围限制，旧附件里的目标也不能用于当前页面操作。
+
+固定任务要求、权限边界和单条网络详情仍不能为了满足长度限制而静默截断；超出固定上限继续明确报错。裁剪不会扩大授权目标集合。
+
+### 13.3 网络证据：全局完整性与限定采集范围分别表达
+
+本次已捕获的 78 条请求没有命中 poe-bot，错误列表为空，但当时 network.capture.complete 和 console.complete 都为 false。因此只能证明“已采集记录未发现”，不能证明“全页面无 POE 请求或 JavaScript 错误”。GET 禁用接口的 404 则有正向响应证据，可以独立通过。
+
+本次实现保留全局 complete=false，并增加 coverage：
+
+| 字段/范围                                       | 含义及成立条件                                                                                                  |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| current-main-document-loader-http               | 已订阅 Network，并观察到当前主 frame/loader 的文档请求起点，且历史未截断，才能在此范围内 complete=true          |
+| active-renderer-error-events-since-subscription | 当前订阅渲染目标在采集窗口内的错误事件；订阅就绪且历史未截断时范围内完整                                        |
+| startedAt / capturedAt                          | UTC 毫秒，标记采集窗口起点与快照时间；网络另带 navigationId                                                     |
+| reasons                                         | 未观察到导航起点、尚未订阅或历史截断时说明缺口                                                                  |
+| excludedScopes                                  | 网络排除其他 tab、其他 frame loader、worker、WebSocket、响应正文及未来事件；错误窗口排除订阅前和其他目标/上下文 |
+
+网络覆盖只由订阅就绪后、没有 redirectResponse 的文档首跳建立。后续重定向仍保留请求及响应事实，但不能补认缺失首跳；完整链路的后续跳不会撤销已经确认的起点。Console 错误窗口明确列出 eventTypes，覆盖 Runtime.exceptionThrown、console.error 和失败的 console.assert，不采集 Console 参数，也不包含其他 Console 类型或浏览器 Log 域。
+
+人工身份输入引发失效时，同时清空旧请求与导航起点，不能沿用旧账号覆盖声明。首次附加已经加载的页面时，只有后续真正观察到新导航起点才能满足网络范围完整性。旧节点没有 coverage 时，投影返回 COVERAGE_UNAVAILABLE；不能根据请求条数或筛选结果反推完整。
+
+分页、过滤和上下文裁剪不修改底层采集范围；“范围完整”不代表所有分页已读，也不覆盖排除项。只要原 Case 要求全页面、iframe 或 worker 等范围，就仍需相应补充采集能力或判为 INCONCLUSIVE。本次不新增响应正文、任意 CDP 或任意脚本接口，不补录生产历史证据。
+
+### 13.4 回归与后续实施顺序
+
+本批回归覆盖：双期限边界；GET/touch 不延时；真实 HTTP/数据库探索超时后新收尾帧、旧版本拒绝和报告关闭；两套 MCP 发现提示；重复表格控件的裁剪顺序及原始数据不变；网络分页保留范围；原生事件的导航/截断边界；本地真实 Chromium 导航、跨观察保留和身份失效。
+
+先完成本地构建、契约和上述回归，再经 review 发布 API 与 Browser Node。API 单独升级时兼容旧节点，但范围完整性仍显示未知。发布后应使用具备历史配置模型及低权限账号的独立验证运行重跑原 Case，逐项及时 record；本次修复不会改变原生产报告，也不能将本地夹具测试表述为该业务 Case 已通过。
+
+### 13.5 共性能力与外部执行专属修复
+
+本次源于真实 MCP 联调，但改造按职责落在共享层与外部适配层；不要求每种入口各实现一套修复。
+
+| 改动                                                     | 所在层                             | 适用范围                                                                                                                     |
+| -------------------------------------------------------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| 导航完整性、重定向缺口、Console 断言错误与身份失效       | Browser Node 原生 Chromium 采集器  | 启用 network_evidence 的内置/外部 Agent、浏览器任务和 Case，以及它们的各组 tab；读取共享原始证据的 HTTP/MCP/报告入口都会受益 |
+| 上下文裁剪顺序、裁剪标记、网络分页与重复读取保护         | execution-core                     | 内置 Agent 与外部 Agent，共享上下文投影的浏览器任务和 Case 验证                                                              |
+| 原步骤预算内的探索/收尾分配                              | execution-driver 与 execution-core | 两类执行主体共享规则；准备、清理阶段继续遵守原有独立预算                                                                     |
+| 外部等待遵守 modelDeadline、实时剩余时间、提交后切帧检查 | API external-execution 适配层      | 外部 Agent 的直接 HTTP API 和两套操作级 MCP；内置 ChatModel 原本已遵守 modelDeadline，无需新增外部控制句柄                   |
+| tools/list 中的期限、收尾和证据范围说明                  | MCP 契约                           | 两套 MCP 的客户端；委托内置执行时仍由内置 Agent 消费共享层规则                                                               |
+
+采集修复不是“所有模式都能证明全页面完整”：禁用采集、协议夹具或尚未升级的节点不会新增真实证据；跨进程 iframe、worker 等排除范围也未因此补齐。旧节点继续按覆盖未知处理。当前新增回归包含缺失首跳、未就绪订阅、失效后的重定向、完整链路、断言错误脱敏与容量限制，以及本机 Chromium 的实际断言和重定向事件。真实浏览器回归通过调用底层失效函数构造窗口缺口，不把它表述为真实人工接管验收。

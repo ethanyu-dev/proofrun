@@ -663,6 +663,94 @@ test(
           node.unknownWrite = false;
         }
       });
+      // 范围：真实 HTTP/数据库等待自然到期后留出收尾窗口并拒绝旧帧；页面仍由节点夹具提供。
+      await suite.test(
+        '外部探索等待到期发布只读新帧，原期限内完成报告',
+        async () => {
+          const savedTimeout = config.caseProfile.budget.timeoutMs;
+          let session;
+          try {
+            config.caseProfile.budget.timeoutMs = 20000;
+            session = await open();
+          } finally {
+            config.caseProfile.budget.timeoutMs = savedTimeout;
+          }
+          const initial = (await ready(session.id)).data;
+          assert.equal(initial.context.state.settlement, null);
+          assert(
+            initial.context.budget.decisionTimeMs <
+              initial.context.budget.timeMs,
+          );
+          // 仅在隔离测试库中延迟一个操作的登记，使决定在数据库提交期间跨过探索期限。
+          const racing = post(session.id, initial, { type: 'browser.observe' });
+          await db.query(`CREATE FUNCTION delay_external_test() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN IF NEW.id = '${racing.operationId}' THEN PERFORM pg_sleep(2); END IF; RETURN NEW; END $$`);
+          await db.query(
+            'CREATE TRIGGER delay_external_test BEFORE INSERT ON pr_external_operations FOR EACH ROW EXECUTE FUNCTION delay_external_test()',
+          );
+          try {
+            await until(
+              () => view(session.id),
+              (r) => r.data.context.budget.decisionTimeMs < 1000,
+              20000,
+            );
+            const rejected = await http(
+              'POST',
+              `/v3/controllers/${session.id}/decisions`,
+              racing,
+            );
+            assert.equal(rejected.status, 409);
+            assert.equal(rejected.body.code, 'REVISION_CONFLICT');
+            const receipt = await settle(racing.operationId);
+            assert.equal(receipt.data.status, 'FAILED');
+            assert.equal(receipt.data.effect, 'NOT_STARTED');
+            assert.equal(receipt.data.error.code, 'REVISION_CONFLICT');
+            const replay = await ok(
+              'POST',
+              `/v3/controllers/${session.id}/decisions`,
+              racing,
+            );
+            assert.equal(replay.data.status, 'FAILED');
+          } finally {
+            await db.query(
+              'DROP TRIGGER delay_external_test ON pr_external_operations',
+            );
+            await db.query('DROP FUNCTION delay_external_test()');
+          }
+          const { data: final } = await until(
+            () => view(session.id),
+            (r) =>
+              r.data.nextAction === 'ACT' &&
+              r.data.context.state.settlement === 'budget',
+            20000,
+          );
+          assert(final.revision > initial.revision);
+          assert(final.context.budget.timeMs > 0);
+          assert(final.context.budget.timeMs < initial.context.budget.timeMs);
+          assert(
+            final.context.feedback.some(
+              (f) => f.code === 'SETTLEMENT_REQUIRED',
+            ),
+          );
+          assert(!final.allowedActions.includes('browser.act'));
+          const stale = await http(
+            'POST',
+            `/v3/controllers/${session.id}/decisions`,
+            post(session.id, initial, { type: 'browser.observe' }),
+          );
+          assert.equal(stale.status, 409);
+          assert.equal(stale.body.code, 'REVISION_CONFLICT');
+          const result = await complete(session.id);
+          assert.equal(result.data.report.verdict, null);
+          assert.equal(result.data.report.browserResult.outcome, 'COMPLETED');
+          // 报告先完成，物理浏览器回收是异步事实，不能由 READ_REPORT 推断已经关闭。
+          const closed = await until(
+            () => view(session.id),
+            (r) => r.data.closureVerified,
+          );
+          assert.equal(closed.data.nextAction, 'READ_REPORT');
+        },
+      );
       // 范围：主动关闭及过期绑定不可复活；不把关闭请求当作节点关闭确认。
       await suite.test(
         'touch 仅延长空闲期限，关闭后幂等读取不重新执行',
@@ -678,6 +766,21 @@ test(
           });
           const touched = (await view(session.id)).data;
           assert.equal(touched.revision, current.revision);
+          // 范围：真实 HTTP 连续读取/touch 不冻结或延长决定窗口；不校准生产网络延迟。
+          assert.equal(current.context.budget.timingState, 'live');
+          assert(touched.context.budget.timeMs < current.context.budget.timeMs);
+          assert.equal(
+            touched.context.budget.stepDeadlineAt,
+            current.context.budget.stepDeadlineAt,
+          );
+          assert.equal(
+            touched.context.budget.decisionDeadlineAt,
+            current.context.budget.decisionDeadlineAt,
+          );
+          assert(
+            touched.context.budget.decisionTimeMs <=
+              touched.context.budget.timeMs,
+          );
           assert.equal(
             touched.executor.decisionCalls,
             current.executor.decisionCalls,

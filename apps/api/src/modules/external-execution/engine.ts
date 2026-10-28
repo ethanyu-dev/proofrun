@@ -19,6 +19,7 @@ import { executionContext, stopExecution } from '../scheduling/state.js';
 import type { BudgetState } from '../scheduling/step-budget.js';
 import { RuntimeDriver } from '../execution-runtime/driver.js';
 import { settleRuntimeOperations } from '../execution-runtime/supervisor.js';
+import { DecisionWindow } from './decision-window.js';
 
 /** 外部执行的策略来自平台，调用方不能扩大步骤预算或上下文上限。 */
 const EXECUTION_CONFIG = {
@@ -53,6 +54,10 @@ function externalSteps<T extends StepResult[]>(
 interface Waiting {
   /** 当前已冻结上下文，用于同进程唤醒；公开版本保存在数据库。 */
   input: DecisionInput;
+  /** 保留探索与步骤两个期限，不能在 GET 时从旧预算重新推算。 */
+  window: DecisionWindow;
+  /** 与数据库已提交的帧版本一致，避免并发 GET 将新期限配给旧上下文。 */
+  revision?: number;
   /** 仅接受已经持久登记的决定，错误则唤醒原纠错路径。 */
   resolve: (output: DecisionOutput) => void;
   reject: (error: unknown) => void;
@@ -86,7 +91,18 @@ export class ExternalEngine {
   }
   /** 仅在上下文已提交且端口仍等待时允许新决定。 */
   waiting(id: string) {
-    return this.active.get(id)?.ready === true;
+    const current = this.active.get(id);
+    return (
+      current?.ready === true &&
+      (current.pending?.window.view().decisionTimeMs ?? 0) > 0
+    );
+  }
+  /** 仅公开当前等待的时间信息；不暴露凭据，也不延长任何租约。 */
+  timing(id: string, revision: number) {
+    const current = this.active.get(id);
+    return current?.ready && current.pending?.revision === revision
+      ? current.pending.window.view()
+      : undefined;
   }
 
   /** 用量仅表示外部决定数，绝不伪造供应商调用或 token；平台内部计数仍用于冻结额度。 */
@@ -183,12 +199,28 @@ export class ExternalEngine {
   }
 
   /** 只有决定已事务提交后才可唤醒驱动；重复操作不会再次 resolve。 */
-  accept(id: string, operationId: string, decision: AgentDecision) {
+  accept(
+    id: string,
+    operationId: string,
+    decision: AgentDecision,
+    expectedRevision: number,
+  ) {
     const current = this.active.get(id);
     if (!current?.pending)
       throw new ApiError(410, 'EXECUTION_RUNTIME_LOST', '执行器已失效');
-    current.operationId = operationId;
     const pending = current.pending;
+    // 事务提交期间可能已经触发收尾或人工撤销，必须在无异步间隙的唤醒前再核对原帧。
+    if (
+      !current.ready ||
+      pending.revision !== expectedRevision ||
+      pending.window.view().decisionTimeMs <= 0
+    )
+      throw new ApiError(
+        409,
+        'REVISION_CONFLICT',
+        '原决定窗口已结束，请重新读取上下文',
+      );
+    current.operationId = operationId;
     delete current.pending;
     current.ready = false;
     pending.resolve({ decision, promptTokens: 0, completionTokens: 0 });
@@ -318,6 +350,7 @@ export class ExternalEngine {
       signal: AbortSignal,
     ): Promise<DecisionOutput> => {
       signal.throwIfAborted();
+      const window = new DecisionWindow(input);
       await this.settle(id);
       let resolve!: (value: DecisionOutput) => void,
         reject!: (error: unknown) => void;
@@ -330,15 +363,18 @@ export class ExternalEngine {
         () =>
           reject(
             new ExecutionFault(
-              'STEP_TIME_BUDGET_EXCEEDED',
-              '外部决定等待超过步骤期限',
+              input.modelDeadline !== undefined &&
+                !input.context!.state.settlement
+                ? 'DECISION_WINDOW_EXPIRED'
+                : 'STEP_TIME_BUDGET_EXCEEDED',
+              '外部决定等待窗口已结束',
             ),
           ),
-        Math.max(1, input.context!.budget.timeMs),
+        Math.max(1, window.view().decisionTimeMs),
       );
       deadline.unref();
       current.ready = false;
-      current.pending = { input, resolve, reject };
+      current.pending = { input, window, resolve, reject };
       const abort = () => reject(signal.reason);
       signal.addEventListener('abort', abort, { once: true });
       try {
@@ -347,7 +383,7 @@ export class ExternalEngine {
           if (context.control_mode !== 'AUTO')
             throw new ExecutionFault('CONTROL_CHANGED', '控制权已变化');
           const saved = await client.query(
-            "UPDATE pr_external_controllers SET revision=revision+1,context=$2,control_revision=$3,auth_revision=$4,idle_deadline_at=clock_timestamp()+$5*interval '1 millisecond' WHERE id=$1 AND state='ACTIVE'",
+            "UPDATE pr_external_controllers SET revision=revision+1,context=$2,control_revision=$3,auth_revision=$4,idle_deadline_at=clock_timestamp()+$5*interval '1 millisecond' WHERE id=$1 AND state='ACTIVE' RETURNING revision",
             [
               id,
               input.context,
@@ -358,6 +394,7 @@ export class ExternalEngine {
           );
           if (!saved.rowCount)
             throw new ExecutionFault('EXECUTION_EXPIRED', '外部控制已经结束');
+          current.pending!.revision = Number(saved.rows[0].revision);
         });
         signal.throwIfAborted();
         current.ready = true;

@@ -1031,3 +1031,67 @@ test('批量视图按项保留游标和完整详情，超过固定预算明确�
     { code: 'CONTEXT_BUDGET_EXCEEDED' },
   );
 });
+
+// 范围：分页、筛选和摘要裁剪保持采集范围；夹具只验证投影，不能证明业务页没有遗漏请求。
+test('范围内完整不提升为全局完整，旧节点明确缺少覆盖信息', () => {
+  const current = page();
+  assert.equal(networkView(current).capture.coverage.complete, false);
+  assert.deepEqual(networkView(current).capture.coverage.reasons, [
+    'COVERAGE_UNAVAILABLE',
+  ]);
+  current.network.coverage = {
+    scope: 'current-main-document-loader-http',
+    complete: true,
+    reasons: [],
+    startedAt: 1000,
+    capturedAt: 2000,
+    navigationId: current.network.navigationId,
+    excludedScopes: ['workers', 'child-frame-loaders', 'future-events'],
+  };
+  const view = networkView(current, {
+    observationId: current.observationId,
+    urlContains: 'missing',
+  });
+  assert.equal(view.matched, 0);
+  assert.equal(view.capture.complete, false);
+  assert.deepEqual(view.capture.coverage, current.network.coverage);
+  const paged = networkView(current, {
+    observationId: current.observationId,
+    offset: 20,
+  });
+  trimNetworkView(paged);
+  assert.deepEqual(paged.capture.coverage, current.network.coverage);
+  paged.capture.coverage.excludedScopes.push('fixture');
+  assert.equal(
+    current.network.coverage.excludedScopes.includes('fixture'),
+    false,
+  );
+});
+
+// 范围：采集时间变化不绕过循环保护，窗口/完整性变化则可重读；不模拟浏览器漏事件。
+test('覆盖快照时钟不是网络进展，实际覆盖变化仍可补证', () => {
+  const current = page(),
+    ledger = new NetworkReads();
+  current.network.coverage = {
+    scope: 'current-main-document-loader-http',
+    complete: true,
+    startedAt: 10,
+    capturedAt: 20,
+  };
+  const read = {
+    type: 'network.requests',
+    observationId: current.observationId,
+  };
+  assert(ledger.read(current, [read]));
+  current.network.coverage.capturedAt = 30;
+  assert(ledger.read(current, [read]));
+  current.network.coverage.capturedAt = 40;
+  assert.equal(ledger.read(current, [read]), undefined);
+  assert.equal(current.network.coverage.capturedAt, 40);
+  current.network.coverage.complete = false;
+  assert(ledger.read(current, [read]));
+  assert(ledger.read(current, [read]));
+  assert.equal(ledger.read(current, [read]), undefined);
+  current.network.coverage.startedAt = 35;
+  assert(ledger.read(current, [read]));
+});
