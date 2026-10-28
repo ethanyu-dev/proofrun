@@ -1,4 +1,5 @@
 import { BrowserTaskResult } from '../components/browser-task-result';
+import { BrowserTaskDelete } from '../components/browser-task-delete';
 import { useState } from 'react';
 import type { TaskDetail } from '@proofrun/contracts';
 import { ApiClient } from '../api';
@@ -28,6 +29,20 @@ export function TaskDetailPage({ api, id }: { api: ApiClient; id: string }) {
         description={task?.definition.objective ?? ''}
       >
         {task && <TaskExecutionStatus task={task} />}
+        {task && browser && (
+          <BrowserTaskDelete
+            key={task.id}
+            api={api}
+            task={{
+              id: task.id,
+              objective: task.definition.objective,
+              state: task.state,
+            }}
+            onDeleted={() => {
+              location.hash = '/browser-tasks';
+            }}
+          />
+        )}
         <Button asChild variant="outline">
           <a
             href={

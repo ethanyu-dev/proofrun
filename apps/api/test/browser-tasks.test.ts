@@ -157,7 +157,7 @@ test('浏览器完成结果必须有正文和当前执行证据，不能绕过�
   );
 });
 
-// 范围：真实 PostgreSQL、HTTP 准入、幂等、分页和重跑；不启动浏览器或真实模型，不代表业务验收。
+// 范围：真实 PostgreSQL、HTTP 准入、幂等、分页、重跑和软删除；不启动浏览器或真实模型，不代表业务验收。
 test(
   '浏览器精简入口隔离配置并保留历史与 v2 入口',
   { timeout: 60000 },
@@ -325,6 +325,53 @@ test(
       const retried = await call('/v1/browser-tasks', INPUT);
       assert.equal(retried.statusCode, 202, retried.body);
       assert.equal(retried.json().definition.budget.maxActions, 20);
+
+      // 浏览器任务复用通用删除接口；直接构造执行状态，不模拟真实浏览器会话关闭。
+      const deletePath = '/v1/tasks/browser-second/delete';
+      assert.equal(
+        (await app.inject({ method: 'POST', url: deletePath, payload: {} }))
+          .statusCode,
+        401,
+      );
+      for (const state of ['QUEUED', 'RUNNING']) {
+        await sql.query('UPDATE pr_tasks SET state=$1 WHERE id=$2', [
+          state,
+          'browser-second',
+        ]);
+        const rejected = await call(deletePath, {});
+        assert.equal(rejected.statusCode, 409, rejected.body);
+        assert.equal(rejected.json().code, 'TASK_ACTIVE');
+        assert.equal((await call('/v1/tasks/browser-second')).statusCode, 200);
+      }
+      await sql.query(
+        "UPDATE pr_tasks SET state='CANCELLED',finished_at=clock_timestamp() WHERE id=$1",
+        ['browser-second'],
+      );
+      const deleted = await call(deletePath, {});
+      assert.equal(deleted.statusCode, 200, deleted.body);
+      assert.deepEqual(deleted.json(), {
+        deletedTaskIds: ['browser-second'],
+        deletedRequestIds: [],
+      });
+      assert.equal((await call(deletePath, {})).statusCode, 200);
+      assert.equal((await call('/v1/tasks/browser-second')).statusCode, 404);
+      assert.equal(
+        (await call('/v1/tasks?taskKind=browser'))
+          .json()
+          .tasks.some((item: { id: string }) => item.id === 'browser-second'),
+        false,
+      );
+      assert.equal(
+        (
+          await call('/v1/browser-tasks', {
+            ...INPUT,
+            taskId: 'browser-second',
+          })
+        ).statusCode,
+        409,
+      );
+      assert.equal((await call(`/v1/tasks/${INPUT.taskId}`)).statusCode, 200);
+      assert.equal((await call('/v2/requests')).json().requests.length, 1);
     } finally {
       await app.close();
       await sql.end();
