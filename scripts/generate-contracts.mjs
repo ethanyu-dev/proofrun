@@ -5,6 +5,12 @@ import { compile } from 'json-schema-to-typescript';
 const check = process.argv.includes('--check');
 const destination = new URL('../contracts/src/generated/', import.meta.url);
 const names = [
+  'runtime-request',
+  'external-execution-request',
+  'external-execution-result',
+  'mcp-task-call',
+  'mcp-task-result',
+  'public-error',
   'execution-outcome',
   'node-runtime',
   'identity-check',

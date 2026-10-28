@@ -649,6 +649,15 @@ export type VerificationReport = {
     output: string;
     evidenceRefs: string[];
   };
+  executor?: {
+    kind: 'external';
+    judgmentSource: 'external_agent';
+    usageSource: 'unavailable';
+    decisionCalls: number;
+    modelCalls: null;
+    promptTokens: null;
+    completionTokens: null;
+  };
 };
 
 /**
@@ -995,6 +1004,10 @@ export interface StepResult {
       maxActions: number;
       maxModelCalls: number;
     };
+    /**
+     * 外部决定计数；不代表平台模型调用。
+     */
+    decisionCalls?: number;
   };
   /**
    * @maxItems 64

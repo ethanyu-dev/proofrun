@@ -339,6 +339,15 @@ export type VerificationReport = {
     output: string;
     evidenceRefs: string[];
   };
+  executor?: {
+    kind: 'external';
+    judgmentSource: 'external_agent';
+    usageSource: 'unavailable';
+    decisionCalls: number;
+    modelCalls: null;
+    promptTokens: null;
+    completionTokens: null;
+  };
 };
 
 export interface EnrollNode {
@@ -393,6 +402,10 @@ export interface ClaimExecution {
   identityVersion?: 1 | 2;
   profileTabsVersion?: 1;
   executionPlanVersion?: 1;
+  /**
+   * 可只执行模型决定，由服务端 runtime 管理版本 1 运行。
+   */
+  runtimeVersion?: 1;
 }
 export interface SubmitBrowserCommand {
   /**
@@ -801,6 +814,10 @@ export interface StepResult {
       maxActions: number;
       maxModelCalls: number;
     };
+    /**
+     * 外部决定计数；不代表平台模型调用。
+     */
+    decisionCalls?: number;
   };
   /**
    * @maxItems 64

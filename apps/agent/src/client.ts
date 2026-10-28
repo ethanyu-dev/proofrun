@@ -3,14 +3,17 @@ import {
   validateExecutionGrant,
   validateNodeEvent,
   type ExecutionGrant,
-  type NodeCommand,
-  type NodeEvent,
   type VerificationReport,
   type ModelCallWrite,
   type StepResult,
   type ControlRequest,
 } from '@proofrun/contracts';
 import type { AgentConfig } from './config.js';
+import type { RuntimeRequest } from '@proofrun/contracts';
+import type {
+  RuntimeView,
+  RuntimeConfig,
+} from '@proofrun/execution-core/runtime';
 import {
   AgentFault,
   jsonRequest,
@@ -26,73 +29,18 @@ const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 /** 结果轮询只读取数据库，不触发业务动作。 */
 const RESULT_POLL_MS = 150;
 
-export type BrowserOperation = Extract<
-  NodeCommand['command'],
-  {
-    type:
-      | 'browser.act'
-      | 'browser.observe'
-      | 'browser.wait'
-      | 'browser.cookies.clear'
-      | 'browser.trace'
-      | 'browser.identity.prepare';
-  }
->;
-export type CommandResult = Extract<NodeEvent, { type: 'command.result' }>;
-/** 执行视图只用于生命周期控制；节点和会话身份始终来自领取响应。 */
-export interface ExecutionView extends ExecutionTiming {
-  /** 仅来自独立人工处理页逐项确认，普通 resume 不会携带此证据。 */
-  humanConfirmation?: {
-    revision: number;
-    items: string[];
-    conditionKeys?: string[];
-    authRevision?: number;
-  };
-  /** 节点实际启动回执，不接受模型声明。 */
-  environmentProof?: {
-    sessionId: string;
-    initialState: string;
-    authRestored: boolean;
-    /** 节点回读验证的动画偏好；旧记录缺失时不能推断为已启用。 */
-    reducedMotion?: boolean;
-  };
-  /** 认证版本只随可能改变身份的操作增长。 */
-  authRevision?: number;
-  /** 任务终态用于撤销模型调用，不依赖模型理解取消文本。 */
-  taskState: string;
-  /** 操作权与代次独立于任务生命周期，暂停期间仍由原 worker 续租。 */
-  controlMode: 'AUTO' | 'REQUESTED' | 'HUMAN';
-  controlRevision: number;
-  actionCount: number;
-  /** 浏览器会话就绪和关闭进度。 */
-  state: string;
-  closureVerified: boolean;
-  /** 控制面签发的 worker 权限期限。 */
-  leaseExpiresAt: string;
-  /** 服务端登记的证据及交付状态，不接受模型自报的 URL。 */
-  artifacts: Array<{ id: string; kind: string; sha256: string; state: string }>;
-}
-
-/** 控制面时间快照；旧版心跳未带这些字段时不能自行推断预算已刷新。 */
-export interface ExecutionTiming {
-  /** profile 中各步骤独立计时，客户端只投影当前组。 */
-  stepBudgets?: Record<string, NonNullable<ExecutionTiming['stepBudget']>>;
-  taskDeadlineAt?: string;
-  /** 当前步骤的服务端计时与计数；旧 worker 不会领取携带此策略的新任务。 */
-  stepBudget?: {
-    stepId: string;
-    deadlineAt: number;
-    actions: number;
-    modelCalls: number;
-    pausedAt: number | null;
-  } | null;
-  /** 控制面首次进入清理时固定的期限，不能被较早的业务心跳覆盖。 */
-  cleanupDeadlineAt?: string | null;
-  leaseExpiresAt?: string;
-  controlMode?: 'AUTO' | 'REQUESTED' | 'HUMAN';
-  controlRevision?: number;
-}
-
+export type {
+  BrowserOperation,
+  CommandResult,
+  ExecutionView,
+  ExecutionTiming,
+} from '@proofrun/execution-core/ports';
+import type {
+  BrowserOperation,
+  CommandResult,
+  ExecutionView,
+  ExecutionTiming,
+} from '@proofrun/execution-core/ports';
 /** worker 只连接控制面，从不直接连接浏览器节点或业务内网。 */
 export class ControlClient {
   constructor(private readonly config: AgentConfig) {}
@@ -135,6 +83,7 @@ export class ControlClient {
         identityVersion: 2,
         profileTabsVersion: 1,
         executionPlanVersion: 1,
+        runtimeVersion: 1,
       },
       this.config.requestMs,
       signal,
@@ -167,6 +116,43 @@ export class ControlClient {
         await pause(100 * (attempt + 1), signal);
       }
     }
+  }
+  /** 冻结执行策略后启动共享驱动，相同配置重送不会创建第二个执行循环。 */
+  async runtimeStart(
+    execution: ExecutionGrant,
+    config: RuntimeConfig,
+  ): Promise<void> {
+    await this.request(execution, '/runtime', 'POST', {
+      type: 'start',
+      config,
+    });
+  }
+  /** 有界拉取下一帧；调用本身不续租、不派发模型或浏览器操作。 */
+  async runtimeView(
+    execution: ExecutionGrant,
+    afterRevision: number,
+    signal: AbortSignal,
+  ): Promise<RuntimeView> {
+    return (await this.request(
+      execution,
+      `/runtime?afterRevision=${afterRevision}`,
+      'GET',
+      undefined,
+      signal,
+    )) as RuntimeView;
+  }
+  /** 决定和模型存档用冻结帧身份原样重送；不改键重试。 */
+  async runtimeMutation(
+    execution: ExecutionGrant,
+    decisionId: string,
+    body: Exclude<RuntimeRequest, { type: 'start' }>,
+  ): Promise<void> {
+    await this.request(
+      execution,
+      `/runtime/decisions/${encodeURIComponent(decisionId)}`,
+      'POST',
+      body,
+    );
   }
   /** 历史证据与状态在执行终止后仍可读，不能据此获取新执行权限。 */
   async view(

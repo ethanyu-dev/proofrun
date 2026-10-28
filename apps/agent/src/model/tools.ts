@@ -1,3 +1,4 @@
+import { allowedDecisionTypes } from '@proofrun/execution-core/execution/allowed-decisions';
 import { TOOL_DESCRIPTIONS } from '../prompts/tools.js';
 import type { DecisionContextData } from '../execution/context.js';
 import type { AgentDecision } from '@proofrun/contracts';
@@ -35,34 +36,7 @@ export function decisionTools(
       : {}),
   };
   return tools
-    .filter(
-      (tool) =>
-        tool.type !== 'verification.environment' &&
-        (tool.type !== 'verification.record' ||
-          !['PREPARING', 'CHECKING'].includes(context.state.phase)) &&
-        (!context.state.settlement ||
-          (context.state.settlement === 'budget'
-            ? [
-                'verification.record',
-                'verification.finish',
-                'verification.block',
-              ]
-            : ['verification.record', 'verification.block']
-          )
-            .concat(['network.requests', 'network.request_detail'])
-            .includes(tool.type)) &&
-        (!tool.type.startsWith('network.') ||
-          !!context.page.network?.evidenceRefs.length) &&
-        (tool.type !== 'verification.intervene' ||
-          context.task.permissions.allowIntervention) &&
-        (tool.type !== 'browser.cookies.clear' ||
-          context.state.phase === 'CLEANUP') &&
-        (tool.type !== 'browser.act' || context.budget.actions > 0) &&
-        (tool.type !== 'browser.observe' ||
-          !context.feedback.some(
-            (item) => item.code === 'OBSERVATION_STALLED',
-          )),
-    )
+    .filter((tool) => allowedDecisionTypes(context).includes(tool.type))
     .map((tool) => {
       const parameters = structuredClone(tool.parameters) as {
         properties: Record<string, unknown>;

@@ -78,7 +78,7 @@ class ModelFixture(BaseHTTPRequestHandler):
 
 def run():
     """一次完整场景验证普通 DOM 和两层开放 Shadow DOM，并用页面服务独立计数。"""
-    harness = Harness()
+    harness = Harness(runtime_version=1)
     page = ThreadingHTTPServer(('127.0.0.1', 0), Fixture)
     page.writes = []
     # 复用页面夹具的按键回调，避免记录接口抛错；此场景不据此验收键盘语义。

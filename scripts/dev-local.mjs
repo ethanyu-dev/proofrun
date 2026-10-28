@@ -1,3 +1,4 @@
+import { localApiEnvironment } from './local-api-environment.mjs';
 import { spawn, execFileSync } from 'node:child_process';
 import {
   existsSync,
@@ -40,22 +41,6 @@ const AGENT_PROXY_KEYS = [
   'no_proxy',
 ];
 
-/** 服务环境只分发职责所需配置；Console 不继承管理员或模型密钥。 */
-const API_KEYS = [
-  'PROOFRUN_DATABASE_URL',
-  'PROOFRUN_ADMIN_TOKEN',
-  'PROOFRUN_WORKER_TOKEN',
-  'PROOFRUN_PUBLIC_URL',
-  'PROOFRUN_CONSOLE_URL',
-  'PROOFRUN_FEISHU_APP_ID',
-  'PROOFRUN_FEISHU_APP_SECRET',
-  'PROOFRUN_FEISHU_CHAT_ID',
-  'PROOFRUN_ARTIFACT_DIRECTORY',
-  'PROOFRUN_CASE_PROFILE_FILE',
-  'PROOFRUN_DEVPASS_CONFIG_FILE',
-  'PROOFRUN_API_HOST',
-  'PROOFRUN_API_PORT',
-];
 const settings = parseEnv(readFileSync(ENV_FILE, 'utf8'));
 /** 本机显式保存启用状态后，普通启动命令也恢复已配对的 Docker 节点。 */
 const WITH_PREVIEW_NODE =
@@ -231,6 +216,7 @@ async function main() {
   run('pnpm', ['build:devpass']);
   run('pnpm', ['contracts:generate']);
   run('pnpm', ['--filter', '@proofrun/contracts', 'build']);
+  run('pnpm', ['build:execution']);
   run('pnpm', ['--filter', './apps/*', '-r', 'build']);
   run(process.execPath, [
     '--input-type=module',
@@ -358,7 +344,7 @@ async function main() {
     'api',
     join(ROOT, 'apps/api/dist/main.js'),
     [],
-    Object.fromEntries(API_KEYS.map((key) => [key, settings[key]])),
+    localApiEnvironment(settings),
   );
   await waitHttp(`${ORIGIN}/health/ready`);
   if (WITH_PREVIEW_NODE) {

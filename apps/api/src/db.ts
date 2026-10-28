@@ -49,6 +49,9 @@ const MIGRATIONS = [
   '036-remove-node-capacity.sql',
   '037-remove-report-analysis.sql',
   '038-runtime-evidence.sql',
+  '039-public-task-access.sql',
+  '040-execution-runtime.sql',
+  '041-external-execution.sql',
 ];
 
 /** 所有业务事务使用同一连接；独占连接单独维护控制面实例锁。 */

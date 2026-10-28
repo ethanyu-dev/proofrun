@@ -116,7 +116,7 @@ class SmokeModel(BaseHTTPRequestHandler):
 def run():
     """同一环境声明由本进程实际启动配置生成，结果离开容器前核实 systemd 清理。"""
     OUTPUT.mkdir(mode=0o700)
-    harness = Harness()
+    harness = Harness(runtime_version=1)
     fixture = agent = model = None
     agent_log = None
     kind = os.environ.get('PROOFRUN_EVAL_MODEL_KIND', 'scripted')

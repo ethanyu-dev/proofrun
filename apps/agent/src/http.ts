@@ -16,16 +16,8 @@ const TRANSIENT_TRANSPORT_CODES = new Set([
   ...TRANSPORT_CODES.values(),
 ]);
 
-/** 错误只保留分类和状态码，不传播带 URL、密钥或页面内容的原始服务错误。 */
-export class AgentFault extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-    readonly status = 0,
-  ) {
-    super(message);
-  }
-}
+export { ExecutionFault as AgentFault } from '@proofrun/execution-core/faults';
+import { ExecutionFault as AgentFault } from '@proofrun/execution-core/faults';
 /** 可取消等待，关停或租约失效时不再继续下一次领取或浏览器动作。 */
 export async function pause(ms: number, signal?: AbortSignal): Promise<void> {
   signal?.throwIfAborted();

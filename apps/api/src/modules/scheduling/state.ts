@@ -20,6 +20,10 @@ export interface ExecutionContext {
   task_id: string;
   /** 准入时冻结的完整定义，执行者不能改写标准。 */
   definition: VerificationTask;
+  /** 版本 1 的自动写入只能来自服务端 runtime；人工控制仍走原管理入口。 */
+  runtime_version: number;
+  /** 冻结的执行者；外部控制者不能使用内置模型出口。 */
+  executor_kind: 'builtin' | 'external';
   /** 是否允许继续业务执行；与物理清理进度独立。 */
   task_state: string;
   /** 自动执行的截止时间；人工暂停期间不生效，恢复后重置。 */
@@ -72,7 +76,7 @@ export async function executionContext(
   const result = await client.query<ExecutionContext>(
     `
     SELECT e.id,e.task_id,e.token_hash,e.lease_expires_at,e.state AS execution_state,e.action_count,e.budget_state,e.control_mode,e.control_revision,e.control_reason,e.auth_revision,e.human_requested_at,e.human_deadline_at,
-      t.definition,t.state AS task_state,t.deadline_at,t.cleanup_deadline_at,
+      t.definition,t.runtime_version,t.executor_kind,t.state AS task_state,t.deadline_at,t.cleanup_deadline_at,
       s.id AS session_id,s.state AS session_state,s.node_id,s.node_epoch,s.lease_id,s.fence,s.closure_verified,s.external_expires_at
     FROM pr_executions e JOIN pr_tasks t ON t.id=e.task_id JOIN pr_sessions s ON s.execution_id=e.id
     WHERE e.id=$1${options.lock === false ? '' : ' FOR UPDATE OF e,t,s'}`,

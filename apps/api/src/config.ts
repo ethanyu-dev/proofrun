@@ -3,6 +3,10 @@ import {
   type DevPassConfig,
 } from './modules/account-providers/config.js';
 import { resolve } from 'node:path';
+import {
+  loadPublicCredentials,
+  type PublicCredential,
+} from './modules/public-execution/auth.js';
 import { loadCaseProfile, type CaseProfile } from './modules/cases/profile.js';
 import {
   feishuConfig,
@@ -20,6 +24,12 @@ const DEFAULTS = {
 
 /** 控制面只支持一个活动实例；队列、租约和消息均持久化到数据库。 */
 export interface ApiConfig {
+  /** 新入队运行的冻结驱动版本；省略保留程序化旧接入，部署配置默认启用版本 1。 */
+  executionRuntimeVersion?: 0 | 1;
+  /** 可选任务级 MCP 服务凭据；未配置时不注册公共接入端点。 */
+  publicCredentials?: PublicCredential[];
+  /** 外部控制空闲期限；不覆盖任务、账号或步骤的硬期限。 */
+  externalIdleMs?: number;
   /** 受控的外部账号来源，密钥不进入任务。 */
   devPass?: DevPassConfig;
   /** 可选飞书企业自建应用；未配置时关闭 Case 生命周期通知。 */
@@ -67,6 +77,11 @@ function integer(
 
 /** 启动时验证必要依赖配置；不提供可误用于部署的默认凭据。 */
 export function loadConfig(): ApiConfig {
+  const executionRuntimeVersion = Number(
+    process.env.PROOFRUN_EXECUTION_RUNTIME_VERSION ?? '1',
+  );
+  if (executionRuntimeVersion !== 0 && executionRuntimeVersion !== 1)
+    throw new Error('PROOFRUN_EXECUTION_RUNTIME_VERSION must be 0 or 1');
   const databaseUrl = process.env.PROOFRUN_DATABASE_URL ?? '';
   const adminToken = process.env.PROOFRUN_ADMIN_TOKEN ?? '';
   const workerToken = process.env.PROOFRUN_WORKER_TOKEN ?? '';
@@ -136,7 +151,12 @@ export function loadConfig(): ApiConfig {
       '飞书通知已改为企业自建应用，请移除旧 WEBHOOK_URL/SIGNING_SECRET 并配置 APP_ID、APP_SECRET、CHAT_ID',
     );
   const devPass = loadDevPass(process.env.PROOFRUN_DEVPASS_CONFIG_FILE);
+  const publicCredentials = loadPublicCredentials(
+    process.env.PROOFRUN_MCP_CREDENTIALS_FILE,
+  );
   return {
+    executionRuntimeVersion,
+    ...(publicCredentials ? { publicCredentials } : {}),
     ...(devPass ? { devPass } : {}),
     ...(feishu ? { feishu } : {}),
     ...(caseProfile ? { caseProfile } : {}),

@@ -4118,6 +4118,11 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
             (rows) =>
               rows.some((m) => m.type === 'state' && m.mode === 'HUMAN'),
           );
+          // bootstrap 也返回 HUMAN 状态；必须等节点直连打开，才能发送完成消息。
+          await until(
+            () => ws.readyState,
+            (state) => state === WebSocket.OPEN,
+          );
           assert.deepEqual(
             messages.find((m) => m.type === 'state').conditionKeys,
             [keys[round]],

@@ -40,6 +40,10 @@
     },
     "state": {
       "const": "STARTING"
+    },
+    "runtimeVersion": {
+      "const": 1,
+      "description": "存在时必须使用内部运行时接口；省略为旧 worker 驱动路径。"
     }
   },
   "required": [
