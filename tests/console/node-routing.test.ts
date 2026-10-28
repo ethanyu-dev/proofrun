@@ -4,6 +4,7 @@ import test from 'node:test';
 import { ApiClient } from '../../apps/console/src/api.ts';
 import {
   NodeRoutingSummary,
+  NodeRoutingAction,
   NodeRoutingEditor,
   type ConsoleNode,
 } from '../../apps/console/src/components/node-routing.tsx';
@@ -32,7 +33,12 @@ const legacyNode: ConsoleNode = {
 function render(node: ConsoleNode) {
   return {
     summary: renderToStaticMarkup(
-      createElement(NodeRoutingSummary, { node, edit() {} }),
+      createElement(
+        'div',
+        null,
+        createElement(NodeRoutingSummary, { node }),
+        createElement(NodeRoutingAction, { node, edit() {} }),
+      ),
     ),
     editor: renderToStaticMarkup(
       createElement(NodeRoutingEditor, {
@@ -84,12 +90,12 @@ test('完整域名配置允许展示与编辑，包括初始零版本', () => {
   });
   assert.match(empty.summary, /未绑定域名/);
   assert.doesNotMatch(empty.summary, /disabled=""/);
-  assert.match(empty.editor, /<form/);
+  // 弹窗内容由 Portal 挂载，实际表单与保存行为在 DOM 交互回归中验证。
   const configured = render({
     ...legacyNode,
     routing_domains: ['example.com'],
     routing_revision: 1,
   });
   assert.match(configured.summary, /<li>example.com<\/li>/);
-  assert.match(configured.editor, />example.com<\/textarea>/);
+  assert.doesNotMatch(configured.summary, /disabled=""/);
 });

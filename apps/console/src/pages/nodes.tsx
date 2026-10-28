@@ -1,4 +1,9 @@
-import { NodeDefaultProfile } from '../components/node-default-profile';
+import { KeyRound, Trash2 } from 'lucide-react';
+import { DialogFooter } from '../components/ui/dialog';
+import {
+  NodeDefaultProfile,
+  NodeProfileAction,
+} from '../components/node-default-profile';
 import { toast } from 'sonner';
 import { Modal } from '../components/modal';
 import { Button } from '../components/ui/button';
@@ -8,6 +13,7 @@ import { NodeVersion } from '../components/node-version';
 import {
   NodeRoutingEditor,
   NodeRoutingSummary,
+  NodeRoutingAction,
   type ConsoleNode,
 } from '../components/node-routing';
 import type { NodeList, NodeSummary } from '@proofrun/contracts';
@@ -38,7 +44,6 @@ export function NodesPage({ api }: { api: ApiClient }) {
     Omit<NodeList, 'nodes'> & { nodes: ConsoleNode[] }
   >(api, '/v1/nodes');
   const [routingNode, setRoutingNode] = useState<NodeSummary>();
-  const [savedRouting, setSavedRouting] = useState(false);
   const [rotation, setRotation] = useState<string>();
   const [enrolling, setEnrolling] = useState(false);
   const [confirm, setConfirm] = useState<string>();
@@ -102,44 +107,41 @@ export function NodesPage({ api }: { api: ApiClient }) {
           close={() => setRoutingNode(undefined)}
           saved={() => {
             setRoutingNode(undefined);
-            setSavedRouting(true);
             toast.success('域名配置已保存');
             resource.refresh();
           }}
         />
       )}
-      {savedRouting && <p role="status">域名配置已保存，对后续分配生效。</p>}
       <ErrorNotice message={error} />
       {confirm && (
         <Modal
           title="撤销节点"
           close={() => setConfirm(undefined)}
           busy={pending}
+          className="node-management-dialog"
         >
           <ErrorNotice message={error} />
           <p>
             撤销节点 {confirm}{' '}
             的连接凭据并停止关联任务。已发生的业务操作不会撤销，未确认关闭的会话仍保留占用。
           </p>
-          <div className="page-actions">
-            <Button
-              variant="default"
-              className="button button-primary"
-              disabled={pending}
-              onClick={() => void revoke()}
-            >
-              确认撤销
-            </Button>
+          <DialogFooter>
             <Button
               variant="outline"
-              className="button button-secondary"
               disabled={pending}
               data-dialog-cancel
               onClick={() => setConfirm(undefined)}
             >
-              返回
+              取消
             </Button>
-          </div>
+            <Button
+              variant="destructive"
+              disabled={pending}
+              onClick={() => void revoke()}
+            >
+              {pending ? '正在撤销…' : '确认撤销'}
+            </Button>
+          </DialogFooter>
         </Modal>
       )}
       <RefreshBar {...resource} />
@@ -254,45 +256,50 @@ export function NodesPage({ api }: { api: ApiClient }) {
                     ))}
                   </ul>
                 </section>
-                <NodeDefaultProfile api={api} node={node} />
-                <NodeRoutingSummary
-                  node={node}
-                  edit={(node) => {
-                    setRoutingNode(node);
-                    setSavedRouting(false);
-                  }}
-                />
+                <NodeDefaultProfile node={node} />
+                <NodeRoutingSummary node={node} />
                 <footer className="node-footer">
+                  <div
+                    className="node-actions"
+                    role="group"
+                    aria-label={`${node.name} 管理操作`}
+                  >
+                    <NodeRoutingAction node={node} edit={setRoutingNode} />
+                    <NodeProfileAction api={api} node={node} />
+                    {!node.revoked_at && (
+                      <>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={node.occupied !== 0}
+                          title={
+                            node.occupied !== 0
+                              ? '请等待会话结束后轮换凭据'
+                              : undefined
+                          }
+                          onClick={() => setRotation(node.id)}
+                        >
+                          <KeyRound aria-hidden="true" />
+                          轮换凭据
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="node-revoke"
+                          onClick={(event) => {
+                            event.currentTarget.focus();
+                            setConfirm(node.id);
+                          }}
+                        >
+                          <Trash2 aria-hidden="true" />
+                          撤销节点
+                        </Button>
+                      </>
+                    )}
+                  </div>
                   <p className="node-heartbeat muted">
                     最近心跳 <span>{time(node.last_seen_at)}</span>
                   </p>
-                  {!node.revoked_at && (
-                    <div
-                      className="node-actions"
-                      role="group"
-                      aria-label={`${node.name} 管理操作`}
-                    >
-                      {node.occupied === 0 && (
-                        <Button
-                          variant="ghost"
-                          className="text-button"
-                          onClick={() => setRotation(node.id)}
-                        >
-                          轮换凭据
-                        </Button>
-                      )}
-                      <Button
-                        variant="ghost"
-                        className="text-button node-revoke"
-                        onClick={(event) => {
-                          event.currentTarget.focus();
-                          setConfirm(node.id);
-                        }}
-                      >
-                        撤销节点
-                      </Button>
-                    </div>
-                  )}
                 </footer>
               </article>
             ))}
