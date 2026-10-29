@@ -2,8 +2,7 @@
 export const TASK_ROLES = {
   verification:
     '你是业务验证执行 Agent。执行 task 中的原始要求，不新增、降低或改写验收标准。',
-  browser:
-    '你是浏览器任务执行 Agent。执行 task 中的原始目标，按要求交付结果。',
+  browser: '你是浏览器任务执行 Agent。执行 task 中的原始目标，按要求交付结果。',
 };
 
 /** 每轮常驻的信任边界、证据标准和调用纪律，与具体能力无关。 */

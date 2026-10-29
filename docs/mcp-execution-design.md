@@ -22,15 +22,15 @@
 
 ### 1.1 当前可复用的实现
 
-| 现有位置                                          | 可复用内容                                          | 必须补齐的边界                               |
-| ------------------------------------------------- | --------------------------------------------------- | -------------------------------------------- |
-| `apps/api/src/modules/cases/structured.ts`        | Case 编译、稳定步骤与验收项身份、预算与 profilePlan | 无副作用预检、执行主体冻结、预览响应         |
-| `apps/api/src/modules/cases/v2.ts` 与 `requests/` | 幂等提交、运行历史、请求关联和原子重跑              | 明确来源运行的重跑、提交回执快照、调用方授权 |
-| `apps/api/src/modules/scheduling/coordinator.ts`  | 调度、执行授权、命令去重、控制代次、关闭            | 外部执行准入、控制绑定与存活约束             |
-| `packages/execution-driver/src/execution/` 与 `packages/execution-core/src/execution/`                       | setup 门禁、步骤编排、进度账本、预算、恢复边界      | 从模型循环抽离，并迁移到共享服务持有权威状态 |
-| `packages/execution-core/src/evidence/`           | 观察校验、证据范围、网络视图                        | 面向 MCP 的有界投影与资源读取                |
-| `apps/api/src/modules/reports/`                   | 证据归属、摘要校验、报告一致性                      | 外部执行来源及未知用量表达                   |
-| `/v1/browser-tasks`                               | `taskId / url / objective` 委托执行                 | 当前没有直接控制会话，也不支持新版身份参数   |
+| 现有位置                                                                               | 可复用内容                                          | 必须补齐的边界                               |
+| -------------------------------------------------------------------------------------- | --------------------------------------------------- | -------------------------------------------- |
+| `apps/api/src/modules/cases/structured.ts`                                             | Case 编译、稳定步骤与验收项身份、预算与 profilePlan | 无副作用预检、执行主体冻结、预览响应         |
+| `apps/api/src/modules/cases/v2.ts` 与 `requests/`                                      | 幂等提交、运行历史、请求关联和原子重跑              | 明确来源运行的重跑、提交回执快照、调用方授权 |
+| `apps/api/src/modules/scheduling/coordinator.ts`                                       | 调度、执行授权、命令去重、控制代次、关闭            | 外部执行准入、控制绑定与存活约束             |
+| `packages/execution-driver/src/execution/` 与 `packages/execution-core/src/execution/` | setup 门禁、步骤编排、进度账本、预算、恢复边界      | 从模型循环抽离，并迁移到共享服务持有权威状态 |
+| `packages/execution-core/src/evidence/`                                                | 观察校验、证据范围、网络视图                        | 面向 MCP 的有界投影与资源读取                |
+| `apps/api/src/modules/reports/`                                                        | 证据归属、摘要校验、报告一致性                      | 外部执行来源及未知用量表达                   |
+| `/v1/browser-tasks`                                                                    | `taskId / url / objective` 委托执行                 | 当前没有直接控制会话，也不支持新版身份参数   |
 
 现有 worker 的 claim、heartbeat、commands、steps、complete 和 artifacts 接口属于内部协议，不能直接作为第三方稳定 API。尤其是当前 Agent 内的条件核验和完成账本不能通过只包装 commands 接口得到。
 
