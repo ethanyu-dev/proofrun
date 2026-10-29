@@ -1,6 +1,7 @@
 /** 网络证据按需读取规则；摘要不是完整响应，查询不产生新的业务事实。 */
 export const NETWORK_PROMPT = `page.network 默认只有请求 ID、脱敏 URL、方法和状态码，
 status=null 表示未收到响应。
+未主动查询时只提供最多 5 条预览；需要更多请求时使用 network_requests 按需读取完整分页。
 使用 network_requests 按 urlContains/status 筛选或按 nextOffset 翻页；
 传入当前 observationId。
 total/matched/omitted/nextOffset 描述列表视图，

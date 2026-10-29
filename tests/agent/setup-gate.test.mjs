@@ -152,9 +152,11 @@ for (const partial of [false, true]) {
       const value = complete(context);
       if (context.task.stepId === 'prepare') {
         assert.deepEqual(
-          context.task.requirements.map((s) => s.requirement),
-          ['准备指定的验证环境', '资格应符合输入中约定的甲类条件'],
+          context.task.requirements.map((s) => s.requirementRef),
+          ['task.description', 'task.policy[0]'],
         );
+        assert.equal(context.task.description, '准备指定的验证环境');
+        assert.equal(context.task.policy[0], '资格应符合输入中约定的甲类条件');
         if (partial) value.progress.requirements.pop();
         else delete value.progress;
       }

@@ -2,6 +2,7 @@ import type { NetworkReadReceipt } from '../evidence/network-reads.js';
 import { evidenceExcerpt } from '../model/evidence-excerpt.js';
 import {
   networkView,
+  networkOverview,
   trimNetworkView,
   type NetworkSelection,
 } from '../evidence/network-view.js';
@@ -16,6 +17,7 @@ import type { PolicyResult } from './policy-checks.js';
 import type { InteractionProgress } from './interaction-progress.js';
 import type { OperationJournal } from './operation-journal.js';
 import { AgentFault } from '../faults.js';
+import { artifactSections, requirementSections } from './context-sections.js';
 
 /** 只保留有界历史正文；历史元素编号永远不作为当前操作身份。 */
 const HISTORY_LIMIT = 8;
@@ -29,6 +31,9 @@ const TARGET_EXCERPT_CHARS = 400;
 /** 深度裁剪正文和网络之前，优先保留当前排序的少量可操作控件。 */
 const TARGET_RESERVE = 8;
 const HISTORICAL_TARGET = /\s*\[target=[^\]]+\]|\bref=[^,\]\s]+/g;
+/** 仅在正文或控件被省略时说明缺口；不向内置 Agent 暗示未注册的附件读取工具。 */
+const COVERAGE_RECOVERY =
+  '当前正文或控件存在省略；原始采集内容保留在 artifactRefs 对应附件中，未提供部分不能用于判定。';
 
 /** 已执行命令的模型可见摘要，不包含调用权限。 */
 export interface RecentOperation {
@@ -129,17 +134,30 @@ export function rememberObservation(
 /** 白名单投影是唯一模型视图；没有身份配方、调度元数据或第二份局部计划。 */
 function contextData(input: ContextInput) {
   const { current, executionStep: step } = input;
+  const description = step?.description ?? input.task.objective;
   const allowed = new Set(input.evidence.map((item) => item.id));
   const refs = (values: string[]) => values.filter((id) => allowed.has(id));
-  const excerpts = new Map<string, PreviousObservation>();
-  for (const item of input.previousObservations) {
-    const key = JSON.stringify([
+  // 相同正文只复用本轮已提供文本，保留各自来源；变化的语言、地址和缺口不合并。
+  const contentKey = (
+    item: Pick<
+      PreviousObservation,
+      'url' | 'title' | 'documents' | 'text' | 'truncated'
+    >,
+  ) =>
+    JSON.stringify([
       item.url,
       item.title,
       item.documents,
       item.text,
-      item.truncated,
+      item.truncated === true,
     ]);
+  const currentKey = contentKey({
+    ...current,
+    truncated: current.truncated === true,
+  });
+  const excerpts = new Map<string, PreviousObservation>();
+  for (const item of input.previousObservations) {
+    const key = contentKey(item);
     const old = excerpts.get(key);
     excerpts.set(key, {
       ...structuredClone(item),
@@ -153,12 +171,24 @@ function contextData(input: ContextInput) {
     });
   }
   const requirements = input.workflow?.steps ?? [];
+  const networkPage = {
+    ...current,
+    artifactRefs: current.artifactRefs.filter((ref) =>
+      allowed.has(ref.artifactId),
+    ),
+  };
+  const hasNetworkQuery =
+    input.networkSelection?.observationId === current.observationId ||
+    input.networkBatchSelections?.some(
+      (item) => item.observationId === current.observationId,
+    );
   return {
     task: {
       kind: input.task.taskKind ?? 'verification',
-      background: input.background,
+      background:
+        input.background === description ? undefined : input.background,
       stepId: step?.stepId,
-      description: step?.description ?? input.task.objective,
+      description,
       url: step?.url ?? input.task.target.url,
       policy: step?.policy,
       criteria: structuredClone(input.task.acceptanceCriteria),
@@ -166,10 +196,11 @@ function contextData(input: ContextInput) {
         allowIntervention: input.task.environment.allowIntervention,
       },
       // 原文出现一次，账本只引用稳定要求身份；结构化步骤不重复拆解描述。
-      requirements: requirements.map((item) => ({
-        id: item.id,
-        requirement: item.requirement,
-      })),
+      requirements: requirementSections(
+        requirements,
+        description,
+        step?.policy,
+      ),
     },
     state: {
       phase: input.cleanup
@@ -180,7 +211,9 @@ function contextData(input: ContextInput) {
         ? (input.verificationReview.reason ?? 'stalled')
         : null,
       criteria: structuredClone(input.recordedCriteria ?? []),
-      networkReads: structuredClone(input.networkReads ?? []),
+      networkReads: input.networkReads?.length
+        ? structuredClone(input.networkReads)
+        : undefined,
       conditions: [
         ...input.preconditions.map((item) => ({
           ...structuredClone(item),
@@ -199,9 +232,10 @@ function contextData(input: ContextInput) {
         ...structuredClone(item),
         evidenceRefs: refs(item.evidenceRefs),
       })),
-      readings: input.interactionProgress
-        ? structuredClone(input.interactionProgress)
-        : undefined,
+      readings:
+        input.interactionProgress && input.interactionProgress.discovered > 0
+          ? structuredClone(input.interactionProgress)
+          : undefined,
     },
     page: {
       observationId: current.observationId,
@@ -215,20 +249,15 @@ function contextData(input: ContextInput) {
       tabs: structuredClone(current.tabs),
       viewport: structuredClone(current.viewport),
       atomic: current.atomic,
-      network: networkView(
-        {
-          ...current,
-          artifactRefs: current.artifactRefs.filter((ref) =>
-            allowed.has(ref.artifactId),
-          ),
-        },
-        input.networkSelection,
-        input.networkBatchSelections,
-      ),
+      network: hasNetworkQuery
+        ? networkView(
+            networkPage,
+            input.networkSelection,
+            input.networkBatchSelections,
+          )
+        : networkOverview(networkPage),
       runtime: structuredClone(current.runtime),
-      artifactRefs: current.artifactRefs.filter((ref) =>
-        allowed.has(ref.artifactId),
-      ),
+      artifactRefs: artifactSections(networkPage.artifactRefs, !!input.image),
       coverage: {
         capture: structuredClone(current.coverage ?? { status: 'unknown' }),
         text: {
@@ -242,9 +271,8 @@ function contextData(input: ContextInput) {
           omitted: 0,
           detailsTruncated: false,
         },
-        /** 裁剪不丢弃原始附件；客户端按 artifactRefs 的 DOM/RUNTIME 身份分页读取。 */
-        recovery:
-          '裁剪只影响当前投影；原始已采集内容可按 artifactRefs 使用 evidence_read(content, offset, limit) 读取。旧附件目标不得用于当前操作。',
+        /** 裁剪器仅在确有缺口时填充说明，避免每轮重复携带无关提示。 */
+        recovery: undefined as string | undefined,
       },
     },
     history: {
@@ -262,7 +290,12 @@ function contextData(input: ContextInput) {
         ).values(),
       ],
       omittedCommands: input.actionMemory?.omitted ?? 0,
-      excerpts: [...excerpts.values()],
+      excerpts: [...excerpts.values()].map((item) => ({
+        ...item,
+        text: contentKey(item) === currentKey ? undefined : item.text,
+        textRef: contentKey(item) === currentKey ? 'page.text' : undefined,
+        artifactRefs: artifactSections(item.artifactRefs),
+      })),
       omittedExcerpts: 0,
     },
     evidence: input.evidence.map(({ id, kind }) => ({ id, kind })),
@@ -360,7 +393,18 @@ export function boundContext(
     if (changed) context.page.coverage.controls.detailsTruncated = true;
     return changed;
   };
-  let text = JSON.stringify(context);
+  // 说明本身也计入预算，不能在裁剪完成后额外追加导致请求超过上限。
+  const serialize = () => {
+    const { coverage } = context.page;
+    coverage.recovery =
+      coverage.text.truncated ||
+      coverage.controls.omitted > 0 ||
+      coverage.controls.detailsTruncated
+        ? COVERAGE_RECOVERY
+        : undefined;
+    return JSON.stringify(context);
+  };
+  let text = serialize();
   while (text.length > maxContextChars) {
     if (context.history.excerpts.length) {
       context.history.excerpts.shift();
@@ -414,7 +458,7 @@ export function boundContext(
         'CONTEXT_BUDGET_EXCEEDED',
         '固定要求、进度或关键回执超过模型上下文上限',
       );
-    text = JSON.stringify(context);
+    text = serialize();
   }
   return { text, context };
 }

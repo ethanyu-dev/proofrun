@@ -929,7 +929,7 @@ test('批次任一请求身份失效时不留下部分查询回执', async () =>
           requestId: 'invalid',
         },
       ]);
-    assert.deepEqual(context.state.networkReads, []);
+    assert.equal(context.state.networkReads, undefined);
     assert.equal(context.page.network.detail, null);
     assert.equal(context.page.network.filter.urlContains, null);
     assert.equal(context.page.network.additionalResults, undefined);

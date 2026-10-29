@@ -4,6 +4,8 @@ import { AgentFault } from '../faults.js';
 
 /** 默认只展开一页摘要；剩余请求通过筛选或偏移读取，不丢弃原始记录。 */
 const PAGE_SIZE = 20;
+/** 未主动查询时只展示发现线索，完整分页仍由 network.requests 按需读取。 */
+const PREVIEW_SIZE = 5;
 
 /** 查询状态绑定观察快照；页面刷新后不能把旧详情当成当前事实。 */
 export interface NetworkSelection {
@@ -77,7 +79,11 @@ function snapshot(page: Observation) {
 }
 
 /** 每次投影只返回摘要与最多一条详情；证据内容和所属观察均不被修改。 */
-function singleNetworkView(page: Observation, selection?: NetworkSelection) {
+function singleNetworkView(
+  page: Observation,
+  selection?: NetworkSelection,
+  pageSize = PAGE_SIZE,
+) {
   const captured = snapshot(page);
   if (!captured) return undefined;
   const { source, entries, evidenceRefs } = captured;
@@ -95,7 +101,7 @@ function singleNetworkView(page: Observation, selection?: NetworkSelection) {
       (query?.status === undefined || row.status === query.status),
   );
   const offset = query?.offset ?? 0;
-  const requests = matched.slice(offset, offset + PAGE_SIZE);
+  const requests = matched.slice(offset, offset + pageSize);
   const selectedIndex = entries.findIndex(
     (entry) => entry.id === query?.requestId,
   );
@@ -171,6 +177,13 @@ export function networkView(
     ...view,
     ...(additionalResults.length ? { additionalResults } : {}),
   };
+}
+
+/** 初次观察保留总数、覆盖和读取游标；不把有限预览当作全部网络证据。 */
+export function networkOverview(
+  page: Observation,
+): ReturnType<typeof networkView> {
+  return singleNetworkView(page, undefined, PREVIEW_SIZE);
 }
 
 /** 工具查询必须属于当前观察且有已交付 NETWORK 证据，不接受外部地址或任意附件。 */

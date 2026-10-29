@@ -17,6 +17,9 @@ unavailable、truncated 或 complete=false 不能证明无异常；无注册与�
 const EXCERPT_PROMPT = `history.excerpts 保留对应观察的正文与 documents，不代表当前状态；
 缺少历史 documents 不能断言当时的 lang，无有效 artifactRefs 时不能用于验收。
 历史目标不能重放。`;
+/** 正文完全相同时仍保留历史证据身份；引用只复用文字，不把历史状态改成当前状态。 */
+const EXCERPT_REF_PROMPT =
+  '历史摘录的 textRef 指向本轮 page.text，表示文字完全相同；证据来源仍使用该历史摘录自身的 artifactRefs。';
 
 /** 出现文档声明后解释其证据含义，不从 URL 推导页面语言或额外验收项。 */
 const DOCUMENT_PROMPT = `语言声明以 page.documents 中主文档（isMainFrame=true）的 lang 为准，
@@ -36,6 +39,9 @@ const PROGRESS_PROMPT = `用可选 progress 保存动作之前已取得的事实
 保存成功后程序才执行后续动作。`;
 const REQUIREMENTS_PROMPT =
   'requirements 按 task.requirements 的原 id 逐项声明 complete/incomplete/blocked。';
+/** 原文引用只在确实去重时解释；引用目标是本轮 task 内已有字段。 */
+const REQUIREMENT_REF_PROMPT =
+  'requirementRef 指向本轮 task 中的原始要求文本，按该字段完整内容执行，不把引用路径当作要求。';
 const CRITERIA_PROMPT =
   'criteria 按原 criterionId 判定 PASSED/FAILED/INCONCLUSIVE。';
 const READING_PROMPT = `readings 只登记已观察面板 itemId 和真实原文 quote。
@@ -52,6 +58,7 @@ export function contextPrompts(context: DecisionContextData): string[] {
       ? KEYBOARD_RECEIPT_PROMPT
       : '',
     history.excerpts.length ? EXCERPT_PROMPT : '',
+    history.excerpts.some((item) => item.textRef) ? EXCERPT_REF_PROMPT : '',
     page.runtime ? RUNTIME_PROMPT : '',
     page.documents?.length ||
     history.excerpts.some((item) => item.documents?.length)
@@ -64,6 +71,9 @@ export function contextPrompts(context: DecisionContextData): string[] {
       ? PROGRESS_PROMPT
       : '',
     task.requirements.length ? REQUIREMENTS_PROMPT : '',
+    task.requirements.some((item) => item.requirementRef)
+      ? REQUIREMENT_REF_PROMPT
+      : '',
     task.kind !== 'browser' && task.criteria.length ? CRITERIA_PROMPT : '',
     hasReadings ? READING_PROMPT : '',
   ].filter(Boolean);

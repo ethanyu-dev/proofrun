@@ -239,7 +239,7 @@ export class ExecutionRuntime {
         throw new ExecutionFault('EVIDENCE_MISMATCH', '当前截图缺少可追溯证据');
       frame.imageArtifact = {
         id: artifact.artifactId,
-        sha256: artifact.sha256,
+        sha256: hash,
       };
     }
     // 先注册回调再发布快照，极快 worker 也不能看到尚未可处理的决定。
