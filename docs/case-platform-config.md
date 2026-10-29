@@ -38,4 +38,4 @@ verification 的 A = min(30, 12 + 2 × max(0, expected 项数 − 1))。其中�
 
 业务预算耗尽不会撤销整个 case。取消、租约丢失、节点断开或浏览器效果未知仍终止执行。清理失败或三分钟到期停止后续清理，清理结果不参与最终业务判定。
 
-升级需一起更新 API、Agent、Console，并执行 API 启动迁移。只有声明 stepBudgetVersion=1 的 worker 能领取新任务，节点须声明 ephemeralProfiles。历史运行中任务及相同 caseId 重提保持冻结快照；新身份重跑默认采用当前策略，`budgetMode: "original"` 可复现原预算。旧 JEV/双跑不能按 original 预算复现，需按当前策略创建新运行。完整说明见 [v2 协议](public-api-v2.md)。
+升级需一起更新 API、Agent、Console，并执行 API 启动迁移。只有声明 stepBudgetVersion=1 的 worker 能领取新任务，节点须声明 ephemeralProfiles。历史运行中任务及相同 caseId 重提保持冻结快照；新身份重跑默认采用当前策略，`budgetMode: "original"` 可复现原预算。完整说明见 [v2 协议](public-api-v2.md)。

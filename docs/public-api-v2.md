@@ -21,9 +21,9 @@ requestId 必填，为 1–80 位字母、数字、下划线或短横线；title
 
 请求的 executionStatus 为 QUEUED / IN_PROGRESS / FINISHED，只表达执行进度；reportPhase 为 PENDING / PARTIAL / FINAL。所有要求组终止后为 FINAL，即使有子报告缺失。非 FINAL 的 reportStatus 为 null；已交付报告中的失败仍由 observedFailureCount 显示。FINAL 时，任一组已确认 FAILED 则汇总 FAILED，所有要求组均 PASSED 才 PASSED，否则 INCONCLUSIVE。两组相反的明确判断另计 confirmedDisagreementCount，不能将组间差异直接解释成产品根因。
 
-uniqueCriteriaCounts 按 `(caseId, criterionId)` 统计一次，包含 total、passed、failed、inconclusive、skipped、pending，后五项之和等于 total；双跑不会把总数翻倍。确认失败优先；否则仍有组未终止计 pending；终止后全部通过计 passed，全部缺失/未验收计 skipped，其余计 inconclusive。请求整体结论还检查完整单组 reportStatus，不能只凭验收项统计推断前置步骤已完成。setup 的显式 expected 保留，policy 不计入，cleanup 单独展示。
+uniqueCriteriaCounts 按 `(caseId, criterionId)` 统计一次，包含 total、passed、failed、inconclusive、skipped、pending，后五项之和等于 total。确认失败优先；否则运行未终止计 pending；终止后全部通过计 passed，全部缺失/未验收计 skipped，其余计 inconclusive。请求整体结论还检查完整单组 reportStatus，不能只凭验收项统计推断前置步骤已完成。setup 的显式 expected 保留，policy 不计入，cleanup 单独展示。
 
-reportCoverage 的 expected、available、missing 明确报告齐全程度；byExecutionMode 分别统计 LLM/JEV 已交付报告，不把未配置模式当成缺报告。响应携带 generatedAt 与 aggregationVersion（当前为 1），页面和 JSON 导出使用同一份服务端快照；部分导出明确标记 partial。清理失败不改变已确认业务通过，证据清理不改变已有结论。
+reportCoverage 的 expected、available、missing 明确报告齐全程度；byExecutionMode 只统计 LLM 已交付报告。响应携带 generatedAt 与 aggregationVersion（当前为 1），页面和 JSON 导出使用同一份服务端快照；部分导出明确标记 partial。清理失败不改变已确认业务通过，证据清理不改变已有结论。
 
 Console 的任务和报告默认按请求展示，提供未归组任务、全部执行明细以及原 taskId 深链接。共享 case 的执行详情列出所有关联请求，取消会影响所有引用同一执行的请求。请求内单 case 重跑向请求重跑接口提交仅含该成员的映射；整体重跑提交全部成员。报告使用各成员当前运行的结果。独立 `/v2/cases/{caseId}/rerun` 仍只新增运行，不推测要更新哪个请求。请求分组不改变调度、浏览器会话或 case 间依赖关系。
 
@@ -118,7 +118,7 @@ executionPlan.evidenceKinds 是验收取证配置与全部步骤（含 setup、c
 
 ## 查询与结果
 
-`POST /v2/cases/{caseId}/rerun` 接收 `{"runId":"本次运行的幂等键"}`，返回 202 和同一 case 的单个 `CaseResultV2`，其中 caseId 不变，taskId/runId 指向新运行。沿用原业务定义、环境和取证类型，新运行统一使用 LLM，默认按当前逐步预算策略生成新任务；可传 `budgetMode: "original"` 复现原预算，缺省为 `"current"`。不复制旧状态或报告。历史双跑只创建一个新的 LLM 运行；旧 JEV/双跑使用 original 预算时返回 RERUN_BUDGET_INCOMPATIBLE。平台配置撤下后仍可重跑；如需采用当前环境配置，改用 `POST /v2/cases` 提交新身份。
+`POST /v2/cases/{caseId}/rerun` 接收 `{"runId":"本次运行的幂等键"}`，返回 202 和同一 case 的单个 `CaseResultV2`，其中 caseId 不变，taskId/runId 指向新运行。沿用原业务定义、环境和取证类型，新运行统一使用 LLM，默认按当前逐步预算策略生成新任务；可传 `budgetMode: "original"` 复现原预算，缺省为 `"current"`。不复制旧状态或报告。平台配置撤下后仍可重跑；如需采用当前环境配置，改用 `POST /v2/cases` 提交新身份。
 
 可额外传 `timeBudget: {"stepTimeoutMs":900000,"cleanupTimeoutMs":600000}`，在所选预算基础上将每个业务步骤至少扩展到 15 分钟、整段清理至少扩展到 10 分钟。两个字段可单独提供，值必须为正整数毫秒；原本更长的步骤（包含等待）不会缩短。动作数、模型请求数及收尾额度不变，业务总时间重新汇总，完整会话仍受 24 小时上限约束。没有逐步预算的历史任务会在新身份上补编译逐步计划。相同 runId 重提始终返回首次冻结的预算；改变额度需要另一个新 runId。
 
@@ -131,7 +131,7 @@ runId 为 1–80 位字母、数字、下划线或短横线，与 caseId 使用�
 
 所有接口沿用部署管理员 Bearer 凭据。结果结构见 [CaseResultV2 Schema](../contracts/schemas/case-result-v2.schema.json) 与 [OpenAPI](../contracts/public-api.openapi.json)。
 
-响应包含 caseId、status、reportStatus、criteriaCounts、result、steps、cleanup。历史双跑额外返回 `comparison: { id, arms }`；arms 按 llm、jev 顺序分别包含 taskId、executionMode 和各自的完整 case 结果（含步骤、清理及排队原因）。顶层字段保持纯 LLM 主组的原有投影，不能用顶层完成或通过推断另一组的状态。单组及历史单组任务省略 comparison。查询、幂等重提和取消均返回相同结构；证据入口允许读取两组及各自清理中已记录的证据。status 为原任务生命周期；result 为原有 outcome、summary、criteria、evidence 结构，无报告时为 null。steps 包含 stepId、status、summary、evidenceRefs、criteria、startedAt、finishedAt；新任务另有 groupId 与 phase，标识 tab 分组及准备/检查/验证阶段。步骤状态为 PENDING、RUNNING、COMPLETED、BLOCKED、ERROR、SKIPPED。
+响应包含 caseId、status、reportStatus、criteriaCounts、result、steps、cleanup。查询、幂等重提和取消均返回同一单执行结构；证据入口只读取本次执行及其清理中已记录的证据。status 为原任务生命周期；result 为原有 outcome、summary、criteria、evidence 结构，无报告时为 null。steps 包含 stepId、status、summary、evidenceRefs、criteria、startedAt、finishedAt；新任务另有 groupId 与 phase，标识 tab 分组及准备/检查/验证阶段。步骤状态为 PENDING、RUNNING、COMPLETED、BLOCKED、ERROR、SKIPPED。
 
 `reportStatus` 是与 Console 验证报告一致的结论，新增字段不改变原有 `status`、`result.outcome` 或清理结果的语义。提交、查询、幂等重提与取消响应均返回：
 
@@ -162,7 +162,7 @@ cleanup 中每项必填 url、exec_order、description，可选 stepId、policy�
 
 steps 按实际执行顺序包含清理步骤；cleanup 仍提供 taskId、status、result 摘要，其中 taskId 就是该组原任务的身份，PENDING 表示尚未进入收尾阶段。清理摘要单独投影自己的步骤结论，result 在原任务报告交付前为 null。原任务报告覆盖业务和清理，清理的 expected 计入总验收项；清理受阻或错误会使整体 outcome 不完整，但不会抹掉已完成的业务验收结论。
 
-新任务在自己的临时会话末尾清理，不再生成 resourceKey 或使用资源锁。DevPass 账号容量由外部租约约束；平台不隔离服务端业务数据，共用账号或业务对象的操作顺序仍需上游协调。历史双跑清理和结果只按原记录读取。
+新任务在自己的临时会话末尾清理，不再生成 resourceKey 或使用资源锁。DevPass 账号容量由外部租约约束；平台不隔离服务端业务数据，共用账号或业务对象的操作顺序仍需上游协调。
 
 升级前已经提交的任务继续使用冻结的独立清理定义；同 caseId 幂等重提不会转换执行方式或创建新执行。新提交的 case 使用同任务收尾；重新执行沿用 caseId 并新增运行。
 
@@ -181,7 +181,7 @@ steps 按实际执行顺序包含清理步骤；cleanup 仍提供 taskId、statu
 
 ## 历史运行软删除
 
-管理员通过 `POST /v1/tasks/{taskId}/delete` 删除一次完整运行，或通过 `POST /v1/tasks/delete` 提交 `{ "ids": ["taskId-1", "taskId-2"] }`，上限 100 个。双跑与历史独立清理共同删除；任一任务仍在运行、清理待执行或会话未核实关闭时整批返回 409。请求级入口为 `POST /v2/requests/{requestId}/delete` 与 `POST /v2/requests/delete`，仍被其他请求引用的执行保留。
+管理员通过 `POST /v1/tasks/{taskId}/delete` 删除一次完整运行，或通过 `POST /v1/tasks/delete` 提交 `{ "ids": ["taskId-1", "taskId-2"] }`，上限 100 个。关联的历史独立清理共同删除；任一任务仍在运行、清理待执行或会话未核实关闭时整批返回 409。请求级入口为 `POST /v2/requests/{requestId}/delete` 与 `POST /v2/requests/delete`，仍被其他请求引用的执行保留。
 
 软删除保留底层记录，隐藏列表与详情，并排除 Case、运行次数、通过率、趋势及关联 Tokens。删除最新运行后默认读取前一条未删除运行；重复删除幂等，删除的运行幂等键不可复活。历史上不同 caseId 的旧重跑不会自动合并。
 

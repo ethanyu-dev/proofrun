@@ -175,8 +175,7 @@ test('十二个场景使用现有契约，预算和验收身份由冻结定义�
       bindings(scenario, detail.definition).length,
       scenario.checks.length,
     );
-    assert.ok(callAllowance(value, 'llm') > 0);
-    assert.equal(callAllowance(value, 'jev'), callAllowance(value, 'llm') * 2);
+    assert.ok(callAllowance(value) > 0);
   }
   assert.deepEqual(
     suite('smoke').map((c) => c.id),

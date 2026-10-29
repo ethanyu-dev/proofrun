@@ -97,12 +97,6 @@ export function parseTaskDefinition(text: string): VerificationTask {
         .slice(0, 3)
         .join('；')}`,
     );
-  if (task.comparison)
-    throw new Error(
-      '历史对照任务只能查看；创建新任务请移除 comparison 并使用 LLM。',
-    );
-  if (task.executionMode && task.executionMode !== 'llm')
-    throw new Error('新任务只支持 LLM，JEV 与并行对比已停用。');
   if (
     new Set(task.acceptanceCriteria.map((c) => c.id)).size !==
     task.acceptanceCriteria.length

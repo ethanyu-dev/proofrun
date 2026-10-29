@@ -9,7 +9,7 @@ members AS (
 
 /**
  * 一条请求成员对应任务页的一条 Case 展示行，复用成员在各自请求内分别计数。
- * 按请求创建日归属，只从该请求当前关联中选择展示组；历史双跑与 Console 一样优先 JEV。
+ * 按请求创建日归属，只从该请求当前关联中选择展示组。
  * 只读取判定所需字段，不向应用层加载报告正文和证据。
  * 缺最终报告时按步骤定义取首条保存记录，与 Case 详情投影一致，保留异常结束前已证实的失败。
  */
@@ -17,7 +17,7 @@ export const DASHBOARD_CASES_SQL = `
 WITH ${REQUEST_MEMBERS_SQL}, displayed_cases AS (
   SELECT DISTINCT ON (request_id,case_id) request_created_at,task_id
   FROM members WHERE request_created_at >= $1::timestamptz AND request_created_at < $2::timestamptz
-  ORDER BY request_id,case_id,CASE execution_mode WHEN 'jev' THEN 0 ELSE 1 END
+  ORDER BY request_id,case_id,task_id
 )
 SELECT to_char(c.request_created_at AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD') AS date,
   t.state,
@@ -71,12 +71,12 @@ SELECT to_char(at AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD') AS date,kind,
   sum(legacy) AS legacy
 FROM usage GROUP BY date,kind`;
 
-/** 当前关联运行按运行创建日计数，复用和双跑各合并一次；不包含被替换的历史运行。 */
+/** 当前关联运行按运行创建日计数，复用按任务身份去重；不包含被替换的历史运行。 */
 export const DASHBOARD_RUNS_SQL = `
 WITH ${REQUEST_MEMBERS_SQL}, ids AS (
   SELECT DISTINCT task_id FROM members
 )
 SELECT to_char(min(t.created_at) AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD') AS date
 FROM ids JOIN pr_tasks t ON t.id=ids.task_id
-GROUP BY coalesce(t.definition#>>'{comparison,id}',t.id)
+GROUP BY t.id
 HAVING min(t.created_at) >= $1::timestamptz AND min(t.created_at) < $2::timestamptz`;

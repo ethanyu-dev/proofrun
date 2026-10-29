@@ -8,7 +8,7 @@ export interface ContextModule {
   value: unknown;
 }
 
-/** 只为已存档字段提供标签；旧工作流和 JEV 标签用于历史读取，不参与新请求构造。 */
+/** 只为已存档字段提供标签；不参与新请求构造。 */
 const CONTEXT_LABELS: Record<string, string> = {
   task: '任务定义与验收标准',
   state: '执行阶段与已保存进度',
@@ -22,8 +22,6 @@ const CONTEXT_LABELS: Record<string, string> = {
   evidence: '可引用证据',
   feedback: '错误与规划反馈',
   truncated: '上下文裁剪标记',
-  jevProgress: 'JEV 进度',
-  omittedTargets: 'JEV 省略目标数量',
   field: '待填写字段',
   page: '当前页面正文',
 };
@@ -108,17 +106,10 @@ export function contextModules(
   }
   if (request.tools !== undefined)
     modules.push({ title: '工具定义', path: 'tools', value: request.tools });
-  if (request.questions !== undefined)
-    modules.push({
-      title: 'JEV 问题与候选',
-      path: 'questions',
-      value: request.questions,
-    });
   const {
     messages: _messages,
     state: _state,
     tools: _tools,
-    questions: _questions,
     ...parameters
   } = request;
   modules.push({ title: '模型调用参数', path: 'request', value: parameters });

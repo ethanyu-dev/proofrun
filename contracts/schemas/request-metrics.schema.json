@@ -12,11 +12,7 @@
     },
     "execution": {
       "$ref": "token-usage.schema.json",
-      "description": "所有关联验证执行的已采集用量，按任务去重，包含双组及历史独立清理。"
-    },
-    "jev": {
-      "$ref": "token-usage.schema.json",
-      "description": "真实 JEV 候选选择调用，不按 Case 执行模式归类。"
+      "description": "所有关联验证执行的已采集用量，按任务去重，包含独立清理。"
     },
     "llm": {
       "$ref": "token-usage.schema.json",
@@ -28,5 +24,5 @@
       "description": "验证执行已采集 Tokens 的合计。"
     }
   },
-  "required": ["executionElapsedMs", "execution", "jev", "llm", "totalTokens"]
+  "required": ["executionElapsedMs", "execution", "llm", "totalTokens"]
 }

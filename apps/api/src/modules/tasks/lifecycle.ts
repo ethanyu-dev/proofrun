@@ -1,7 +1,7 @@
 import { Database } from '../../db.js';
 import { ApiError } from '../../domain.js';
 
-/** 批量删除有界；执行身份兼容历史双跑与清理前缀。 */
+/** 批量删除有界；执行身份包含业务与清理前缀。 */
 const MAX_DELETE = 100;
 const TASK_ID = /^[A-Za-z0-9_-]{1,160}$/;
 
@@ -69,9 +69,9 @@ export class TaskLifecycle {
         if (active.rowCount)
           throw new ApiError(409, 'TASK_ACTIVE', '请等待任务结束后删除');
       }
-      // comparison.id 表示本轮双跑；sourceTaskId 可能指向更早的普通任务，不能用于级联删除。
+      // 独立清理归属其父任务，普通任务只删除自身关联。
       const selected = await client.query(
-        `SELECT t.id,coalesce('comparison:' || (p.definition#>>'{comparison,id}'),'task:' || p.id,'comparison:' || (t.definition#>>'{comparison,id}'),'task:' || t.id) AS root FROM pr_tasks t LEFT JOIN pr_tasks p ON p.id=coalesce(t.definition->>'parentTaskId',(SELECT parent_task_id FROM pr_case_cleanups WHERE task_id=t.id)) WHERE t.id=ANY($1::text[])`,
+        `SELECT t.id,coalesce(p.id,t.id) AS root FROM pr_tasks t LEFT JOIN pr_tasks p ON p.id=coalesce(t.definition->>'parentTaskId',(SELECT parent_task_id FROM pr_case_cleanups WHERE task_id=t.id)) WHERE t.id=ANY($1::text[])`,
         [taskIds],
       );
       if (selected.rowCount !== taskIds.length)
@@ -83,7 +83,7 @@ export class TaskLifecycle {
         deleted_at: Date | null;
       }>(
         `WITH parents AS (
-        SELECT id FROM pr_tasks WHERE coalesce('comparison:' || (definition#>>'{comparison,id}'),'task:' || id)=ANY($1::text[])
+        SELECT id FROM pr_tasks WHERE id=ANY($1::text[])
       ) SELECT id,state,deleted_at FROM pr_tasks WHERE id IN (SELECT id FROM parents)
         OR definition->>'parentTaskId' IN (SELECT id FROM parents)
         OR id IN (SELECT task_id FROM pr_case_cleanups WHERE parent_task_id IN (SELECT id FROM parents))

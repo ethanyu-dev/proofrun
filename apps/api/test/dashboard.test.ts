@@ -115,7 +115,7 @@ test(
         `INSERT INTO pr_tasks(id,definition,definition_hash,state,deadline_at,created_at,finished_at,report) VALUES($1,$2,'fixture',$3,'2099-01-01',$4,$5,$6)`,
         [id, definition, state, at, state === 'QUEUED' ? null : at, report],
       );
-      if (linked && !extra.comparison && extra.purpose !== 'cleanup') {
+      if (linked && extra.purpose !== 'cleanup') {
         await sql.query(
           `INSERT INTO pr_verification_requests(request_id,title,definition_hash,created_at) VALUES($1,$1,'fixture',$2)`,
           [id, at],
@@ -174,16 +174,14 @@ test(
       });
 
       await insertTask('before-midnight', '2024-03-03T15:59:59.999Z', 'PASSED');
-      await insertTask('llm-arm', '2024-03-03T16:00:00Z', 'FAILED', {
-        comparison: { id: 'pair', arm: 'llm' },
-      });
       await insertTask(
-        'jev-arm',
-        '2024-03-03T16:00:00.010Z',
+        'shared-run',
+        '2024-03-03T16:00:00Z',
         'PASSED',
-        { comparison: { id: 'pair', arm: 'jev' } },
+        {},
         'COMPLETED',
         { modelCalls: 1, promptTokens: 9999, completionTokens: 9999 },
+        false,
       );
       await insertTask(
         'unknown',
@@ -205,16 +203,12 @@ test(
           [id],
         );
         await sql.query(
-          `INSERT INTO pr_verification_request_cases(request_id,case_id,task_id,position,definition_hash,execution_origin) VALUES($1,'shared-case','llm-arm',0,'fixture','reused')`,
-          [id],
-        );
-        await sql.query(
-          `INSERT INTO pr_verification_request_arms(request_id,case_id,execution_mode,task_id) VALUES($1,'shared-case','jev','jev-arm')`,
+          `INSERT INTO pr_verification_request_cases(request_id,case_id,task_id,position,definition_hash,execution_origin) VALUES($1,'shared-case','shared-run',0,'fixture','reused')`,
           [id],
         );
       }
 
-      // 范围：JEV 展示组、请求成员计数、北京时间闭开区间；不验证 Agent 判定真实性。
+      // 范围：请求成员计数、北京时间闭开区间；不验证 Agent 判定真实性。
       await suite.test(
         'Case 结果按请求创建日分组，周期通过率按分母加权',
         async () => {
@@ -242,7 +236,7 @@ test(
       );
 
       await sql.query(
-        `INSERT INTO pr_case_cleanups(parent_task_id,task_id,definition,state) VALUES('jev-arm','cleanup','{}','SKIPPED')`,
+        `INSERT INTO pr_case_cleanups(parent_task_id,task_id,definition,state) VALUES('shared-run','cleanup','{}','SKIPPED')`,
       );
 
       await insertCall(
@@ -252,12 +246,30 @@ test(
         500,
         50,
       );
-      await insertCall('jev-arm', 'jev-call', '2024-03-03T16:00:00Z', 100, 20);
-      await insertCall('llm-arm', 'llm-call', '2024-03-04T01:00:00Z', 200, 40);
-      await insertCall('jev-arm', 'jev-retry', '2024-03-04T02:00:00Z', null, 5);
       await insertCall(
-        'jev-arm',
-        'jev-pending',
+        'shared-run',
+        'first-call',
+        '2024-03-03T16:00:00Z',
+        100,
+        20,
+      );
+      await insertCall(
+        'shared-run',
+        'llm-call',
+        '2024-03-04T01:00:00Z',
+        200,
+        40,
+      );
+      await insertCall(
+        'shared-run',
+        'retry-call',
+        '2024-03-04T02:00:00Z',
+        null,
+        5,
+      );
+      await insertCall(
+        'shared-run',
+        'pending-call',
         '2024-03-04T03:00:00Z',
         null,
         null,
@@ -390,7 +402,7 @@ test(
             false,
           );
           await sql.query(
-            `UPDATE pr_tasks SET definition=definition || '{"caseV2Definition":{"caseId":"shared-case"}}' WHERE id IN ('llm-arm','jev-arm')`,
+            `UPDATE pr_tasks SET definition=definition || '{"caseV2Definition":{"caseId":"shared-case"}}' WHERE id IN ('shared-run','shared-run')`,
           );
           assert.deepEqual(await reconcile(), before);
 
@@ -406,10 +418,7 @@ test(
           assert.equal(reused.runs, before.runs);
           assert.deepEqual(reused.tokens, before.tokens);
 
-          // 只切换一个请求，另一个共享请求保留旧 JEV 结果；更新请求不改创建日。
-          await sql.query(
-            `DELETE FROM pr_verification_request_arms WHERE request_id='request-two'`,
-          );
+          // 只切换一个请求，另一个共享请求保留原执行结果；更新请求不改创建日。
           await sql.query(
             `UPDATE pr_verification_request_cases SET task_id='independent-rerun' WHERE request_id='request-two'`,
           );

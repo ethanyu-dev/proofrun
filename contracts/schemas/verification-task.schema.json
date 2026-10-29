@@ -159,28 +159,9 @@
         }
       }
     },
-    "comparison": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["id", "arm", "sourceTaskId"],
-      "description": "历史双组对比身份，仅供读取原执行记录；新任务不接受此字段，重跑创建 LLM 单组。",
-      "properties": {
-        "id": {
-          "type": "string",
-          "pattern": "^[A-Za-z0-9_-]{1,100}$"
-        },
-        "arm": {
-          "enum": ["llm", "jev"]
-        },
-        "sourceTaskId": {
-          "type": "string",
-          "pattern": "^[A-Za-z0-9_-]{1,128}$"
-        }
-      }
-    },
     "executionMode": {
-      "enum": ["parallel", "llm", "jev"],
-      "description": "新建及重跑仅支持 llm，省略时按纯 LLM 执行。jev、parallel 仅保留用于读取历史记录，不能用于新执行。"
+      "enum": ["llm"],
+      "description": "仅支持 llm，省略时按 LLM 执行。"
     },
     "caseV2Definition": {
       "$ref": "verification-case-v2.schema.json",
@@ -429,7 +410,6 @@
           "caseDefinition": false,
           "caseV2Definition": false,
           "profilePlan": false,
-          "comparison": false,
           "purpose": false,
           "parentTaskId": false,
           "cleanupStepIds": false,

@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { Database } from '../src/db.js';
@@ -126,10 +125,10 @@ test(
     /** SQL 仅建立最小合法状态，人工请求仍通过真实控制权服务生成。 */
     async function create(
       runKey = randomUUID(),
-      arm?: 'llm' | 'jev',
+      suffix?: string,
       purpose = 'verification',
     ) {
-      const id = arm ? `${runKey}-${arm}` : runKey;
+      const id = suffix ? `${runKey}-${suffix}` : runKey;
       const definition = {
         ...task('feishu'),
         taskId: id,
@@ -139,15 +138,6 @@ test(
           allowIntervention: true,
         },
         purpose,
-        ...(arm
-          ? {
-              comparison: {
-                id: runKey,
-                sourceTaskId: 'different-source-task',
-                arm,
-              },
-            }
-          : {}),
       };
       await db.query(
         "INSERT INTO pr_tasks(id,definition,definition_hash,state,deadline_at) VALUES($1,$2,$1,'QUEUED',clock_timestamp()+interval '1 hour')",
@@ -170,10 +160,6 @@ test(
           await client.query(
             `INSERT INTO pr_verification_request_cases(request_id,case_id,task_id,position,definition_hash,execution_origin) VALUES($1,$2,$2,$3,$2,'created')`,
             [requestId, id, position],
-          );
-          await client.query(
-            `INSERT INTO pr_verification_request_arms(request_id,case_id,task_id,execution_mode) VALUES($1,$2,$2,'jev')`,
-            [requestId, id],
           );
         }
       });
@@ -449,20 +435,14 @@ test(
         },
       );
 
-      // 范围：历史双组在首次扫描前连续重跑、事务回滚与独立运行隔离；不验证真实双执行器或群投递。
+      // 范围：单执行在首次扫描前连续重跑、事务回滚与独立运行隔离；不验证真实执行器或群投递。
       await suite.test(
-        '快速重跑保留全部旧组归属，失败切换不留下通知记录',
+        '快速重跑保留全部旧运行归属，失败切换不留下通知记录',
         async () => {
           const pair = randomUUID();
-          const old = await create(pair, 'llm');
-          const sibling = await create(pair, 'jev');
+          const old = await create(pair);
           const key = await request([old]);
-          await db.query(
-            'UPDATE pr_verification_request_arms SET task_id=$2 WHERE request_id=$1',
-            [key.slice('request:'.length), sibling],
-          );
           await finish(old, 'ERROR', 'FAILED');
-          await finish(sibling);
           const next = await create();
           await assert.rejects(rerun(key, old, next, true), /fixture-rollback/);
           assert.equal(
@@ -567,53 +547,6 @@ test(
         },
       );
 
-      // 范围：升级保留活动请求旧消息身份、抑制已结束历史请求重发；只执行真实迁移 SQL，不访问飞书。
-      await suite.test(
-        '旧 case 通知迁移到请求，继续更新原主卡片和 HITL 卡片',
-        async () => {
-          const id = await create();
-          await activate(id);
-          await control.change(id, WORKER, 'request', 0, '升级前登录');
-          const before = await sync(id, 2);
-          const history = await create();
-          await finish(history);
-          await sync(history, 2);
-          const key = await request([id]);
-          const historicalKey = await request([history]);
-          // 模拟升级前按控制事件命名的 HITL 记录，迁移不能另建消息身份。
-          await db.query(
-            "UPDATE pr_feishu_messages SET event_key='control-999',event=jsonb_set(event,'{key}','\"control-999\"') WHERE run_key=$1 AND event->>'kind'='HITL'",
-            [id],
-          );
-          await db.query(
-            await readFile(
-              new URL(
-                '../migrations/026-feishu-request-cards.sql',
-                import.meta.url,
-              ),
-              'utf8',
-            ),
-          );
-          const migrated = await sync(key, 2);
-          assert.deepEqual(
-            new Set(migrated.map((row) => row.message_id)),
-            new Set(before.map((row) => row.message_id)),
-          );
-          assert.ok(
-            JSON.stringify(
-              remote.cards.get(
-                migrated.find((row) => row.event.kind === 'SUBMITTED')!
-                  .message_id,
-              ),
-            ).includes('验证状态：等待人工处理'),
-          );
-          assert.equal((await messages(historicalKey)).length, 0);
-          await finish(id);
-          await sync(key, 3);
-          assert.equal((await messages(id)).length, 0);
-        },
-      );
-
       // 范围：真实控制面事件、恢复不新增消息、旧卡片状态和按钮同步；不验证真实飞书渲染。
       await suite.test(
         '提交和首次 HITL 发卡片，恢复原位更新，完成另发报告',
@@ -698,39 +631,6 @@ test(
               '/#/hitl/',
             ),
           );
-      });
-
-      // 范围：比较组以本轮 comparison.id 聚合，不能错误关联 sourceTaskId；单组结束不发整例完成。
-      await suite.test('双组 Case 仅提交一次，两组结束后才发完成', async () => {
-        const key = randomUUID();
-        const a = await create(key, 'llm');
-        const b = await create(key, 'jev');
-        await activate(a);
-        await activate(b);
-        await control.change(a, WORKER, 'request', 0, 'A 登录');
-        await control.change(b, WORKER, 'request', 0, 'B 登录');
-        let rows = await sync(key, 2);
-        for (const row of rows) {
-          const body = JSON.stringify(remote.cards.get(row.message_id));
-          assert.ok(body.includes(`处理任务 ${a}`));
-          assert.ok(body.includes(`处理任务 ${b}`));
-          assert.ok(!body.includes('different-source-task'));
-        }
-        await finish(a);
-        for (let i = 0; i < 3; i++) await tick();
-        assert.equal(
-          (await messages(key)).some((row) => row.event.kind === 'COMPLETED'),
-          false,
-        );
-        await finish(b, 'TIMED_OUT', 'INCONCLUSIVE');
-        rows = await sync(key, 3);
-        for (const row of rows) {
-          const body = JSON.stringify(remote.cards.get(row.message_id));
-          assert.ok(body.includes('执行已结束'));
-          assert.ok(body.includes('已超时'));
-          assert.ok(body.includes('验收通过'));
-          assert.ok(body.includes('证据不足'));
-        }
       });
 
       // 范围：送达回执丢失后跨 API/数据库重启重用 uuid 和原始内容，随后补最新状态；不保证超过一小时仍可去重。

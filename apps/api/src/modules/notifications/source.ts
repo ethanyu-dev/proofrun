@@ -17,8 +17,6 @@ interface TaskFacts {
   case_id: string;
   /** 卡片验证目标，不包含完整任务配置。 */
   objective: string;
-  /** 历史比较任务仍需等待完整成员结束，但卡片不再展示执行模式。 */
-  comparison: boolean;
   /** 持久生命周期及提交、结束事件时间。 */
   state: string;
   created_at: Date;
@@ -73,7 +71,7 @@ export async function readCaseSnapshot(
     await client.query<TaskFacts>(
       `SELECT t.id,COALESCE(t.definition#>>'{caseV2Definition,caseId}',t.definition#>>'{caseDefinition,caseId}',$1) AS case_id,
         t.definition->>'objective' AS objective,
-        t.definition ? 'comparison' AS comparison,t.state,t.created_at,t.finished_at,
+        t.state,t.created_at,t.finished_at,
         CASE WHEN t.report IS NULL THEN NULL ELSE jsonb_build_object(
           'executionDisposition',t.report->'executionDisposition','verdict',t.report->'verdict',
           'steps',(SELECT coalesce(jsonb_agg(jsonb_build_object('stepId',s->'stepId','status',s->'status')),'[]'::jsonb) FROM jsonb_array_elements(t.report->'steps') s),
@@ -90,7 +88,7 @@ export async function readCaseSnapshot(
         FROM pr_tasks t LEFT JOIN pr_executions e ON e.task_id=t.id
         LEFT JOIN pr_sessions s ON s.execution_id=e.id
         LEFT JOIN pr_interventions h ON h.execution_id=e.id AND h.revision=e.control_revision AND h.completed_at IS NULL
-        WHERE (($2::text[] IS NULL AND COALESCE(t.definition#>>'{comparison,id}',t.id)=$1) OR t.id=ANY($2::text[]))
+        WHERE (($2::text[] IS NULL AND t.id=$1) OR t.id=ANY($2::text[]))
         AND COALESCE(t.definition->>'purpose','verification')<>'cleanup'
         AND NOT EXISTS(SELECT 1 FROM pr_node_profiles p WHERE p.task_id=t.id)
         ORDER BY t.id`,
@@ -162,8 +160,7 @@ export async function readCaseSnapshot(
     };
   });
   const terminal =
-    rows.length >=
-      (taskIds?.length ?? (rows.some((row) => row.comparison) ? 2 : 1)) &&
+    rows.length >= (taskIds?.length ?? 1) &&
     rows.every((row) => !ACTIVE.has(row.state));
   const state = terminal
     ? rows.every((row) => row.state === 'COMPLETED')

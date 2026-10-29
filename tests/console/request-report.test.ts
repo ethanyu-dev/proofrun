@@ -64,12 +64,6 @@ test('报告直接展示汇总与 Case，不生成或轮询分析', async (conte
             totalTokens: 577300,
             calls: 20,
           },
-          jev: {
-            promptTokens: 100000,
-            completionTokens: 5000,
-            totalTokens: 105000,
-            calls: 12,
-          },
           llm: {
             promptTokens: 454787,
             completionTokens: 17513,
@@ -92,7 +86,6 @@ test('报告直接展示汇总与 Case，不生成或轮询分析', async (conte
     assert.match(text, /未能判定/);
     assert.match(text, /4 分 33 秒/);
     assert.match(text, /验证 Tokens 合计577,300/);
-    assert.match(text, /JEV（历史）105,000/);
     assert.match(text, /LLM472,300/);
     assert.doesNotMatch(
       text,

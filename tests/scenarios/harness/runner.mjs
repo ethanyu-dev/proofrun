@@ -36,7 +36,7 @@ const ACTIVE = new Set(['QUEUED', 'RUNNING']);
 const exec = promisify(execFile);
 
 /** 统计产品现有逐步上限，派发前预留整例额度；不因样本失败追加次数。 */
-export function callAllowance(input, mode) {
+export function callAllowance(input) {
   const cleanupStepIds = input.cleanup.map((s) => s.stepId);
   const budget = compileStepBudget({
     steps: [
@@ -44,7 +44,6 @@ export function callAllowance(input, mode) {
       ...input.cleanup.map((s) => ({ ...s, type: 'setup' })),
     ],
     cleanupStepIds,
-    executionMode: mode,
   });
   return (
     budget.steps.reduce((n, step) => n + step.maxModelCalls, 0) +
@@ -344,7 +343,7 @@ export async function run(options) {
       const input = definition(scenario, sample.id, options.fixtureUrl);
       if (!validateVerificationCaseV2(input))
         throw new Error('场景定义不满足 Case v2 Schema');
-      const allowance = callAllowance(input, options.mode);
+      const allowance = callAllowance(input);
       if (sample.submissionIntentAt) reservedCalls += allowance;
       if (
         sample.result?.closureVerified &&

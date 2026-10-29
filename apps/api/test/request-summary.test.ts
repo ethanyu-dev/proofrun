@@ -99,16 +99,11 @@ test('请求摘要的一致性与可恢复刷新', { timeout: 60_000 }, async (s
         VALUES($1,$2,'fixture','QUEUED',now()+interval '1 hour') ON CONFLICT DO NOTHING`,
           [task, DEFINITION],
         );
-      await client.query(
-        `INSERT INTO pr_verification_request_cases(request_id,case_id,task_id,position,definition_hash,execution_origin)
-        VALUES($1,$1,$2,0,'fixture','created')`,
-        [id, taskIds[0]],
-      );
       for (const [i, task] of taskIds.entries())
         await client.query(
-          `INSERT INTO pr_verification_request_arms(request_id,case_id,task_id,execution_mode)
-        VALUES($1,$1,$2,$3)`,
-          [id, task, i === 0 ? 'llm' : 'jev'],
+          `INSERT INTO pr_verification_request_cases(request_id,case_id,task_id,position,definition_hash,execution_origin)
+           VALUES($1,$2,$3,$4,'fixture','created')`,
+          [id, `${id}-${i}`, task, i],
         );
     });
   };
@@ -120,7 +115,7 @@ test('请求摘要的一致性与可恢复刷新', { timeout: 60_000 }, async (s
     return value;
   };
   try {
-    // 范围：共享任务、双跑分歧、缺报告、重复标准与清理隔离；报告是人为注入的事实。
+    // 范围：共享任务、多 case 结果、缺报告、重复标准与清理隔离；报告是人为注入的事实。
     await suite.test(
       '所有状态变化与详情同口径，共享任务更新全部请求',
       async () => {
@@ -151,7 +146,10 @@ test('请求摘要的一致性与可恢复刷新', { timeout: 60_000 }, async (s
           "UPDATE pr_tasks SET state='COMPLETED',report=$2 WHERE id=$1",
           ['second-arm', report('FAILED')],
         );
-        assert.equal((await equal('shared-one')).confirmedDisagreementCount, 2);
+        assert.equal(
+          (await equal('shared-one')).uniqueCriteriaCounts.failed,
+          2,
+        );
         await db.query('UPDATE pr_tasks SET report=$2 WHERE id=$1', [
           'shared-task',
           report('PASSED', true),
@@ -295,7 +293,7 @@ test('请求摘要的一致性与可恢复刷新', { timeout: 60_000 }, async (s
     // 范围：分批重建、归属删除、启动恢复；不验证生产备份恢复过程。
     await suite.test('摘要可重建，启动继续未完成批次', async () => {
       await db.query(
-        "DELETE FROM pr_verification_request_arms WHERE request_id='shared-one' AND execution_mode='jev'",
+        "DELETE FROM pr_verification_request_cases WHERE request_id='shared-one' AND task_id='second-arm'",
       );
       assert.equal((await equal('shared-one')).executionCounts.total, 1);
       await db.query('DELETE FROM pr_request_summaries');
@@ -336,25 +334,6 @@ test('请求摘要的一致性与可恢复刷新', { timeout: 60_000 }, async (s
       );
       assert.equal(await rebuildRequestSummaries(db), 108);
       assert.equal((await equal('rollback')).caseCount, 1);
-    });
-    // 范围：已有请求从 29 号迁移升级并回填；通过移除新增派生结构模拟旧库，不改原始任务。
-    await suite.test('旧库迁移保留全部业务事实并回填摘要', async () => {
-      await db.query(`DROP FUNCTION pr_invalidate_task_requests() CASCADE;
-        DROP FUNCTION pr_invalidate_request_summary() CASCADE;
-        DROP FUNCTION pr_mark_request_summary(text);
-        DROP TABLE pr_request_summary_dirty,pr_request_summaries;
-        DELETE FROM pr_migrations WHERE version=30`);
-      await db.close();
-      db = new Database(url.toString());
-      await db.start();
-      reader = new RequestReader(db, 'http://localhost');
-      assert.equal(
-        (await db.query('SELECT count(*)::int n FROM pr_request_summaries'))
-          .rows[0]!.n,
-        108,
-      );
-      await equal('shared-one');
-      await equal('racing');
     });
   } finally {
     await db.close();

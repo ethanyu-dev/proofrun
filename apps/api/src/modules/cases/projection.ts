@@ -96,9 +96,8 @@ export function projectCase(
   cleanup: CleanupFacts | null,
   publicUrl: string,
   detail = true,
-): Omit<CaseResultV2, 'comparison'> {
-  const runId =
-    task.definition.comparison?.sourceTaskId ?? task.definition.taskId;
+): CaseResultV2 {
+  const runId = task.definition.taskId;
   return {
     caseId,
     runId,

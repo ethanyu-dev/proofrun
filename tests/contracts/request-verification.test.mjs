@@ -11,7 +11,7 @@ function member(verdicts, status = 'COMPLETED') {
     criteria: verdicts.map((_, i) => ({ criterionId: `c${i}` })),
     arms: [
       {
-        executionMode: 'jev',
+        executionMode: 'llm',
         result: {
           status,
           reportStatus: verdicts.every((value) => value === 'PASSED')
@@ -53,16 +53,9 @@ test('验证状态不把执行结束、缺失或未验收当成成功', () => {
   noReport.arms[0].result.result = null;
   assert.equal(requestCaseVerification(noReport).status, 'unknown');
 });
-// 范围：请求按 case 统计，历史双跑和重复记录不会抬高通过数；不覆盖服务端读事务。
+// 范围：请求按 case 统计，重复记录不会抬高通过数；不覆盖服务端读事务。
 test('总体通过数以全部通过的 case 计数', () => {
   const success = member(['PASSED']);
-  success.arms.unshift({
-    executionMode: 'llm',
-    result: {
-      status: 'COMPLETED',
-      result: { criteria: [{ criterionId: 'c0', verdict: 'FAILED' }] },
-    },
-  });
   const counts = requestVerification({
     cases: [
       success,

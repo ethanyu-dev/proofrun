@@ -15,35 +15,29 @@ const require = createRequire(
 );
 const { createElement, act } = require('react');
 const { renderToStaticMarkup } = require('react-dom/server');
-const api = new ApiClient('fixture-comparison-credential');
+const api = new ApiClient('fixture-report-credential');
 
-// 范围：任一组的报告详情均标识双跑模式及耗时；静态渲染不覆盖入口点击和另一组的接口加载。
-test('双跑报告从任一组进入都标识对照模式', () => {
-  for (const arm of ['llm', 'jev'] as const) {
-    const task = fixture(arm);
-    const report = renderToStaticMarkup(
-      createElement(ReportDetails, { api, task }),
-    );
-    assert.doesNotMatch(report, /当前仅展示/);
-    assert.match(report, /LLM \/ LLM \+ JEV/);
-    assert.match(report, /历史对照/);
-    assert.match(report, /JEV 与双跑模式已停用/);
-    assert.match(report, /执行时长/);
-  }
+// 范围：当前报告显示执行方式与耗时；静态渲染不覆盖真实浏览器执行。
+test('报告标识单 LLM 执行', () => {
+  const report = renderToStaticMarkup(
+    createElement(ReportDetails, { api, task: fixture('first') }),
+  );
+  assert.match(report, /纯 LLM/);
+  assert.match(report, /执行时长/);
 });
 
-/** 两组刻意采用不同报告、节点及清理状态，使跨组混用不能被相同夹具掩盖。 */
-function fixture(arm: 'llm' | 'jev'): TaskDetail {
-  const id = `fixture-pair-${arm}`;
+/** 两个独立任务刻意采用不同报告、节点及清理状态，使跨任务混用不能被相同夹具掩盖。 */
+function fixture(arm: 'first' | 'second'): TaskDetail {
+  const id = `fixture-run-${arm}`;
   return {
     id,
     state: 'COMPLETED',
-    reportStatus: arm === 'llm' ? 'PASSED' : 'INCONCLUSIVE',
+    reportStatus: arm === 'first' ? 'PASSED' : 'INCONCLUSIVE',
     criteriaCounts: {
       total: 1,
-      passed: arm === 'llm' ? 1 : 0,
+      passed: arm === 'first' ? 1 : 0,
       failed: 0,
-      inconclusive: arm === 'llm' ? 0 : 1,
+      inconclusive: arm === 'first' ? 0 : 1,
       skipped: 0,
     },
     created_at: '2026-09-28T00:00:00Z',
@@ -54,11 +48,10 @@ function fixture(arm: 'llm' | 'jev'): TaskDetail {
     definition: {
       protocolVersion: '0.1',
       taskId: id,
-      objective: '对照夹具',
+      objective: '报告夹具',
       target: { url: 'https://example.test' },
       environment: { id: 'fixture', nodePool: 'fixture' },
       budget: { maxActions: 10, timeoutMs: 1200000 },
-      comparison: { id: 'fixture-pair', arm, sourceTaskId: 'fixture-source' },
       acceptanceCriteria: [
         {
           id: 'result',
@@ -76,9 +69,9 @@ function fixture(arm: 'llm' | 'jev'): TaskDetail {
         lease_expires_at: '2026-09-28T00:01:00Z',
         session_id: `session-${arm}`,
         node_id: `node-${arm}`,
-        session_state: arm === 'llm' ? 'CLOSED' : 'CLOSING',
-        closure_verified: arm === 'llm',
-        action_count: arm === 'llm' ? 3 : 7,
+        session_state: arm === 'first' ? 'CLOSED' : 'CLOSING',
+        closure_verified: arm === 'first',
+        action_count: arm === 'first' ? 3 : 7,
         control_mode: 'AUTO',
         control_revision: 0,
         control_reason: null,
@@ -89,12 +82,12 @@ function fixture(arm: 'llm' | 'jev'): TaskDetail {
       taskId: id,
       lifecycle: 'COMPLETED',
       executionDisposition: 'EXECUTED',
-      verdict: arm === 'llm' ? 'PASSED' : 'INCONCLUSIVE',
+      verdict: arm === 'first' ? 'PASSED' : 'INCONCLUSIVE',
       summary: `REPORT-${arm}`,
       criteria: [
         {
           criterionId: 'result',
-          verdict: arm === 'llm' ? 'PASSED' : 'INCONCLUSIVE',
+          verdict: arm === 'first' ? 'PASSED' : 'INCONCLUSIVE',
           summary: `CRITERION-${arm}`,
           evidenceRefs: [`artifact-${arm}`],
         },
@@ -123,7 +116,7 @@ function renderControl(task: TaskDetail): string {
 
 // 范围：自动执行及已结束任务不显示待办，即使数据库保留 HUMAN；不验证后台控制状态迁移。
 test('人工入口只出现在仍待处理的执行中', () => {
-  const task = fixture('llm');
+  const task = fixture('first');
   task.state = 'RUNNING';
   task.executions[0].state = 'RUNNING';
   assert.equal(renderControl(task), '');
@@ -142,141 +135,94 @@ test('人工入口只出现在仍待处理的执行中', () => {
   assert.equal(renderControl(task), '');
 });
 
-// 范围：交接阶段与人工阶段的提示以及两组原因隔离；不验证异步链接获取或真实浏览器操作。
+// 范围：交接阶段与人工阶段的提示以及两个独立任务原因隔离；不验证异步链接获取或真实浏览器操作。
 test('顶部待办区分交接与可处理状态且不再展示操作表', () => {
-  const llm = fixture('llm');
-  const jev = fixture('jev');
-  for (const task of [llm, jev]) {
+  const first = fixture('first');
+  const second = fixture('second');
+  for (const task of [first, second]) {
     task.state = 'RUNNING';
     task.executions[0].state = 'RUNNING';
     task.executions[0].control_reason = `请登录 ${task.id}`;
   }
-  llm.executions[0].control_mode = 'REQUESTED';
-  jev.executions[0].control_mode = 'HUMAN';
-  const waiting = renderControl(llm);
-  const human = renderControl(jev);
+  first.executions[0].control_mode = 'REQUESTED';
+  second.executions[0].control_mode = 'HUMAN';
+  const waiting = renderControl(first);
+  const human = renderControl(second);
   assert.ok(waiting.includes('等待执行交接'));
   assert.ok(!waiting.includes('正在获取处理入口'));
   assert.ok(human.includes('需要人工处理'));
   assert.ok(human.includes('正在获取处理入口'));
-  assert.ok(waiting.includes('请登录 fixture-pair-llm'));
-  assert.ok(!waiting.includes('请登录 fixture-pair-jev'));
-  assert.ok(human.includes('请登录 fixture-pair-jev'));
-  assert.ok(!human.includes('请登录 fixture-pair-llm'));
+  assert.ok(waiting.includes('请登录 fixture-run-first'));
+  assert.ok(!waiting.includes('请登录 fixture-run-second'));
+  assert.ok(human.includes('请登录 fixture-run-second'));
+  assert.ok(!human.includes('请登录 fixture-run-first'));
   assert.ok(!human.includes('<table'));
 });
 
-// 范围：两组结果按验收身份取任一通过并去重，清理、未知和重复记录不增加通过数；不验证模型判断真实性。
-test('双跑通过数按项目合并，不以两组通过数相加或要求同时通过', () => {
-  const llm = fixture('llm');
-  const jev = fixture('jev');
-  const base = llm.definition.acceptanceCriteria[0]!;
-  for (const task of [llm, jev]) {
-    task.definition.acceptanceCriteria = [
-      base,
-      { ...base, id: 'second' },
-      { ...base, id: 'missing' },
-      { ...base, id: 'cleanup', stepId: 'cleanup' },
-    ];
-    task.definition.cleanupStepIds = ['cleanup'];
-    task.report!.criteria.push({
-      ...task.report!.criteria[0]!,
-      criterionId: 'cleanup',
-      verdict: 'PASSED',
-    });
-  }
-  jev.report!.criteria[0]!.verdict = 'FAILED';
-  jev.report!.criteria.push({
-    ...jev.report!.criteria[0]!,
-    criterionId: 'second',
-    verdict: 'PASSED',
-  });
-  assert.deepEqual(verificationProgress([llm, jev]), { passed: 2, total: 3 });
-  assert.deepEqual(verificationProgress([jev, llm]), { passed: 2, total: 3 });
-  llm.report!.criteria.push({ ...llm.report!.criteria[0]! });
-  assert.deepEqual(verificationProgress([llm, jev]), { passed: 1, total: 3 });
-  jev.report!.criteria.push({
-    ...jev.report!.criteria[0]!,
-    criterionId: 'unknown',
-    verdict: 'PASSED',
-  });
-  assert.deepEqual(verificationProgress([llm, jev]), { passed: 1, total: 3 });
+// 范围：单任务清理、未知和重复结果不增加通过数；不验证模型判断真实性。
+test('验收统计排除清理和不明确的记录', () => {
+  const task = fixture('first');
+  const base = task.definition.acceptanceCriteria[0]!;
+  task.definition.acceptanceCriteria = [
+    base,
+    { ...base, id: 'missing' },
+    { ...base, id: 'cleanup', stepId: 'cleanup' },
+  ];
+  task.definition.cleanupStepIds = ['cleanup'];
+  task.report!.criteria.push(
+    { ...task.report!.criteria[0]!, criterionId: 'cleanup' },
+    { ...task.report!.criteria[0]!, criterionId: 'unknown' },
+  );
+  assert.deepEqual(verificationProgress(task), { passed: 1, total: 2 });
+  task.report!.criteria.push({ ...task.report!.criteria[0]! });
+  assert.deepEqual(verificationProgress(task), { passed: 0, total: 2 });
 });
-
-// 范围：报告并列呈现勾叉、独立耗时及证据归属，整体仅呈现计数；静态渲染不覆盖网络加载和浏览器布局。
-test('报告从任一组进入都呈现相同合并计数和固定模式顺序', () => {
-  const llm = fixture('llm');
-  const jev = fixture('jev');
-  jev.report!.criteria[0]!.verdict = 'FAILED';
-  for (const [task, elapsedMs] of [
-    [llm, 12300],
-    [jev, 45600],
-  ] as const) {
-    task.report!.executionDetails = {
-      reasonCode: null,
-      model: 'fixture',
-      modelCalls: 1,
-      actions: 1,
-      elapsedMs,
-      commandIds: [],
-      promptTokens: 0,
-      completionTokens: 0,
-    };
-  }
-  for (const task of [llm, jev]) {
+// 范围：报告证据来自当前任务，两个独立任务不能互相串用；不覆盖证据文件加载。
+test('报告只展示当前运行的证据', () => {
+  for (const id of ['first', 'second'] as const) {
     const html = renderToStaticMarkup(
-      createElement(ReportDetails, { api, task, arms: [jev, llm] }),
+      createElement(ReportDetails, { api, task: fixture(id) }),
     );
-    const overview = html.slice(0, html.indexOf('aria-label="验证汇总"'));
-    assert.match(overview, />1 \/ 1</);
-    assert.doesNotMatch(overview, /无法判定|未通过|当前仅展示/);
-    const table = html.slice(html.indexOf('<table'), html.indexOf('</table>'));
-    assert.match(table, />✓</);
-    assert.match(table, />×</);
-    assert.match(table, /LLM \+ JEV（历史）/);
-    assert(table.indexOf('>LLM<') < table.indexOf('>LLM + JEV（历史）<'));
-    assert.match(html, /12.3 秒/);
-    assert.match(html, /45.6 秒/);
-    assert(html.indexOf('验证汇总') < html.indexOf('各模式验证记录'));
-    assert.match(html, /artifact-llm/);
-    assert.match(html, /artifact-jev/);
+    assert.match(html, new RegExp(`artifact-${id}`));
+    assert.doesNotMatch(
+      html,
+      new RegExp(`artifact-${id === 'first' ? 'second' : 'first'}`),
+    );
   }
 });
 
 // 范围：未生成报告时仍按定义计总数，并只计已登记通过；不从执行状态或清理推断业务结果。
 test('运行中和零业务项目保留准确分母', () => {
-  const task = fixture('llm');
+  const task = fixture('first');
   task.report = null;
-  assert.deepEqual(verificationProgress([task]), { passed: 0, total: 1 });
+  assert.deepEqual(verificationProgress(task), { passed: 0, total: 1 });
   task.definition.acceptanceCriteria = [];
-  assert.deepEqual(verificationProgress([task]), { passed: 0, total: 0 });
+  assert.deepEqual(verificationProgress(task), { passed: 0, total: 0 });
 });
 
-// 范围：合并后的报告保留各模式执行异常，异常不覆盖任一模式已通过的计数；不验证真实故障触发。
-test('双跑报告保留各组执行原因且不改变合并通过数', () => {
-  const llm = fixture('llm');
-  const jev = fixture('jev');
-  jev.executionOutcome = {
+// 范围：环境故障保留原始原因，不能据此冒充业务通过；不验证真实故障触发。
+test('报告保留当前运行的环境阻塞原因', () => {
+  const task = fixture('second');
+  task.executionOutcome = {
     category: 'ENVIRONMENT_BLOCKED',
     reasonCode: 'ENVIRONMENT_NOT_READY',
     terminationCode: 'SESSION_ENDED',
-    detail: 'JEV 组缺少指定测试账号',
+    detail: '缺少指定测试账号',
     waitingSince: null,
     waitDeadline: null,
   };
   const html = renderToStaticMarkup(
-    createElement(ReportDetails, { api, task: jev, arms: [llm, jev] }),
+    createElement(ReportDetails, { api, task }),
   );
   assert.match(html, /环境阻塞/);
-  assert.match(html, /JEV 组缺少指定测试账号/);
-  assert.match(html, /旧节点未记录具体触发原因/);
-  assert.match(html, />1 \/ 1</);
+  assert.match(html, /缺少指定测试账号/);
+  assert.match(html, />0 \/ 1</);
 });
 
 // 范围：执行页移除旧模块、完整读取分页并保留来源；HTTP 为夹具，不覆盖真实浏览器会话。
 test('执行页仅显示当前运行并读完操作分页', async (context) => {
   const window = new Window({
-    url: 'http://localhost/#/tasks/fixture-pair-jev?request=request-fixture',
+    url: 'http://localhost/#/tasks/fixture-run-second?request=request-fixture',
   });
   const globals = {
     window,
@@ -304,7 +250,7 @@ test('执行页仅显示当前运行并读完操作分页', async (context) => {
   const calls: string[] = [];
   context.mock.method(localApi, 'json', async (path: string) => {
     calls.push(path);
-    if (path === '/v1/tasks/fixture-pair-jev') return fixture('jev');
+    if (path === '/v1/tasks/fixture-run-second') return fixture('second');
     if (path.endsWith('/timeline'))
       return {
         commands: [
@@ -346,7 +292,7 @@ test('执行页仅显示当前运行并读完操作分页', async (context) => {
       root.render(
         createElement(TaskDetailPage, {
           api: localApi,
-          id: 'fixture-pair-jev',
+          id: 'fixture-run-second',
         }),
       ),
     );
@@ -362,13 +308,13 @@ test('执行页仅显示当前运行并读完操作分页', async (context) => {
     assert.deepEqual(
       calls.filter((path) => path.includes('/timeline')),
       [
-        '/v1/admin/executions/execution-jev/timeline',
-        '/v1/admin/executions/execution-jev/timeline?after=first',
+        '/v1/admin/executions/execution-second/timeline',
+        '/v1/admin/executions/execution-second/timeline?after=first',
       ],
     );
     assert(
       !calls.some((path) =>
-        /comparison|model-calls|live-frame|execution-llm/.test(path),
+        /comparison|model-calls|live-frame|execution-first/.test(path),
       ),
     );
   } finally {
@@ -384,7 +330,7 @@ test('执行页仅显示当前运行并读完操作分页', async (context) => {
 // 范围：模拟实时帧与任务终态切换，完成后关闭订阅并进入步骤回放；不代表真实节点视频传输验收。
 test('执行完成后退出实时画面且不把最后帧冒充步骤截图', async (context) => {
   const window = new Window({
-    url: 'http://localhost/#/tasks/fixture-pair-llm',
+    url: 'http://localhost/#/tasks/fixture-run-first',
   });
   const globals = {
     window,
@@ -426,7 +372,7 @@ test('执行完成后退出实时画面且不把最后帧冒充步骤截图', as
     if (path.endsWith('/live-frame')) return { frame: null };
     throw Error(`非预期读取：${path}`);
   });
-  const task = fixture('llm');
+  const task = fixture('first');
   task.state = 'RUNNING';
   task.report = null;
   task.executions[0]!.state = 'RUNNING';

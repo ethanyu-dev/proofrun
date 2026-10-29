@@ -170,12 +170,6 @@ export class Coordinator {
         'CASE_ENDPOINT_REQUIRED',
         '结构化 case 请通过 /v2/cases 提交',
       );
-    if (task.comparison)
-      throw new ApiError(
-        400,
-        'COMPARISON_ENDPOINT_REQUIRED',
-        '双跑模式已停用，请移除 comparison 并使用 LLM 创建新任务',
-      );
     const ids = task.acceptanceCriteria.map((c) => c.id);
     if (
       new Set(ids).size !== ids.length ||
@@ -204,7 +198,7 @@ export class Coordinator {
       );
   }
 
-  /** 同一提交身份跨模式互斥；整批事务回滚，不能在第二组冲突时遗留第一组。 */
+  /** 同一提交身份串行入队；整批事务在任一任务冲突时回滚。 */
   private async enqueue(
     tasks: VerificationTask[],
     identity: string,
@@ -215,18 +209,6 @@ export class Coordinator {
         'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
         [identity],
       );
-      const bound = await client.query<{ id: string }>(
-        "SELECT id FROM pr_tasks WHERE id=$1 OR definition->'comparison'->>'id'=$1",
-        [identity],
-      );
-      if (
-        bound.rows.some((row) => !tasks.some((task) => task.taskId === row.id))
-      )
-        throw new ApiError(
-          409,
-          'TASK_CONFLICT',
-          '任务身份已绑定另一种执行方式',
-        );
       for (const task of tasks) {
         const originalHash = digest(canonical(task));
         // 普通验证入口也冻结模板来源；历史重提按原始摘要兼容，不改写已有运行。
@@ -410,22 +392,8 @@ export class Coordinator {
         'CASE_ENDPOINT_REQUIRED',
         '结构化任务请通过 /v2/cases/:id/rerun 新增运行，不支持在内部入口重跑',
       );
-    const { comparison: _comparison, ...business } = definition;
-    await this.submit({ ...business, taskId: runId, executionMode: 'llm' });
+    await this.submit({ ...definition, taskId: runId, executionMode: 'llm' });
     return { taskId: runId };
-  }
-
-  /** 旧双跑写入入口明确拒绝，不再创建任务。 */
-  async compare(
-    _sourceId: string,
-    _comparisonId: string,
-    _maxActions?: number,
-  ) {
-    throw new ApiError(
-      410,
-      'EXECUTION_MODE_RETIRED',
-      '双跑入口已停用，请创建 LLM 运行',
-    );
   }
 
   /** worker 真正领取时才预留浏览器，任务等待期间不占用 Chrome。 */
@@ -485,7 +453,6 @@ export class Coordinator {
         }
         if (
           task.purpose === 'cleanup' ||
-          task.comparison ||
           (task.executionMode && task.executionMode !== 'llm')
         )
           continue;

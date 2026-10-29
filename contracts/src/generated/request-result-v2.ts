@@ -26,7 +26,7 @@ export interface RequestResultV2 {
    */
   generatedAt: string;
   /**
-   * 当前范围内的 case 数，双跑不增加数量。
+   * 当前范围内的 case 数。
    */
   caseCount: number;
   /**
@@ -100,11 +100,7 @@ export interface RequestResultV2 {
    */
   observedFailureCount: number;
   /**
-   * 两组明确通过和失败相反的标准数，不含覆盖差异。
-   */
-  confirmedDisagreementCount: number;
-  /**
-   * 按 caseId 和 criterionId 去重，双跑不增加分母。
+   * 按 caseId 和 criterionId 去重。
    */
   uniqueCriteriaCounts: {
     /**
@@ -134,46 +130,52 @@ export interface RequestResultV2 {
   };
   /**
    * 按模式汇总；未配置该模式的 case 不计缺失。
+   *
+   * @maxItems 1
    */
-  byExecutionMode: {
-    /**
-     * 冻结执行模式，按 LLM、JEV 顺序展示。
-     */
-    executionMode: 'llm' | 'jev';
-    /**
-     * 当前范围内的 case 数，双跑不增加数量。
-     */
-    caseCount: number;
-    /**
-     * 当前模式要求组中没有报告的数量。
-     */
-    missingReportCount: number;
-    /**
-     * 当前模式已交付报告的原单组统计。
-     */
-    criteriaCounts: {
-      /**
-       * 该统计范围的总数，不能混同 case 数与执行次数。
-       */
-      total: number;
-      /**
-       * 满足该范围全部要求的通过数量。
-       */
-      passed: number;
-      /**
-       * 已交付结论中确认失败的数量。
-       */
-      failed: number;
-      /**
-       * 仍无法形成确定结论，包括通过与缺失并存。
-       */
-      inconclusive: number;
-      /**
-       * 未验收或所有要求组均缺失该项的数量。
-       */
-      skipped: number;
-    };
-  }[];
+  byExecutionMode:
+    | []
+    | [
+        {
+          /**
+           * 冻结的 LLM 执行模式。
+           */
+          executionMode: 'llm';
+          /**
+           * 当前范围内的 case 数。
+           */
+          caseCount: number;
+          /**
+           * 当前模式要求组中没有报告的数量。
+           */
+          missingReportCount: number;
+          /**
+           * 当前模式已交付报告的原单组统计。
+           */
+          criteriaCounts: {
+            /**
+             * 该统计范围的总数，不能混同 case 数与执行次数。
+             */
+            total: number;
+            /**
+             * 满足该范围全部要求的通过数量。
+             */
+            passed: number;
+            /**
+             * 已交付结论中确认失败的数量。
+             */
+            failed: number;
+            /**
+             * 仍无法形成确定结论，包括通过与缺失并存。
+             */
+            inconclusive: number;
+            /**
+             * 未验收或所有要求组均缺失该项的数量。
+             */
+            skipped: number;
+          };
+        },
+      ];
   /**
    * 首次接收冻结的成员与顺序，不按当前筛选截断。
    */
@@ -227,61 +229,65 @@ export interface RequestResultV2 {
        */
       status: 'PASSED' | 'FAILED' | 'INCONCLUSIVE' | 'SKIPPED' | 'PENDING';
       /**
-       * 两组存在相反的明确通过和失败判断。
-       */
-      disagreement: boolean;
-      /**
-       * 两组覆盖不同，不当作明确判断冲突。
-       */
-      coverageDifference: boolean;
-      /**
        * 首次接收冻结的实际执行组，不随平台配置变化。
+       *
+       * @maxItems 1
        */
-      arms: {
-        /**
-         * 原执行任务身份，用于报告和证据追溯。
-         */
-        taskId: string;
-        /**
-         * 冻结执行模式，按 LLM、JEV 顺序展示。
-         */
-        executionMode: 'llm' | 'jev';
-        /**
-         * 该执行组该项原始判断；无报告时为 null。
-         */
-        verdict: 'PASSED' | 'FAILED' | 'INCONCLUSIVE' | 'SKIPPED' | null;
-        /**
-         * 报告已交付的观察和依据，汇总不会再次生成。
-         */
-        summary: string;
-        /**
-         * 只引用当前 case 和执行组登记的证据。
-         */
-        evidenceRefs: string[];
-      }[];
+      arms:
+        | []
+        | [
+            {
+              /**
+               * 原执行任务身份，用于报告和证据追溯。
+               */
+              taskId: string;
+              /**
+               * 冻结的 LLM 执行模式。
+               */
+              executionMode: 'llm';
+              /**
+               * 该执行组该项原始判断；无报告时为 null。
+               */
+              verdict: 'PASSED' | 'FAILED' | 'INCONCLUSIVE' | 'SKIPPED' | null;
+              /**
+               * 报告已交付的观察和依据，汇总不会再次生成。
+               */
+              summary: string;
+              /**
+               * 只引用当前 case 和执行组登记的证据。
+               */
+              evidenceRefs: string[];
+            },
+          ];
     }[];
     /**
      * 首次接收冻结的实际执行组，不随平台配置变化。
+     *
+     * @maxItems 1
      */
-    arms: {
-      /**
-       * 原执行任务身份，用于报告和证据追溯。
-       */
-      taskId: string;
-      /**
-       * 冻结执行模式，按 LLM、JEV 顺序展示。
-       */
-      executionMode: 'llm' | 'jev';
-      /**
-       * 原记录创建时间；复用时不会改成本次请求时间。
-       */
-      createdAt: string;
-      /**
-       * 证据清理时间；原结论保留，下载应禁用。
-       */
-      archivedAt: string | null;
-      result: CaseResultV2;
-    }[];
+    arms:
+      | []
+      | [
+          {
+            /**
+             * 原执行任务身份，用于报告和证据追溯。
+             */
+            taskId: string;
+            /**
+             * 冻结的 LLM 执行模式。
+             */
+            executionMode: 'llm';
+            /**
+             * 原记录创建时间；复用时不会改成本次请求时间。
+             */
+            createdAt: string;
+            /**
+             * 证据清理时间；原结论保留，下载应禁用。
+             */
+            archivedAt: string | null;
+            result: CaseResultV2;
+          },
+        ];
     /**
      * 冻结的步骤定义，准备、业务验证和后续清理分别展示。
      */
@@ -476,360 +482,6 @@ export interface CaseResultV2 {
    * 最近一次领取检查发现的排队原因；成功领取后清空，取消或排队超时后保留。null 或缺失表示尚无诊断，不表示一定可执行。
    */
   queueReason?: null | QueueReason;
-  /**
-   * 双跑时返回两组独立结果；顶层字段兼容纯 LLM 主组，不代表两组汇总结论。单组任务省略。
-   */
-  comparison?: {
-    id: string;
-    /**
-     * @minItems 2
-     * @maxItems 2
-     */
-    arms: [
-      {
-        /**
-         * 原始请求的幂等身份。
-         */
-        caseId: string;
-        /**
-         * 执行生命周期；COMPLETED 不直接表示业务通过。
-         */
-        status: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'CANCELLED' | 'TIMED_OUT' | 'ERROR';
-        /**
-         * 已交付的业务结果；尚无报告时为 null，包括部分异常终态。
-         */
-        result: null | {
-          /**
-           * 整体业务结论；BLOCKED 和 ERROR 不表示产品失败。
-           */
-          outcome: 'PASSED' | 'FAILED' | 'INCONCLUSIVE' | 'BLOCKED' | 'ERROR';
-          /**
-           * 基于本次证据的结果说明。
-           */
-          summary: string;
-          /**
-           * 按原验收项身份返回逐项结论。
-           */
-          criteria: {
-            /**
-             * 对应原 acceptanceCriteria 中的 id。
-             */
-            criterionId: string;
-            /**
-             * 逐项判断；未进行验收时为 SKIPPED。
-             */
-            verdict: 'PASSED' | 'FAILED' | 'INCONCLUSIVE' | 'SKIPPED';
-            /**
-             * 该项结论及证据支持范围。
-             */
-            summary: string;
-            /**
-             * 引用 evidence 数组中的证据身份。
-             */
-            evidenceRefs: string[];
-          }[];
-          /**
-           * 报告引用的证据，下载范围限定于当前 case。
-           */
-          evidence: {
-            /**
-             * 平台登记的证据身份。
-             */
-            id: string;
-            /**
-             * 证据媒介，由平台取证配置决定。
-             */
-            kind: 'DOM' | 'SCREENSHOT' | 'NETWORK' | 'TRACE' | 'RUNTIME';
-            /**
-             * 本控制面的 case 证据地址，下载需要相同凭据。
-             */
-            url: string;
-            /**
-             * 原始下载字节的 SHA-256 小写十六进制摘要。
-             */
-            sha256: string;
-          }[];
-        };
-        /**
-         * 按实际串行顺序返回各步骤进度，故障不抹掉已完成结论。
-         */
-        steps: StepResult[];
-        /**
-         * 业务清理状态与结果；新任务的 taskId 指向原任务，历史独立清理保留旧身份；没有清理定义时为 null。
-         */
-        cleanup: null | {
-          taskId: string;
-          status: 'PENDING' | 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'CANCELLED' | 'TIMED_OUT' | 'ERROR' | 'SKIPPED';
-          /**
-           * 已交付的业务结果；尚无报告时为 null，包括部分异常终态。
-           */
-          result: null | {
-            /**
-             * 整体业务结论；BLOCKED 和 ERROR 不表示产品失败。
-             */
-            outcome: 'PASSED' | 'FAILED' | 'INCONCLUSIVE' | 'BLOCKED' | 'ERROR';
-            /**
-             * 基于本次证据的结果说明。
-             */
-            summary: string;
-            /**
-             * 按原验收项身份返回逐项结论。
-             */
-            criteria: {
-              /**
-               * 对应原 acceptanceCriteria 中的 id。
-               */
-              criterionId: string;
-              /**
-               * 逐项判断；未进行验收时为 SKIPPED。
-               */
-              verdict: 'PASSED' | 'FAILED' | 'INCONCLUSIVE' | 'SKIPPED';
-              /**
-               * 该项结论及证据支持范围。
-               */
-              summary: string;
-              /**
-               * 引用 evidence 数组中的证据身份。
-               */
-              evidenceRefs: string[];
-            }[];
-            /**
-             * 报告引用的证据，下载范围限定于当前 case。
-             */
-            evidence: {
-              /**
-               * 平台登记的证据身份。
-               */
-              id: string;
-              /**
-               * 证据媒介，由平台取证配置决定。
-               */
-              kind: 'DOM' | 'SCREENSHOT' | 'NETWORK' | 'TRACE' | 'RUNTIME';
-              /**
-               * 本控制面的 case 证据地址，下载需要相同凭据。
-               */
-              url: string;
-              /**
-               * 原始下载字节的 SHA-256 小写十六进制摘要。
-               */
-              sha256: string;
-            }[];
-          };
-        };
-        /**
-         * 验证报告状态：通过、未通过、无法判定；无报告时为 null。执行状态不等于验收结论，已确认失败优先于未覆盖项。
-         */
-        reportStatus: 'PASSED' | 'FAILED' | 'INCONCLUSIVE' | null;
-        /**
-         * 按本次验收定义统计，各分类之和等于 total；无报告时为 null。
-         */
-        criteriaCounts: null | {
-          /**
-           * 本次定义的验收项总数。
-           */
-          total: number;
-          /**
-           * 通过项数。
-           */
-          passed: number;
-          /**
-           * 未通过项数。
-           */
-          failed: number;
-          /**
-           * 已验收但无法判定的项数。
-           */
-          inconclusive: number;
-          /**
-           * 未验收或报告缺失的项数。
-           */
-          skipped: number;
-        };
-        /**
-         * 最近一次领取检查发现的排队原因；成功领取后清空，取消或排队超时后保留。null 或缺失表示尚无诊断，不表示一定可执行。
-         */
-        queueReason?: null | QueueReason;
-        executionMode: 'llm' | 'jev';
-        taskId: string;
-        executionOutcome?: ExecutionOutcome;
-        /**
-         * 本次运行的主任务身份，历史记录按此身份读取。
-         */
-        runId?: string;
-      },
-      {
-        /**
-         * 原始请求的幂等身份。
-         */
-        caseId: string;
-        /**
-         * 执行生命周期；COMPLETED 不直接表示业务通过。
-         */
-        status: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'CANCELLED' | 'TIMED_OUT' | 'ERROR';
-        /**
-         * 已交付的业务结果；尚无报告时为 null，包括部分异常终态。
-         */
-        result: null | {
-          /**
-           * 整体业务结论；BLOCKED 和 ERROR 不表示产品失败。
-           */
-          outcome: 'PASSED' | 'FAILED' | 'INCONCLUSIVE' | 'BLOCKED' | 'ERROR';
-          /**
-           * 基于本次证据的结果说明。
-           */
-          summary: string;
-          /**
-           * 按原验收项身份返回逐项结论。
-           */
-          criteria: {
-            /**
-             * 对应原 acceptanceCriteria 中的 id。
-             */
-            criterionId: string;
-            /**
-             * 逐项判断；未进行验收时为 SKIPPED。
-             */
-            verdict: 'PASSED' | 'FAILED' | 'INCONCLUSIVE' | 'SKIPPED';
-            /**
-             * 该项结论及证据支持范围。
-             */
-            summary: string;
-            /**
-             * 引用 evidence 数组中的证据身份。
-             */
-            evidenceRefs: string[];
-          }[];
-          /**
-           * 报告引用的证据，下载范围限定于当前 case。
-           */
-          evidence: {
-            /**
-             * 平台登记的证据身份。
-             */
-            id: string;
-            /**
-             * 证据媒介，由平台取证配置决定。
-             */
-            kind: 'DOM' | 'SCREENSHOT' | 'NETWORK' | 'TRACE' | 'RUNTIME';
-            /**
-             * 本控制面的 case 证据地址，下载需要相同凭据。
-             */
-            url: string;
-            /**
-             * 原始下载字节的 SHA-256 小写十六进制摘要。
-             */
-            sha256: string;
-          }[];
-        };
-        /**
-         * 按实际串行顺序返回各步骤进度，故障不抹掉已完成结论。
-         */
-        steps: StepResult[];
-        /**
-         * 业务清理状态与结果；新任务的 taskId 指向原任务，历史独立清理保留旧身份；没有清理定义时为 null。
-         */
-        cleanup: null | {
-          taskId: string;
-          status: 'PENDING' | 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'CANCELLED' | 'TIMED_OUT' | 'ERROR' | 'SKIPPED';
-          /**
-           * 已交付的业务结果；尚无报告时为 null，包括部分异常终态。
-           */
-          result: null | {
-            /**
-             * 整体业务结论；BLOCKED 和 ERROR 不表示产品失败。
-             */
-            outcome: 'PASSED' | 'FAILED' | 'INCONCLUSIVE' | 'BLOCKED' | 'ERROR';
-            /**
-             * 基于本次证据的结果说明。
-             */
-            summary: string;
-            /**
-             * 按原验收项身份返回逐项结论。
-             */
-            criteria: {
-              /**
-               * 对应原 acceptanceCriteria 中的 id。
-               */
-              criterionId: string;
-              /**
-               * 逐项判断；未进行验收时为 SKIPPED。
-               */
-              verdict: 'PASSED' | 'FAILED' | 'INCONCLUSIVE' | 'SKIPPED';
-              /**
-               * 该项结论及证据支持范围。
-               */
-              summary: string;
-              /**
-               * 引用 evidence 数组中的证据身份。
-               */
-              evidenceRefs: string[];
-            }[];
-            /**
-             * 报告引用的证据，下载范围限定于当前 case。
-             */
-            evidence: {
-              /**
-               * 平台登记的证据身份。
-               */
-              id: string;
-              /**
-               * 证据媒介，由平台取证配置决定。
-               */
-              kind: 'DOM' | 'SCREENSHOT' | 'NETWORK' | 'TRACE' | 'RUNTIME';
-              /**
-               * 本控制面的 case 证据地址，下载需要相同凭据。
-               */
-              url: string;
-              /**
-               * 原始下载字节的 SHA-256 小写十六进制摘要。
-               */
-              sha256: string;
-            }[];
-          };
-        };
-        /**
-         * 验证报告状态：通过、未通过、无法判定；无报告时为 null。执行状态不等于验收结论，已确认失败优先于未覆盖项。
-         */
-        reportStatus: 'PASSED' | 'FAILED' | 'INCONCLUSIVE' | null;
-        /**
-         * 按本次验收定义统计，各分类之和等于 total；无报告时为 null。
-         */
-        criteriaCounts: null | {
-          /**
-           * 本次定义的验收项总数。
-           */
-          total: number;
-          /**
-           * 通过项数。
-           */
-          passed: number;
-          /**
-           * 未通过项数。
-           */
-          failed: number;
-          /**
-           * 已验收但无法判定的项数。
-           */
-          inconclusive: number;
-          /**
-           * 未验收或报告缺失的项数。
-           */
-          skipped: number;
-        };
-        /**
-         * 最近一次领取检查发现的排队原因；成功领取后清空，取消或排队超时后保留。null 或缺失表示尚无诊断，不表示一定可执行。
-         */
-        queueReason?: null | QueueReason;
-        executionMode: 'llm' | 'jev';
-        taskId: string;
-        executionOutcome?: ExecutionOutcome;
-        /**
-         * 本次运行的主任务身份，历史记录按此身份读取。
-         */
-        runId?: string;
-      },
-    ];
-  };
   executionOutcome?: ExecutionOutcome;
   /**
    * 本次运行的主任务身份，历史记录按此身份读取。
@@ -1066,15 +718,14 @@ export interface RequestMetrics {
    */
   executionElapsedMs: number | null;
   execution: TokenUsage;
-  jev: TokenUsage1;
-  llm: TokenUsage2;
+  llm: TokenUsage1;
   /**
    * 验证执行已采集 Tokens 的合计。
    */
   totalTokens: number | null;
 }
 /**
- * 所有关联验证执行的已采集用量，按任务去重，包含双组及历史独立清理。
+ * 所有关联验证执行的已采集用量，按任务去重，包含独立清理。
  */
 export interface TokenUsage {
   /**
@@ -1095,30 +746,9 @@ export interface TokenUsage {
   calls: number;
 }
 /**
- * 真实 JEV 候选选择调用，不按 Case 执行模式归类。
- */
-export interface TokenUsage1 {
-  /**
-   * 已返回的输入 Tokens。
-   */
-  promptTokens: number | null;
-  /**
-   * 已返回的输出 Tokens。
-   */
-  completionTokens: number | null;
-  /**
-   * 已返回输入与输出的合计；均未采集时为 null。
-   */
-  totalTokens: number | null;
-  /**
-   * 已登记的实际模型调用次数，包含未回传用量的调用。
-   */
-  calls: number;
-}
-/**
  * 验证中的文本决策和填写调用。
  */
-export interface TokenUsage2 {
+export interface TokenUsage1 {
   /**
    * 已返回的输入 Tokens。
    */

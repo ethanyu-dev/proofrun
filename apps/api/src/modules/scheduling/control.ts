@@ -1,5 +1,4 @@
 import type { PoolClient } from 'pg';
-import { caseArmIds } from '../cases/structured.js';
 import { recordHumanUnable } from '../hitl/unable.js';
 import { pauseStepBudget } from './step-budget.js';
 import { Database } from '../../db.js';
@@ -268,7 +267,7 @@ export class ExecutionControl {
     const unable = async (client: PoolClient) => {
       // 同例两组同时提交人工终态时先串行整例，避免分别持有组锁后交叉等待。
       await client.query(
-        "SELECT pg_advisory_xact_lock(hashtextextended(COALESCE(t.definition#>>'{comparison,id}',t.id),8)) FROM pr_tasks t JOIN pr_executions e ON e.task_id=t.id WHERE e.id=$1",
+        'SELECT pg_advisory_xact_lock(hashtextextended(t.id,8)) FROM pr_tasks t JOIN pr_executions e ON e.task_id=t.id WHERE e.id=$1',
         [id],
       );
       const context = await executionContext(client, id);
@@ -312,11 +311,12 @@ export class ExecutionControl {
         'UPDATE pr_executions SET control_reason=$2,human_requested_at=NULL,human_deadline_at=NULL WHERE id=$1',
         [id, reason.trim()],
       );
-      const ids = context.definition.caseV2Definition
-        ? caseArmIds(context.definition)
-        : [context.task_id];
-      for (const taskId of [...new Set(ids)].sort())
-        await recordHumanUnable(client, taskId, reason.trim(), publicUrl);
+      await recordHumanUnable(
+        client,
+        context.task_id,
+        reason.trim(),
+        publicUrl,
+      );
       return { reason: reason.trim() };
     };
     return transaction ? unable(transaction) : this.db.transaction(unable);

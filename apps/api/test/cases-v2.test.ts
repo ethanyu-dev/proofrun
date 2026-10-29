@@ -475,7 +475,7 @@ test('v2 重跑保留原配置及整个 case，重试不重复创建', async () 
     assert.deepEqual(fresh.definition.cleanupStepIds, ['cleanup-1']);
     assert.equal(fresh.definition.steps!.at(-1)!.stepId, 'cleanup-1');
     assert.equal(fresh.definition.resourceKey, undefined);
-    assert.equal(result.comparison, undefined);
+    assert.equal('comparison' in result, false);
     assert.equal(fresh.definition.executionMode, executionMode);
     const count = f.records.size;
     assert.deepEqual(await changed.rerun(INPUT.caseId, 'new-case'), result);
@@ -597,7 +597,7 @@ test('重跑可单独扩大步骤和清理时间且不改变动作额度或业�
     const task = f.records.get(arm)!.definition;
     assert(validateVerificationTask(task));
     assert.equal(task.stepBudget!.cleanup.timeoutMs, 600_000);
-    const factor = task.executionMode === 'jev' ? 2 : 1;
+    const factor = 1;
     task.stepBudget!.steps.forEach((step, index) => {
       assert.equal(
         step.maxActions,
@@ -664,7 +664,7 @@ test('历史总预算重跑扩容时生成逐步计划且保留旧动作上限',
   assert.equal(old.stepBudget, undefined);
 });
 
-// 范围：稳定排序后 setup 拆组，cleanup 不占业务 tab，双跑保持计划；不验证真实浏览器并发。
+// 范围：稳定排序后 setup 拆组，cleanup 不占业务 tab，执行保持计划；不验证真实浏览器并发。
 test('profile 按 setup 分组且保持原步骤身份', () => {
   const input = structuredClone(INPUT);
   input.steps.push({
@@ -694,7 +694,7 @@ test('profile 按 setup 分组且保持原步骤身份', () => {
   );
 });
 
-// 范围：提交及重跑采用新并发、双跑计划一致、旧任务快照不被修改；不覆盖真实数据库或模型限流。
+// 范围：提交及重跑采用新并发、执行计划一致、旧任务快照不被修改；不覆盖真实数据库或模型限流。
 test('多组 v2 提交和重跑最多并发八组，保留历史任务的冻结值', async () => {
   for (const count of [5, 9]) {
     const input = structuredClone(INPUT);

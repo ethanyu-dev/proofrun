@@ -4,7 +4,7 @@ import { compileStepBudget, stepLimit } from '../../contracts/dist/index.js';
 
 // 范围：按结构化验收项数量编译有界预算，准备/清理不膨胀；不模拟模型效率或生产耗时。
 test('多验收项增加动作和模型额度，三十次动作封顶', () => {
-  for (const executionMode of ['standard', 'jev']) {
+  for (const executionMode of ['llm']) {
     const task = {
       executionMode,
       cleanupStepIds: ['cleanup'],
@@ -25,7 +25,7 @@ test('多验收项增加动作和模型额度，三十次动作封顶', () => {
     );
     assert.deepEqual(
       plan.steps.map((s) => s.maxModelCalls),
-      [24, 36, 52, 60, 20].map((n) => n * (executionMode === 'jev' ? 2 : 1)),
+      [24, 36, 52, 60, 20],
     );
     assert(plan.steps.every((s) => s.timeoutMs === 300000));
     assert.equal(plan.cleanup.maxActions, 10);

@@ -51,7 +51,7 @@ export async function refreshRequestSummaries(
       )
     ).rows;
     const projected = await projector.project(client, rows, false);
-    // 搜索口径保持原来的主任务目标；双跑另一组的定义不扩大搜索范围。
+    // 搜索使用当前关联任务的目标，不从已替换运行补入文本。
     const search = (
       await client.query<{ request_id: string; terms: string[] }>(
         `SELECT c.request_id,array_agg(c.case_id ORDER BY c.position) || array_agg(t.definition->>'objective' ORDER BY c.position) AS terms

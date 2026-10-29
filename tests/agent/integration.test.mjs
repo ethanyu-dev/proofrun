@@ -791,7 +791,7 @@ test(
                     ...[null, false, {}, [], 42, '', 'MAX', 'xhigh'].map(
                       (value) => ({ ...body, reasoning_effort: value }),
                     ),
-                    // 旧 JEV 请求只允许读取历史存档，不能再走新调用写入。
+                    // 已移除的请求形状不能进入模型调用写入。
                     ...['state', 'questions', 'assets'].map((key) => ({
                       ...body,
                       [key]: {},

@@ -322,10 +322,10 @@ test('清理失败与受阻不被执行状态或缺失验收覆盖', () => {
 
 // 范围：两种模式及旧记录在报告顶部、任务内报告和 JSON 导出中一致；不验证真实模型调用链。
 test('报告明显展示验证模式，导出保留模式编码和文案', () => {
-  for (const mode of ['jev', 'llm', undefined] as const) {
+  for (const mode of ['llm', undefined] as const) {
     const task = fixture();
     task.definition.executionMode = mode;
-    const label = mode === 'jev' ? 'JEV + LLM（历史，已停用）' : '纯 LLM';
+    const label = '纯 LLM';
     const html = renderToStaticMarkup(
       createElement(ReportDetails, { api, task }),
     );
@@ -351,8 +351,7 @@ test('报告明显展示验证模式，导出保留模式编码和文案', () =>
     assert.equal(json.executionMode, mode ?? 'llm');
     assert.equal(json.executionModeLabel, label);
     assert.equal(json.taskId, task.id);
-    if (mode === 'jev') assert.match(html, /JEV 与双跑模式已停用/);
-    else assert.doesNotMatch(html, /JEV|历史对照|已停用/);
+    assert.doesNotMatch(html, /JEV|历史对照|已停用/);
   }
 });
 

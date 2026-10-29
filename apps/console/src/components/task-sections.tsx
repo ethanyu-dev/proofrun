@@ -192,9 +192,7 @@ export function TaskReport({ api, task }: TaskSectionProps) {
                 className="button button-secondary button-small"
                 href={taskHref('reports', task.id)}
               >
-                {task.definition.comparison
-                  ? '打开历史对照报告'
-                  : '打开验证报告'}
+                打开验证报告
               </a>
             </Button>
           )}
@@ -205,17 +203,15 @@ export function TaskReport({ api, task }: TaskSectionProps) {
                 className="button button-secondary button-small"
                 onClick={() => setExportOpen(true)}
               >
-                导出此组报告
+                导出报告
               </Button>
-              <ReportProgress counts={verificationProgress([task])} />
+              <ReportProgress counts={verificationProgress(task)} />
             </div>
           )}
         </div>
         <p className="muted">
           验证模式：
-          {executionModeLabel(
-            task.definition.comparison?.arm ?? task.definition.executionMode,
-          )}
+          {executionModeLabel(task.definition.executionMode)}
         </p>
         {task.archived_at && (
           <p className="error-notice">

@@ -1,4 +1,3 @@
-import { seedHistoricalPair } from './historical-comparison.js';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -82,24 +81,6 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
       headers: { authorization: `Bearer ${ADMIN}` },
       ...(body === undefined ? {} : { payload: body as object }),
     });
-    // 历史聚合夹具显式导入旧双跑记录，新接口本身只产生 LLM。
-    if (
-      path === '/v2/cases' &&
-      response.statusCode === 202 &&
-      body &&
-      !Array.isArray(body)
-    ) {
-      const input = body as { requestId: string; cases: VerificationCaseV2[] };
-      for (const item of input.cases)
-        await seedHistoricalPair(sql, `case-v2-${item.caseId}`);
-      const stored = await app.inject({
-        method: 'GET',
-        url: `/v2/requests/${input.requestId}`,
-        headers: { authorization: `Bearer ${ADMIN}` },
-      });
-      stored.statusCode = 202;
-      return stored;
-    }
     return response;
   };
   const submit = async (requestId: string, ids: string[]) => {
@@ -117,39 +98,35 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
     return result;
   };
   try {
-    // 范围：双跑身份、首次顺序和对象协议；不覆盖真实调度资源。
-    await suite.test(
-      '历史三个 case 六个执行组，只统计三个唯一验收项',
-      async () => {
-        const result = await submit('request-main', ['alpha', 'beta', 'gamma']);
-        assert.equal(result.caseCount, 3);
-        assert.equal(result.executionCounts.total, 6);
-        assert.equal(result.uniqueCriteriaCounts.total, 3);
-        assert.equal(result.uniqueCriteriaCounts.pending, 3);
-        assert.equal(result.reportStatus, null);
-        assert.equal(result.reportPhase, 'PENDING');
-        const replay = await submit('request-main', ['gamma', 'alpha', 'beta']);
-        assert.deepEqual(
-          replay.cases.map((c) => c.caseId),
-          ['alpha', 'beta', 'gamma'],
-        );
-        assert.equal(
-          (await sql.query('SELECT count(*)::int AS n FROM pr_tasks')).rows[0]
-            .n,
-          6,
-        );
-        assert.equal(
-          (
-            await call('/v2/cases', {
-              requestId: 'request-main',
-              title: '改变标题',
-              cases: ['alpha', 'beta', 'gamma'].map(example),
-            })
-          ).statusCode,
-          409,
-        );
-      },
-    );
+    // 范围：单执行身份、首次顺序和对象协议；不覆盖真实调度资源。
+    await suite.test('三个 case 三个执行，只统计三个唯一验收项', async () => {
+      const result = await submit('request-main', ['alpha', 'beta', 'gamma']);
+      assert.equal(result.caseCount, 3);
+      assert.equal(result.executionCounts.total, 3);
+      assert.equal(result.uniqueCriteriaCounts.total, 3);
+      assert.equal(result.uniqueCriteriaCounts.pending, 3);
+      assert.equal(result.reportStatus, null);
+      assert.equal(result.reportPhase, 'PENDING');
+      const replay = await submit('request-main', ['gamma', 'alpha', 'beta']);
+      assert.deepEqual(
+        replay.cases.map((c) => c.caseId),
+        ['alpha', 'beta', 'gamma'],
+      );
+      assert.equal(
+        (await sql.query('SELECT count(*)::int AS n FROM pr_tasks')).rows[0].n,
+        3,
+      );
+      assert.equal(
+        (
+          await call('/v2/cases', {
+            requestId: 'request-main',
+            title: '改变标题',
+            cases: ['alpha', 'beta', 'gamma'].map(example),
+          })
+        ).statusCode,
+        409,
+      );
+    });
     // 范围：交叉批次锁与幂等事务；不覆盖多主数据库部署。
     await suite.test(
       '并发同请求与交叉请求不会重复创建，共享成员保留来源',
@@ -166,10 +143,10 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
         assert.equal(
           (
             await sql.query(
-              "SELECT count(*)::int AS n FROM pr_tasks WHERE id IN ('case-v2-delta','comparison-case-v2-delta-jev')",
+              "SELECT count(*)::int AS n FROM pr_tasks WHERE id='case-v2-delta'",
             )
           ).rows[0].n,
-          2,
+          1,
         );
       },
     );
@@ -264,13 +241,10 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
         ).json<RequestResultV2>();
         assert.equal(result.reportPhase, 'PARTIAL');
         assert.equal(result.reportStatus, null);
-        assert.equal(result.uniqueCriteriaCounts.passed, 0);
+        assert.equal(result.uniqueCriteriaCounts.passed, 1);
         await sql.query(
           "UPDATE pr_tasks SET state='COMPLETED',report=$2 WHERE id=$1",
-          [
-            'comparison-case-v2-alpha-jev',
-            report('comparison-case-v2-alpha-jev', 'FAILED'),
-          ],
+          ['case-v2-alpha', report('case-v2-alpha', 'FAILED')],
         );
         await sql.query(
           "UPDATE pr_tasks SET state='CANCELLED' WHERE definition#>>'{caseV2Definition,caseId}' IN ('beta','gamma')",
@@ -282,8 +256,7 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
         );
         assert.equal(result.reportPhase, 'FINAL');
         assert.equal(result.reportStatus, 'FAILED');
-        assert.equal(result.confirmedDisagreementCount, 1);
-        assert.equal(result.reportCoverage.missing, 4);
+        assert.equal(result.reportCoverage.missing, 2);
         assert.equal(result.uniqueCriteriaCounts.failed, 1);
         assert.equal(result.uniqueCriteriaCounts.skipped, 2);
         assert.equal(result.cases[1]!.arms[0]!.result.reportStatus, null);
@@ -326,18 +299,18 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
         }
       }
     });
-    // 范围：真实数据库关联、同一 JEV 执行内混合调用拆分及无报告用量；不运行真实模型或计费。
+    // 范围：真实数据库关联、同一 LLM 执行内逐次调用计量及无报告用量；不运行真实模型或计费。
     await suite.test(
-      '请求耗时按执行跨度，Tokens 按调用用途拆分且不重复累加报告',
+      '请求耗时按执行跨度，Tokens 按调用计量且不重复累加报告',
       async () => {
         await sql.query(
-          "INSERT INTO pr_executions(id,task_id,worker_id,token_hash,lease_expires_at,state,created_at) VALUES('usage-trace','comparison-case-v2-alpha-jev','fixture','fixture',clock_timestamp(),'FINISHED','2026-10-19T00:00:00Z')",
+          "INSERT INTO pr_executions(id,task_id,worker_id,token_hash,lease_expires_at,state,created_at) VALUES('usage-trace','case-v2-alpha','fixture','fixture',clock_timestamp(),'FINISHED','2026-10-19T00:00:00Z')",
         );
         await sql.query(
-          "UPDATE pr_tasks SET finished_at='2026-10-19T00:05:00Z',report=jsonb_set(report,'{executionDetails}',$1) WHERE id='comparison-case-v2-alpha-jev'",
+          "UPDATE pr_tasks SET finished_at='2026-10-19T00:05:00Z',report=jsonb_set(report,'{executionDetails}',$1) WHERE id='case-v2-alpha'",
           [
             JSON.stringify({
-              model: 'JEV + llm',
+              model: 'fixture-llm',
               promptTokens: 9999,
               completionTokens: 9999,
               modelCalls: 2,
@@ -349,10 +322,10 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
           ],
         );
         await sql.query(
-          "INSERT INTO pr_model_calls(id,execution_id,call_index,record,start_hash) VALUES('usage-jev','usage-trace',1,$1,'fixture')",
+          "INSERT INTO pr_model_calls(id,execution_id,call_index,record,start_hash) VALUES('usage-decision','usage-trace',1,$1,'fixture')",
           [
             JSON.stringify({
-              purpose: 'JEV_SELECTION',
+              purpose: 'DECISION',
               promptTokens: 1000,
               completionTokens: 100,
             }),
@@ -375,18 +348,17 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
         );
         assert.ok(result.metrics);
         assert.equal(result.metrics.executionElapsedMs, 300000);
-        assert.equal(result.metrics.jev.totalTokens, 1100);
-        assert.equal(result.metrics.llm.totalTokens, 2200);
+        assert.equal(result.metrics.llm.totalTokens, 3300);
         assert.equal(result.metrics.execution.totalTokens, 3300);
         assert.equal(result.metrics.totalTokens, 3300);
         assert.equal('analysis' in result.metrics, false);
         assert.equal(result.metrics.execution.calls, 2);
-        // 第二组与首组重叠，整体验证为六分钟，既不是耗时相加，也不是取最长单组。
+        // 第二个 case 与首个 case 重叠，整体验证为六分钟，既不是耗时相加，也不是取最长单个执行。
         await sql.query(
-          "INSERT INTO pr_executions(id,task_id,worker_id,token_hash,lease_expires_at,state,created_at) VALUES('usage-parallel','case-v2-alpha','fixture','fixture',clock_timestamp(),'FINISHED','2026-10-19T00:02:00Z')",
+          "INSERT INTO pr_executions(id,task_id,worker_id,token_hash,lease_expires_at,state,created_at) VALUES('usage-overlap','case-v2-beta','fixture','fixture',clock_timestamp(),'FINISHED','2026-10-19T00:02:00Z')",
         );
         await sql.query(
-          "UPDATE pr_tasks SET finished_at='2026-10-19T00:06:00Z' WHERE id='case-v2-alpha'",
+          "UPDATE pr_tasks SET finished_at='2026-10-19T00:06:00Z' WHERE id='case-v2-beta'",
         );
         assert.equal(
           (await call('/v2/requests/request-main/report')).json().metrics
@@ -414,11 +386,11 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
         // 终态缺少最终报告时，逐次调用仍保留；不会把用量变成零。
         const saved = (
           await sql.query(
-            "SELECT report FROM pr_tasks WHERE id='comparison-case-v2-alpha-jev'",
+            "SELECT report FROM pr_tasks WHERE id='case-v2-alpha'",
           )
         ).rows[0].report;
         await sql.query(
-          "UPDATE pr_tasks SET report=NULL WHERE id='comparison-case-v2-alpha-jev'",
+          "UPDATE pr_tasks SET report=NULL WHERE id='case-v2-alpha'",
         );
         assert.equal(
           (await call('/v2/requests/request-main/report')).json().metrics
@@ -426,7 +398,7 @@ test('请求归属、原子提交与报告汇总集成', { timeout: 60_000 }, as
           3300,
         );
         await sql.query(
-          "UPDATE pr_tasks SET report=$1 WHERE id='comparison-case-v2-alpha-jev'",
+          "UPDATE pr_tasks SET report=$1 WHERE id='case-v2-alpha'",
           [saved],
         );
       },

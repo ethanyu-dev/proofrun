@@ -1,13 +1,10 @@
 import type { VerificationTask } from '@proofrun/contracts';
 import { AgentFault } from '../faults.js';
 
-/** 新执行只有 LLM；历史模式可读取，但必须重新提交为当前策略后执行。 */
+/** 新执行只有 LLM；不接受其他执行模式。 */
 export function executionStrategy(task: VerificationTask): 'llm' {
-  if ((task.executionMode && task.executionMode !== 'llm') || task.comparison)
-    throw new AgentFault(
-      'EXECUTION_MODE_RETIRED',
-      '历史 JEV/双跑任务不能直接执行，请使用 LLM 创建新运行',
-    );
+  if (task.executionMode && task.executionMode !== 'llm')
+    throw new AgentFault('EXECUTION_MODE_RETIRED', '任务只支持 LLM 执行');
   const plan = task.sessionPlan;
   // 版本混用时也不能将旧账号要求静默当作无身份执行。
   if (

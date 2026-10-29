@@ -56,7 +56,7 @@ interface Binding {
   session_id: string | null;
   /** 已分配账号的公开身份。 */
   account_id: string | null;
-  /** 双跑需要保持一致的材料版本。 */
+  /** 已申请材料的固定版本。 */
   material_version: string | null;
   /** 首次交还时冻结的结论，自动错误不污染账号健康。 */
   release_outcome: ReleaseAccountInput['outcome'] | null;
@@ -553,26 +553,6 @@ export class ExternalAccounts {
         if (!retryable || terminal)
           await this.fail(row.task_id, `EXTERNAL_ACCOUNT_${reason}`);
         return;
-      }
-      // 仅兼容升级前已持久化的双跑租约恢复；新预留不再创建配对。
-      // 交还前恢复材料时仍须核对原账号，不能用另一账号覆盖遗留绑定。
-      const primary = task.definition.comparison?.sourceTaskId;
-      if (primary && primary !== row.task_id) {
-        const paired = (
-          await this.db.query<Binding>(
-            'SELECT * FROM pr_external_accounts WHERE task_id=$1',
-            [primary],
-          )
-        ).rows[0];
-        if (
-          !paired ||
-          paired.account_id !== result.result.account.id ||
-          paired.material_version !== result.result.account.material.version
-        ) {
-          result.close();
-          await this.fail(row.task_id, 'EXTERNAL_ACCOUNT_COMPARISON_CHANGED');
-          return;
-        }
       }
       await this.db.query(
         `UPDATE pr_external_accounts SET state=CASE WHEN session_id IS NULL THEN 'ALLOCATED' ELSE 'IN_USE' END,

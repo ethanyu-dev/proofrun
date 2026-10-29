@@ -1253,7 +1253,7 @@ test('新增元素动作绑定当前观察，纯文本模型不能执行视觉�
 });
 
 // 范围：所有执行入口只允许 LLM，历史模式明确拒绝；不调用实际模型。
-test('显式旧模式与历史对照均不能进入新执行', async () => {
+test('显式旧模式不能进入新执行', async () => {
   const { executionStrategy } =
     await import('../../packages/execution-core/dist/model/strategy.js');
   const task = grant().task;
@@ -1263,14 +1263,6 @@ test('显式旧模式与历史对照均不能进入新执行', async () => {
     assert.throws(() => executionStrategy({ ...task, executionMode: mode }), {
       code: 'EXECUTION_MODE_RETIRED',
     });
-  assert.throws(
-    () =>
-      executionStrategy({
-        ...task,
-        comparison: { id: 'old', arm: 'llm', sourceTaskId: 'source' },
-      }),
-    { code: 'EXECUTION_MODE_RETIRED' },
-  );
 });
 import { ObservationTracker } from '../../packages/execution-core/dist/evidence/changes.js';
 

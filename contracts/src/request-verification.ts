@@ -1,10 +1,8 @@
 import type { RequestResultV2 } from './generated/request-result-v2.js';
 
-/** 展示使用同一执行组；历史双跑优先选 JEV，不混合另一组的通过项。 */
+/** 每个 case 只使用当前关联的 LLM 执行。 */
 export function requestCaseArm(member: RequestResultV2['cases'][number]) {
-  return (
-    member.arms.find((arm) => arm.executionMode === 'jev') ?? member.arms[0]
-  );
+  return member.arms[0];
 }
 
 /** 业务验证状态独立于执行生命周期；缺失证据不能当成产品失败。 */

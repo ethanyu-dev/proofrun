@@ -19,11 +19,11 @@ export interface RequestCaseFacts {
   executionOrigin: 'created' | 'reused';
   /** 整请求重跑的成员来源，普通提交为空。 */
   sourceCaseId: string | null;
-  /** 同一 case 的两组共享标准身份，不能按执行次数增加总数。 */
+  /** 验收标准按身份去重，不能按执行次数增加总数。 */
   criteria: VerificationTask['acceptanceCriteria'];
   /** 冻结步骤用于展示准备与清理；列表汇总可省略。 */
   steps?: Member['steps'];
-  /** 只包含该 case 冻结时要求的执行组。 */
+  /** 只包含该 case 当前关联的一次执行。 */
   arms: Member['arms'];
 }
 
@@ -37,53 +37,49 @@ function combine(statuses: (Verdict | null)[]): Verdict {
 
 /** 对齐原始验收身份与证据；重复记录与单组汇总保持同一保守口径。 */
 export function summarizeRequestCase(facts: RequestCaseFacts): Member {
-  const finished = facts.arms.every(
-    (arm) => !ACTIVE_STATES.has(arm.result.status),
-  );
-  const criteria = [
+  const arm = facts.arms[0];
+  if (facts.arms.length !== 1 || !arm)
+    throw new Error('每个 case 必须关联一次执行');
+  const finished = !ACTIVE_STATES.has(arm.result.status);
+  const criteria: Member['criteria'] = [
     ...new Map(facts.criteria.map((c) => [c.id, c])).values(),
   ].map((criterion) => {
-    const arms = facts.arms.map((arm) => {
-      const records =
-        arm.result.result?.criteria.filter(
-          (c) => c.criterionId === criterion.id,
-        ) ?? [];
-      const verdict = !arm.result.result
-        ? null
-        : records.some((c) => c.verdict === 'FAILED')
-          ? ('FAILED' as const)
-          : records.length > 1
-            ? ('INCONCLUSIVE' as const)
-            : (records[0]?.verdict ?? ('SKIPPED' as const));
-      return {
-        taskId: arm.taskId,
-        executionMode: arm.executionMode,
-        verdict,
-        summary: records.map((c) => c.summary).join('\n'),
-        evidenceRefs: [...new Set(records.flatMap((c) => c.evidenceRefs))],
-      };
-    });
-    const values = arms.map((a) => a.verdict);
-    const status = values.includes('FAILED')
-      ? ('FAILED' as const)
-      : !finished
-        ? ('PENDING' as const)
-        : values.every((v) => v === 'PASSED')
-          ? ('PASSED' as const)
-          : values.every((v) => v === null || v === 'SKIPPED')
-            ? ('SKIPPED' as const)
-            : ('INCONCLUSIVE' as const);
-    const disagreement = values.includes('PASSED') && values.includes('FAILED');
+    const records =
+      arm.result.result?.criteria.filter(
+        (c) => c.criterionId === criterion.id,
+      ) ?? [];
+    const verdict = !arm.result.result
+      ? null
+      : records.some((c) => c.verdict === 'FAILED')
+        ? ('FAILED' as const)
+        : records.length > 1
+          ? ('INCONCLUSIVE' as const)
+          : (records[0]?.verdict ?? ('SKIPPED' as const));
+    const reading = {
+      taskId: arm.taskId,
+      executionMode: arm.executionMode,
+      verdict,
+      summary: records.map((c) => c.summary).join('\n'),
+      evidenceRefs: [...new Set(records.flatMap((c) => c.evidenceRefs))],
+    };
+
+    const status =
+      verdict === 'FAILED'
+        ? ('FAILED' as const)
+        : !finished
+          ? ('PENDING' as const)
+          : verdict === 'PASSED'
+            ? ('PASSED' as const)
+            : verdict === null || verdict === 'SKIPPED'
+              ? ('SKIPPED' as const)
+              : ('INCONCLUSIVE' as const);
     return {
       criterionId: criterion.id,
       stepId: criterion.stepId ?? '',
       description: criterion.description,
       expectedResult: criterion.expectedResult,
       status,
-      disagreement,
-      coverageDifference:
-        arms.length > 1 && !disagreement && new Set(values).size > 1,
-      arms,
+      arms: [reading],
     };
   });
   return {
@@ -92,9 +88,7 @@ export function summarizeRequestCase(facts: RequestCaseFacts): Member {
     executionOrigin: facts.executionOrigin,
     sourceCaseId: facts.sourceCaseId,
     finished,
-    reportStatus: finished
-      ? combine(facts.arms.map((a) => a.result.reportStatus))
-      : null,
+    reportStatus: finished ? (arm.result.reportStatus ?? 'INCONCLUSIVE') : null,
     criteria,
     steps: facts.steps ?? [],
     arms: facts.arms,
@@ -146,6 +140,19 @@ export function summarizeRequest(
     PENDING: 'pending',
   } as const;
   for (const c of criteria) uniqueCriteriaCounts[criterionKeys[c.status]]++;
+  const criteriaCounts = {
+    total: 0,
+    passed: 0,
+    failed: 0,
+    inconclusive: 0,
+    skipped: 0,
+  };
+  for (const arm of arms)
+    if (arm.result.criteriaCounts)
+      for (const key of Object.keys(
+        criteriaCounts,
+      ) as (keyof typeof criteriaCounts)[])
+        criteriaCounts[key] += arm.result.criteriaCounts[key];
   return {
     aggregationVersion: AGGREGATION_VERSION,
     caseCount: cases.length,
@@ -164,30 +171,14 @@ export function summarizeRequest(
       missing: arms.length - available,
     },
     observedFailureCount: uniqueCriteriaCounts.failed,
-    confirmedDisagreementCount: criteria.filter((c) => c.disagreement).length,
     uniqueCriteriaCounts,
-    byExecutionMode: (['llm', 'jev'] as const).map((executionMode) => {
-      const selected = arms.filter((a) => a.executionMode === executionMode);
-      const criteriaCounts = {
-        total: 0,
-        passed: 0,
-        failed: 0,
-        inconclusive: 0,
-        skipped: 0,
-      };
-      for (const arm of selected)
-        if (arm.result.criteriaCounts)
-          for (const key of Object.keys(
-            criteriaCounts,
-          ) as (keyof typeof criteriaCounts)[])
-            criteriaCounts[key] += arm.result.criteriaCounts[key];
-      return {
-        executionMode,
-        caseCount: selected.length,
-        missingReportCount: selected.filter((a) => a.result.result === null)
-          .length,
+    byExecutionMode: [
+      {
+        executionMode: 'llm',
+        caseCount: arms.length,
+        missingReportCount: arms.length - available,
         criteriaCounts,
-      };
-    }),
+      },
+    ],
   };
 }

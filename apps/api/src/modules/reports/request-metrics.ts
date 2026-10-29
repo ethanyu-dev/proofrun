@@ -2,9 +2,6 @@ import type { RequestMetrics, VerificationReport } from '@proofrun/contracts';
 import type { PoolClient } from 'pg';
 import { addUsage, emptyUsage } from './usage.js';
 
-/** 历史报告仅含纯模型名时才回退拆分；混合名称不按执行模式猜测。 */
-const JEV_MODEL = /^jev(?:[-\s(]|$)/i;
-
 /** 同一读取事务中汇总全部关联执行；复用只展示原执行事实，任务身份去重。 */
 export async function requestMetrics(
   client: PoolClient,
@@ -29,11 +26,10 @@ export async function requestMetrics(
   const calls = (
     await client.query<{
       task_id: string;
-      purpose: string | null;
       prompt: number | null;
       completion: number | null;
     }>(
-      `SELECT e.task_id,m.record->>'purpose' AS purpose,m.record->'promptTokens' AS prompt,m.record->'completionTokens' AS completion
+      `SELECT e.task_id,m.record->'promptTokens' AS prompt,m.record->'completionTokens' AS completion
     FROM pr_model_calls m JOIN pr_executions e ON e.id=m.execution_id WHERE e.task_id=ANY($1::text[])`,
       [tasks.map((task) => task.id)],
     )
@@ -41,7 +37,6 @@ export async function requestMetrics(
   const metrics: RequestMetrics = {
     executionElapsedMs: null,
     execution: emptyUsage(),
-    jev: emptyUsage(),
     llm: emptyUsage(),
     totalTokens: null,
   };
@@ -50,11 +45,7 @@ export async function requestMetrics(
     if (recorded.length) {
       for (const call of recorded) {
         addUsage(metrics.execution, call.prompt, call.completion);
-        // 用实际调用目的区分 JEV 服务和文本模型，JEV 模式内的决策仍归 LLM。
-        if (call.purpose === 'JEV_SELECTION')
-          addUsage(metrics.jev, call.prompt, call.completion);
-        else if (call.purpose === 'DECISION' || call.purpose === 'FIELD_VALUE')
-          addUsage(metrics.llm, call.prompt, call.completion);
+        addUsage(metrics.llm, call.prompt, call.completion);
       }
     } else if (task.details) {
       const detail = task.details;
@@ -65,9 +56,8 @@ export async function requestMetrics(
         detail.modelCalls,
       );
       for (const usage of detail.modelUsage ?? [detail]) {
-        if (usage.model.includes(' + ')) continue;
         addUsage(
-          JEV_MODEL.test(usage.model) ? metrics.jev : metrics.llm,
+          metrics.llm,
           usage.promptTokens,
           usage.completionTokens,
           'calls' in usage ? usage.calls : usage.modelCalls,

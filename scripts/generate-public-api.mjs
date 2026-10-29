@@ -119,7 +119,7 @@ const document = {
     title: 'ProofRun Case API',
     version: '0.1.0',
     description:
-      '新接入使用 /v2/cases 批量提交结构化步骤，/v1/cases 保留兼容。环境、身份、预算及执行策略由平台管理。新建 v2 只支持 LLM 单组，每步独立 300 秒，动作与模型额度按步骤类型及验收项数冻结；历史 comparison.arms 继续只读，旧 JEV/parallel 不再接受。接口需要部署管理员 Bearer 凭据，请仅由可信服务端保管；提交和取消会产生实际操作。由共享 Schema 生成，请勿手改。',
+      '新接入使用 /v2/cases 批量提交结构化步骤，/v1/cases 保留兼容。环境、身份、预算及执行策略由平台管理。新建 v2 只支持 LLM 单组，每步独立 300 秒，动作与模型额度按步骤类型及验收项数冻结；每个 case 只关联一次执行。接口需要部署管理员 Bearer 凭据，请仅由可信服务端保管；提交和取消会产生实际操作。由共享 Schema 生成，请勿手改。',
   },
   servers: [
     { url: 'https://api-proofrun.ethankit.com', description: '生产 HTTP API' },
@@ -283,7 +283,7 @@ const document = {
     '/v1/tasks/delete': {
       post: operation(
         'deleteTaskRuns',
-        '原子软删除一至一百条已结束运行及其双跑和清理记录',
+        '原子软删除一至一百条已结束运行及关联清理记录',
         object({
           deletedTaskIds: { type: 'array', items: { type: 'string' } },
           deletedRequestIds: { type: 'array', items: { type: 'string' } },

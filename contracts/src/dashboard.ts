@@ -42,7 +42,7 @@ export interface DashboardUsage {
 
 /** 日明细与周期汇总使用相同字段，周期通过率重新按总数计算。 */
 export interface DashboardMetrics {
-  /** 本周期创建且仍被可见请求关联的运行数，复用及双跑合并一次。 */
+  /** 本周期创建且仍被可见请求关联的运行数，跨请求复用只计一次。 */
   runs: number;
   /** 按请求创建日归属的 Case 当前关联结果。 */
   cases: DashboardCases;

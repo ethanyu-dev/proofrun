@@ -10,11 +10,9 @@ export const REQUEST_STATE_LABELS = {
 /** 保留 case 范围，防止同名验收项或证据跨 case 混用。 */
 export type RequestCase = RequestResultV2['cases'][number];
 
-/** 历史双跑沿用原 JEV 优先口径；当前单组沿用实际执行，不合并另一组的结果。 */
+/** 每个 case 只使用当前关联的 LLM 执行。 */
 export function displayedCaseArm(member: RequestCase) {
-  return (
-    member.arms.find((arm) => arm.executionMode === 'jev') ?? member.arms[0]
-  );
+  return member.arms[0];
 }
 
 /** 报告未交付时读取本组已持久化步骤；缺失或重复记录不冒充通过。 */

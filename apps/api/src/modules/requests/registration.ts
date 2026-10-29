@@ -88,17 +88,5 @@ export async function registerMembers(
         request.sources?.[caseId] ?? null,
       ],
     );
-    if (definition.comparison) {
-      const siblingId = `comparison-${definition.comparison.sourceTaskId ?? definition.taskId}-jev`;
-      const sibling = (
-        await client.query('SELECT id FROM pr_tasks WHERE id=$1', [siblingId])
-      ).rows[0];
-      if (!sibling)
-        throw new ApiError(409, 'CASE_INCOMPLETE', '历史双跑执行组记录不完整');
-      await client.query(
-        `INSERT INTO pr_verification_request_arms(request_id,case_id,execution_mode,task_id) VALUES($1,$2,'jev',$3)`,
-        [request.requestId, caseId, siblingId],
-      );
-    }
   }
 }

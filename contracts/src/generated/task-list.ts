@@ -14,11 +14,7 @@ export interface TaskSummary {
   /**
    * 当前任务的执行模式；历史定义未记录时为 null。
    */
-  executionMode?: 'llm' | 'jev' | 'parallel' | null;
-  /**
-   * 服务端保存的双跑归属；单组为 null，旧响应可缺失，不根据任务名称推测。
-   */
-  comparison?: null | Comparison;
+  executionMode?: 'llm' | null;
   /**
    * 清理所属的主任务身份；列表相邻行不代表归属。旧响应可缺失。
    */
@@ -82,14 +78,6 @@ export interface TaskSummary {
    * 显式浏览器任务标记；历史任务为 null 或缺省。
    */
   taskKind?: 'browser' | null;
-}
-/**
- * 历史双组对比身份，仅供读取原执行记录；新任务不接受此字段，重跑创建 LLM 单组。
- */
-export interface Comparison {
-  id: string;
-  arm: 'llm' | 'jev';
-  sourceTaskId: string;
 }
 /**
  * 执行原因投影；不改写生命周期与验收结论，终止原因不覆盖已确认的环境阻塞。

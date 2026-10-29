@@ -69,7 +69,7 @@ test('任务与报告分别承载目标进度和验收结果', () => {
             description: '检查标题',
           },
         ],
-        arms: ['llm', 'jev'].map((mode) => ({
+        arms: ['llm'].map((mode) => ({
           taskId: `split-${mode}`,
           executionMode: mode,
           createdAt: '2026-10-20T00:00:00Z',
@@ -78,7 +78,7 @@ test('任务与报告分别承载目标进度和验收结果', () => {
             reportStatus: 'FAILED',
             steps: steps.map((step, i) => ({
               stepId: step.stepId,
-              status: mode === 'llm' || i === 0 ? 'COMPLETED' : 'SKIPPED',
+              status: i === 0 ? 'COMPLETED' : 'SKIPPED',
             })),
             result: {
               summary: '报告专属结论',
@@ -108,11 +108,11 @@ test('任务与报告分别承载目标进度和验收结果', () => {
   assert.match(task, /步骤完成 1 \/ 3/);
   for (const description of ['准备登录', '检查页面', '恢复数据'])
     assert.ok(task.includes(description));
-  assert.match(task, /split-jev\?request=split-request/);
+  assert.match(task, /split-llm\?request=split-request/);
   assert.match(task, /查看执行详情/);
   assert.match(task, /执行已结束，可查看执行过程与已保留的证据/);
   assert.doesNotMatch(task, /观看实时视频/);
-  assert.doesNotMatch(task, /报告专属|逐项验收|查看 DOM|split-llm/);
+  assert.doesNotMatch(task, /报告专属|逐项验收|查看 DOM/);
   const report = renderToStaticMarkup(
     createElement(RequestCases, { api: new ApiClient('fixture'), value }),
   );
@@ -120,7 +120,7 @@ test('任务与报告分别承载目标进度和验收结果', () => {
   assert.match(report, /报告专属结论/);
   assert.match(report, /报告专属实际观察/);
   assert.doesNotMatch(report, /准备登录|恢复数据|步骤完成|观看实时视频/);
-  const selectedArm = value.cases[0]!.arms[1]!;
+  const selectedArm = value.cases[0]!.arms[0]!;
   for (const status of ['RUNNING', 'QUEUED'] as const) {
     selectedArm.result.status = status;
     const active = renderToStaticMarkup(
@@ -130,7 +130,7 @@ test('任务与报告分别承载目标进度和验收结果', () => {
         onRerun: () => {},
       }),
     );
-    assert.match(active, /split-jev\?request=split-request/);
+    assert.match(active, /split-llm\?request=split-request/);
     if (status === 'RUNNING') {
       assert.match(active, /button button-primary/);
       assert.match(active, /观看实时视频/);
@@ -189,7 +189,7 @@ test('请求页的 MODEL_BLOCKED 与任务详情统一显示执行受阻', () =>
           arms: [
             {
               taskId: 'blocked-task',
-              executionMode: 'jev',
+              executionMode: 'llm',
               createdAt: '2026-10-19T00:00:00Z',
               result: {
                 status: 'COMPLETED',
@@ -241,7 +241,7 @@ test('请求封装完整发送并跳到请求详情', async (context) => {
     `/requests/${request.requestId}`,
   );
 });
-// 范围：历史双跑只展示默认组，成功时省略执行摘要并默认折叠验收明细；静态夹具不证明浏览器交互或真实验收成功。
+// 范围：当前单执行展示，成功时省略执行摘要并默认折叠验收明细；静态夹具不证明浏览器交互或真实验收成功。
 test('case 直接展开，只展示选定执行的通过数和状态', () => {
   const criterion = {
     criterionId: 'c',
@@ -262,13 +262,13 @@ test('case 直接展开，只展示选定执行的通过数和状态', () => {
     archivedAt: '2026-10-19T01:00:00Z',
     result: {
       status: 'COMPLETED',
-      reportStatus: mode === 'jev' ? 'PASSED' : 'FAILED',
+      reportStatus: 'PASSED',
       steps: [],
       cleanup: null,
       result: {
-        outcome: mode === 'jev' ? 'PASSED' : 'FAILED',
-        summary: mode === 'jev' ? '当前记录' : '另一组记录',
-        criteria: [reading(mode === 'jev' ? 'PASSED' : 'FAILED')],
+        outcome: 'PASSED',
+        summary: '当前记录',
+        criteria: [reading('PASSED')],
         evidence: [
           {
             id: 'artifact',
@@ -287,14 +287,14 @@ test('case 直接展开，只展示选定执行的通过数和状态', () => {
         caseId: 'a',
         title: '验证目标',
         executionOrigin: 'reused',
-        arms: [arm('llm'), arm('jev')],
+        arms: [arm('llm')],
         criteria: [criterion],
         steps: [],
       },
     ],
   } as unknown as RequestResultV2;
   const member = value.cases[0]!;
-  assert.equal(displayedCaseArm(member)?.taskId, 'task-jev');
+  assert.equal(displayedCaseArm(member)?.taskId, 'task-llm');
   assert.deepEqual(caseVerificationProgress(member), { passed: 1, total: 1 });
   const preview = renderToStaticMarkup(
     createElement(RequestCasePreview, { value, reports: true }),
@@ -311,22 +311,22 @@ test('case 直接展开，只展示选定执行的通过数和状态', () => {
   assert.match(details, /<details class="request-criterion"><summary/);
   assert.match(details, /夹具依据/);
   assert.match(details, /disabled=""[^>]*>证据已清理/);
-  assert.match(details, /task-jev\?request=r/);
+  assert.match(details, /task-llm\?request=r/);
   assert.doesNotMatch(
     details,
-    /<details[^>]* open|当前记录|复用已有执行|执行创建于|另一组记录|task-llm|LLM|JEV|无法判定/,
+    /<details[^>]* open|当前记录|复用已有执行|执行创建于|另一组记录|LLM|JEV|无法判定/,
   );
 });
 
 // 范围：分母包含缺失项，单组兼容、执行中步骤记录及重复结果；不检查后端生成报告的真实性。
-test('通过数不会合并其他模式或因缺报告缩小分母', () => {
+test('通过数保留缺失结果且不因缺报告缩小分母', () => {
   const member = {
     caseId: 'progress-case',
     title: '进度夹具',
     criteria: Array.from({ length: 21 }, (_, i) => ({ criterionId: `c${i}` })),
     arms: [
       {
-        executionMode: 'jev',
+        executionMode: 'llm',
         taskId: 'primary',
         result: {
           status: 'RUNNING',

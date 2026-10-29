@@ -1,6 +1,6 @@
 # 请求读取与摘要
 
-请求和冻结成员关系保留在 `pr_verification_requests`、`pr_verification_request_cases`；新的单 LLM 运行只写 cases 一份关联。`pr_request_runs` 视图以 cases 为主运行来源，并补入历史 `pr_verification_request_arms` 的从运行；复用历史双跑时只冻结额外的从运行，不重复写主运行。历史表和原始报告保留，任务仍是执行与报告的事实来源。`projector.ts` 供详情和摘要刷新共用，继续调用 Contracts 的 `summarizeReport`、`summarizeRequestCase`、`summarizeRequest`，不在 SQL 复制判定规则。
+请求和冻结成员关系保留在 `pr_verification_requests`、`pr_verification_request_cases`；新的单 LLM 运行只写 cases 一份关联。`pr_request_runs` 视图读取 cases 当前关联的一次执行。任务仍是执行与报告的事实来源。`projector.ts` 供详情和摘要刷新共用，继续调用 Contracts 的 `summarizeReport`、`summarizeRequestCase`、`summarizeRequest`，不在 SQL 复制判定规则。
 
 `pr_request_summaries` 保存列表需要的计数和状态；索引列从同一 JSON 生成，不能独立更新。列表通过执行状态、报告状态、创建时间和请求身份筛选分页，不再分批读取历史任务并在应用层筛选。详情保持直接读取原始事实；公开响应结构及计数口径不变。
 

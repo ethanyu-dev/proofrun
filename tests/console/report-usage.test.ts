@@ -21,19 +21,12 @@ const EMPTY_USAGE: TokenUsage = {
 };
 
 /** 用独立的执行总量检验隐藏空分项不会改写总计。 */
-function metrics(jev: TokenUsage = EMPTY_USAGE): RequestMetrics {
-  const llm = {
-    calls: 2,
-    promptTokens: 100,
-    completionTokens: 20,
-    totalTokens: 120,
-  };
+function metrics(llm: TokenUsage = EMPTY_USAGE): RequestMetrics {
   return {
     executionElapsedMs: 3000,
     execution: llm,
     llm,
-    jev,
-    totalTokens: 120,
+    totalTokens: llm.totalTokens,
   };
 }
 
@@ -50,34 +43,7 @@ test('纯 LLM 报告顶部与明细不展示空 JEV 行', () => {
       );
       assert.doesNotMatch(html, /JEV|历史/);
       assert.match(html, /LLM/);
-      assert.match(html, value ? />120</ : />—</);
-    }
-  }
-});
-
-// 范围：历史模式缺少用量时保留未知占位，实际调用或部分 Tokens 也可识别旧记录；不推断未记录的消耗。
-test('历史 JEV 用量保留来源标识与未知值', () => {
-  const cases = [
-    { metrics: undefined, historicalJev: true, expected: />—</ },
-    { metrics: metrics(), historicalJev: true, expected: />—</ },
-    { metrics: metrics({ ...EMPTY_USAGE, calls: 1 }), expected: />—</ },
-    { metrics: metrics({ ...EMPTY_USAGE, promptTokens: 17 }), expected: />—</ },
-    {
-      metrics: metrics({
-        calls: 1,
-        promptTokens: 100,
-        completionTokens: 5,
-        totalTokens: 105,
-      }),
-      expected: />105</,
-    },
-  ];
-  for (const sample of cases) {
-    for (const component of [ReportUsage, ReportUsageDetails]) {
-      const html = renderToStaticMarkup(createElement(component, sample));
-      assert.match(html, /JEV（历史）/);
-      assert.match(html, sample.expected);
-      assert.match(html, /LLM/);
+      assert.match(html, value?.totalTokens === 0 ? />0</ : />—</);
     }
   }
 });

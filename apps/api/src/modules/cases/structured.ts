@@ -20,9 +20,8 @@ import { DEFAULT_CASE_EXECUTION_MODE, type CaseProfile } from './profile.js';
 
 /** 前缀将新版 case 与旧公开入口、普通内部任务隔离。 */
 export const V2_PREFIX = 'case-v2-';
-/** 主任务、双跑从组及清理的保留前缀，禁止普通任务占用这些服务端身份。 */
-export const CASE_TASK_ID =
-  /^(case-(?:v2|run)-|cleanup-case-(?:v2|run)-|comparison-case-(?:v2|run)-|cleanup-comparison-case-(?:v2|run)-)/;
+/** 主任务及清理的保留前缀，禁止普通任务占用这些服务端身份。 */
+export const CASE_TASK_ID = /^(case-(?:v2|run)-|cleanup-case-(?:v2|run)-)/;
 /** 批量提交必须有界，避免长事务和过量任务占用。 */
 export const MAX_CASE_BATCH = 32;
 
@@ -203,20 +202,8 @@ export function compileCase(
   return task;
 }
 
-/** 双跑保留旧主任务路径，另一组使用独立命名空间，避免与带后缀的 caseId 冲突。 */
-export function caseArmIds(task: VerificationTask): string[] {
-  const primaryId = task.comparison?.sourceTaskId ?? task.taskId;
-  return task.comparison
-    ? [primaryId, `comparison-${primaryId}-jev`]
-    : [primaryId];
-}
-
-/** 新提交只有 LLM 一组，历史双跑的读取仍由 caseArmIds 处理。 */
+/** 校验平台编译配置，防止绕过协议入口提交不支持的模式。 */
 export function assertCaseExecution(task: VerificationTask): void {
   if (task.executionMode && task.executionMode !== 'llm')
-    throw new ApiError(
-      422,
-      'EXECUTION_MODE_RETIRED',
-      '新任务只支持 llm，jev 和 parallel 已退出执行',
-    );
+    throw new ApiError(422, 'EXECUTION_MODE_RETIRED', '任务只支持 llm');
 }
