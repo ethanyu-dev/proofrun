@@ -482,3 +482,191 @@ test('重复控件面板先压缩，保留正文、网络页和取回完整证�
   );
   assert.deepEqual(current, before);
 });
+
+// 范围：通过真实 HTTP 请求验证规则随结构化上下文加入及移除；页面与模型回复为夹具，不评估模型遵循能力。
+test('专项提示词按每轮事实加载，不残留上一轮规则', async () => {
+  const { args, current } = await input();
+  const server = await modelServer(() => ({
+    type: 'verification.block',
+    summary: '检查提示词装配',
+  }));
+  const model = new ChatModel({ ...config, modelUrl: server.url });
+  const send = async (data) => {
+    await model.decide(decisionContext(data), new AbortController().signal);
+    return server.requests.at(-1).messages[0].content;
+  };
+  try {
+    const minimal = await send(args);
+    assert.doesNotMatch(
+      minimal,
+      /page.network|state.conditions|state.readings|page.documents|history.commands|history.excerpts/,
+    );
+    assert.doesNotMatch(minimal, /scroll|focusVerified|Service Worker/);
+    assert.match(minimal, /不可信证据/);
+    assert.match(minimal, /budget 是剩余硬额度/);
+    assert.match(minimal, /criteria 按原 criterionId/);
+
+    const rich = await send({
+      ...args,
+      current: {
+        ...current,
+        documents: [
+          { frameId: 'main', isMainFrame: true, lang: 'en', url: current.url },
+        ],
+        runtime: { version: 1, status: 'observed' },
+      },
+      setupPhase: 'CHECKING',
+      history: [
+        {
+          commandId: 'keyboard-fixture',
+          operation: 'browser.act',
+          action: 'press',
+          operationStatus: 'SUCCEEDED',
+          effect: 'COMPLETED',
+          keyboard: { scope: 'target', focusVerified: true },
+        },
+      ],
+      previousObservations: [{ ...current }],
+      // discovered 是裁剪前的稳定计数；正文全部省略时也须保留阅读约束。
+      interactionProgress: {
+        revision: 1,
+        currentTargets: [],
+        discovered: 1,
+        unreadItemIds: ['item-1'],
+        recordedItemIds: [],
+        items: [],
+        limit: 32,
+        omittedItems: 1,
+      },
+    });
+    assert.match(rich, /当前独立核验/);
+    assert.doesNotMatch(rich, /当前执行业务验证/);
+    assert.match(rich, /state.conditions/);
+    assert.match(rich, /state.readings/);
+    assert.match(rich, /page.documents/);
+    assert.match(rich, /history.commands/);
+    assert.match(rich, /history.excerpts/);
+    assert.match(rich, /focusVerified/);
+    assert.match(rich, /Service Worker/);
+    assert.equal(await send(args), minimal);
+    assert.deepEqual(server.errors, []);
+  } finally {
+    await server.close();
+  }
+});
+
+// 范围：工具说明与最终截图、运行时、阶段和预算能力同步；不执行真实视觉点击或 PWA 清理。
+test('动作提示随最终工具能力加载，收尾不再注入浏览器操作规则', async () => {
+  const server = await modelServer(() => ({
+    type: 'verification.block',
+    summary: '检查能力说明',
+  }));
+  try {
+    for (const options of [
+      { vision: false, image: true },
+      { vision: true, image: false },
+      { vision: true, image: true },
+      { runtime: true },
+      { runtime: true, cleanup: true },
+      { runtime: true, settlement: true },
+      { actions: 0 },
+    ]) {
+      const { args, current } = await input();
+      if (options.runtime) current.runtime = { version: 1, status: 'observed' };
+      if (options.actions === 0) args.budgetRemaining.actions = 0;
+      await new ChatModel({
+        ...config,
+        modelUrl: server.url,
+        vision: !!options.vision,
+      }).decide(
+        decisionContext({
+          ...args,
+          image: options.image ? 'data:image/png;base64,fixture' : undefined,
+          cleanup: !!options.cleanup,
+          verificationReview: options.settlement
+            ? { final: true, reason: 'budget' }
+            : undefined,
+        }),
+        new AbortController().signal,
+      );
+      const request = server.requests.at(-1);
+      const act = request.tools.find(
+        (tool) => tool.function.name === 'browser_act',
+      )?.function;
+      if (options.settlement || options.actions === 0) {
+        assert.equal(act, undefined);
+        assert.doesNotMatch(
+          request.messages[0].content,
+          /scroll|navigate|视觉点击/,
+        );
+      } else {
+        const actions = act.parameters.properties.action.enum;
+        const visual = !!(options.vision && options.image);
+        assert.equal(actions.includes('visual.click'), visual);
+        assert.equal(act.description.includes('视觉点击'), visual);
+        assert.equal(
+          act.description.includes('online 只派发'),
+          !!options.runtime,
+        );
+        assert.equal(
+          act.description.includes('network.probe 的 target'),
+          !!options.runtime,
+        );
+        assert.equal(
+          act.description.includes('pwa.cleanup 仅清理'),
+          !!options.cleanup,
+        );
+        assert.match(act.description, /不为确认同一事实反复 navigate/);
+      }
+    }
+    assert.deepEqual(server.errors, []);
+  } finally {
+    await server.close();
+  }
+});
+
+// 范围：网络规则依据实际可读取的证据开放，收尾仍可读取；无证据不得仅凭快照存在注入工具说明。
+test('网络提示与证据工具保持一致，通用任务不携带正式验收规则', async () => {
+  const server = await modelServer(() => ({
+    type: 'verification.block',
+    summary: '检查网络规则',
+  }));
+  try {
+    for (const withEvidence of [false, true]) {
+      const { args, current } = await input();
+      args.task.taskKind = 'browser';
+      args.task.acceptanceCriteria = [];
+      current.network = { requests: [] };
+      if (withEvidence) {
+        const id = '11111111-1111-4111-8111-111111111111';
+        current.artifactRefs.push({
+          kind: 'NETWORK',
+          artifactId: id,
+          sha256: 'a'.repeat(64),
+        });
+        args.evidence.push({ kind: 'NETWORK', id, sha256: 'a'.repeat(64) });
+      }
+      await new ChatModel({ ...config, modelUrl: server.url }).decide(
+        decisionContext({
+          ...args,
+          verificationReview: { final: true, reason: 'budget' },
+        }),
+        new AbortController().signal,
+      );
+      const request = server.requests.at(-1);
+      const prompt = request.messages[0].content;
+      assert.equal(
+        request.tools.some((tool) => tool.function.name === 'network_requests'),
+        withEvidence,
+      );
+      assert.equal(prompt.includes('page.network 默认'), withEvidence);
+      assert.equal(prompt.includes('最多 4 个纯'), withEvidence);
+      assert.match(prompt, /只读收尾/);
+      assert.match(prompt, /通用浏览器任务/);
+      assert.doesNotMatch(prompt, /当前执行业务验证|criteria 按原 criterionId/);
+    }
+    assert.deepEqual(server.errors, []);
+  } finally {
+    await server.close();
+  }
+});

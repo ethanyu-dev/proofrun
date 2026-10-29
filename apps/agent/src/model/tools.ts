@@ -1,5 +1,5 @@
 import { allowedDecisionTypes } from '@proofrun/execution-core/execution/allowed-decisions';
-import { TOOL_DESCRIPTIONS } from '../prompts/tools.js';
+import { toolDescription } from '../prompts/tools.js';
 import type { DecisionContextData } from '@proofrun/execution-core/execution/context';
 import type { AgentDecision } from '@proofrun/contracts';
 import { agentDecisionSchema } from '@proofrun/contracts';
@@ -14,10 +14,11 @@ export interface DecisionTool {
   parameters: object;
 }
 
-/** 所有工具共享进度入口，公开报告继续使用原有领域协议。 */
+/** 共享进度协议；hasImage 只表示本轮真正交付截图，先收窄能力再生成对应说明。 */
 export function decisionTools(
   context: DecisionContextData,
   tools: DecisionTool[],
+  hasImage = false,
 ): DecisionTool[] {
   const ids = context.task.criteria.map((item) => item.id);
   const progress = structuredClone(agentDecisionSchema.definitions.progress);
@@ -84,11 +85,14 @@ export function decisionTools(
           )
           .map((item) => item.target);
         const actionSchema = parameters.properties.action as { enum: string[] };
+        // 视觉与运行时动作在此一次性收窄，提示词不得早于最终能力列表生成。
         actionSchema.enum = actionSchema.enum.filter(
           (action) =>
-            !['online', 'pwa.cleanup', 'network.probe'].includes(action) ||
-            (context.page.runtime?.version === 1 &&
-              (action !== 'pwa.cleanup' || context.state.phase === 'CLEANUP')),
+            (action !== 'visual.click' || hasImage) &&
+            (!['online', 'pwa.cleanup', 'network.probe'].includes(action) ||
+              (context.page.runtime?.version === 1 &&
+                (action !== 'pwa.cleanup' ||
+                  context.state.phase === 'CLEANUP'))),
         );
 
         const scrollTargets = context.page.targets
@@ -153,7 +157,7 @@ export function decisionTools(
       );
       return {
         ...tool,
-        description: TOOL_DESCRIPTIONS[tool.type] ?? tool.description,
+        description: toolDescription({ ...tool, parameters }),
         parameters,
       };
     });
