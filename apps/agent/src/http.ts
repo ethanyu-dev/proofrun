@@ -1,3 +1,5 @@
+import type { Dispatcher } from 'undici';
+
 /** JSON 回复限额覆盖控制面单帧，图片使用独立的 8 MiB 限额。 */
 const MAX_JSON_BYTES = 2 * 1024 * 1024;
 /** 只映射运行时的封闭错误码；原始异常可能包含地址、代理凭据或请求正文。 */
@@ -55,7 +57,7 @@ export async function readBytes(
     await reader.cancel().catch(() => {});
   }
 }
-/** 每次调用只发出一次请求；附加头由可信调用方提供，认证与正文类型仍由本函数确定。 */
+/** 每次调用只发出一次请求；可信调用方可提供连接策略，但不能绕过总时限、取消及正文限额。 */
 export async function jsonRequest(
   url: string,
   token: string,
@@ -64,10 +66,16 @@ export async function jsonRequest(
   timeoutMs: number,
   signal?: AbortSignal,
   extraHeaders?: Record<string, string>,
+  transport?: (timeoutMs: number, signal: AbortSignal) => Dispatcher,
 ): Promise<unknown> {
-  const timeout = AbortSignal.timeout(Math.max(1, Math.floor(timeoutMs)));
+  const duration = Math.max(1, Math.floor(timeoutMs));
+  const timeout = AbortSignal.timeout(duration);
+  const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
+  requestSignal.throwIfAborted();
+  const dispatcher = transport?.(duration, requestSignal);
   try {
     const response = await fetch(url, {
+      ...(dispatcher ? { dispatcher } : {}),
       method,
       redirect: 'error',
       headers: {
@@ -76,7 +84,7 @@ export async function jsonRequest(
         ...(body === undefined ? {} : { 'content-type': 'application/json' }),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+      signal: requestSignal,
     });
     const bytes = await readBytes(response, MAX_JSON_BYTES);
     let value: unknown;
@@ -124,6 +132,9 @@ export async function jsonRequest(
         ? (TRANSPORT_CODES.get(cause.code) ?? 'TRANSPORT_ERROR')
         : 'TRANSPORT_ERROR';
     throw new AgentFault(code, '服务请求超时或连接中断');
+  } finally {
+    // 请求专属连接在成功、拒绝、超时及取消后都释放；默认控制面连接池不受影响。
+    await dispatcher?.destroy();
   }
 }
 /** 只有传输失败和临时 HTTP 故障可重试，参数和权限拒绝不能被重试掩盖。 */

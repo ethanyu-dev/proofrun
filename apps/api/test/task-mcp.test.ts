@@ -214,7 +214,7 @@ test(
         async () => {
           const bt = await browser.listTools();
           const vt = await verification.listTools();
-          assert.equal(bt.tools.length, 16);
+          assert.equal(bt.tools.length, 17);
           assert.equal(vt.tools.length, 16);
           for (const [tools, prefix] of [
             [bt.tools, 'browser_'],

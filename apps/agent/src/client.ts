@@ -69,6 +69,14 @@ export class ControlClient {
       steps,
     )) as ExecutionTiming;
   }
+  /** 在启动基准循环前向控制面冻结实际构建和无密钥模型配置。 */
+  async benchmarkBuild(
+    execution: ExecutionGrant,
+    body: unknown,
+    signal: AbortSignal,
+  ) {
+    return this.request(execution, '/benchmark-build', 'POST', body, signal);
+  }
   /** 同一次调用不重试 claim：回执丢失时由短租约回收，不冒险重复领取。 */
   async claim(signal?: AbortSignal): Promise<ExecutionGrant | null> {
     const response = (await jsonRequest(
@@ -84,6 +92,7 @@ export class ControlClient {
         profileTabsVersion: 1,
         executionPlanVersion: 1,
         runtimeVersion: 1,
+        benchmarkVersion: 1,
       },
       this.config.requestMs,
       signal,

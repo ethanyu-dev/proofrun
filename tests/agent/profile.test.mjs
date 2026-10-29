@@ -1055,3 +1055,40 @@ test('profile 并发组只使用一个执行租约守卫', { timeout: 10_000 }, 
   assert.equal(client.renewals, 1);
   assert.equal(client.reports.length, 1);
 });
+
+// 范围：分组中的历史关键词不再触发静态跳过，模型夹具负责全部步骤；不证明真实工具可读取元数据。
+test('profile 含历史关键词的步骤仍正常执行', async () => {
+  const { report, seen } = await run(
+    (context) => finish(context),
+    (execution) => {
+      execution.task.steps.find((step) => step.stepId === 'a-verify').expected =
+        ['读取 canonical'];
+      execution.task.acceptanceCriteria.find(
+        (criterion) => criterion.id === 'a',
+      ).expectedResult = '读取 canonical';
+    },
+  );
+  assert.equal(report.executionDisposition, 'EXECUTED');
+  assert.equal(report.verdict, 'PASSED');
+  assert.equal(
+    report.steps.find((step) => step.stepId === 'a-verify').status,
+    'COMPLETED',
+  );
+  assert.equal(
+    report.steps.find((step) => step.stepId === 'b-verify').status,
+    'COMPLETED',
+  );
+  assert.equal(
+    report.steps.find((step) => step.stepId === 'cleanup').status,
+    'COMPLETED',
+  );
+  assert.equal(
+    report.criteria.find((criterion) => criterion.criterionId === 'a').verdict,
+    'PASSED',
+  );
+  assert.equal(
+    report.criteria.find((criterion) => criterion.criterionId === 'b').verdict,
+    'PASSED',
+  );
+  assert(seen.some(([step]) => step === 'a-verify'));
+});

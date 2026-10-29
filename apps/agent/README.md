@@ -25,7 +25,7 @@ pnpm --filter @proofrun/agent start serve
 pnpm --filter @proofrun/agent start once
 ```
 
-应用不自动加载 `.env`。模型名称、API 地址与密钥没有默认值；每次 `decide` 发起一次 `/chat/completions` 请求。服务必须支持函数工具与 `parallel_tool_calls: false`；默认使用 `tool_choice: required`，显式开启思考或推理强度时使用 `auto`。不支持 `max_completion_tokens` 的服务可配置 `PROOFRUN_MODEL_TOKEN_PARAMETER=max_tokens`，不自动猜测供应商或隐藏重试。工具使用非严格模式；各协议分支映射为独立工具，工具名确定动作类型，参数无需 decision 外层。执行器仍使用同源 Schema 和领域规则校验返回内容，格式错误只反馈对应分支的约束，不回显原始回复。
+应用不自动加载 `.env`。模型名称、API 地址与密钥没有默认值；每次 `decide` 发起一次 `/chat/completions` 请求。服务必须支持函数工具与 `parallel_tool_calls: false`；默认使用 `tool_choice: required`，显式开启思考或推理强度时使用 `auto`。不支持 `max_completion_tokens` 的服务可配置 `PROOFRUN_MODEL_TOKEN_PARAMETER=max_tokens`，不自动猜测供应商或隐藏重试。系统提示按本轮实际工具明确回复调用数量：浏览器动作始终逐轮串行，即使填写独立字段也需等待下一轮的新观察；只有实际开放网络读取工具时才附带原有纯读取批次规则。多浏览器动作回复仍整批拒绝、完整存档，不择一执行或隐式重试。未发现面板阅读账本时不向模型开放 `progress.readings`，普通页面核验通过结论及证据字段保存，不能以验收项 ID 构造阅读项。工具使用非严格模式；各协议分支映射为独立工具，工具名确定动作类型，参数无需 decision 外层。执行器仍使用同源 Schema 和领域规则校验返回内容，格式错误只反馈对应分支的约束，不回显原始回复。
 
 `PROOFRUN_MODEL_THINKING` 接受 `default`（默认）、`enabled`、`disabled`。`default` 不发送 `thinking`；显式模式发送 `thinking: {"type":"enabled"}` 或 `thinking: {"type":"disabled"}`。
 
@@ -45,6 +45,8 @@ export PROOFRUN_AGENT_MODEL_MS=120000
 ```
 
 推理强度、输出上限与超时独立生效；输出上限需覆盖推理 token 和最终工具参数，8192 是成本与速度取舍，不保证复杂调用不会截断。`PROOFRUN_MODEL_MAX_TOKENS` 可显式设为 256–65536，`PROOFRUN_AGENT_MODEL_MS` 可设为 100–600000 毫秒，通用代码默认值仍为 4096 token 和 30 秒；提高这两项不会增加冻结的任务或步骤预算，身份选择也仍受 110 秒限制。采用代理时保留其实际模型名与输出预算参数。配置在 Agent 重启后生效，API 必须同时部署支持 `reasoning_effort` 的请求存档校验；最小模型调用成功不代表业务任务验收通过。
+
+模型请求的 TCP/TLS 连接使用本轮实际剩余时限，避免 Node `fetch` 默认的十秒连接上限提前截断长时限请求。该时限仍取配置与步骤模型剩余额度的较小值，任务截止及租约取消可提前中断。每次模型请求使用独立连接并在结束时释放，取消信号也传入底层连接器，避免握手中残留连接或影响其他任务；控制面继续复用默认连接池。不会增加请求重试、任务时限或 benchmark 门禁预算。
 
 `PROOFRUN_MODEL_VISION=true` 时，每次观察采集并下载一张 PNG，核实归属和摘要后作为 LLM 输入；未交付图片时不提供坐标点击。需要截图验收而模型未启用视觉时明确阻塞。仅有附件引用不能证明图像内容已经核实。
 

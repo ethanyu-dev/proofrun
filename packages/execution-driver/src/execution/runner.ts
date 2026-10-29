@@ -1,3 +1,8 @@
+import {
+  selectContext,
+  ContextReads,
+  type ContextSelection,
+} from '@proofrun/execution-core/execution/context-view';
 import { buildExecutionReport } from '@proofrun/execution-core/report';
 import {
   recoverableFocusFailure,
@@ -271,6 +276,10 @@ class Execution {
   private criteria: CriteriaLedger;
   /** 面向模型的局部定义，原始任务快照始终保持不变。 */
   private currentTask: VerificationTask | undefined;
+  /** 显式恢复或运行时分页只绑定当前观察，不刷新浏览器。 */
+  private contextSelection: ContextSelection | undefined;
+  /** 跨视图保留只读进度并防止反复恢复同一页面。 */
+  private contextReads = new ContextReads();
   /** 仅展开最近一次网络查询；观察身份不同后不携带旧详情。 */
   private networkSelection: NetworkSelection | undefined;
   /** 最近批次中的其它读取只投影一次批次，不累计所有详情。 */
@@ -768,6 +777,8 @@ class Execution {
       ...(this.networkSelection
         ? { networkSelection: this.networkSelection }
         : {}),
+      contextSelection: this.contextSelection,
+      contextReads: this.contextReads.view(this.current!),
       networkBatchSelections: this.networkBatchSelections,
       networkReads: this.networkReads.view(this.current!),
       changes: this.changes,
@@ -1634,7 +1645,9 @@ class Execution {
     let workflowRecoveries = 0;
     let repeatedRecords = 0;
     this.networkReads = new NetworkReads();
+    this.contextReads = new ContextReads();
     this.networkSelection = undefined;
+    this.contextSelection = undefined;
     this.networkBatchSelections = [];
     // 收尾只进入一次；协议纠错仍在同一只读阶段内消耗原额度，不能重新探索。
     let finalReview = false;
@@ -1971,6 +1984,16 @@ class Execution {
             'INVALID_MODEL_DECISION',
             '批量工具调用只允许至多四个纯网络读取，整批未执行',
           );
+        if (
+          ['browser.act', 'browser.wait'].includes(decision.type) &&
+          input.context?.page.view !== 'page'
+        )
+          throw new AgentFault(
+            'INVALID_MODEL_DECISION',
+            '先用 context_read(section=page) 恢复同一快照的页面视图，再执行浏览器操作',
+          );
+        if (decision.type === 'context.read')
+          selectContext(this.current!, decision);
         const progress = decision.progress;
         const decidedCriteria = progress?.criteria ?? [];
         if (!validateAgentDecision(decision))
@@ -1987,7 +2010,11 @@ class Execution {
                 ]
               : ['verification.record']
           )
-            .concat(['network.requests', 'network.request_detail'])
+            .concat([
+              'network.requests',
+              'network.request_detail',
+              'context.read',
+            ])
             .includes(decision.type)
         )
           return this.blocked(STALLED_SUMMARY, 'NO_PROGRESS');
@@ -2097,6 +2124,20 @@ class Execution {
           repeatedRecords = 0;
         }
 
+        if (decision.type === 'context.read') {
+          if (savedChanged) this.contextReads.progressed();
+          if (!this.contextReads.read(this.current!, decision))
+            return this.blocked(
+              '同一 context 视图或运行时页反复读取，未取得新进展',
+              'NO_PROGRESS',
+            );
+          this.contextSelection = selectContext(this.current!, decision);
+          this.feedback =
+            '已读取同一观察：page.runtimeDetail 是本页原始条目；state.contextReads 保留已读偏移及缓存状态计数。翻页使用 runtimeDetail.nextOffset，不从摘要预览的 nextOffset 重新开始。仅需 DOM 事实或页面操作时恢复 page。';
+          errors = 0;
+          finalReview = false;
+          continue;
+        }
         if (
           decision.type === 'network.requests' ||
           decision.type === 'network.request_detail'
@@ -2111,6 +2152,7 @@ class Execution {
               '网络读取反复返回已读结果（包括列表与详情交替），未取得新的验收进展',
               'NO_PROGRESS',
             );
+          this.contextSelection = undefined;
           for (const read of reads)
             this.networkSelection = retainNetworkSelection(
               this.networkSelection,
@@ -2642,7 +2684,9 @@ class Execution {
         recorded.find((r) => r.criterionId === c.id) ?? {
           criterionId: c.id,
           verdict: 'SKIPPED' as const,
-          summary: '该项尚未验收',
+          summary:
+            this.stepResults.find((step) => step.stepId === c.stepId)
+              ?.summary ?? '该项尚未验收',
           evidenceRefs: [],
         },
     );

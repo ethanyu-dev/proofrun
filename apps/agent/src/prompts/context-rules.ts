@@ -11,7 +11,10 @@ const KEYBOARD_RECEIPT_PROMPT =
 const RUNTIME_PROMPT = `page.runtime 提供同会话 Service Worker、Cache Storage 和 Console 的范围与完整性。
 不要求人工打开 DevTools。
 unavailable、truncated 或 complete=false 不能证明无异常；无注册与读取失败须区分。
-不得以页面打开代替运行时验收。`;
+不得以页面打开代替运行时验收。
+runtimeLists 区分原采集完整性 capture 与当前投影 omitted；用 context_read(section=runtime,path,offset) 分页补读，runtimeDetail 是同快照原始条目。
+优先核对 runtimeDetail；继续翻页使用 runtimeDetail.nextOffset，而不是摘要目录的 nextOffset。
+state.contextReads 保留已读页与实际缓存状态计数；翻页前用 progress 保存本页发现，不重复读第一页。`;
 
 /** 历史正文只证明当时事实，不能作为当前状态或操作目标。 */
 const EXCERPT_PROMPT = `history.excerpts 保留对应观察的正文与 documents，不代表当前状态；
@@ -44,9 +47,15 @@ const REQUIREMENT_REF_PROMPT =
   'requirementRef 指向本轮 task 中的原始要求文本，按该字段完整内容执行，不把引用路径当作要求。';
 const CRITERIA_PROMPT =
   'criteria 按原 criterionId 判定 PASSED/FAILED/INCONCLUSIVE。';
-const READING_PROMPT = `readings 只登记已观察面板 itemId 和真实原文 quote。
+const READING_PROMPT = `阅读记录只放在工具参数 progress.readings 内，不能放到工具参数顶层。
+itemId 使用 state.readings.items 的对应 id；quote 从该项 text 逐字复制一段连续原文，最多 600 字符。
+不要把 name、heading、摘要或其他面板正文拼进 quote；只允许空白排版差异。
+引文被拒绝时，修正 progress.readings 中的 quote，仍保持相同字段层级；登记失败会阻止同次动作，不能假定动作已经执行。
 state.readings 是阅读进度，不是验收结论。
 已读面板不重复打开；原任务确需重访时提供 revisitReason。`;
+/** 未发现面板时没有合法 itemId，不能把验收项或任务要求身份误用作阅读项。 */
+const NO_READINGS_PROMPT = `本轮没有子项阅读账本，省略 progress.readings，不能用验收项或要求的 ID 构造 itemId。
+普通页面核验依据通过 summary 和 evidenceRefs 保存。`;
 
 /** 只依据模型本轮收到的结构化事实装配，不扫描任务或页面关键词猜测场景。 */
 export function contextPrompts(context: DecisionContextData): string[] {
@@ -60,6 +69,9 @@ export function contextPrompts(context: DecisionContextData): string[] {
     history.excerpts.length ? EXCERPT_PROMPT : '',
     history.excerpts.some((item) => item.textRef) ? EXCERPT_REF_PROMPT : '',
     page.runtime ? RUNTIME_PROMPT : '',
+    page.view && page.view !== 'page'
+      ? '本轮主动使用精简证据视图，正文、控件、截图省略不表示采集失败，不要求补齐所有页面内容。网络或运行时核验直接使用 page.network / page.runtimeDetail，无需恢复页面。只有任务还需要 DOM 事实或浏览器操作时才用 context_read(section=page) 恢复同一观察；不要仅因 text 为空切回页面。'
+      : '',
     page.documents?.length ||
     history.excerpts.some((item) => item.documents?.length)
       ? DOCUMENT_PROMPT
@@ -75,6 +87,6 @@ export function contextPrompts(context: DecisionContextData): string[] {
       ? REQUIREMENT_REF_PROMPT
       : '',
     task.kind !== 'browser' && task.criteria.length ? CRITERIA_PROMPT : '',
-    hasReadings ? READING_PROMPT : '',
+    hasReadings ? READING_PROMPT : NO_READINGS_PROMPT,
   ].filter(Boolean);
 }

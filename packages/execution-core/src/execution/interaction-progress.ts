@@ -132,7 +132,7 @@ export class InteractionProgress {
       if (!quote)
         throw new AgentFault(
           'INVALID_MODEL_DECISION',
-          `子项 ${item.id} 的引文与已观察原文不一致；只允许空白排版差异，已登记子项无需重复提交`,
+          `子项 ${item.id} 的引文与已观察原文不一致；请在 progress.readings 内修正 quote，从 state.readings.items 对应项的 text 复制连续原文，不拼入 name/heading；readings 不能放到工具参数顶层。只允许空白排版差异，已登记子项无需重复提交`,
         );
       seen.add(item.id);
       return { item, quote };

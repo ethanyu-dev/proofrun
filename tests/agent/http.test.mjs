@@ -1,11 +1,166 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createServer } from 'node:http';
+import { createServer as createTcpServer } from 'node:net';
+import { once } from 'node:events';
+import { setTimeout as delay } from 'node:timers/promises';
+import { modelTransport } from '../../apps/agent/dist/model/transport.js';
 import {
   AgentFault,
   jsonRequest,
   transient,
 } from '../../apps/agent/dist/http.js';
+
+/** 超过 Node 默认十秒连接时限，直接覆盖曾经提前中止的 TLS 建连路径。 */
+const MODEL_CONNECTION_TEST_MS = 11_500;
+
+/** TCP 接通后读取但不回复 TLS 握手；用于确定性模拟慢建连，不访问真实供应商。 */
+async function stalledTls() {
+  const sockets = new Set();
+  let connections = 0;
+  const server = createTcpServer((socket) => {
+    connections++;
+    sockets.add(socket);
+    socket.resume();
+    socket.on('error', () => {});
+    socket.on('close', () => sockets.delete(socket));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return {
+    server,
+    url: `https://127.0.0.1:${server.address().port}`,
+    connections: () => connections,
+    async assertReleased() {
+      const deadline = performance.now() + 1000;
+      while (sockets.size && performance.now() < deadline) await delay(10);
+      assert.equal(sockets.size, 0, '请求结束后不能遗留正在握手的连接');
+    },
+    async close() {
+      for (const socket of sockets) socket.destroy();
+      await new Promise((resolve) => server.close(resolve));
+    },
+  };
+}
+
+// 范围：本地真实 TCP/TLS 等待超过默认十秒后遵守已有请求期限，无重连且释放 socket；不证明远端网络质量。
+test('模型慢建连使用请求剩余期限，不被隐含十秒配置提前截断', async () => {
+  const fixture = await stalledTls();
+  try {
+    const started = performance.now();
+    await assert.rejects(
+      jsonRequest(
+        fixture.url,
+        'fixture',
+        'POST',
+        {},
+        MODEL_CONNECTION_TEST_MS,
+        undefined,
+        undefined,
+        modelTransport,
+      ),
+      { code: 'TRANSPORT_REQUEST_TIMEOUT' },
+    );
+    const elapsed = performance.now() - started;
+    assert.ok(
+      elapsed >= MODEL_CONNECTION_TEST_MS - 100,
+      `提前结束：${elapsed}`,
+    );
+    assert.ok(
+      elapsed < MODEL_CONNECTION_TEST_MS + 3000,
+      `超出期限：${elapsed}`,
+    );
+    assert.equal(fixture.connections(), 1);
+    await fixture.assertReleased();
+  } finally {
+    await fixture.close();
+  }
+});
+
+// 范围：取消发生在 TLS 建连中时立刻关闭连接且保留租约错误；不等待完整模型时限，不验证远端服务取消计算。
+test('模型握手期间取消会关闭在途连接，已经取消的调用不建连', async () => {
+  const fixture = await stalledTls();
+  const controller = new AbortController();
+  const reason = new AgentFault('LEASE_LOST', '租约失效');
+  try {
+    const connected = once(fixture.server, 'connection');
+    const request = jsonRequest(
+      fixture.url,
+      'fixture',
+      'POST',
+      {},
+      30_000,
+      controller.signal,
+      undefined,
+      modelTransport,
+    );
+    const rejected = assert.rejects(request, (error) => error === reason);
+    await connected;
+    controller.abort(reason);
+    await rejected;
+    await fixture.assertReleased();
+    await assert.rejects(
+      jsonRequest(
+        fixture.url,
+        'fixture',
+        'POST',
+        {},
+        30_000,
+        controller.signal,
+        undefined,
+        modelTransport,
+      ),
+      (error) => error === reason,
+    );
+    assert.equal(fixture.connections(), 1);
+  } finally {
+    await fixture.close();
+  }
+});
+
+// 范围：并行本地 HTTP 请求分别遵守自己的取消信号与响应；不测供应商并发限流或真实模型。
+test('取消一个模型请求不会影响其他任务的连接', async () => {
+  const server = createServer((request, response) => {
+    request.resume();
+    if (request.url === '/complete') response.end('{"ok":true}');
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const url = `http://127.0.0.1:${server.address().port}`;
+  const controller = new AbortController();
+  const reason = new AgentFault('LEASE_LOST', '租约失效');
+  try {
+    const received = once(server, 'request');
+    const pending = assert.rejects(
+      jsonRequest(
+        `${url}/pending`,
+        'fixture',
+        'POST',
+        {},
+        3000,
+        controller.signal,
+        undefined,
+        modelTransport,
+      ),
+      (error) => error === reason,
+    );
+    await received;
+    const complete = jsonRequest(
+      `${url}/complete`,
+      'fixture',
+      'POST',
+      {},
+      3000,
+      undefined,
+      undefined,
+      modelTransport,
+    );
+    controller.abort(reason);
+    await pending;
+    assert.deepEqual(await complete, { ok: true });
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
 
 // 范围：注入运行时错误验证分类与脱敏，不将模拟错误当作真实网络故障证据。
 test('传输错误保留连接阶段分类且不泄露原始异常', async (t) => {

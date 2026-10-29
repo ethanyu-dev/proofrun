@@ -250,7 +250,7 @@ test(
         async () => {
           const bt = (await browser.listTools()).tools,
             vt = (await verification.listTools()).tools;
-          assert.equal(bt.length, 16);
+          assert.equal(bt.length, 17);
           assert.equal(vt.length, 16);
           // 范围：两套真实 MCP 目录交付计时和证据边界，文案不会替代服务端校验。
           assert.match(
@@ -647,6 +647,25 @@ test(
           );
           data = (await ready(run.id)).data;
           assert.ok(data.context.page.network.detail);
+          // 范围：真实控制面恢复同快照，不增加节点观察；节点页面仍为夹具。
+          assert.equal(data.context.page.view, 'network');
+          assert(!data.allowedActions.includes('browser.act'));
+          const networkObservation = data.context.page.observationId;
+          const restore = envelope(data, {
+            type: 'context.read',
+            observationId: networkObservation,
+            section: 'page',
+          });
+          await call(browser, 'browser_context_read', restore);
+          assert.equal(
+            (await settled(restore.operationId)).data.status,
+            'SUCCEEDED',
+          );
+          data = (await ready(run.id)).data;
+          assert.equal(data.context.page.view, 'page');
+          assert.equal(data.context.page.observationId, networkObservation);
+          assert.ok(data.context.page.network.detail);
+          assert(data.allowedActions.includes('browser.act'));
           const decision = {
             type: 'verification.finish',
             summary: '夹具读取网络完成',

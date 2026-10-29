@@ -4,11 +4,16 @@ RUN corepack enable && corepack prepare pnpm@10.30.2 --activate
 COPY . .
 RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @proofrun/contracts build && pnpm build:execution
-RUN pnpm --filter @proofrun/agent build && pnpm --filter @proofrun/agent deploy --prod --legacy /runtime
+RUN pnpm --filter @proofrun/agent build && node scripts/benchmarks/agent-loop.mjs
+RUN pnpm --filter @proofrun/agent deploy --prod --legacy /runtime
+
+# 真实运行在构建外完成；构建上下文只接收无密钥的结果，源码变化即失效。
+FROM build AS verified
+RUN node scripts/benchmarks/release-gate.mjs && node scripts/benchmarks/write-build-info.mjs --output /runtime/dist/build-info.json
 
 FROM node:24.21.0-bookworm-slim
 ENV NODE_ENV=production
 WORKDIR /app
-COPY --from=build /runtime ./
+COPY --from=verified /runtime ./
 USER node
 CMD ["node", "dist/main.js", "serve"]

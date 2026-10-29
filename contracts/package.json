@@ -16,6 +16,26 @@
     "./request-verification": {
       "types": "./dist/request-verification.d.ts",
       "default": "./dist/request-verification.js"
+    },
+    "./benchmark": {
+      "types": "./dist/benchmark.d.ts",
+      "default": "./dist/benchmark.js"
+    },
+    "./release": {
+      "types": "./dist/release.d.ts",
+      "default": "./dist/release.js"
+    },
+    "./deployment": {
+      "types": "./dist/deployment.d.ts",
+      "default": "./dist/deployment.js"
+    },
+    "./benchmark-scenarios": {
+      "types": "./dist/benchmark-scenarios.d.ts",
+      "default": "./dist/benchmark-scenarios.js"
+    },
+    "./verification-capabilities": {
+      "types": "./dist/verification-capabilities.d.ts",
+      "default": "./dist/verification-capabilities.js"
     }
   },
   "files": [

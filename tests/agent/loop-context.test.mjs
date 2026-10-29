@@ -665,6 +665,11 @@ test('网络提示与证据工具保持一致，通用任务不携带正式验�
       );
       assert.equal(prompt.includes('page.network 默认'), withEvidence);
       assert.equal(prompt.includes('最多 4 个纯'), withEvidence);
+      assert.equal(
+        prompt.includes('tool_calls 数组长度必须为 1'),
+        !withEvidence,
+      );
+      assert.doesNotMatch(prompt, /特殊批次以本轮附加规则为准/);
       assert.match(prompt, /只读收尾/);
       assert.match(prompt, /通用浏览器任务/);
       assert.doesNotMatch(prompt, /当前执行业务验证|criteria 按原 criterionId/);
@@ -855,4 +860,181 @@ test('截图校验元数据仅随实际图片交付保留', async () => {
     current.artifactRefs.find((item) => item.artifactId === id).sha256,
     sha256,
   );
+});
+
+// 范围：真实适配器的 HTTP 等待受步骤剩余模型时限约束，失败仍完整记账且不隐式重试；挂起回复是夹具，不评估供应商延迟。
+test('模型连接修复仍服从更短的步骤期限并记录超时', async () => {
+  const { args } = await input();
+  let release;
+  const waiting = new Promise((resolve) => {
+    release = resolve;
+  });
+  const server = await modelServer(async () => {
+    await waiting;
+    return { type: 'verification.block', summary: '仅验证期限' };
+  });
+  const receipts = [];
+  let requests = 0;
+  try {
+    const started = performance.now();
+    await assert.rejects(
+      new ChatModel({
+        ...config,
+        modelUrl: server.url,
+        modelMs: 600_000,
+      }).decide(
+        {
+          ...decisionContext(args),
+          modelDeadline: started + 200,
+          recordRequest: () => {
+            requests++;
+          },
+          traceRequest: async () => async (receipt) => {
+            receipts.push(receipt);
+          },
+        },
+        new AbortController().signal,
+      ),
+      { code: 'TRANSPORT_REQUEST_TIMEOUT' },
+    );
+    assert.ok(performance.now() - started < 2000);
+    assert.equal(requests, 1);
+    assert.equal(server.requests.length, 1);
+    assert.equal(receipts.length, 1);
+    assert.equal(receipts[0].status, 'ERROR');
+    assert.equal(receipts[0].error, 'TRANSPORT_REQUEST_TIMEOUT');
+    assert.equal(receipts[0].response, null);
+  } finally {
+    release();
+    await server.close();
+  }
+});
+
+// 范围：真实 HTTP 出站规则与审计保留，重现首轮双 fill 后整批拒绝且不隐式重试；回复是夹具，实际模型遵从率由真实基准验证。
+test('首轮双浏览器动作保持原文并整批拒绝，单调用约束进入实际请求', async () => {
+  const { args } = await input();
+  const calls = ['first-field', 'second-field'].map((target) => ({
+    type: 'function',
+    function: {
+      name: 'browser_act',
+      arguments: JSON.stringify({ action: 'fill', target, value: 'synthetic' }),
+    },
+  }));
+  const reply = {
+    choices: [
+      {
+        finish_reason: 'tool_calls',
+        message: { role: 'assistant', tool_calls: calls },
+      },
+    ],
+    usage: { prompt_tokens: 20, completion_tokens: 10 },
+  };
+  const server = await modelServer(() => ({ raw: reply }));
+  const receipts = [];
+  let sent,
+    count = 0;
+  try {
+    await assert.rejects(
+      new ChatModel({
+        ...config,
+        modelUrl: server.url,
+        thinking: 'enabled',
+        reasoningEffort: 'high',
+      }).decide(
+        {
+          ...decisionContext(args),
+          recordRequest: () => {
+            count++;
+          },
+          traceRequest: async (record) => {
+            sent = JSON.parse(record.request);
+            return async (receipt) => {
+              receipts.push(receipt);
+            };
+          },
+        },
+        new AbortController().signal,
+      ),
+      { code: 'INVALID_MODEL_DECISION' },
+    );
+    assert.equal(server.requests.length, 1);
+    assert.equal(count, 1);
+    assert.deepEqual(sent, server.requests[0]);
+    assert.equal(sent.parallel_tool_calls, false);
+    assert.equal(sent.tool_choice, 'auto');
+    assert.equal(sent.thinking.type, 'enabled');
+    assert.match(sent.messages[0].content, /tool_calls 数组长度必须为 1/);
+    assert.match(sent.messages[0].content, /这种回复会整批拒绝/);
+    assert.doesNotMatch(sent.messages[0].content, /特殊批次|最多 4 个纯/);
+    assert.match(
+      sent.tools.find((tool) => tool.function.name === 'browser_act').function
+        .description,
+      /填写多个字段也必须拆到不同轮次/,
+    );
+    assert.equal(receipts.length, 1);
+    assert.equal(receipts[0].status, 'RECEIVED');
+    assert.deepEqual(
+      JSON.parse(receipts[0].response).choices[0].message.tool_calls,
+      calls,
+    );
+    assert.deepEqual(server.errors, []);
+  } finally {
+    await server.close();
+  }
+});
+
+// 范围：工具 schema 随真实 context 开关阅读入口，防止普通核验误填 itemId；HTTP 模型是夹具，不证明真实模型质量或引文真实性。
+test('没有面板账本时不提供 readings，存在或裁剪后的账本保留原校验入口', async () => {
+  const { args } = await input();
+  const server = await modelServer(() => ({
+    type: 'verification.block',
+    summary: '只验证出站能力',
+  }));
+  const model = new ChatModel({ ...config, modelUrl: server.url });
+  try {
+    for (const discovered of [0, 1, 0]) {
+      await model.decide(
+        decisionContext({
+          ...args,
+          interactionProgress: {
+            revision: 0,
+            currentTargets: [],
+            discovered,
+            unreadItemIds: discovered ? ['item-1'] : [],
+            recordedItemIds: [],
+            items: [],
+            limit: 32,
+            omittedItems: discovered,
+          },
+        }),
+        new AbortController().signal,
+      );
+      const request = server.requests.at(-1);
+      for (const tool of request.tools) {
+        const progress = tool.function.parameters.properties.progress;
+        assert.equal(
+          Object.hasOwn(progress.properties, 'readings'),
+          discovered > 0,
+        );
+        assert.equal(progress.additionalProperties, false);
+        const ajv = new Ajv({ strict: false });
+        const validate = ajv.compile(progress);
+        assert.equal(
+          validate({ readings: [{ itemId: 'invented', quote: 'synthetic' }] }),
+          discovered > 0,
+        );
+      }
+      if (discovered) {
+        assert.match(request.messages[0].content, /progress\.readings 内/);
+        assert.match(request.messages[0].content, /不要把 name、heading/);
+      }
+      assert.equal(
+        request.messages[0].content.includes('本轮没有子项阅读账本'),
+        discovered === 0,
+      );
+    }
+    assert.deepEqual(server.errors, []);
+  } finally {
+    await server.close();
+  }
 });

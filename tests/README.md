@@ -142,3 +142,11 @@ pnpm test:agent:browser
 ## 真实 Codex MCP 联调
 
 `pnpm test:mcp:codex` 使用真实已登录的 Codex CLI，通过两套 MCP 完成准备、浏览器操作、验证、清理与报告。需要独立 PostgreSQL 和 Linux/systemd/Chromium 容器依赖；配置、审计产物及覆盖边界见 [联调说明](mcp-real/README.md)。`pnpm test:mcp:regression` 运行 `tests/mcp-real/` 下无需真实模型的配置传递和验收审核器回归；本地启动配置用例归入此入口，`test:deploy` 只运行部署冒烟，避免 CI 重复执行。
+
+## Agent Loop 发布基础基准
+
+运行 `pnpm benchmark:setup` 后执行 `pnpm benchmark:release --version v0.1.0 --env-file .proofrun/local.env`，真实模型和独立 Chrome 完成八个固定场景（原五例加选择控件、跨标签、展开阅读），并保留逐轮 context、工具调用、截图及独立服务端写入事实。`pnpm benchmark:gate` 核实真实套件、当前源码与 24 小时有效期。Console 默认运行真实套件，发布工作流和最终 Docker 镜像必须通过真实门禁。
+
+`pnpm benchmark:agent` 保留无凭据的脚本协议回归。`pnpm test:benchmark` 覆盖归档、基线、发布门禁拒绝路径、本地 HTTP 事实与接口边界；这些单元测试不调用真实模型，不能代替真实验收。真实套件仍使用本地控制端口适配、合成业务与明确故障注入，不覆盖生产控制面和远程监管；配置和 CI secrets 见 [基准说明](../scripts/benchmarks/README.md)。
+
+线上基准回归 `apps/api/test/benchmarks.test.ts` 使用隔离 PostgreSQL，覆盖管理员授权、并发幂等、旧 worker 隔离、版本冻结、固定预算、故障回执持久化、重启与失败归档。节点和命令回执为显式模拟，不代替真实模型/浏览器验收。归档 v2 包含发布身份；发布命令必填 `--version`。线上真实运行需在部署新 API/Agent 后从 Console 发起，结果与本地真实套件分开存储和比较。

@@ -13,6 +13,17 @@ export type AgentDecision =
       progress?: Progress;
     }
   | {
+      type: 'context.read';
+      observationId: string;
+      section: 'page' | 'runtime';
+      /**
+       * runtimeLists 中提供的列表路径；page 视图不填写。
+       */
+      path?: string;
+      offset?: number;
+      progress?: Progress;
+    }
+  | {
       type: 'network.request_detail';
       /**
        * 当前 page.network.observationId；分页与详情只读取该次快照。

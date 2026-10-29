@@ -1,3 +1,4 @@
+import type { ReleaseIdentity } from '@proofrun/contracts/release';
 import {
   loadDevPass,
   type DevPassConfig,
@@ -24,6 +25,11 @@ const DEFAULTS = {
 
 /** 控制面只支持一个活动实例；队列、租约和消息均持久化到数据库。 */
 export interface ApiConfig {
+  /** 基准仅使用显式配置的独立节点池，环境名称用于归档筛选。 */
+  benchmarkNodePool?: string;
+  benchmarkEnvironment?: string;
+  /** 程序化测试可注入构建身份；部署进程只读取应用旁的清单。 */
+  buildIdentity?: ReleaseIdentity;
   /** 新入队运行的冻结驱动版本；省略保留程序化旧接入，部署配置默认启用版本 1。 */
   executionRuntimeVersion?: 0 | 1;
   /** 可选任务级 MCP 服务凭据；未配置时不注册公共接入端点。 */
@@ -155,6 +161,12 @@ export function loadConfig(): ApiConfig {
     process.env.PROOFRUN_MCP_CREDENTIALS_FILE,
   );
   return {
+    ...(process.env.PROOFRUN_BENCHMARK_NODE_POOL
+      ? { benchmarkNodePool: process.env.PROOFRUN_BENCHMARK_NODE_POOL }
+      : {}),
+    ...(process.env.PROOFRUN_BENCHMARK_ENVIRONMENT
+      ? { benchmarkEnvironment: process.env.PROOFRUN_BENCHMARK_ENVIRONMENT }
+      : {}),
     executionRuntimeVersion,
     ...(publicCredentials ? { publicCredentials } : {}),
     ...(devPass ? { devPass } : {}),

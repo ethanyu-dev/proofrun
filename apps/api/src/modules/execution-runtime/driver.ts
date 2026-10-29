@@ -46,6 +46,10 @@ export class RuntimeDriver {
     private readonly control: ExecutionControl,
     private readonly models: ModelCalls,
     private readonly artifacts: ArtifactStore,
+    private readonly wrap?: (
+      grant: ExecutionGrant,
+      ports: ExecutionClient,
+    ) => ExecutionClient,
   ) {}
   /** 终态仍可补交已开始模型调用的真实用量；不能由此派发新的模型或浏览器动作。 */
   async finishTrace(
@@ -74,7 +78,7 @@ export class RuntimeDriver {
   ports(grant: ExecutionGrant): ExecutionClient {
     const id = grant.id,
       token = grant.leaseToken;
-    return {
+    const ports: ExecutionClient = {
       view: () =>
         mapped(async () =>
           wire<ExecutionView>(await this.coordinator.execution(id, token)),
@@ -240,5 +244,6 @@ export class RuntimeDriver {
           return `data:image/png;base64,${bytes.toString('base64')}`;
         }),
     };
+    return this.wrap ? this.wrap(grant, ports) : ports;
   }
 }

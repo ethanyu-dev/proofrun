@@ -12,7 +12,8 @@
   "dependencies": {
     "@proofrun/contracts": "workspace:*",
     "@proofrun/execution-core": "workspace:*",
-    "@proofrun/execution-driver": "workspace:*"
+    "@proofrun/execution-driver": "workspace:*",
+    "undici": "7.29.1"
   },
   "files": [
     "dist"

@@ -2937,3 +2937,64 @@ test('浏览器任务受阻时保留原因与部分正文', async () => {
   assert.match(report.browserResult.output, /企业报价/);
   assert.equal(report.verdict, null);
 });
+
+// 范围：过去命中静态规则的要求仍进入真实执行链路；模型与页面由夹具提供，不证明具备这些取证能力。
+test('普通任务不再按验收关键词静态阻塞', async () => {
+  const { report, requests } = await run(
+    () => ({
+      type: 'verification.block',
+      reasonCode: 'OTHER',
+      summary: '实际执行未取得所需证据',
+    }),
+    (_client, execution) => {
+      execution.task.acceptanceCriteria[0].expectedResult =
+        '检查 canonical 属性';
+    },
+  );
+  assert(requests.length > 0);
+  assert.equal(report.executionDisposition, 'BLOCKED');
+  assert.equal(report.verdict, null);
+  assert.notEqual(
+    report.executionDetails.reasonCode,
+    'VERIFICATION_CAPABILITY_MISSING',
+  );
+  assert.match(report.summary, /实际执行未取得所需证据/);
+});
+
+// 范围：含历史规则关键词的步骤全部交给模型，运行失败仍保留未完成结论；不验证真实站点取证。
+test('结构化任务不再按关键词跳过步骤', async () => {
+  const seen = [];
+  const { report } = await run(
+    (context) => {
+      seen.push(context.task.stepId);
+      if (context.task.stepId === 'step-2')
+        return {
+          type: 'verification.block',
+          reasonCode: 'OTHER',
+          summary: '实际执行未取得所需证据',
+        };
+      return {
+        ...finish(context),
+        evidenceRefs: context.page.artifactRefs.map((a) => a.artifactId),
+      };
+    },
+    (_client, execution) => {
+      structuredGrant(execution, [
+        {},
+        { expected: ['canonical、响应正文和私网图片 URL'] },
+        { url: 'http://intranet.test/after' },
+      ]);
+    },
+  );
+  assert(seen.includes('step-2'));
+  assert.deepEqual(
+    report.steps.map((step) => step.status),
+    ['COMPLETED', 'BLOCKED', 'COMPLETED'],
+  );
+  assert.notEqual(
+    report.steps[1].reasonCode,
+    'VERIFICATION_CAPABILITY_MISSING',
+  );
+  assert.equal(report.verdict, null);
+  assert.equal(report.criteria.length, 3);
+});

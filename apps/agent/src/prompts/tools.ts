@@ -6,6 +6,7 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
   'browser.observe':
     '只读观察当前页面；动作后程序已经自动观察，不重复 observe。',
   'browser.act': `执行一个受限动作。
+一次回复只能调用一次本工具，并且不能同时返回其他工具调用；填写多个字段也必须拆到不同轮次。
 只使用当前 page.targets 的 target 和 operations；历史目标不能重放。
 可用 progress 先保存动作前的事实，再执行动作。
 操作后程序自动观察，不重复 observe。`,
@@ -14,7 +15,7 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
   'browser.cookies.clear':
     '仅在清理阶段删除任务站点授权名称的 Cookie，程序校验清理回执；不返回 Cookie 值。',
   'verification.record': `持久化新增 progress，不结束步骤。
-requirements、criteria、readings 各自使用自己的稳定身份，不能互相替代。
+各类进度使用各自的原始稳定身份，不能互相替代；只提交本轮 schema 开放的字段。
 record 必须带新增进度，无变化反复登记不能获得新预算。`,
   'verification.finish':
     '声明当前步骤已完成，补交 progress 和执行证据。setup 仍须通过程序条件检查，缺少证据不能完成。',

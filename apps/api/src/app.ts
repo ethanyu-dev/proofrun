@@ -1,3 +1,7 @@
+import { deployedRelease } from '@proofrun/contracts/deployment';
+import { Benchmarks } from './modules/benchmarks/service.js';
+import { registerBenchmarks } from './modules/benchmarks/routes.js';
+import { benchmarkPorts } from './modules/benchmarks/driver.js';
 import { validateBrowserTaskRequest } from '@proofrun/contracts';
 import { executionTimeline } from './modules/scheduling/timeline.js';
 import { TaskLifecycle } from './modules/tasks/lifecycle.js';
@@ -133,12 +137,19 @@ export async function buildApp(
   const notifications = new CaseNotifications(db, config, app.log);
   app.addHook('onReady', async () => notifications.start());
   const modelCalls = new ModelCalls(db);
+  const benchmarks = new Benchmarks(
+    db,
+    config,
+    config.buildIdentity ??
+      deployedRelease(new URL('./build-info.json', import.meta.url)),
+  );
   const driver = new RuntimeDriver(
     db,
     coordinator,
     control,
     modelCalls,
     artifacts,
+    (grant, ports) => benchmarkPorts(benchmarks, grant, ports),
   );
   const external = new ExternalExecution(
     db,
@@ -173,6 +184,7 @@ export async function buildApp(
     { preHandler: admin },
     (request) => dashboardStatistics(db, request.query),
   );
+  registerBenchmarks(app, benchmarks, admin);
   const worker = async (request: FastifyRequest) =>
     requireToken(request.headers.authorization, config.workerToken);
   const node = async (request: FastifyRequest) => {
@@ -609,6 +621,8 @@ export async function buildApp(
       body.profileTabsVersion,
       body.executionPlanVersion,
       body.runtimeVersion,
+      undefined,
+      body.benchmarkVersion,
     );
   });
   app.get<{ Params: IdParams }>('/v1/executions/:id', (request) =>
@@ -835,6 +849,7 @@ export async function buildApp(
       .tick()
       .then(() => nodeProfiles.tick())
       .then(() => external.tick())
+      .then(() => benchmarks.tick())
       .catch((error) => {
         app.log.error({ err: error }, '调度扫描失败');
         if (!db.healthy) void app.close();

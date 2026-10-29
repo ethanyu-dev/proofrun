@@ -8,6 +8,7 @@ import {
 } from '@proofrun/contracts';
 import type { AgentConfig } from '../config.js';
 import { AgentFault, jsonRequest } from '../http.js';
+import { modelTransport } from './transport.js';
 import { modelRequest } from './request.js';
 import { reasoningParameters, toolChoice } from './reasoning.js';
 import { isModelToolCall, networkBatch } from './network-batch.js';
@@ -108,6 +109,8 @@ export class ChatModel implements DecisionModel {
               : Math.max(1, input.modelDeadline - performance.now()),
           ),
           signal,
+          undefined,
+          modelTransport,
         ),
     )) as {
       choices?: Array<{

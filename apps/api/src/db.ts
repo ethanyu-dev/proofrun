@@ -54,6 +54,7 @@ const MIGRATIONS = [
   '041-external-execution.sql',
   '042-node-default-profile.sql',
   '043-remove-comparison.sql',
+  '044-benchmarks.sql',
 ];
 
 /** 所有业务事务使用同一连接；独占连接单独维护控制面实例锁。 */

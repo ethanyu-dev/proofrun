@@ -1,0 +1,540 @@
+/* 基准页独立收紧间距与字号，不改变已有任务表单和人工接管布局。 */
+.bench-page {
+  display: grid;
+  gap: 14px;
+  font-size: 13px;
+  min-width: 0;
+}
+.bench-page h1 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.5px;
+}
+.bench-page h2 {
+  font-size: 15px;
+  font-weight: 600;
+}
+.bench-page h3 {
+  font-size: 13px;
+  font-weight: 600;
+}
+.bench-header,
+.bench-actions,
+.bench-section-title,
+.bench-filters {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.bench-header p {
+  margin-top: 3px;
+}
+.bench-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+/* 模式选择器保持工具栏宽度，避免默认全宽挤出多行。 */
+.bench-actions .select-field {
+  width: 176px;
+  height: 32px;
+  font-size: 12px;
+}
+.bench-notice {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  padding: 9px 12px;
+  line-height: 1.6;
+  font-size: 12px;
+}
+.bench-notice code {
+  margin-left: 14px;
+  white-space: nowrap;
+}
+.bench-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.bench-toolbar label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.bench-toolbar label > span {
+  color: var(--color-muted);
+  flex-shrink: 0;
+}
+.bench-toolbar .select-field {
+  min-width: 230px;
+  height: 32px;
+  font-size: 12px;
+}
+.bench-meta {
+  margin-left: auto;
+  text-align: right;
+  font-size: 11px;
+  color: var(--color-muted);
+  line-height: 1.6;
+}
+.bench-stats {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 6px;
+}
+.bench-stats > div {
+  display: grid;
+  gap: 5px;
+  padding: 12px 16px;
+  border-right: 1px solid var(--color-border);
+}
+.bench-stats > div:last-child {
+  border: 0;
+}
+.bench-stats > div > span {
+  color: var(--color-muted);
+  font-size: 12px;
+}
+.bench-stats strong {
+  font-size: 23px;
+  line-height: 1.3;
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+}
+.bench-stats small {
+  font-size: 12px;
+  color: var(--color-muted);
+  font-weight: 400;
+}
+.bench-stats .bench-result {
+  font-size: 19px;
+}
+.bench-result[data-pass='true'] {
+  color: var(--color-success);
+}
+.bench-result[data-pass='false'] {
+  color: var(--color-danger);
+}
+.bench-cases,
+.bench-detail {
+  border: 1px solid var(--color-border-strong);
+  border-radius: 6px;
+  overflow: hidden;
+  min-width: 0;
+}
+.bench-cases > .bench-section-title {
+  padding: 10px 12px;
+}
+.bench-filters input {
+  width: 180px;
+  height: 30px;
+  font-size: 12px;
+}
+.bench-filters .select-field {
+  min-width: 110px;
+  height: 30px;
+  font-size: 12px;
+}
+.bench-table-wrap {
+  overflow-x: auto;
+}
+.bench-page table {
+  border-collapse: collapse;
+  width: 100%;
+  white-space: nowrap;
+}
+.bench-page th,
+.bench-page td {
+  text-align: left;
+  padding: 9px 12px;
+  border-top: 1px solid var(--color-border);
+  font-size: 12px;
+}
+.bench-page th {
+  color: var(--color-muted);
+  font-weight: 500;
+  background: var(--color-surface);
+}
+.bench-page tr[data-selected='true'] {
+  background: var(--color-secondary);
+}
+.bench-case-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  font-weight: 550;
+  color: inherit;
+}
+.bench-case-link small {
+  display: block;
+  font-size: 10px;
+  margin-top: 3px;
+  font-weight: 400;
+}
+.bench-page td > small {
+  display: inline-block;
+  margin-left: 12px;
+  color: var(--color-muted);
+}
+.bench-detail {
+  padding: 12px;
+  display: grid;
+  gap: 9px;
+}
+.bench-checks {
+  border-block: 1px solid var(--color-border);
+  padding: 8px 0;
+}
+.bench-page summary {
+  cursor: pointer;
+  font-size: 12px;
+}
+.bench-checks > div {
+  display: grid;
+  grid-template-columns: 35px 190px 1fr;
+  gap: 8px;
+  padding: 7px 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.bench-checks strong {
+  font-weight: 500;
+}
+.bench-round-layout {
+  display: grid;
+  grid-template-columns: 255px minmax(0, 1fr);
+  border-top: 1px solid var(--color-border);
+}
+.bench-rounds {
+  padding: 10px 12px 0 0;
+  border-right: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  /* 多步骤真实任务可能有数百轮，轮次栏独立滚动，不把详情页拉成长表。 */
+  max-height: min(72vh, 720px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  align-self: start;
+}
+.bench-round {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-background);
+  color: inherit;
+  padding: 8px;
+  text-align: left;
+  width: 100%;
+  flex-shrink: 0;
+}
+.bench-round[aria-pressed='true'] {
+  border-color: var(--color-foreground);
+  background: var(--color-surface);
+}
+.bench-round strong {
+  font-weight: 600;
+}
+.bench-round small {
+  font-size: 10px;
+  color: var(--color-muted);
+  font-weight: 400;
+}
+.bench-round code {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.bench-round .mono {
+  font-size: 11px;
+}
+.bench-initial {
+  margin-top: 8px;
+}
+.bench-inspector {
+  padding: 10px 0 0 14px;
+  min-width: 0;
+}
+.bench-inspector > .bench-section-title {
+  margin-bottom: 10px;
+}
+.bench-context-bar {
+  display: flex;
+  width: 100%;
+  height: 10px;
+  overflow: hidden;
+  background: var(--color-secondary);
+  border-radius: 2px;
+}
+.bench-context-bar > span {
+  min-width: 0;
+  height: 100%;
+}
+.bench-page [data-module='task'] {
+  background: #7c83bd;
+}
+.bench-page [data-module='state'] {
+  background: #b194c8;
+}
+.bench-page [data-module='page'] {
+  background: #6399ad;
+}
+.bench-page [data-module='history'] {
+  background: #d3aa72;
+}
+.bench-page [data-module='evidence'] {
+  background: #85a88a;
+}
+.bench-page [data-module='budget'] {
+  background: #a8a5a0;
+}
+.bench-page [data-module='feedback'] {
+  background: #ce8e84;
+}
+.bench-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 13px;
+  color: var(--color-muted);
+  font-size: 11px;
+  padding: 3px 0;
+}
+.bench-legend > span,
+.bench-module > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.bench-page i[data-module] {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  display: inline-block;
+  flex-shrink: 0;
+}
+.bench-inline-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  font-size: 12px;
+  color: var(--color-muted);
+  margin-block: 12px;
+}
+.bench-inline-stats b {
+  color: var(--color-foreground);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.bench-module-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px 10px;
+  margin-block: 8px;
+}
+.bench-module {
+  justify-content: space-between;
+  font-size: 12px;
+  padding: 5px 7px;
+  height: 28px;
+}
+.bench-module[aria-pressed='true'] {
+  background: var(--color-secondary);
+}
+.bench-module small {
+  width: 42px;
+  text-align: right;
+  font-size: 10px;
+  color: var(--color-muted);
+}
+.bench-inspector .bench-section-title {
+  margin-top: 10px;
+}
+.bench-code {
+  max-height: 360px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 11px/1.65 var(--font-mono);
+  background: var(--color-surface);
+  color: var(--color-foreground);
+  padding: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  margin: 8px 0 0;
+  tab-size: 2;
+}
+.bench-tool {
+  border-bottom: 1px solid var(--color-border);
+  padding-block: 10px;
+}
+.bench-tool summary span {
+  display: block;
+  font-size: 11px;
+  color: var(--color-muted);
+  margin-top: 4px;
+}
+.bench-empty {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: 6px;
+  padding: 60px 20px;
+  text-align: center;
+}
+@media (max-width: 850px) {
+  .bench-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .bench-stats {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .bench-stats > div {
+    padding: 10px;
+  }
+  .bench-stats strong {
+    font-size: 20px;
+  }
+  .bench-meta {
+    margin-left: 0;
+    text-align: left;
+  }
+  .bench-round-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .bench-rounds {
+    border: 0;
+    padding-right: 0;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .bench-inspector {
+    padding-left: 0;
+  }
+  .bench-checks > div {
+    grid-template-columns: 35px 1fr;
+  }
+  .bench-checks > div > .muted {
+    grid-column: 2;
+  }
+}
+@media (max-width: 520px) {
+  .bench-page h1 {
+    font-size: 19px;
+  }
+  .bench-page .bench-toolbar label {
+    width: 100%;
+  }
+  .bench-toolbar .select-field {
+    min-width: 0;
+    width: 100%;
+  }
+  .bench-cases > .bench-section-title {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .bench-filters {
+    width: 100%;
+  }
+  .bench-filters input {
+    width: 100%;
+    min-width: 0;
+  }
+  .bench-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .bench-module-grid {
+    grid-template-columns: 1fr;
+  }
+  .bench-rounds {
+    grid-template-columns: 1fr;
+  }
+  .bench-notice code {
+    display: block;
+    margin: 4px 0 0;
+  }
+}
+
+.bench-version-input {
+  width: 190px;
+  height: 32px;
+  font-size: 12px;
+}
+
+/* 数据源选择保持单行紧凑，不让默认全宽控件把入口挤到下一行。 */
+.bench-source {
+  margin-bottom: 12px;
+  font-size: 12px;
+}
+.bench-source .select-field {
+  width: 230px;
+  flex-shrink: 0;
+}
+
+/* 历史任务逐步摘要保持紧凑，避免长结果挤压逐轮分析区域。 */
+.bench-step-list {
+  display: grid;
+  gap: 6px;
+  max-height: 280px;
+  overflow: auto;
+  padding: 8px 0;
+}
+.bench-checks > .bench-step-list {
+  display: grid;
+  grid-template-columns: 1fr;
+}
+.bench-step-list > div {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 10px;
+}
+
+/* 能力预检与逐步结果分开排版，原文折叠后仍可同时看到全部缺口。 */
+.bench-capability .bench-step-list > div {
+  grid-template-columns: minmax(150px, 220px) minmax(0, 1fr);
+  gap: 8px;
+}
+.bench-capability .bench-step-list p {
+  margin: 4px 0;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 640px) {
+  .bench-capability .bench-step-list > div {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+}
+
+/* 原因保持可见且按文本换行，不让零调用任务只留下一个失败标记。 */
+.bench-capability .bench-step-list {
+  max-height: none;
+  overflow: visible;
+}
+.bench-case-reason {
+  margin: 4px 0;
+  max-width: 420px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.bench-diagnosis-row {
+  border-top: 1px solid var(--color-border);
+  padding: 8px 0 2px;
+}
+.bench-diagnosis p {
+  margin: 4px 0;
+  overflow-wrap: anywhere;
+}
+#benchmark-case-detail {
+  scroll-margin-top: 16px;
+}

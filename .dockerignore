@@ -14,3 +14,7 @@ target
 !.env.example
 artifacts
 release
+
+# 仅带入无密钥的真实基准候选，供最终镜像构建核验。
+.benchmark-release/*
+!.benchmark-release/real.json

@@ -12,7 +12,19 @@ concurrency:
   group: node-release-${{ inputs.version }}
   cancel-in-progress: false
 jobs:
+  agent-benchmark:
+    uses: ./.github/workflows/agent-benchmark.yml
+    with:
+      release_version: ${{ inputs.version }}
+
+  real-agent-benchmark:
+    uses: ./.github/workflows/real-agent-benchmark.yml
+    with:
+      release_version: ${{ inputs.version }}
+    secrets: inherit
+
   package:
+    needs: [agent-benchmark, real-agent-benchmark]
     strategy:
       fail-fast: false
       matrix:

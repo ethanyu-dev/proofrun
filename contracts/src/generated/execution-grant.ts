@@ -634,6 +634,13 @@ export interface ExecutionGrant {
    * 存在时必须使用内部运行时接口；省略为旧 worker 驱动路径。
    */
   runtimeVersion?: 1;
+  /**
+   * 由调度器根据持久化关联生成，不接受任务输入自行开启故障注入。
+   */
+  benchmark?: {
+    runId: string;
+    caseId: string;
+  };
 }
 /**
  * case 入口保存的原始业务定义，用于幂等重提和隔离公开读取；普通内部任务省略。
