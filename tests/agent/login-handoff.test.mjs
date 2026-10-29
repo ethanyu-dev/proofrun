@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { compileStepBudget } from '../../contracts/dist/index.js';
-import { execute } from '../../apps/agent/dist/execution/runner.js';
+import { execute } from '../../packages/execution-driver/dist/execution/runner.js';
 import { ChatModel } from '../../apps/agent/dist/model/chat.js';
 import {
   blockedLoginIntervention,
   needsLoginIntervention,
-} from '../../apps/agent/dist/execution/login-intervention.js';
+} from '../../packages/execution-core/dist/execution/login-intervention.js';
 import { config, grant, FakeControl, finish, modelServer } from './fixture.mjs';
-import { conditionKey } from '../../apps/agent/dist/execution/policy-checks.js';
+import { conditionKey } from '../../packages/execution-core/dist/execution/policy-checks.js';
 
 /** 页面、人工和账号均为夹具，记录完整交接状态以检验执行器是否真的等待并重新观察。 */
 class LoginControl extends FakeControl {

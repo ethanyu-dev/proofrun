@@ -92,7 +92,7 @@ pnpm eval:e2e --output /private/eval-run --environment /private/environment.json
 
 `activity.json` 保存测量结束后的命令类型、状态和错误码，`routing.json` 同时保留模型决策的动作/等待条件摘要，不保存填写值。脚本模式单独运行 `E07` 会故意等待不存在的文本，验证真实节点在命令截止前返回、Agent 重观察后查询记录且不重复保存；`wait-recovery-check.json` 记录恢复耗时。它只验收恢复链路，不计入真实模型通过率。真实模型稳定性测评可用 `--repeat 3`（Linux 为 `PROOFRUN_EVAL_REPEAT=3`），同一场景每次使用独立样本，全部重复按固定种子排序；应保留逐轮结果和失败，不挑选最好的一轮。
 
-`--max-calls`（Linux 为 `PROOFRUN_EVAL_MAX_CALLS`）按每例的最坏请求额度预留，已完成样本不会释放预留量；它不是只累加已发生的 HTTP 请求。运行完整批次前应按 `callAllowance(definition(...), mode)` 累加所有场景并乘以重复次数。当前 `core` 三轮需要为 LLM 预留 1200 次；实际请求数仍以 `calls.json` 为准。额度不足导致的未启动样本必须保留，不能当作完整批次比较。
+`--max-calls`（Linux 为 `PROOFRUN_EVAL_MAX_CALLS`）按每例的最坏请求额度预留，已完成样本不会释放预留量；它不是只累加已发生的 HTTP 请求。运行完整批次前应按 `callAllowance(definition(...))` 累加所有场景并乘以重复次数。当前 `core` 三轮需要为 LLM 预留 1200 次；实际请求数仍以 `calls.json` 为准。额度不足导致的未启动样本必须保留，不能当作完整批次比较。
 
 模型视觉输入直接使用已核实的当前截图；测试镜像不再安装 JEV 图片预处理依赖，也不配置额外 `NODE_PATH`。截图证据校验和模型视觉能力配置仍按正常执行路径生效。
 

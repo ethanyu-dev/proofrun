@@ -35,7 +35,7 @@
     "caseCount": {
       "type": "integer",
       "minimum": 0,
-      "description": "当前范围内的 case 数，双跑不增加数量。"
+      "description": "当前范围内的 case 数。"
     },
     "finishedCaseCount": {
       "type": "integer",
@@ -133,11 +133,6 @@
       "minimum": 0,
       "description": "已交付报告确认失败的唯一项数，部分结果期间也展示。"
     },
-    "confirmedDisagreementCount": {
-      "type": "integer",
-      "minimum": 0,
-      "description": "两组明确通过和失败相反的标准数，不含覆盖差异。"
-    },
     "uniqueCriteriaCounts": {
       "type": "object",
       "additionalProperties": false,
@@ -181,7 +176,7 @@
         "skipped",
         "pending"
       ],
-      "description": "按 caseId 和 criterionId 去重，双跑不增加分母。"
+      "description": "按 caseId 和 criterionId 去重。"
     },
     "byExecutionMode": {
       "type": "array",
@@ -190,13 +185,13 @@
         "additionalProperties": false,
         "properties": {
           "executionMode": {
-            "enum": ["llm", "jev"],
-            "description": "冻结执行模式，按 LLM、JEV 顺序展示。"
+            "enum": ["llm"],
+            "description": "冻结的 LLM 执行模式。"
           },
           "caseCount": {
             "type": "integer",
             "minimum": 0,
-            "description": "当前范围内的 case 数，双跑不增加数量。"
+            "description": "当前范围内的 case 数。"
           },
           "missingReportCount": {
             "type": "integer",
@@ -250,7 +245,8 @@
           "criteriaCounts"
         ]
       },
-      "description": "按模式汇总；未配置该模式的 case 不计缺失。"
+      "description": "按模式汇总；未配置该模式的 case 不计缺失。",
+      "maxItems": 1
     },
     "cases": {
       "type": "array",
@@ -315,14 +311,6 @@
                   ],
                   "description": "当前层级的执行或验收状态，不能跨层级解释。"
                 },
-                "disagreement": {
-                  "type": "boolean",
-                  "description": "两组存在相反的明确通过和失败判断。"
-                },
-                "coverageDifference": {
-                  "type": "boolean",
-                  "description": "两组覆盖不同，不当作明确判断冲突。"
-                },
                 "arms": {
                   "type": "array",
                   "items": {
@@ -334,8 +322,8 @@
                         "description": "原执行任务身份，用于报告和证据追溯。"
                       },
                       "executionMode": {
-                        "enum": ["llm", "jev"],
-                        "description": "冻结执行模式，按 LLM、JEV 顺序展示。"
+                        "enum": ["llm"],
+                        "description": "冻结的 LLM 执行模式。"
                       },
                       "verdict": {
                         "enum": [
@@ -367,7 +355,8 @@
                       "evidenceRefs"
                     ]
                   },
-                  "description": "首次接收冻结的实际执行组，不随平台配置变化。"
+                  "description": "首次接收冻结的实际执行组，不随平台配置变化。",
+                  "maxItems": 1
                 }
               },
               "required": [
@@ -376,8 +365,6 @@
                 "description",
                 "expectedResult",
                 "status",
-                "disagreement",
-                "coverageDifference",
                 "arms"
               ]
             },
@@ -394,8 +381,8 @@
                   "description": "原执行任务身份，用于报告和证据追溯。"
                 },
                 "executionMode": {
-                  "enum": ["llm", "jev"],
-                  "description": "冻结执行模式，按 LLM、JEV 顺序展示。"
+                  "enum": ["llm"],
+                  "description": "冻结的 LLM 执行模式。"
                 },
                 "createdAt": {
                   "type": "string",
@@ -419,7 +406,8 @@
                 "result"
               ]
             },
-            "description": "首次接收冻结的实际执行组，不随平台配置变化。"
+            "description": "首次接收冻结的实际执行组，不随平台配置变化。",
+            "maxItems": 1
           },
           "steps": {
             "type": "array",
@@ -496,7 +484,6 @@
     "reportStatus",
     "reportCoverage",
     "observedFailureCount",
-    "confirmedDisagreementCount",
     "uniqueCriteriaCounts",
     "byExecutionMode",
     "cases"

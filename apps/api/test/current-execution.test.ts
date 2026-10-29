@@ -8,14 +8,13 @@ import pg from 'pg';
 import { Database } from '../src/db.js';
 import { buildApp } from '../src/app.js';
 import { task } from './fixture.js';
-import { seedHistoricalPair } from './historical-comparison.js';
 
 /** 只在独立临时 PostgreSQL 验证迁移和归属；不访问模型、浏览器或真实业务数据。 */
 const ADMIN = 'current-execution-admin-fixture';
 
-// 范围：遗留清理阻止升级、回滚后可继续升级、当前归属单写和历史双跑复用；不验证真实清理动作。
+// 范围：遗留清理阻止升级、回滚后可继续升级、当前归属单写和当前运行复用；不验证真实清理动作。
 test(
-  '执行收敛迁移保留历史并只写一次当前运行关联',
+  '执行收敛迁移保持当前数据并只写一次当前运行关联',
   { timeout: 30_000 },
   async () => {
     assert.ok(process.env.PROOFRUN_TEST_DATABASE_URL);
@@ -135,7 +134,7 @@ test(
       assert.equal(
         (
           await sql.query(
-            'SELECT count(*)::int AS n FROM pr_verification_request_arms',
+            "SELECT (to_regclass('pr_verification_request_arms') IS NOT NULL)::int AS n",
           )
         ).rows[0].n,
         0,
@@ -167,21 +166,12 @@ test(
         ).rows[0].n,
         1,
       );
-      await seedHistoricalPair(sql, 'case-v2-current');
-      const historical = await submit('historical-reuse');
+      const reused = await submit('current-reuse');
       assert.deepEqual(
-        historical.cases[0].arms.map(
+        reused.cases[0].arms.map(
           (a: { executionMode: string }) => a.executionMode,
         ),
-        ['llm', 'jev'],
-      );
-      assert.equal(
-        (
-          await sql.query(
-            "SELECT count(*)::int AS n FROM pr_verification_request_arms WHERE request_id='historical-reuse'",
-          )
-        ).rows[0].n,
-        1,
+        ['llm'],
       );
       assert.equal(
         (await sql.query('SELECT count(*)::int AS n FROM pr_case_cleanups'))

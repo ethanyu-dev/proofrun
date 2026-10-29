@@ -33,7 +33,7 @@ export interface RequestRow {
 interface ArmRow {
   /** 当前关联归属，同一个 task 可出现在多个请求中。 */
   request_id: string;
-  /** 用于跨组对齐业务标准的 case 身份。 */
+  /** 请求内业务标准归属的 case 身份。 */
   case_id: string;
   /** 首次提交的成员顺序，重排重提不覆盖。 */
   position: number;
@@ -44,7 +44,7 @@ interface ArmRow {
   /** 实际执行身份，证据与状态都归属于此任务。 */
   task_id: string;
   /** 冻结模式，不依据当前配置推断。 */
-  execution_mode: 'llm' | 'jev';
+  execution_mode: 'llm';
   /** 只用于服务端确定标准范围，不直接返回整个内部定义。 */
   definition: VerificationTask;
   /** 执行生命周期，不直接转换成验收结论。 */
@@ -104,7 +104,7 @@ export class RequestProjector {
       FROM pr_request_runs a JOIN pr_verification_request_cases c USING(request_id,case_id)
       JOIN pr_tasks t ON t.id=a.task_id
       LEFT JOIN pr_case_cleanups legacy ON legacy.parent_task_id=t.id LEFT JOIN pr_tasks clean ON clean.id=legacy.task_id
-      WHERE a.request_id=ANY($1::text[]) AND t.deleted_at IS NULL ORDER BY c.position,CASE a.execution_mode WHEN 'llm' THEN 0 ELSE 1 END`,
+      WHERE a.request_id=ANY($1::text[]) AND t.deleted_at IS NULL ORDER BY c.position`,
         [rows.map((r) => r.request_id)],
       )
     ).rows;
@@ -127,56 +127,53 @@ export class RequestProjector {
           await requestMetrics(client, row.request_id, new Date(generatedAt)),
         );
     return rows.map((row) => {
-      const groups = new Map<string, ArmRow[]>();
-      for (const arm of arms)
-        if (arm.request_id === row.request_id)
-          groups.set(arm.case_id, [...(groups.get(arm.case_id) ?? []), arm]);
-      const cases = [...groups.values()].map((group) => {
-        const first = group[0]!;
-        const cleanupIds = new Set(first.definition.cleanupStepIds ?? []);
-        return summarizeRequestCase({
-          caseId: first.case_id,
-          title: first.definition.objective,
-          executionOrigin: first.execution_origin,
-          sourceCaseId: first.source_case_id,
-          steps: detail
-            ? (first.definition.steps ?? []).map((step) => ({
-                stepId: step.stepId!,
-                type: step.type,
-                description: step.description,
-                expected: step.expected,
-                cleanup: cleanupIds.has(step.stepId!),
-              }))
-            : [],
-          criteria: first.definition.acceptanceCriteria.filter(
-            (c) => !cleanupIds.has(c.stepId ?? ''),
-          ),
-          arms: group.map((arm) => {
-            const cleanup = !detail
-              ? null
-              : arm.definition.cleanupStepIds !== undefined
-                ? inlineCleanup(arm)
-                : arm.legacy_cleanup;
-            return {
-              taskId: arm.task_id,
-              executionMode: arm.execution_mode,
-              createdAt: arm.created_at.toISOString(),
-              archivedAt: arm.archived_at?.toISOString() ?? null,
-              result: projectCase(
-                arm.case_id,
-                {
-                  ...arm,
-                  queueReason: arm.queue_reason,
-                  executionOutcome: arm.execution_outcome,
-                },
-                cleanup,
-                this.publicUrl,
-                detail,
-              ),
-            };
-          }),
+      const cases = arms
+        .filter((arm) => arm.request_id === row.request_id)
+        .map((first) => {
+          const cleanupIds = new Set(first.definition.cleanupStepIds ?? []);
+          const cleanup = !detail
+            ? null
+            : first.definition.cleanupStepIds !== undefined
+              ? inlineCleanup(first)
+              : first.legacy_cleanup;
+          return summarizeRequestCase({
+            caseId: first.case_id,
+            title: first.definition.objective,
+            executionOrigin: first.execution_origin,
+            sourceCaseId: first.source_case_id,
+            steps: detail
+              ? (first.definition.steps ?? []).map((step) => ({
+                  stepId: step.stepId!,
+                  type: step.type,
+                  description: step.description,
+                  expected: step.expected,
+                  cleanup: cleanupIds.has(step.stepId!),
+                }))
+              : [],
+            criteria: first.definition.acceptanceCriteria.filter(
+              (c) => !cleanupIds.has(c.stepId ?? ''),
+            ),
+            arms: [
+              {
+                taskId: first.task_id,
+                executionMode: first.execution_mode,
+                createdAt: first.created_at.toISOString(),
+                archivedAt: first.archived_at?.toISOString() ?? null,
+                result: projectCase(
+                  first.case_id,
+                  {
+                    ...first,
+                    queueReason: first.queue_reason,
+                    executionOutcome: first.execution_outcome,
+                  },
+                  cleanup,
+                  this.publicUrl,
+                  detail,
+                ),
+              },
+            ],
+          });
         });
-      });
       return {
         requestId: row.request_id,
         title: row.title,

@@ -93,6 +93,3 @@ export async function modelRequest(
   });
   return result;
 }
-
-/** 兼容原错误映射入口。 */
-export { modelTraceFault } from '@proofrun/execution-core/faults';

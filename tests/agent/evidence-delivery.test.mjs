@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { waitForEvidence } from '../../apps/agent/dist/evidence/delivery.js';
+import { waitForEvidence } from '../../packages/execution-driver/dist/evidence/delivery.js';
 import { AgentFault, pause } from '../../apps/agent/dist/http.js';
 
 /** 仅模拟控制面证据状态，不生成真实截图或连接节点。 */

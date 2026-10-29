@@ -584,36 +584,6 @@ export async function buildApp(
     },
   );
   app.post<{ Params: IdParams }>(
-    '/v1/tasks/:id/compare',
-    { preHandler: admin },
-    (request) => {
-      const body = request.body as
-        { comparisonId?: unknown; maxActions?: unknown } | undefined;
-      if (
-        !body ||
-        typeof body.comparisonId !== 'string' ||
-        Object.keys(body).some(
-          (key) => !['comparisonId', 'maxActions'].includes(key),
-        ) ||
-        (body.maxActions !== undefined && typeof body.maxActions !== 'number')
-      )
-        throw new ApiError(400, 'INVALID_COMPARISON', '需要 comparisonId');
-      return coordinator.compare(
-        request.params.id,
-        body.comparisonId,
-        body.maxActions as number | undefined,
-      );
-    },
-  );
-  app.get<{ Params: IdParams }>(
-    '/v1/tasks/:id/comparison',
-    { preHandler: admin },
-    async (request) => {
-      await lifecycle.visible(request.params.id);
-      return tasks.comparison(request.params.id);
-    },
-  );
-  app.post<{ Params: IdParams }>(
     '/v1/tasks/:id/cancel',
     { preHandler: admin },
     (request) => coordinator.cancel(request.params.id),

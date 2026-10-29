@@ -16,7 +16,6 @@ const CALL_STATUS = {
 };
 const PURPOSE = {
   DECISION: '决策',
-  JEV_SELECTION: 'JEV 候选选择',
   FIELD_VALUE: '填写值生成',
 };
 type CallSummary = Omit<ModelCall, 'request' | 'response'>;

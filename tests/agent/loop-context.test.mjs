@@ -4,10 +4,10 @@ import { createRequire } from 'node:module';
 import {
   decisionContext,
   rememberObservation,
-} from '../../apps/agent/dist/execution/context.js';
+} from '../../packages/execution-core/dist/execution/context.js';
 import { ChatModel } from '../../apps/agent/dist/model/chat.js';
-import { Workflow } from '../../apps/agent/dist/execution/workflow.js';
-import { observation } from '../../apps/agent/dist/evidence/observation.js';
+import { Workflow } from '../../packages/execution-core/dist/execution/workflow.js';
+import { observation } from '../../packages/execution-core/dist/evidence/observation.js';
 import { config, grant, FakeControl, modelServer } from './fixture.mjs';
 
 /** 复用 Contracts 已固定的 AJV 校验出站 schema，不新增测试专用依赖。 */
@@ -359,17 +359,21 @@ test('语言切换的历史文档声明与正文一起保留，不被当前状�
   rememberObservation(history, { ...current, documents });
   const result = decisionContext({
     ...args,
-    current: { ...current, documents },
+    current: { ...current, documents: [{ ...documents[0], lang: 'fr' }] },
     previousObservations: history,
   }).context;
-  assert.equal(result.page.documents[0].lang, 'en');
+  assert.equal(result.page.documents[0].lang, 'fr');
   assert.deepEqual(
     result.history.excerpts.map((item) => item.documents[0].lang),
     ['zh-CN', 'en'],
   );
   assert.deepEqual(
     result.history.excerpts[0].artifactRefs,
-    current.artifactRefs,
+    current.artifactRefs.map(({ artifactId, kind }) => ({
+      artifactId,
+      kind,
+      sha256: undefined,
+    })),
   );
   assert.equal(
     result.history.excerpts[0].text,
@@ -472,13 +476,383 @@ test('重复控件面板先压缩，保留正文、网络页和取回完整证�
   const result = decisionContext({ ...args, maxContextChars: 64000 });
   assert(result.text.length <= 64000);
   assert.equal(result.context.page.text, current.text);
-  assert.equal(result.context.page.network.requests.length, 20);
+  assert.equal(result.context.page.network.requests.length, 5);
   assert(result.context.page.targets.length >= 8);
   assert.equal(result.context.page.coverage.controls.detailsTruncated, true);
-  assert.match(result.context.page.coverage.recovery, /evidence_read/);
+  assert.match(result.context.page.coverage.recovery, /artifactRefs/);
   assert.equal(
     result.context.page.coverage.text.originalChars,
     current.text.length,
   );
   assert.deepEqual(current, before);
+});
+
+// 范围：通过真实 HTTP 请求验证规则随结构化上下文加入及移除；页面与模型回复为夹具，不评估模型遵循能力。
+test('专项提示词按每轮事实加载，不残留上一轮规则', async () => {
+  const { args, current } = await input();
+  const server = await modelServer(() => ({
+    type: 'verification.block',
+    summary: '检查提示词装配',
+  }));
+  const model = new ChatModel({ ...config, modelUrl: server.url });
+  const send = async (data) => {
+    await model.decide(decisionContext(data), new AbortController().signal);
+    return server.requests.at(-1).messages[0].content;
+  };
+  try {
+    const minimal = await send(args);
+    assert.doesNotMatch(
+      minimal,
+      /page.network|state.conditions|state.readings|page.documents|history.commands|history.excerpts/,
+    );
+    assert.doesNotMatch(minimal, /scroll|focusVerified|Service Worker/);
+    assert.match(minimal, /不可信证据/);
+    assert.match(minimal, /budget 是剩余硬额度/);
+    assert.match(minimal, /criteria 按原 criterionId/);
+
+    const rich = await send({
+      ...args,
+      current: {
+        ...current,
+        documents: [
+          { frameId: 'main', isMainFrame: true, lang: 'en', url: current.url },
+        ],
+        runtime: { version: 1, status: 'observed' },
+      },
+      setupPhase: 'CHECKING',
+      history: [
+        {
+          commandId: 'keyboard-fixture',
+          operation: 'browser.act',
+          action: 'press',
+          operationStatus: 'SUCCEEDED',
+          effect: 'COMPLETED',
+          keyboard: { scope: 'target', focusVerified: true },
+        },
+      ],
+      previousObservations: [{ ...current }],
+      // discovered 是裁剪前的稳定计数；正文全部省略时也须保留阅读约束。
+      interactionProgress: {
+        revision: 1,
+        currentTargets: [],
+        discovered: 1,
+        unreadItemIds: ['item-1'],
+        recordedItemIds: [],
+        items: [],
+        limit: 32,
+        omittedItems: 1,
+      },
+    });
+    assert.match(rich, /当前独立核验/);
+    assert.doesNotMatch(rich, /当前执行业务验证/);
+    assert.match(rich, /state.conditions/);
+    assert.match(rich, /state.readings/);
+    assert.match(rich, /page.documents/);
+    assert.match(rich, /history.commands/);
+    assert.match(rich, /history.excerpts/);
+    assert.match(rich, /focusVerified/);
+    assert.match(rich, /Service Worker/);
+    assert.equal(await send(args), minimal);
+    assert.deepEqual(server.errors, []);
+  } finally {
+    await server.close();
+  }
+});
+
+// 范围：工具说明与最终截图、运行时、阶段和预算能力同步；不执行真实视觉点击或 PWA 清理。
+test('动作提示随最终工具能力加载，收尾不再注入浏览器操作规则', async () => {
+  const server = await modelServer(() => ({
+    type: 'verification.block',
+    summary: '检查能力说明',
+  }));
+  try {
+    for (const options of [
+      { vision: false, image: true },
+      { vision: true, image: false },
+      { vision: true, image: true },
+      { runtime: true },
+      { runtime: true, cleanup: true },
+      { runtime: true, settlement: true },
+      { actions: 0 },
+    ]) {
+      const { args, current } = await input();
+      if (options.runtime) current.runtime = { version: 1, status: 'observed' };
+      if (options.actions === 0) args.budgetRemaining.actions = 0;
+      await new ChatModel({
+        ...config,
+        modelUrl: server.url,
+        vision: !!options.vision,
+      }).decide(
+        decisionContext({
+          ...args,
+          image: options.image ? 'data:image/png;base64,fixture' : undefined,
+          cleanup: !!options.cleanup,
+          verificationReview: options.settlement
+            ? { final: true, reason: 'budget' }
+            : undefined,
+        }),
+        new AbortController().signal,
+      );
+      const request = server.requests.at(-1);
+      const act = request.tools.find(
+        (tool) => tool.function.name === 'browser_act',
+      )?.function;
+      if (options.settlement || options.actions === 0) {
+        assert.equal(act, undefined);
+        assert.doesNotMatch(
+          request.messages[0].content,
+          /scroll|navigate|视觉点击/,
+        );
+      } else {
+        const actions = act.parameters.properties.action.enum;
+        const visual = !!(options.vision && options.image);
+        assert.equal(actions.includes('visual.click'), visual);
+        assert.equal(act.description.includes('视觉点击'), visual);
+        assert.equal(
+          act.description.includes('online 只派发'),
+          !!options.runtime,
+        );
+        assert.equal(
+          act.description.includes('network.probe 的 target'),
+          !!options.runtime,
+        );
+        assert.equal(
+          act.description.includes('pwa.cleanup 仅清理'),
+          !!options.cleanup,
+        );
+        assert.match(act.description, /不为确认同一事实反复 navigate/);
+      }
+    }
+    assert.deepEqual(server.errors, []);
+  } finally {
+    await server.close();
+  }
+});
+
+// 范围：网络规则依据实际可读取的证据开放，收尾仍可读取；无证据不得仅凭快照存在注入工具说明。
+test('网络提示与证据工具保持一致，通用任务不携带正式验收规则', async () => {
+  const server = await modelServer(() => ({
+    type: 'verification.block',
+    summary: '检查网络规则',
+  }));
+  try {
+    for (const withEvidence of [false, true]) {
+      const { args, current } = await input();
+      args.task.taskKind = 'browser';
+      args.task.acceptanceCriteria = [];
+      current.network = { requests: [] };
+      if (withEvidence) {
+        const id = '11111111-1111-4111-8111-111111111111';
+        current.artifactRefs.push({
+          kind: 'NETWORK',
+          artifactId: id,
+          sha256: 'a'.repeat(64),
+        });
+        args.evidence.push({ kind: 'NETWORK', id, sha256: 'a'.repeat(64) });
+      }
+      await new ChatModel({ ...config, modelUrl: server.url }).decide(
+        decisionContext({
+          ...args,
+          verificationReview: { final: true, reason: 'budget' },
+        }),
+        new AbortController().signal,
+      );
+      const request = server.requests.at(-1);
+      const prompt = request.messages[0].content;
+      assert.equal(
+        request.tools.some((tool) => tool.function.name === 'network_requests'),
+        withEvidence,
+      );
+      assert.equal(prompt.includes('page.network 默认'), withEvidence);
+      assert.equal(prompt.includes('最多 4 个纯'), withEvidence);
+      assert.match(prompt, /只读收尾/);
+      assert.match(prompt, /通用浏览器任务/);
+      assert.doesNotMatch(prompt, /当前执行业务验证|criteria 按原 criterionId/);
+    }
+    assert.deepEqual(server.errors, []);
+  } finally {
+    await server.close();
+  }
+});
+
+// 范围：共享 context 去重原文、空账本和校验元数据，保留实际要求与可引用身份；不证明模型能正确执行原始任务。
+test('context 仅在原文完全相同时引用来源，空阅读和网络账本不加载', async () => {
+  const { args, current } = await input();
+  const description = '核对名称与提交结果，不新增验收标准。';
+  args.task.objective = description;
+  args.background = description;
+  args.executionStep = {
+    stepId: 'setup',
+    type: 'setup',
+    description,
+    url: current.url,
+    policy: ['保留当前账号', '不要刷新页面'],
+  };
+  args.workflow = {
+    revision: 0,
+    steps: [description, '保留当前账号', '不要刷新页面', '不要刷新页面。'].map(
+      (requirement, i) => ({
+        id: `req-${i}`,
+        requirement,
+        status: 'pending',
+        evidenceRefs: [],
+      }),
+    ),
+  };
+  args.interactionProgress = {
+    discovered: 0,
+    items: [],
+    currentTargets: [],
+    recordedItemIds: [],
+    unreadItemIds: [],
+  };
+  const source = structuredClone(args);
+  const result = decisionContext(args);
+  const delivered = JSON.parse(result.text);
+  assert.equal(delivered.task.background, undefined);
+  assert.equal(delivered.task.description, description);
+  assert.deepEqual(delivered.task.policy, source.executionStep.policy);
+  assert.deepEqual(delivered.task.requirements, [
+    { id: 'req-0', requirementRef: 'task.description' },
+    { id: 'req-1', requirementRef: 'task.policy[0]' },
+    { id: 'req-2', requirementRef: 'task.policy[1]' },
+    { id: 'req-3', requirement: '不要刷新页面。' },
+  ]);
+  assert.equal(delivered.state.readings, undefined);
+  assert.equal(delivered.state.networkReads, undefined);
+  assert.equal(delivered.page.coverage.recovery, undefined);
+  assert.deepEqual(
+    delivered.page.artifactRefs,
+    current.artifactRefs.map(({ artifactId, kind }) => ({ artifactId, kind })),
+  );
+  assert.deepEqual(args, source);
+  assert.deepEqual(delivered, JSON.parse(JSON.stringify(result.context)));
+  const distinct = decisionContext({
+    ...args,
+    background: '包含跨步骤约束的完整原目标',
+  }).context;
+  assert.equal(distinct.task.background, '包含跨步骤约束的完整原目标');
+});
+
+// 范围：历史与当前文本复用但保留历史附件，语言与完整性不同仍独立；不把相同正文视为同一次观察或相同业务状态。
+test('历史重复正文复用当前文本，同时保留来源与差异证据', async () => {
+  const { args, current, client } = await input();
+  const oldId = '22222222-2222-4222-8222-222222222222';
+  const docs = [
+    { frameId: 'main', isMainFrame: true, lang: 'en', url: current.url },
+  ];
+  current.documents = docs;
+  args.evidence.push({ ...client.artifacts[0], id: oldId });
+  const prior = {
+    observationId: 'old',
+    url: current.url,
+    title: current.title,
+    documents: docs,
+    text: current.text,
+    truncated: false,
+    artifactRefs: [{ artifactId: oldId, kind: 'DOM', sha256: 'a'.repeat(64) }],
+  };
+  args.previousObservations = [
+    prior,
+    {
+      ...prior,
+      observationId: 'different-language',
+      documents: [{ ...docs[0], lang: 'zh-CN' }],
+    },
+    { ...prior, observationId: 'partial', truncated: true },
+  ];
+  const before = structuredClone(args);
+  const result = decisionContext(args).context;
+  assert.equal(result.history.excerpts.length, 3);
+  assert.equal(result.history.excerpts[0].text, undefined);
+  assert.equal(result.history.excerpts[0].textRef, 'page.text');
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(result.history.excerpts[0].artifactRefs)),
+    [{ artifactId: oldId, kind: 'DOM' }],
+  );
+  for (const item of result.history.excerpts.slice(1)) {
+    assert.equal(item.text, current.text);
+    assert.equal(item.textRef, undefined);
+  }
+  assert(result.evidence.some((item) => item.id === oldId));
+  assert.deepEqual(args, before);
+});
+
+// 范围：初次网络只交付预览，主动查询交付完整分页和零匹配回执，新观察恢复预览；所有网络内容均为夹具。
+test('网络 context 默认小预览，查询后按需展开且不改变原始采集', async () => {
+  const { args, current, client } = await input();
+  const id = '33333333-3333-4333-8333-333333333333';
+  current.network = {
+    complete: true,
+    truncated: false,
+    requests: Array.from({ length: 40 }, (_, i) => ({
+      url: `https://fixture.test/item-${i}`,
+      method: 'GET',
+      status: 200,
+    })),
+  };
+  current.artifactRefs.push({
+    artifactId: id,
+    kind: 'NETWORK',
+    sha256: 'a'.repeat(64),
+  });
+  client.artifacts.push({ id, kind: 'NETWORK', sha256: 'a'.repeat(64) });
+  const before = structuredClone(args);
+  const preview = decisionContext(args).context.page.network;
+  assert.equal(preview.total, 40);
+  assert.equal(preview.requests.length, 5);
+  assert.equal(preview.nextOffset, 5);
+  assert.equal(preview.omitted, 35);
+  assert.equal(preview.capture.complete, true);
+  const queried = decisionContext({
+    ...args,
+    networkSelection: {
+      observationId: current.observationId,
+      offset: preview.nextOffset,
+    },
+  }).context.page.network;
+  assert.equal(queried.requests.length, 20);
+  assert.equal(queried.requests[0].url, current.network.requests[5].url);
+  assert.equal(queried.nextOffset, 25);
+  const empty = decisionContext({
+    ...args,
+    networkSelection: { observationId: current.observationId, status: 404 },
+  }).context.page.network;
+  assert.equal(empty.matched, 0);
+  assert.deepEqual(empty.requests, []);
+  assert.equal(empty.nextOffset, null);
+  const stale = decisionContext({
+    ...args,
+    networkSelection: { observationId: 'old-observation', offset: 20 },
+  }).context.page.network;
+  assert.deepEqual(stale, preview);
+  assert.deepEqual(args, before);
+});
+
+// 范围：实际交付截图时保留决定帧所需哈希，文字轮次不携带；这里只验证投影，不代替图片下载及字节完整性校验。
+test('截图校验元数据仅随实际图片交付保留', async () => {
+  const { args, current, client } = await input();
+  const id = '44444444-4444-4444-8444-444444444444';
+  const sha256 = 'b'.repeat(64);
+  current.artifactRefs.push({ artifactId: id, kind: 'SCREENSHOT', sha256 });
+  client.artifacts.push({ id, kind: 'SCREENSHOT', sha256 });
+  const textOnly = JSON.parse(decisionContext(args).text);
+  assert(textOnly.page.artifactRefs.every((item) => item.sha256 === undefined));
+  const withImage = decisionContext({
+    ...args,
+    image: 'data:image/png;base64,fixture',
+  }).context;
+  assert.equal(
+    withImage.page.artifactRefs.find((item) => item.artifactId === id).sha256,
+    sha256,
+  );
+  assert(
+    withImage.page.artifactRefs
+      .filter((item) => item.kind !== 'SCREENSHOT')
+      .every((item) => item.sha256 === undefined),
+  );
+  assert.equal(
+    current.artifactRefs.find((item) => item.artifactId === id).sha256,
+    sha256,
+  );
 });

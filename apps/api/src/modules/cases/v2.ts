@@ -12,12 +12,7 @@ import { ApiError, canonical } from '../../domain.js';
 import type { Coordinator } from '../scheduling/coordinator.js';
 import { validateCaseProfile, type CaseProfile } from './profile.js';
 import { extendRerunTimeBudget, parseRerunTimeBudget } from './rerun-budget.js';
-import {
-  caseArmIds,
-  compileCase,
-  MAX_CASE_BATCH,
-  V2_PREFIX,
-} from './structured.js';
+import { compileCase, MAX_CASE_BATCH, V2_PREFIX } from './structured.js';
 
 /** 编译只需要冻结定义；公共事务注入同连接读取，避免持有连接时再申请连接。 */
 export interface CaseDefinitionReader {
@@ -162,16 +157,6 @@ export class CaseV2Service {
     const definition = reader
       ? await reader.case(id, sourceTaskId)
       : (await this.stored(id, sourceTaskId)).definition;
-    if (
-      budgetMode === 'original' &&
-      (definition.comparison ||
-        (definition.executionMode && definition.executionMode !== 'llm'))
-    )
-      throw new ApiError(
-        422,
-        'RERUN_BUDGET_INCOMPATIBLE',
-        '历史 JEV/双跑预算不能用于新执行，请选择当前预算',
-      );
     const profile: CaseProfile = {
       // 保留原人工权限；退役身份迁移和显式人工配置再按当前平台权限决定是否允许交接。
       environment: {
@@ -257,42 +242,14 @@ export class CaseV2Service {
   /** 即使 worker 异常退出，已持久化的步骤结果仍可查询。 */
   async get(id: string, runId?: string): Promise<CaseResultV2> {
     const task = await this.stored(id, runId);
-    const primary = await this.project(id, task);
-    if (!task.definition.comparison) return primary;
-    const arms = await Promise.all(
-      caseArmIds(task.definition).map(async (taskId) => {
-        const arm =
-          taskId === task.definition.taskId
-            ? task
-            : await this.tasks.task(taskId);
-        return {
-          ...(taskId === task.definition.taskId
-            ? primary
-            : await this.project(id, arm)),
-          taskId,
-          executionMode: arm.definition.comparison!.arm,
-        };
-      }),
-    );
-    const humanOutcome = arms.find(
-      (arm) => arm.executionOutcome?.category === 'HUMAN_UNEXECUTABLE',
-    )?.executionOutcome;
-    return {
-      ...primary,
-      // 人工无法执行属于整例结果；已完成组的原始验收与证据仍保留在各组中。
-      ...(humanOutcome ? { executionOutcome: humanOutcome } : {}),
-      comparison: {
-        id: task.definition.comparison.id,
-        arms: [arms[0]!, arms[1]!],
-      },
-    };
+    return this.project(id, task);
   }
 
-  /** 每组保留独立生命周期、步骤和清理；顶层沿用主组，不合并相互矛盾的结论。 */
+  /** 保留执行生命周期、步骤和清理的原始结果。 */
   private async project(
     id: string,
     task: Awaited<ReturnType<TaskReader['task']>>,
-  ): Promise<Omit<CaseResultV2, 'comparison'>> {
+  ): Promise<CaseResultV2> {
     const cleanup = await this.tasks.caseCleanup(task.definition.taskId);
     return projectCase(id, task, cleanup, this.publicUrl);
   }
@@ -300,8 +257,7 @@ export class CaseV2Service {
   /** 取消同任务业务与收尾；历史独立清理仍按旧调度规则处理。 */
   async cancel(id: string): Promise<CaseResultV2> {
     const task = await this.stored(id);
-    for (const taskId of caseArmIds(task.definition))
-      await this.tasks.cancel(taskId);
+    await this.tasks.cancel(task.definition.taskId);
     return this.get(id);
   }
 
@@ -312,23 +268,17 @@ export class CaseV2Service {
     runId?: string,
   ): Promise<void> {
     const task = await this.stored(id, runId);
-    for (const taskId of caseArmIds(task.definition)) {
-      const arm =
-        taskId === task.definition.taskId
-          ? task
-          : await this.tasks.task(taskId);
-      const cleanup = await this.tasks.caseCleanup(taskId);
-      if (
-        arm.report?.artifacts.some((a) => a.id === artifactId) ||
-        cleanup?.report?.artifacts.some((a) => a.id === artifactId) ||
-        arm.stepResults?.some(
-          (step) =>
-            step.evidenceRefs.includes(artifactId) ||
-            step.criteria.some((c) => c.evidenceRefs.includes(artifactId)),
-        )
+    const cleanup = await this.tasks.caseCleanup(task.definition.taskId);
+    if (
+      task.report?.artifacts.some((a) => a.id === artifactId) ||
+      cleanup?.report?.artifacts.some((a) => a.id === artifactId) ||
+      task.stepResults?.some(
+        (step) =>
+          step.evidenceRefs.includes(artifactId) ||
+          step.criteria.some((c) => c.evidenceRefs.includes(artifactId)),
       )
-        return;
-    }
+    )
+      return;
     throw new ApiError(
       404,
       'EVIDENCE_MISSING',

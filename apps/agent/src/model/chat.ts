@@ -39,7 +39,6 @@ export type {
   DecisionOutput,
   DecisionModel,
 } from '@proofrun/execution-core/model';
-export { decisionData } from '@proofrun/execution-core/model';
 import {
   decisionData,
   type DecisionInput,
@@ -55,7 +54,11 @@ export class ChatModel implements DecisionModel {
   ): Promise<DecisionOutput> {
     const context = decisionData(input);
     const text = JSON.stringify(context);
-    const availableTools = decisionTools(context, MODEL_TOOLS);
+    const availableTools = decisionTools(
+      context,
+      MODEL_TOOLS,
+      this.config.vision && !!input.image,
+    );
     const content =
       this.config.vision && input.image
         ? [
@@ -63,18 +66,6 @@ export class ChatModel implements DecisionModel {
             { type: 'image_url', image_url: { url: input.image } },
           ]
         : text;
-    // 未交付当前截图时不得开放视觉点击工具。
-    if (!this.config.vision || !input.image) {
-      const act = availableTools.find((tool) => tool.type === 'browser.act');
-      if (act) {
-        const schema = act.parameters as {
-          properties: { action: { enum: string[] } };
-        };
-        schema.properties.action.enum = schema.properties.action.enum.filter(
-          (action) => action !== 'visual.click',
-        );
-      }
-    }
     const body = {
       ...reasoningParameters(this.config),
       model: this.config.model,
@@ -84,7 +75,7 @@ export class ChatModel implements DecisionModel {
       messages: [
         {
           role: 'system',
-          content: decisionPrompt(context),
+          content: decisionPrompt(context, availableTools),
         },
         { role: 'user', content },
       ],

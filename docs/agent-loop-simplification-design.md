@@ -49,7 +49,7 @@ setup 保留 PREPARING → CHECKING 两阶段。准备阶段的 finish 只表示
 | `budget`   | 剩余 actions、modelCalls、timeMs                                                                            | 硬额度                     |
 | `feedback` | EXECUTION_FEEDBACK、OBSERVATION_STALLED、REPEATED_STATE 及相应消息/计数                                     | 当前异常和停滞提示         |
 
-task 不透传内部 VerificationTask：账号材料、sessionPlan、调度节点、authState、comparison 元数据不进入循环。原始 requirement 文本放在 task.requirements，state.requirements 只保留对应身份、状态、摘要和来源。原 description/policy 保留，避免把要求拆分当作改写任务。前序步骤失败通过 feedback 进入下一步骤。
+task 不透传内部 VerificationTask：账号材料、sessionPlan、调度节点、authState 元数据不进入循环。原始 requirement 文本放在 task.requirements，state.requirements 只保留对应身份、状态、摘要和来源。原 description/policy 保留，避免把要求拆分当作改写任务。前序步骤失败通过 feedback 进入下一步骤。
 
 page.targets 保留真实浏览器操作能力，删除只服务对照匹配的 comparisonKey。history.commands 合并近期和关键回执，以 commandId 去重，保留发生顺序、operationStatus、effect、Cookie 清理结果等事实。历史正文剔除旧 target/ref 编号，不能据其重放动作；同时保留对应 documents/lang，语言声明不同的快照不合并。人工交接不清除重要副作用回执，步骤边界开始新作用域。
 
@@ -95,13 +95,13 @@ API 持久化可选 StepResult.requirements，验证唯一要求身份、证据�
 
 预算收尾仅允许 record/finish/block，停滞收尾按执行状态限制；不提供新的浏览器动作或人工续时。视觉输入只受 LLM 的 vision 配置控制，没有 JEV 图片或 Box 旁路。
 
-| 文件                       | 当前职责                                         |
-| -------------------------- | ------------------------------------------------ |
-| `prompts/decision.ts`      | 公共任务、浏览器、证据规则，按阶段与收尾状态装配 |
-| `prompts/tools.ts`         | 工具用途及证据引用说明                           |
-| `prompts/recovery.ts`      | 当前使用的恢复反馈模板                           |
-| `prompts/action-replay.ts` | 人工交接后的防重放反馈                           |
-| `prompts/settlement.ts`    | 收尾修复反馈                                     |
+| 文件                                                     | 当前职责                                         |
+| -------------------------------------------------------- | ------------------------------------------------ |
+| `apps/agent/src/prompts/decision.ts`                     | 公共任务、浏览器、证据规则，按阶段与收尾状态装配 |
+| `apps/agent/src/prompts/tools.ts`                        | 工具用途及证据引用说明                           |
+| `packages/execution-driver/src/prompts/recovery.ts`      | 当前使用的恢复反馈模板                           |
+| `packages/execution-driver/src/prompts/action-replay.ts` | 人工交接后的防重放反馈                           |
+| `packages/execution-driver/src/prompts/settlement.ts`    | 收尾修复反馈                                     |
 
 工具机器协议仍由 Contracts 提供，Agent 的 tools.ts 收紧本轮能力与枚举及 progress 引用范围，并覆盖模型用途说明。身份选择不是浏览器循环中的隐藏子调用。
 
@@ -118,7 +118,7 @@ API 持久化可选 StepResult.requirements，验证唯一要求身份、证据�
 | verification.environment 与模型环境分类                                 | 冻结 executionPlan；缺失必需计划则拒绝                  |
 | conclusions、workflow.assessments、工具顶层 criteria 等模型别名         | 唯一 progress 入口；公开报告维持领域协议                |
 | 旧计划/JEV/setup/页面通用大段 prompt                                    | 上述七个实际使用的提示词文件                            |
-| 新建 JEV/双跑、Console 对照按钮、部署旧模式开关                         | 新建及重跑 llm；历史对照只读                            |
+| 新建 JEV/双跑、Console 对照按钮、部署旧模式开关                         | 新建及重跑 llm；删除退役模式历史                        |
 | 案例 HITL saveAuth/published、保存后重启和 tab 重建                     | 当前会话确认后直接交还控制权                            |
 | 任务内 profile_snapshots、为保存合并 trace、保存后重启                  | 任务只操作副本；节点维护另行显式发布模板                |
 | 登录状态导入/删除 CLI、身份失败后隐式切换模板                           | 冻结 profileSource，访客和 DevPass 保持空白隔离         |
@@ -143,7 +143,7 @@ API 持久化可选 StepResult.requirements，验证唯一要求身份、证据�
 2. Case 配置改为 llm，删除 JEV、执行策略和 base_profile_directory 配置；旧模式明确拒绝，不自动改写既有任务。
 3. 协同升级 API、Agent 和 Node；新调度要求 ephemeralProfiles，旧 Node 不静默接单。
 4. 只有人工基准、没有可重新注入材料的账号需补充身份来源。历史目录不会自动迁移成新材料。
-5. 旧 JEV/双跑任务查看历史或创建新的 llm 运行，历史结果不被覆盖。
+5. 迁移 043 删除旧 JEV/双跑任务及关联历史，保留正常单 LLM 数据；在途会话未核实关闭时升级回滚。
 
 单元/HTTP/临时 PostgreSQL 回归验证上下文边界、阶段门禁、进度保存、未知副作用、租约、历史读取和退役接口。真实 Chrome 本地夹具验证逐轮填写、单次提交、观察，以及临时身份隔离和禁止保存。脚本模型和本地网页不代表真实供应商模型质量或生产业务验收；Linux/systemd 部署与真实模型效果需在对应环境验证。
 

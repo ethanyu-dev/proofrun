@@ -57,9 +57,9 @@ export interface ModelCall {
    */
   model: string;
   /**
-   * 新调用只接受 DECISION；JEV_SELECTION 与 FIELD_VALUE 仅供历史记录解码。
+   * 新调用只接受 DECISION；FIELD_VALUE 仅供单 LLM 历史调用记录解码。
    */
-  purpose: 'DECISION' | 'JEV_SELECTION' | 'FIELD_VALUE';
+  purpose: 'DECISION' | 'FIELD_VALUE';
   /**
    * worker 在派发请求前记录的时间。
    */

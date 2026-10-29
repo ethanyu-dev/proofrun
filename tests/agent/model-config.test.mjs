@@ -1,4 +1,4 @@
-import { decisionContext } from '../../apps/agent/dist/execution/context.js';
+import { decisionContext } from '../../packages/execution-core/dist/execution/context.js';
 import { grant } from './fixture.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -19,10 +19,6 @@ function configure(t) {
     PROOFRUN_MODEL_REASONING_EFFORT: undefined,
     PROOFRUN_MODEL_MAX_TOKENS: undefined,
     PROOFRUN_AGENT_MODEL_MS: undefined,
-    PROOFRUN_JEV_LONG_CONTEXT: undefined,
-    PROOFRUN_JEV_IMAGES: undefined,
-    PROOFRUN_JEV_BOX: undefined,
-    PROOFRUN_JEV_EXPANDED_ACTIONS: undefined,
     PROOFRUN_AGENT_EXECUTION_GUIDANCE: undefined,
     PROOFRUN_AGENT_EXECUTION_POLICY: undefined,
     PROOFRUN_AGENT_COMMAND_MS: undefined,

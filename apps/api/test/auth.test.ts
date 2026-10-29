@@ -61,10 +61,19 @@ test('默认 LLM 单组，明确拒绝 JEV 与 parallel 新任务', () => {
   assert.equal(compiled.executionMode, 'llm');
   assert.equal(currentTasks(compiled).length, 1);
   for (const executionMode of ['jev', 'parallel'] as const) {
-    assert.throws(() => validateCaseProfile({ ...profile, executionMode }));
-    assert.throws(() => currentTasks({ ...compiled, executionMode }), {
-      code: 'EXECUTION_MODE_RETIRED',
-    });
+    assert.throws(() =>
+      validateCaseProfile({
+        ...profile,
+        executionMode: executionMode as never,
+      }),
+    );
+    assert.throws(
+      () =>
+        currentTasks({ ...compiled, executionMode: executionMode as never }),
+      {
+        code: 'EXECUTION_MODE_RETIRED',
+      },
+    );
   }
 });
 

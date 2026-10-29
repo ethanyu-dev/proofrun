@@ -141,4 +141,4 @@ pnpm test:agent:browser
 
 ## 真实 Codex MCP 联调
 
-`pnpm test:mcp:codex` 使用真实已登录的 Codex CLI，通过两套 MCP 完成准备、浏览器操作、验证、清理与报告。需要独立 PostgreSQL 和 Linux/systemd/Chromium 容器依赖；配置、审计产物及覆盖边界见 [联调说明](mcp-real/README.md)。`pnpm test:mcp:regression` 运行无需真实模型的配置传递和验收审核器回归。
+`pnpm test:mcp:codex` 使用真实已登录的 Codex CLI，通过两套 MCP 完成准备、浏览器操作、验证、清理与报告。需要独立 PostgreSQL 和 Linux/systemd/Chromium 容器依赖；配置、审计产物及覆盖边界见 [联调说明](mcp-real/README.md)。`pnpm test:mcp:regression` 运行 `tests/mcp-real/` 下无需真实模型的配置传递和验收审核器回归；本地启动配置用例归入此入口，`test:deploy` 只运行部署冒烟，避免 CI 重复执行。

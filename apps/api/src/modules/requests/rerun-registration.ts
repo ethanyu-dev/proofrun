@@ -34,7 +34,7 @@ export async function replaceMemberRuns(
   // 与成员替换同事务；未启用通知的目的地以后也不会补发早于启用时间的任务。
   await client.query(
     `INSERT INTO pr_feishu_runs(destination_id,run_key,settled_at)
-     SELECT DISTINCT d.id,COALESCE(t.definition#>>'{comparison,id}',t.id),statement_timestamp()
+     SELECT DISTINCT d.id,t.id,statement_timestamp()
      FROM pr_request_runs a JOIN pr_tasks t ON t.id=a.task_id
      CROSS JOIN pr_feishu_destinations d
      WHERE a.request_id=$1 AND a.case_id=ANY($2::text[])
@@ -56,10 +56,5 @@ export async function replaceMemberRuns(
         'CASE_MISSING',
         '请求成员已删除或不存在，请刷新后重试',
       );
-    // 历史双跑从组不能混入新一轮单 LLM 结果；其原任务不删除。
-    await client.query(
-      'DELETE FROM pr_verification_request_arms WHERE request_id=$1 AND case_id=$2',
-      [request.requestId, caseId],
-    );
   }
 }

@@ -26,7 +26,7 @@ export interface RequestSummary {
    */
   generatedAt: string;
   /**
-   * 当前范围内的 case 数，双跑不增加数量。
+   * 当前范围内的 case 数。
    */
   caseCount: number;
   /**
@@ -100,11 +100,7 @@ export interface RequestSummary {
    */
   observedFailureCount: number;
   /**
-   * 两组明确通过和失败相反的标准数，不含覆盖差异。
-   */
-  confirmedDisagreementCount: number;
-  /**
-   * 按 caseId 和 criterionId 去重，双跑不增加分母。
+   * 按 caseId 和 criterionId 去重。
    */
   uniqueCriteriaCounts: {
     /**
@@ -134,44 +130,50 @@ export interface RequestSummary {
   };
   /**
    * 按模式汇总；未配置该模式的 case 不计缺失。
+   *
+   * @maxItems 1
    */
-  byExecutionMode: {
-    /**
-     * 冻结执行模式，按 LLM、JEV 顺序展示。
-     */
-    executionMode: 'llm' | 'jev';
-    /**
-     * 当前范围内的 case 数，双跑不增加数量。
-     */
-    caseCount: number;
-    /**
-     * 当前模式要求组中没有报告的数量。
-     */
-    missingReportCount: number;
-    /**
-     * 当前模式已交付报告的原单组统计。
-     */
-    criteriaCounts: {
-      /**
-       * 该统计范围的总数，不能混同 case 数与执行次数。
-       */
-      total: number;
-      /**
-       * 满足该范围全部要求的通过数量。
-       */
-      passed: number;
-      /**
-       * 已交付结论中确认失败的数量。
-       */
-      failed: number;
-      /**
-       * 仍无法形成确定结论，包括通过与缺失并存。
-       */
-      inconclusive: number;
-      /**
-       * 未验收或所有要求组均缺失该项的数量。
-       */
-      skipped: number;
-    };
-  }[];
+  byExecutionMode:
+    | []
+    | [
+        {
+          /**
+           * 冻结的 LLM 执行模式。
+           */
+          executionMode: 'llm';
+          /**
+           * 当前范围内的 case 数。
+           */
+          caseCount: number;
+          /**
+           * 当前模式要求组中没有报告的数量。
+           */
+          missingReportCount: number;
+          /**
+           * 当前模式已交付报告的原单组统计。
+           */
+          criteriaCounts: {
+            /**
+             * 该统计范围的总数，不能混同 case 数与执行次数。
+             */
+            total: number;
+            /**
+             * 满足该范围全部要求的通过数量。
+             */
+            passed: number;
+            /**
+             * 已交付结论中确认失败的数量。
+             */
+            failed: number;
+            /**
+             * 仍无法形成确定结论，包括通过与缺失并存。
+             */
+            inconclusive: number;
+            /**
+             * 未验收或所有要求组均缺失该项的数量。
+             */
+            skipped: number;
+          };
+        },
+      ];
 }

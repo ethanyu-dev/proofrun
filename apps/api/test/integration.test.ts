@@ -4398,8 +4398,7 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         `/v1/tasks/${original.taskId}/compare`,
         { comparisonId: `pair-${randomUUID()}` },
       );
-      assert.equal(retired.status, 410);
-      assert.equal(retired.data.code, 'EXECUTION_MODE_RETIRED');
+      assert.equal(retired.status, 404);
       await api('POST', `/v1/tasks/${runId}/cancel`, {});
     });
 

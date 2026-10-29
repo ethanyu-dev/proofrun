@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { compileStepBudget } from '../../contracts/dist/index.js';
-import { execute } from '../../apps/agent/dist/execution/runner.js';
+import { execute } from '../../packages/execution-driver/dist/execution/runner.js';
 import { ChatModel } from '../../apps/agent/dist/model/chat.js';
-import { Workflow } from '../../apps/agent/dist/execution/workflow.js';
+import { Workflow } from '../../packages/execution-core/dist/execution/workflow.js';
 import { config, grant, FakeControl, finish, modelServer } from './fixture.mjs';
 
 /** 只模拟控制权交接及新观察；不代表真实账号、登录态或网页角色的验收。 */
@@ -152,9 +152,11 @@ for (const partial of [false, true]) {
       const value = complete(context);
       if (context.task.stepId === 'prepare') {
         assert.deepEqual(
-          context.task.requirements.map((s) => s.requirement),
-          ['准备指定的验证环境', '资格应符合输入中约定的甲类条件'],
+          context.task.requirements.map((s) => s.requirementRef),
+          ['task.description', 'task.policy[0]'],
         );
+        assert.equal(context.task.description, '准备指定的验证环境');
+        assert.equal(context.task.policy[0], '资格应符合输入中约定的甲类条件');
         if (partial) value.progress.requirements.pop();
         else delete value.progress;
       }

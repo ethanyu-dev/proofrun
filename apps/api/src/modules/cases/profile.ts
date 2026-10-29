@@ -4,15 +4,15 @@ import {
   type VerificationTask,
 } from '@proofrun/contracts';
 
-/** 新建 case 只使用 LLM；历史任务仍可读取原执行模式。 */
+/** Case 统一使用 LLM 执行。 */
 export const DEFAULT_CASE_EXECUTION_MODE = 'llm';
 
 /** 平台执行配置仅从服务端加载，不接受 case 请求覆盖。 */
 export type CaseProfile = Pick<VerificationTask, 'environment'> & {
   /** 省略总时长时按步骤数计算，动作上限仍由平台明确设置。 */
   budget: { timeoutMs?: number; maxActions: number };
-  /** 运行入口仅接受 llm，联合类型用于读取历史配置。 */
-  executionMode?: 'llm' | 'jev' | 'parallel';
+  /** 省略时采用默认 LLM 执行。 */
+  executionMode?: 'llm';
   /** 平台选择取证能力，上层只定义业务预期。 */
   evidenceKinds: VerificationTask['acceptanceCriteria'][number]['evidenceKinds'];
 };

@@ -2,7 +2,7 @@ import type { Database } from '../../db.js';
 import type { CaseEvent, CaseView } from './card.js';
 import { readCaseSnapshot } from './source.js';
 
-/** 请求通知使用独立命名空间，不能与合法 task/comparison 身份冲突。 */
+/** 请求通知使用独立命名空间，不能与合法 task 身份冲突。 */
 export const REQUEST_RUN_PREFIX = 'request:';
 
 /** 请求快照只包含通知事实；不保存报告正文或派生人工处理令牌。 */

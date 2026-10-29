@@ -6,7 +6,7 @@
 
 **结构化任务接入：[Case API v2](docs/public-api-v2.md) · [批量示例](contracts/examples/public-api/cases-v2.json)。每个对象对应独立任务，内部按 exec_order 串行执行，业务清理在原会话末尾执行，独立预算三分钟。**
 
-**请求归属与汇总：** v2 支持 `{ requestId, title, cases }` 封装，同次提交在任务和报告中按请求展示；双跑按唯一验收项统计，支持部分报告、组间差异、JSON 导出和整请求原子重跑。旧数组提交保留在未归组任务中。见 [请求示例](contracts/examples/public-api/request-v2.json) 与 [设计](docs/verification-request-design.md)。
+**请求归属与汇总：** v2 支持 `{ requestId, title, cases }` 封装，同次提交在任务和报告中按请求展示；按 case 验收项统计，支持部分报告、JSON 导出和整请求原子重跑。旧数组提交保留在未归组任务中。见 [请求示例](contracts/examples/public-api/request-v2.json) 与 [设计](docs/verification-request-design.md)。
 
 **账号来源：仅支持 [DevPass 外部账号](apps/api/src/modules/account-providers/README.md)，以及访客和当前会话人工登录。不再维护本地账号库、自动选账号或节点登录配方。**
 
@@ -17,7 +17,7 @@
 ```text
 apps/
   api/                 控制面：任务、节点、队列、租约、证据与报告
-  agent/               内置模型 Worker：领取任务、续租并提交模型决定（保留旧执行兼容路径）
+  agent/               内置模型 Worker：领取任务、续租并提交模型决定（执行逻辑由共享包提供）
   console/             控制台：任务、节点、证据报告、人工介入
 packages/
   execution-core/      共享门禁、账本、上下文、证据与报告规则
@@ -225,7 +225,7 @@ pnpm accept:task /absolute/path/to/verification-task.json
 
 ## Agent 循环与身份简化
 
-新执行只使用 LLM，context 收敛为七个模块，进度经统一 `progress` 保存。案例不保存或恢复 profile 基准；身份材料注入临时会话，setup 门禁、租约、账号并发和物理关闭继续有效。历史双跑报告可读，新增双跑入口已退役。架构与删除清单见[简化设计](docs/agent-loop-simplification-design.md)。
+新执行只使用 LLM，context 收敛为七个模块，进度经统一 `progress` 保存。案例不保存或恢复 profile 基准；身份材料注入临时会话，setup 门禁、租约、账号并发和物理关闭继续有效。升级迁移会删除退役模式的历史运行及关联记录。架构与删除清单见[简化设计](docs/agent-loop-simplification-design.md)。
 
 ## 协议修改
 

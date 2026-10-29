@@ -1,7 +1,6 @@
 import type { CleanupFacts } from '../cases/projection.js';
 import { identitySummary } from '../sessions/summary.js';
 import { inlineCleanup } from '../cases/inline-cleanup.js';
-import { caseArmIds } from '../cases/structured.js';
 import { taskOutcomes } from './outcome.js';
 import {
   summarizeReport,
@@ -111,25 +110,6 @@ export class TaskReader {
         )
       ).rows[0] ?? null
     );
-  }
-
-  /** 组身份由不可变任务定义确定，不允许页面随意拼接另一组执行。 */
-  async comparison(taskId: string) {
-    const task = await this.task(taskId);
-    const group = (task.definition as VerificationTask).comparison;
-    if (!group) return { comparison: null };
-    return {
-      comparison: {
-        id: group.id,
-        sourceTaskId: group.sourceTaskId,
-        arms: await Promise.all(
-          (task.definition.caseV2Definition
-            ? caseArmIds(task.definition)
-            : ['llm', 'jev'].map((arm) => `${group.id}-${arm}`)
-          ).map((id) => this.task(id)),
-        ),
-      },
-    };
   }
 
   /** 返回任务与资源清理进度，避免把终态任务误认为浏览器已关闭。 */
@@ -292,7 +272,7 @@ export class TaskReader {
       >(
         `SELECT id,left(definition->>'objective',240) AS objective,definition#>>'{environment,nodePool}' AS node_pool,
         definition#>>'{target,url}' AS target_url,definition#>>'{caseV2Definition,caseId}' AS "caseId",definition->>'parentTaskId' AS "parentTaskId",
-        definition->>'taskKind' AS "taskKind",definition->>'executionMode' AS "executionMode",definition->'comparison' AS comparison,state,created_at,finished_at,archived_at,
+        definition->>'taskKind' AS "taskKind",definition->>'executionMode' AS "executionMode",state,created_at,finished_at,archived_at,
         CASE WHEN report IS NULL THEN NULL ELSE jsonb_build_object(
           'executionDisposition', report->'executionDisposition', 'verdict', report->'verdict',
           'steps', (SELECT coalesce(jsonb_agg(jsonb_build_object('stepId',s->'stepId','status',s->'status')),'[]'::jsonb) FROM jsonb_array_elements(report->'steps') s),

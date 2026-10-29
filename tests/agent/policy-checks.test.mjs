@@ -3,9 +3,9 @@ import test from 'node:test';
 import {
   evaluatePolicyChecks,
   conditionKey,
-} from '../../apps/agent/dist/execution/policy-checks.js';
-import { evaluateChecks } from '../../apps/agent/dist/execution/identity.js';
-import { EnvironmentHandoffs } from '../../apps/agent/dist/execution/environment-handoff.js';
+} from '../../packages/execution-core/dist/execution/policy-checks.js';
+import { evaluateChecks } from '../../packages/execution-core/dist/execution/identity.js';
+import { EnvironmentHandoffs } from '../../packages/execution-core/dist/execution/environment-handoff.js';
 
 /** 记录为合成夹具，只测试范围、证据与状态分类，不证明真实网络采集或业务成功。 */
 const step = {

@@ -1,4 +1,3 @@
-import { seedHistoricalPair } from './historical-comparison.js';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
@@ -107,16 +106,12 @@ test('稳定 case 运行历史与软删除集成', { timeout: 60_000 }, async (s
   const submit = async (requestId: string, cases: string[]) => {
     const r = await call('/v2/cases', { requestId, cases: cases.map(example) });
     assert.equal(r.statusCode, 202, r.body);
-    for (const id of cases) await seedHistoricalPair(sql, `case-v2-${id}`);
     return r.json();
   };
   /** 报告结果与历史汇总用量为测试输入，只验证数据库过滤和聚合。 */
   async function finish(runId: string, verdict = 'PASSED', tokens = 50) {
     const rows = (
-      await sql.query(
-        `SELECT id,definition FROM pr_tasks WHERE id=$1 OR definition#>>'{comparison,sourceTaskId}'=$1`,
-        [runId],
-      )
+      await sql.query(`SELECT id,definition FROM pr_tasks WHERE id=$1`, [runId])
     ).rows;
     for (const row of rows) {
       const report = {
@@ -235,7 +230,7 @@ test('稳定 case 运行历史与软删除集成', { timeout: 60_000 }, async (s
         ).rows[0].report,
       );
     });
-    // 范围：批量全成全败、双跑成组删除和摘要失效；用量与报告均为夹具。
+    // 范围：批量全成全败、单运行删除和摘要失效；用量与报告均为夹具。
     await suite.test('批量删除原子校验并同步请求汇总', async () => {
       await submit('batch', ['alpha', 'beta']);
       await finish('case-v2-alpha');
@@ -248,10 +243,10 @@ test('稳定 case 运行历史与软删除集成', { timeout: 60_000 }, async (s
       await read('/v2/requests');
       const before = await statistics();
       r = await call('/v1/tasks/delete', {
-        ids: ['comparison-case-v2-alpha-jev', 'case-v2-alpha'],
+        ids: ['case-v2-alpha'],
       });
       assert.equal(r.statusCode, 200, r.body);
-      assert.equal(r.json().deletedTaskIds.length, 2);
+      assert.equal(r.json().deletedTaskIds.length, 1);
       const detail = await read('/v2/requests/batch');
       assert.equal(detail.caseCount, 1);
       assert.equal(detail.cases[0].caseId, 'beta');
@@ -265,7 +260,7 @@ test('稳定 case 运行历史与软删除集成', { timeout: 60_000 }, async (s
       const after = await statistics();
       assert.equal(
         after.summary.tokens.totalTokens,
-        before.summary.tokens.totalTokens - 120,
+        before.summary.tokens.totalTokens - 60,
       );
       assert.equal(
         (await call('/v1/tasks/delete', { ids: ['case-v2-beta', 'missing'] }))
@@ -308,7 +303,7 @@ test('稳定 case 运行历史与软删除集成', { timeout: 60_000 }, async (s
         );
       },
     );
-    // 范围：详情入口的请求删除原子排除全部当前 case、双跑和统计，重复调用幂等；报告为夹具，不清理真实证据文件。
+    // 范围：详情入口的请求删除原子排除全部当前 case和统计，重复调用幂等；报告为夹具，不清理真实证据文件。
     await suite.test('删除已结束请求及下属执行后不再纳入统计', async () => {
       await submit('detail-delete', ['detail-delete-a', 'detail-delete-b']);
       await finish('case-v2-detail-delete-a');
@@ -326,7 +321,7 @@ test('稳定 case 运行历史与软删除集成', { timeout: 60_000 }, async (s
       const removed = await call(path, {});
       assert.equal(removed.statusCode, 200, removed.body);
       assert.deepEqual(removed.json().deletedRequestIds, ['detail-delete']);
-      assert.equal(removed.json().deletedTaskIds.length, 4);
+      assert.equal(removed.json().deletedTaskIds.length, 2);
       for (const taskId of removed.json().deletedTaskIds)
         assert.equal((await call(`/v1/tasks/${taskId}`)).statusCode, 404);
       assert.equal((await call('/v2/requests/detail-delete')).statusCode, 404);
@@ -347,7 +342,7 @@ test('稳定 case 运行历史与软删除集成', { timeout: 60_000 }, async (s
       assert.equal(after.summary.runs, before.summary.runs - 2);
       assert.equal(
         after.summary.tokens.totalTokens,
-        before.summary.tokens.totalTokens - 240,
+        before.summary.tokens.totalTokens - 120,
       );
       assert.equal((await call(path, {})).statusCode, 200);
       assert.deepEqual((await statistics()).summary, after.summary);
@@ -402,7 +397,7 @@ test('稳定 case 运行历史与软删除集成', { timeout: 60_000 }, async (s
         assert.equal(pending.runs, before.runs);
         assert.equal(
           pending.tokens.totalTokens,
-          before.tokens.totalTokens - 120,
+          before.tokens.totalTokens - 60,
         );
         await finish('case-run-dashboard-current-run');
         const passed = (await statistics()).summary;
@@ -445,7 +440,7 @@ test('稳定 case 运行历史与软删除集成', { timeout: 60_000 }, async (s
     await suite.test('旧清理随整轮删除，未关闭会话拒绝删除', async () => {
       await submit('cleanup-request', ['cleanup-case']);
       await finish('case-v2-cleanup-case');
-      const parent = 'comparison-case-v2-cleanup-case-jev';
+      const parent = 'case-v2-cleanup-case';
       const definition = (
         await sql.query('SELECT definition FROM pr_tasks WHERE id=$1', [parent])
       ).rows[0].definition;
@@ -456,7 +451,6 @@ test('稳定 case 运行历史与软删除集成', { timeout: 60_000 }, async (s
         parentTaskId: parent,
       };
       delete cleanup.caseV2Definition;
-      delete cleanup.comparison;
       await sql.query(
         "INSERT INTO pr_tasks(id,definition,definition_hash,state,deadline_at,finished_at) VALUES('old-cleanup',$1,'fixture','COMPLETED',clock_timestamp(),clock_timestamp())",
         [cleanup],
@@ -494,7 +488,7 @@ test('稳定 case 运行历史与软删除集成', { timeout: 60_000 }, async (s
       );
       assert.equal(
         (await statistics()).summary.tokens.totalTokens,
-        before.summary.tokens.totalTokens - 247,
+        before.summary.tokens.totalTokens - 187,
       );
       assert.equal(
         (
@@ -504,31 +498,6 @@ test('稳定 case 运行历史与软删除集成', { timeout: 60_000 }, async (s
         ).rows[0].n,
         1,
       );
-    });
-    // 范围：旧普通任务的 sourceTaskId 是溯源身份，删除仅按 comparison.id 成组；不执行真实对比。
-    await suite.test('历史对照运行删除同时移除两组', async () => {
-      const original = { ...task('fixture'), taskId: 'ordinary-source' };
-      assert.equal((await call('/v1/tasks', original)).statusCode, 202);
-      // 历史比较直接导入，退役入口不会再生成双跑。
-      assert.equal(
-        (await call('/v1/tasks', { ...original, taskId: 'historical-pair' }))
-          .statusCode,
-        202,
-      );
-      await seedHistoricalPair(sql, 'historical-pair', 'ordinary-source');
-      await sql.query(
-        "UPDATE pr_tasks SET state='COMPLETED',finished_at=clock_timestamp() WHERE id IN ('ordinary-source','historical-pair','comparison-historical-pair-jev')",
-      );
-      const removed = await call(
-        '/v1/tasks/comparison-historical-pair-jev/delete',
-        {},
-      );
-      assert.equal(removed.statusCode, 200, removed.body);
-      assert.deepEqual(
-        new Set(removed.json().deletedTaskIds),
-        new Set(['historical-pair', 'comparison-historical-pair-jev']),
-      );
-      assert.equal((await call('/v1/tasks/ordinary-source')).statusCode, 200);
     });
     // 范围：旧 v1 case 删除后不从兼容读取和幂等提交入口重新出现；不运行浏览器。
     await suite.test('旧 case 兼容入口隐藏已删除记录并拒绝重提', async () => {

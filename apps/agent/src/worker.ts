@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { ExecutionGrant } from '@proofrun/contracts';
 import { ControlClient } from './client.js';
 import type { AgentConfig } from './config.js';
-import { execute } from './execution/runner.js';
+import { execute } from '@proofrun/execution-driver/execution/runner';
 import { AgentFault, pause } from './http.js';
 import { ChatModel } from './model/chat.js';
 import { executeRuntime } from './runtime.js';

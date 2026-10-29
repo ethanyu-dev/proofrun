@@ -2,7 +2,7 @@ import { validateAgentDecision } from '@proofrun/contracts';
 import {
   MAX_NETWORK_READS,
   type NetworkReadDecision,
-} from '../evidence/network-reads.js';
+} from '@proofrun/execution-core/evidence/network-reads';
 import { AgentFault } from '../http.js';
 import type { DecisionTool } from './tools.js';
 

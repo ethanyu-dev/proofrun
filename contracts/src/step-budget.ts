@@ -26,12 +26,10 @@ export const CASE_MAX_MODEL_CALLS = 20_000;
 export type StepBudgetPlan = NonNullable<VerificationTask['stepBudget']>;
 export type StepLimit = StepBudgetPlan['cleanup'];
 
-/** 只依据结构化定义编译预算；重试沿用已冻结的版本，各对照组分别计算。 */
+/** 只依据结构化定义编译预算；重试沿用已冻结的版本，各步骤分别计算。 */
 export function compileStepBudget(
   task: Pick<VerificationTask, 'steps' | 'cleanupStepIds' | 'executionMode'>,
 ): StepBudgetPlan {
-  // 仅供历史快照预算解释；新任务准入只接受 llm，不能用该兼容分支开启旧引擎。
-  const factor = task.executionMode === 'jev' ? 2 : 1;
   return {
     version: 1,
     settleMs: STEP_SETTLE_MS,
@@ -62,12 +60,12 @@ export function compileStepBudget(
           maxModelCalls:
             step.wait && !step.expected.length && step.type !== 'setup'
               ? 0
-              : Math.max(STEP_LIMIT.maxModelCalls, actions * 2) * factor,
+              : Math.max(STEP_LIMIT.maxModelCalls, actions * 2),
         };
       }) as StepBudgetPlan['steps'],
     cleanup: {
       ...CLEANUP_LIMIT,
-      maxModelCalls: CLEANUP_LIMIT.maxModelCalls * factor,
+      maxModelCalls: CLEANUP_LIMIT.maxModelCalls,
     },
   };
 }

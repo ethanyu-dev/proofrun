@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { compileStepBudget } from '../../contracts/dist/index.js';
-import { execute } from '../../apps/agent/dist/execution/runner.js';
+import { execute } from '../../packages/execution-driver/dist/execution/runner.js';
 import { ChatModel } from '../../apps/agent/dist/model/chat.js';
 import { AgentFault } from '../../apps/agent/dist/http.js';
-import { observation } from '../../apps/agent/dist/evidence/observation.js';
+import { observation } from '../../packages/execution-core/dist/evidence/observation.js';
 import { config, grant, FakeControl, finish, modelServer } from './fixture.mjs';
 
 /** 独立业务步骤与清理使用真实预算编译器，浏览器和模型决策仍为脚本夹具。 */
@@ -294,7 +294,12 @@ test('语言声明逐 frame 传给模型，兼容旧节点并拒绝错误类型'
   };
   const report = await run(grant(), client, (context, _turn, body) => {
     assert.deepEqual(context.page.documents, documents);
-    assert.match(body.messages[0].content, /不为确认同一事实反复 navigate/);
+    assert.match(body.messages[0].content, /语言声明以 page.documents/);
+    assert.match(
+      body.tools.find((tool) => tool.function.name === 'browser_act').function
+        .description,
+      /不为确认同一事实反复 navigate/,
+    );
     return finish(context);
   });
   assert.equal(report.verdict, 'PASSED');

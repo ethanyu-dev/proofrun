@@ -2,7 +2,7 @@
 
 JSON Schema 是协议数据结构的源文件；TypeScript 类型由脚本生成并提交。新版上层调用使用 VerificationCaseV2 数组与 CaseResultV2，见[结构化 Case API](../docs/public-api-v2.md)；VerificationCase 与 CaseResult 继续服务旧 [v1 接口](../docs/public-api.md)。VerificationTask 和 VerificationReport 属于平台内部协议。NodeCommand、NodeEvent、ControlRequest、ExecutionGrant、AgentDecision 等内部协议由项目组件配套使用，不整体承诺为第三方稳定 API。
 
-v2 新任务只使用 LLM，按步骤冻结独立时间、动作和模型预算，平台旧总预算不覆盖新 v2 策略。CaseResultV2 的可选 comparison.arms 只用于历史双跑读取；顶层保留主组投影，不代表历史双组汇总结论。
+v2 新任务只使用 LLM，按步骤冻结独立时间、动作和模型预算，平台旧总预算不覆盖新 v2 策略。CaseResultV2 直接表示单次执行结果。请求成员的 arms 数组只允许一个 LLM 结果。
 
 节点和控制面请求的字段说明写在 Schema 的 `description` 中，生成器会把它们带入 TypeScript 类型注释；NodeCommand 的说明也会进入 Rust 构建期生成类型。不要直接改 `src/generated/` 或 Cargo 的 `OUT_DIR`。
 

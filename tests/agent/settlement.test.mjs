@@ -2,9 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { compileStepBudget } from '../../contracts/dist/index.js';
 import { AgentFault } from '../../apps/agent/dist/http.js';
-import { SettlementBudget } from '../../apps/agent/dist/execution/settlement-budget.js';
+import { SettlementBudget } from '../../packages/execution-core/dist/execution/settlement-budget.js';
 import { ChatModel } from '../../apps/agent/dist/model/chat.js';
-import { execute } from '../../apps/agent/dist/execution/runner.js';
+import { execute } from '../../packages/execution-driver/dist/execution/runner.js';
 import { config, grant, FakeControl, finish, modelServer } from './fixture.mjs';
 
 /** 合成两个独立标准，用于验证结果保存顺序，不验证模型判断内容的准确率。 */
@@ -31,14 +31,6 @@ function execution() {
   g.task.stepBudget = compileStepBudget(g.task);
   return g;
 }
-/** 下一动作局部计划不额外分配步骤额度。 */
-const recovery = {
-  goal: '操作表单',
-  scope: '',
-  terms: ['提交'],
-  successCondition: '出现提交结果',
-  maxActions: 2,
-};
 async function run(client, decide, g = execution(), overrides = {}) {
   const server = await modelServer(decide);
   const settings = {
@@ -74,7 +66,6 @@ test('先保存旧证据结论，再派发下一动作；未知结果不丢已�
     action: 'click',
     target: '@e2',
     conclusions: finish(ctx).progress.criteria.slice(0, 1),
-    workflow: { recovery },
   }));
   assert.equal(
     report.criteria.find((c) => c.criterionId === 'title').verdict,
@@ -103,7 +94,6 @@ test('无效同轮证据阻止后续动作', async () => {
         evidenceRefs: ['not-an-artifact'],
       },
     ],
-    workflow: { recovery },
   }));
   assert.equal(
     client.calls.filter((c) => c.operation.action === 'click').length,
@@ -178,7 +168,6 @@ test('慢文本调用后提前只读整理并保留此前结论', async () => {
           action: 'fill',
           target: '@e1',
           value: 'Alice',
-          workflow: { recovery },
           conclusions: finish(ctx).progress.criteria.slice(0, 1),
         };
       }
@@ -207,7 +196,7 @@ test('慢文本调用后提前只读整理并保留此前结论', async () => {
 });
 
 // 范围：没有可确认项目时允许空数组，避免把正常取证误判为格式错误；不放宽非空结论校验。
-test('同轮 conclusions 空数组允许继续取证', async () => {
+test('同轮 progress.criteria 空数组允许继续取证', async () => {
   const client = new FakeControl();
   const report = await run(client, (ctx, turn) =>
     turn === 1
@@ -216,10 +205,13 @@ test('同轮 conclusions 空数组允许继续取证', async () => {
           action: 'fill',
           target: '@e1',
           value: 'Alice',
-          conclusions: [],
-          workflow: { recovery },
+          progress: { criteria: [] },
         }
-      : { type: 'verification.block', summary: '夹具结束', conclusions: [] },
+      : {
+          type: 'verification.block',
+          summary: '夹具结束',
+          progress: { criteria: [] },
+        },
   );
   assert.equal(
     client.calls.filter((c) => c.operation.action === 'fill').length,
@@ -228,7 +220,7 @@ test('同轮 conclusions 空数组允许继续取证', async () => {
   assert(report.criteria.every((c) => c.verdict === 'SKIPPED'));
 });
 
-// 范围：合法结论不依赖下一动作或工作流元数据正确；非法动作仍不得执行。
+// 范围：合法结论不依赖下一动作格式正确；非法动作仍不得执行，不验证真实模型纠错能力。
 test('下一动作格式错误仅保存独立结论，不修补或执行动作', async () => {
   const client = new FakeControl();
   const report = await run(client, (ctx, turn) =>
@@ -292,7 +284,6 @@ test('结论持久化失败后不派发下一动作', async () => {
     action: 'click',
     target: '@e2',
     conclusions: finish(ctx).progress.criteria.slice(0, 1),
-    workflow: { recovery },
   }));
   assert.equal(
     client.calls.filter((c) => c.operation.action === 'click').length,
@@ -319,7 +310,7 @@ function assessments(ctx) {
   }));
 }
 
-// 范围：任意原步骤的完成数组可无损规范化；没有额外模型调用，不证明实际业务已经完成。
+// 范围：裸数组 progress 连续被拒绝，达到既有纠错上限后不能完成步骤；模型回复为夹具，不验证真实模型纠错能力。
 test('finish 拒绝裸数组 progress，不猜测字段含义', async () => {
   const client = new FakeControl();
   let turns = 0;

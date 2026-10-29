@@ -4,7 +4,7 @@ import {
   compileStepBudget,
   compileProfilePlan,
 } from '../../contracts/dist/index.js';
-import { execute } from '../../apps/agent/dist/execution/runner.js';
+import { execute } from '../../packages/execution-driver/dist/execution/runner.js';
 import { ChatModel } from '../../apps/agent/dist/model/chat.js';
 import {
   config,
@@ -119,8 +119,8 @@ test('同 profile 分组并发，强制 policy 检查后验证并统一清理', 
   const { report, client, seen } = await run(async (context) => {
     if (context.state.phase === 'PREPARING') {
       assert.deepEqual(
-        context.task.requirements.map((s) => s.requirement),
-        [context.task.description],
+        context.task.requirements.map((s) => s.requirementRef),
+        ['task.description'],
       );
       await new Promise((resolve) => {
         waiting.push(resolve);
@@ -129,8 +129,8 @@ test('同 profile 分组并发，强制 policy 检查后验证并统一清理', 
     }
     if (context.state.phase === 'CHECKING')
       assert.deepEqual(
-        context.task.requirements.map((s) => s.requirement),
-        context.task.policy,
+        context.task.requirements.map((s) => s.requirementRef),
+        context.task.policy.map((_, i) => `task.policy[${i}]`),
       );
     return finish(context);
   });

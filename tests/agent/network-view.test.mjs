@@ -5,15 +5,15 @@ import {
   networkView,
   selectNetwork,
   trimNetworkView,
-} from '../../apps/agent/dist/evidence/network-view.js';
-import { decisionContext } from '../../apps/agent/dist/execution/context.js';
-import { Workflow } from '../../apps/agent/dist/execution/workflow.js';
+} from '../../packages/execution-core/dist/evidence/network-view.js';
+import { decisionContext } from '../../packages/execution-core/dist/execution/context.js';
+import { Workflow } from '../../packages/execution-core/dist/execution/workflow.js';
 import {
   NetworkReads,
   retainNetworkSelection,
-} from '../../apps/agent/dist/evidence/network-reads.js';
+} from '../../packages/execution-core/dist/evidence/network-reads.js';
 import { ChatModel } from '../../apps/agent/dist/model/chat.js';
-import { execute } from '../../apps/agent/dist/execution/runner.js';
+import { execute } from '../../packages/execution-driver/dist/execution/runner.js';
 import { config, grant, FakeControl, finish, modelServer } from './fixture.mjs';
 
 /** 合成的已脱敏网络观察，含相同地址重复请求、重定向和未响应条目。 */
@@ -929,7 +929,7 @@ test('批次任一请求身份失效时不留下部分查询回执', async () =>
           requestId: 'invalid',
         },
       ]);
-    assert.deepEqual(context.state.networkReads, []);
+    assert.equal(context.state.networkReads, undefined);
     assert.equal(context.page.network.detail, null);
     assert.equal(context.page.network.filter.urlContains, null);
     assert.equal(context.page.network.additionalResults, undefined);

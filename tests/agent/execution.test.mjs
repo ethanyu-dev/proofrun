@@ -1,16 +1,16 @@
 import { compileStepBudget } from '../../contracts/dist/index.js';
-import { StepAllowance } from '../../apps/agent/dist/execution/step-budget.js';
+import { StepAllowance } from '../../packages/execution-core/dist/execution/step-budget.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createServer } from 'node:http';
-import { execute } from '../../apps/agent/dist/execution/runner.js';
+import { execute } from '../../packages/execution-driver/dist/execution/runner.js';
 import { ChatModel } from '../../apps/agent/dist/model/chat.js';
 import { ControlClient } from '../../apps/agent/dist/client.js';
 import { AgentFault, pause } from '../../apps/agent/dist/http.js';
-import { LeaseGuard } from '../../apps/agent/dist/execution/lease.js';
-import { Workflow } from '../../apps/agent/dist/execution/workflow.js';
-import { keyboardReceipt } from '../../apps/agent/dist/execution/keyboard-receipt.js';
-import { OperationJournal } from '../../apps/agent/dist/execution/operation-journal.js';
+import { LeaseGuard } from '../../packages/execution-driver/dist/execution/lease.js';
+import { Workflow } from '../../packages/execution-core/dist/execution/workflow.js';
+import { keyboardReceipt } from '../../packages/execution-core/dist/execution/keyboard-receipt.js';
+import { OperationJournal } from '../../packages/execution-core/dist/execution/operation-journal.js';
 import { config, grant, FakeControl, finish, modelServer } from './fixture.mjs';
 
 // 范围：真实租约定时器抵抗同代次旧快照回退，并拒绝过期后复活；控制面和网络由挂起夹具替代。
@@ -1253,9 +1253,9 @@ test('新增元素动作绑定当前观察，纯文本模型不能执行视觉�
 });
 
 // 范围：所有执行入口只允许 LLM，历史模式明确拒绝；不调用实际模型。
-test('显式旧模式与历史对照均不能进入新执行', async () => {
+test('显式旧模式不能进入新执行', async () => {
   const { executionStrategy } =
-    await import('../../apps/agent/dist/model/strategy.js');
+    await import('../../packages/execution-core/dist/model/strategy.js');
   const task = grant().task;
   assert.equal(executionStrategy(task), 'llm');
   assert.equal(executionStrategy({ ...task, executionMode: 'llm' }), 'llm');
@@ -1263,16 +1263,8 @@ test('显式旧模式与历史对照均不能进入新执行', async () => {
     assert.throws(() => executionStrategy({ ...task, executionMode: mode }), {
       code: 'EXECUTION_MODE_RETIRED',
     });
-  assert.throws(
-    () =>
-      executionStrategy({
-        ...task,
-        comparison: { id: 'old', arm: 'llm', sourceTaskId: 'source' },
-      }),
-    { code: 'EXECUTION_MODE_RETIRED' },
-  );
 });
-import { ObservationTracker } from '../../apps/agent/dist/evidence/changes.js';
+import { ObservationTracker } from '../../packages/execution-core/dist/evidence/changes.js';
 
 /** 使用显式比较键模拟采集结果；真实节点身份稳定性另由 Chromium 用例验证。 */
 function deltaPage(targets, text = '表单', extra = {}) {
@@ -1348,7 +1340,7 @@ test('连续无变化的观察在公共执行器有界停止', async () => {
 // 范围：原始编号要求、证据归属与更新原子性；不证明模型对证据业务含义的判断正确。
 test('通用 workflow 不允许改写要求或用虚构证据跳过步骤', async () => {
   const { Workflow } =
-    await import('../../apps/agent/dist/execution/workflow.js');
+    await import('../../packages/execution-core/dist/execution/workflow.js');
   const workflow = new Workflow(
     '约束：不得提交\n1. 查看订单列表\n2. 打开详情核对金额\n3. 关闭详情',
   );
@@ -1485,7 +1477,7 @@ test('导航外壳补采有界且不把等待算作模型调用', async () => {
 // 范围：自由文本保留整体要求，编号步骤延续行不丢失；不自动理解自然语言中的隐含分支。
 test('任务拆分保留延续行，简单任务无需单独规划请求', async () => {
   const { Workflow } =
-    await import('../../apps/agent/dist/execution/workflow.js');
+    await import('../../packages/execution-core/dist/execution/workflow.js');
   const simple = new Workflow('搜索商品并核对价格，必要时翻页');
   assert.equal(simple.view().steps.length, 1);
   simple.assertFinish({ type: 'verification.finish' });
@@ -1854,7 +1846,7 @@ test('存档失败报告保留 HTTP 状态与错误码，不泄露底层正文',
 // 范围：登录要求与可见页面证据的组合，不以导航登录按钮或访客步骤触发；不验证真实账号。
 test('登录兜底只匹配当前步骤的登录阻塞', async () => {
   const { needsLoginIntervention } =
-    await import('../../apps/agent/dist/execution/login-intervention.js');
+    await import('../../packages/execution-core/dist/execution/login-intervention.js');
   const task = grant().task;
   task.objective = '使用授权测试账号登录后查看邀请页';
   const page = {

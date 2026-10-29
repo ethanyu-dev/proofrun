@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { once } from 'node:events';
 import { ChatModel } from '../../apps/agent/dist/model/chat.js';
-import { execute } from '../../apps/agent/dist/execution/runner.js';
+import { execute } from '../../packages/execution-driver/dist/execution/runner.js';
 import { config, grant, FakeControl, finish, modelServer } from './fixture.mjs';
 
 /** 仅本机 HTTP 夹具记录真实提交次数；没有账号、密码或外部服务。 */

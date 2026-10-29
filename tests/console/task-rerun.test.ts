@@ -13,7 +13,7 @@ const { createElement } = require('react');
 const { renderToStaticMarkup } = require('react-dom/server');
 const api = new ApiClient('rerun-test-credential');
 
-// 范围：任一组按 case 身份调用新接口，重试复用新身份并跳转主组；请求由夹具接收，不证明服务端幂等。
+// 范围：按 case 身份调用新接口，重试复用新身份并跳转当前运行；请求由夹具接收，不证明服务端幂等。
 test('结构化重跑保持 case 身份并跳转到新的运行', async (context) => {
   const calls: { path: unknown; body: unknown }[] = [];
   context.mock.method(
@@ -24,12 +24,6 @@ test('结构化重跑保持 case 身份并跳转到新的运行', async (context
       return Response.json({
         caseId: 'old',
         taskId: 'case-run-new-case',
-        comparison: {
-          arms: [
-            { taskId: 'case-run-new-case' },
-            { taskId: 'comparison-case-run-new-case-jev' },
-          ],
-        },
       });
     },
   );
@@ -37,7 +31,7 @@ test('结构化重跑保持 case 身份并跳转到新的运行', async (context
     assert.equal(
       await rerunTask(
         api,
-        'comparison-case-v2-old-jev',
+        'case-v2-old',
         'new-case',
         new AbortController().signal,
         'old',
@@ -53,7 +47,7 @@ test('结构化重跑保持 case 身份并跳转到新的运行', async (context
     }),
   );
   const html = renderToStaticMarkup(
-    createElement(TaskRerun, { api, id: 'jev', caseId: 'old' }),
+    createElement(TaskRerun, { api, id: 'case-v2-old', caseId: 'old' }),
   );
   assert.match(html, /重跑整个 case/);
 });

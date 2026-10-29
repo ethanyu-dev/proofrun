@@ -7,7 +7,7 @@ import {
   moduleText,
 } from '../../apps/console/src/context-modules.ts';
 
-// 范围：展示拆分保留实际 LLM、JEV 和填写子调用字段及长正文；不代替浏览器交互验收或推断 token 数。
+// 范围：展示拆分保留实际 LLM 和填写子调用字段及长正文；不代替浏览器交互验收或推断 token 数。
 test('上下文按模块保留正文、裁剪标记和混合请求字段', () => {
   const text = '页面事实'.repeat(30_000);
   const context = {
@@ -45,16 +45,6 @@ test('上下文按模块保留正文、裁剪标记和混合请求字段', () =>
     'null',
   );
   assert.ok(parts.some((part) => part.title === '工具定义'));
-  const jev = contextModules({
-    model: 'fixture-jev',
-    state: { ...context, omittedTargets: 42 },
-    questions: { next: {} },
-  });
-  assert.ok(jev.some((part) => part.title === 'JEV 问题与候选'));
-  assert.equal(
-    jev.find((part) => part.title === 'JEV 省略目标数量')?.value,
-    42,
-  );
   const fill = contextModules({
     messages: [
       { role: 'user', content: JSON.stringify({ field: '名称', page: text }) },
@@ -224,11 +214,11 @@ test('任务表单与 JSON 保留高级配置并拒绝无效定义', async () =>
           comparison: { id: 'pair', arm: 'jev', sourceTaskId: 'source' },
         }),
       ),
-    /对照任务/,
+    /格式不正确/,
   );
 });
 
-// 范围：三种模式在共享协议与 JSON 中往返，旧定义保持单组语义；不验证真实模型或节点容量。
+// 范围：当前模式通过共享协议与 JSON 校验，旧定义保持单组语义；不验证真实模型或节点容量。
 test('执行模式只接受 LLM，拒绝退役 JEV 和 parallel', async () => {
   const { newTaskDefinition, parseTaskDefinition } =
     await import('../../apps/console/src/task-definition.ts');
@@ -242,7 +232,7 @@ test('执行模式只接受 LLM，拒绝退役 JEV 和 parallel', async () => {
   for (const executionMode of ['parallel', 'jev'])
     assert.throws(
       () => parseTaskDefinition(JSON.stringify({ ...task, executionMode })),
-      /已停用/,
+      /格式不正确/,
     );
   const { executionMode, ...legacy } = task;
   assert.equal(
@@ -265,7 +255,7 @@ test('执行模式只接受 LLM，拒绝退役 JEV 和 parallel', async () => {
           taskId: 'x'.repeat(101),
         }),
       ),
-    /已停用/,
+    /格式不正确/,
   );
   const shared = {
     ...task,

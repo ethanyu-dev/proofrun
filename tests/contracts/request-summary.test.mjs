@@ -83,10 +83,10 @@ function member(id, arms) {
   });
 }
 
-// 范围：两组一致时按业务身份去重，跨 case 同名标准不合并；不运行模型。
-test('双跑验收项不翻倍，跨 case 不丢标准', () => {
+// 范围：单执行按业务身份统计，跨 case 同名标准不合并；不运行模型。
+test('跨 case 同名验收项独立统计', () => {
   const result = summarizeRequest([
-    member('a', [arm('llm'), arm('jev')]),
+    member('a', [arm('llm')]),
     member('b', [arm('llm')]),
   ]);
   assert.deepEqual(result.uniqueCriteriaCounts, {
@@ -97,7 +97,7 @@ test('双跑验收项不翻倍，跨 case 不丢标准', () => {
     skipped: 0,
     pending: 0,
   });
-  assert.equal(result.executionCounts.total, 3);
+  assert.equal(result.executionCounts.total, 2);
   assert.equal(result.reportStatus, 'PASSED');
   assert.deepEqual(
     result.byExecutionMode.map((m) => [
@@ -105,55 +105,44 @@ test('双跑验收项不翻倍，跨 case 不丢标准', () => {
       m.caseCount,
       m.missingReportCount,
     ]),
-    [
-      ['llm', 2, 0],
-      ['jev', 1, 0],
-    ],
+    [['llm', 2, 0]],
   );
 });
 // 范围：运行中与终态缺报告分别表达，不把单组完成当整请求完成；不模拟失联恢复。
 test('缺报告与部分结果保留覆盖缺口', () => {
   const running = summarizeRequest([
-    member('a', [arm('llm'), arm('jev', { state: 'QUEUED', missing: true })]),
+    member('a', [arm('llm')]),
+    member('b', [arm('llm', { state: 'QUEUED', missing: true })]),
   ]);
   assert.equal(running.reportStatus, null);
   assert.equal(running.reportPhase, 'PARTIAL');
   assert.equal(running.uniqueCriteriaCounts.pending, 1);
   const stopped = summarizeRequest([
-    member('a', [
-      arm('llm'),
-      arm('jev', { state: 'TIMED_OUT', missing: true }),
-    ]),
+    member('a', [arm('llm')]),
+    member('b', [arm('llm', { state: 'TIMED_OUT', missing: true })]),
   ]);
   assert.equal(stopped.reportStatus, 'INCONCLUSIVE');
   assert.equal(stopped.reportPhase, 'FINAL');
-  assert.equal(stopped.uniqueCriteriaCounts.inconclusive, 1);
+  assert.equal(stopped.uniqueCriteriaCounts.skipped, 1);
   const cancelled = summarizeRequest([
-    member('a', [
-      arm('llm', { state: 'CANCELLED', missing: true }),
-      arm('jev', { state: 'CANCELLED', missing: true }),
-    ]),
+    member('a', [arm('llm', { state: 'CANCELLED', missing: true })]),
   ]);
   assert.equal(cancelled.reportStatus, 'INCONCLUSIVE');
   assert.equal(cancelled.uniqueCriteriaCounts.skipped, 1);
-  assert.equal(cancelled.reportCoverage.missing, 2);
+  assert.equal(cancelled.reportCoverage.missing, 1);
 });
-// 范围：确认失败与覆盖差异的优先级，不将组间冲突解释为产品根因。
-test('失败保留且明确冲突只统计相反的确定判断', () => {
-  const failed = member('a', [arm('llm', { verdict: 'FAILED' }), arm('jev')]);
-  assert.equal(failed.criteria[0].disagreement, true);
+// 范围：失败与未知 case 的汇总优先级，不解释产品根因。
+test('失败保留且进行中请求不提前定论', () => {
+  const failed = member('a', [arm('llm', { verdict: 'FAILED' })]);
   const result = summarizeRequest([
     failed,
-    member('b', [arm('llm'), arm('jev', { verdict: 'INCONCLUSIVE' })]),
+    member('b', [arm('llm', { verdict: 'INCONCLUSIVE' })]),
   ]);
   assert.equal(result.reportStatus, 'FAILED');
-  assert.equal(result.confirmedDisagreementCount, 1);
   assert.equal(result.uniqueCriteriaCounts.inconclusive, 1);
   const partial = summarizeRequest([
-    member('a', [
-      arm('llm', { verdict: 'FAILED' }),
-      arm('jev', { state: 'RUNNING', missing: true }),
-    ]),
+    member('a', [arm('llm', { verdict: 'FAILED' })]),
+    member('b', [arm('llm', { state: 'RUNNING', missing: true })]),
   ]);
   assert.equal(partial.reportStatus, null);
   assert.equal(partial.observedFailureCount, 1);

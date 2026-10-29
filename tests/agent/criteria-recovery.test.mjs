@@ -4,9 +4,9 @@ import {
   compileStepBudget,
   validateControlRequest,
 } from '../../contracts/dist/index.js';
-import { execute } from '../../apps/agent/dist/execution/runner.js';
+import { execute } from '../../packages/execution-driver/dist/execution/runner.js';
 import { ChatModel } from '../../apps/agent/dist/model/chat.js';
-import { CriteriaLedger } from '../../apps/agent/dist/execution/criteria.js';
+import { CriteriaLedger } from '../../packages/execution-core/dist/execution/criteria.js';
 import { config, grant, FakeControl, finish, modelServer } from './fixture.mjs';
 
 /** 多标准、后续业务与无标准清理的最小夹具；不模拟业务判定质量。 */

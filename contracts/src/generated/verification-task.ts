@@ -76,17 +76,9 @@ export type VerificationTask = {
     maxActions: number;
   };
   /**
-   * 历史双组对比身份，仅供读取原执行记录；新任务不接受此字段，重跑创建 LLM 单组。
+   * 仅支持 llm，省略时按 LLM 执行。
    */
-  comparison?: {
-    id: string;
-    arm: 'llm' | 'jev';
-    sourceTaskId: string;
-  };
-  /**
-   * 新建及重跑仅支持 llm，省略时按纯 LLM 执行。jev、parallel 仅保留用于读取历史记录，不能用于新执行。
-   */
-  executionMode?: 'parallel' | 'llm' | 'jev';
+  executionMode?: 'llm';
   caseV2Definition?: VerificationCaseV2;
   /**
    * 服务端规范化的串行步骤；每项均有稳定 stepId。

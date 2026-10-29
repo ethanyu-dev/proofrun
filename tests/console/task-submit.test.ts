@@ -31,7 +31,7 @@ test('任务表单只提供临时会话和人工授权，不再配置登录快�
   assert.equal(task.environment.auth, undefined);
 });
 
-// 范围：受控响应验证提交正文、单 case 双跑/单组跳转和批量返回列表；不覆盖真实 API 或浏览器导航。
+// 范围：受控响应验证提交正文、单 case 单执行跳转和批量返回列表；不覆盖真实 API 或浏览器导航。
 test('单个 v2 case 提交后直达任务详情，批量保留列表入口', async (context) => {
   const cases: VerificationCaseV2[] = [
     {
@@ -54,9 +54,7 @@ test('单个 v2 case 提交后直达任务详情，批量保留列表入口', as
   let response: unknown = [
     {
       caseId: cases[0]!.caseId,
-      comparison: {
-        arms: [{ taskId: 'server-primary' }, { taskId: 'server-secondary' }],
-      },
+      taskId: 'server-primary',
     },
   ];
   context.mock.method(
