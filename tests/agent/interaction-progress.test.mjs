@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { decisionContext } from '../../packages/execution-core/dist/execution/context.js';
 import { InteractionProgress } from '../../packages/execution-core/dist/execution/interaction-progress.js';
 import { execute } from '../../packages/execution-driver/dist/execution/runner.js';
 import { config, grant, FakeControl, finish } from './fixture.mjs';
+
+/** 裁剪用例使用相同字符预算，便于比较已读与未读身份的保留行为。 */
+const READING_CONTEXT_CHARS = 4000;
 
 /** 用独立面板和悬浮控件构造观察，不代表真实站点 DOM。 */
 function page() {
@@ -196,11 +200,8 @@ test('滚动改变可见矩形后允许有界点击恢复', () => {
   });
 });
 
-// 范围：大量子项不会挤爆模型上下文，裁剪只作用于副本；不模拟供应商 token 计费。
-test('子项进度可裁剪但执行器保留完整报告来源', async () => {
-  const { decisionContext } =
-    await import('../../packages/execution-core/dist/execution/context.js');
-  const { grant } = await import('./fixture.mjs');
+/** 为裁剪用例构造独立观察、账本和输入；只共享构造方式，不共享可变状态。 */
+function readingFixture(count, text) {
   const observation = {
     ...page(),
     text: '夹具页面',
@@ -208,35 +209,40 @@ test('子项进度可裁剪但执行器保留完整报告来源', async () => {
     atomic: false,
   };
   const first = observation.targets[0];
-  observation.targets = Array.from({ length: 32 }, (_, i) => ({
+  observation.targets = Array.from({ length: count }, (_, i) => ({
     ...first,
-    comparisonKey: `question-${i}`,
+    comparisonKey: `faq-${i}`,
     name: `问题${i}`,
-    disclosure: { ...first.disclosure, text: '答案内容'.repeat(100) },
+    disclosure: { ...first.disclosure, text },
   }));
   const ledger = new InteractionProgress();
   ledger.observe(observation);
-  const input = {
-    task: grant().task,
-    current: observation,
-    preconditions: [],
-    workflow: undefined,
-    interactionProgress: ledger.view(),
-    budgetRemaining: { actions: 20, modelCalls: 40, timeMs: 300000 },
-    evidence: [],
-    history: [],
-    previousObservations: [],
-    feedback: null,
-    maxContextChars: 4000,
+  return {
+    ledger,
+    input: {
+      task: grant().task,
+      current: observation,
+      preconditions: [],
+      interactionProgress: ledger.view(),
+      budgetRemaining: { actions: 20, modelCalls: 40, timeMs: 300000 },
+      evidence: [],
+      history: [],
+      previousObservations: [],
+      feedback: null,
+      maxContextChars: READING_CONTEXT_CHARS,
+    },
   };
+}
+
+// 范围：大量子项不会挤爆模型上下文，裁剪只作用于副本；不模拟供应商 token 计费。
+test('子项进度可裁剪但执行器保留完整报告来源', () => {
+  const { ledger, input } = readingFixture(32, '答案内容'.repeat(100));
   const context = decisionContext(input);
-  assert(context.text.length <= 4000);
-  assert(JSON.parse(context.text).state.readings.omittedItems > 0);
-  assert.equal(JSON.parse(context.text).state.readings.discovered, 32);
-  assert.equal(
-    JSON.parse(context.text).state.readings.unreadItemIds.length,
-    32,
-  );
+  const readings = JSON.parse(context.text).state.readings;
+  assert(context.text.length <= READING_CONTEXT_CHARS);
+  assert(readings.omittedItems > 0);
+  assert.equal(readings.discovered, 32);
+  assert.equal(readings.unreadItemIds.length, 32);
   assert.equal(ledger.results().length, 32);
   assert.equal(ledger.view().items[0].text.length, 400);
 });
@@ -276,25 +282,8 @@ test('FAQ 引文只规范化空白，已登记子项重复提交保留首次原�
 });
 
 // 范围：裁剪不会丢失已登记身份或修改输入；超长原文不能靠归一化绕过引文上限，不覆盖供应商上下文限制。
-test('裁剪保留全部已登记身份且不污染输入进度', async () => {
-  const { decisionContext } =
-    await import('../../packages/execution-core/dist/execution/context.js');
-  const { grant } = await import('./fixture.mjs');
-  const observation = {
-    ...page(),
-    text: '夹具页面',
-    title: 'FAQ',
-    atomic: false,
-  };
-  const first = observation.targets[0];
-  observation.targets = Array.from({ length: 12 }, (_, i) => ({
-    ...first,
-    comparisonKey: `faq-${i}`,
-    name: `问题${i}`,
-    disclosure: { ...first.disclosure, text: '已读答案'.repeat(90) },
-  }));
-  const ledger = new InteractionProgress();
-  ledger.observe(observation);
+test('裁剪保留全部已登记身份且不污染输入进度', () => {
+  const { ledger, input } = readingFixture(12, '已读答案'.repeat(90));
   ledger.record(
     ledger.validate(
       ledger.view().items.map((item) => ({
@@ -305,20 +294,8 @@ test('裁剪保留全部已登记身份且不污染输入进度', async () => {
   );
   const progress = ledger.view();
   const before = structuredClone(progress);
-  const result = JSON.parse(
-    decisionContext({
-      task: grant().task,
-      current: observation,
-      preconditions: [],
-      interactionProgress: progress,
-      budgetRemaining: { actions: 20, modelCalls: 40, timeMs: 300000 },
-      evidence: [],
-      history: [],
-      previousObservations: [],
-      feedback: null,
-      maxContextChars: 4000,
-    }).text,
-  );
+  input.interactionProgress = progress;
+  const result = JSON.parse(decisionContext(input).text);
   assert(result.state.readings.omittedItems > 0);
   assert.deepEqual(
     result.state.readings.recordedItemIds,
