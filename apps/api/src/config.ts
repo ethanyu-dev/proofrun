@@ -4,6 +4,8 @@ import {
   type DevPassConfig,
 } from './modules/account-providers/config.js';
 import { resolve } from 'node:path';
+import { isIP } from 'node:net';
+import type { ClientIpPolicy } from './modules/access/client-ip.js';
 import { loadCaseProfile, type CaseProfile } from './modules/cases/profile.js';
 import {
   feishuConfig,
@@ -20,7 +22,7 @@ const DEFAULTS = {
 };
 
 /** 控制面只支持一个活动实例；队列、租约和消息均持久化到数据库。 */
-export interface ApiConfig {
+export interface ApiConfig extends ClientIpPolicy {
   /** 基准仅使用显式配置的独立节点池，环境名称用于归档筛选。 */
   benchmarkNodePool?: string;
   benchmarkEnvironment?: string;
@@ -73,8 +75,50 @@ function integer(
   return value;
 }
 
+/** 只接受明确的代理 IP 或 CIDR，禁止全信任开关和不稳定的跳数推断。 */
+export function parseTrustedProxies(
+  value: string | undefined,
+): ClientIpPolicy['trustedProxies'] {
+  if (!value?.trim()) return undefined;
+  if (value.trim() === 'railway') return 'railway';
+  const proxies = value.split(',').map((part) => part.trim());
+  for (const proxy of proxies) {
+    const [address, prefix, extra] = proxy.split('/');
+    const version = isIP(address ?? '');
+    if (
+      !version ||
+      address!.includes('%') ||
+      extra !== undefined ||
+      (prefix !== undefined &&
+        (!/^[0-9]{1,3}$/.test(prefix) ||
+          Number(prefix) < 1 ||
+          Number(prefix) > (version === 4 ? 32 : 128)))
+    )
+      throw new Error(
+        'PROOFRUN_TRUSTED_PROXIES 需要以逗号分隔的代理 IP/CIDR，不能使用全信任网段',
+      );
+  }
+  return proxies;
+}
+
 /** 启动时验证必要依赖配置；不提供可误用于部署的默认凭据。 */
 export function loadConfig(): ApiConfig {
+  const trustedProxies = parseTrustedProxies(
+    process.env.PROOFRUN_TRUSTED_PROXIES,
+  );
+  const trustedCdn = process.env.PROOFRUN_TRUSTED_CDN || undefined;
+  if (
+    trustedCdn !== undefined &&
+    (trustedCdn !== 'cloudflare' || !trustedProxies)
+  )
+    throw new Error(
+      'PROOFRUN_TRUSTED_CDN 仅支持 cloudflare，且必须先配置受信代理',
+    );
+  if (
+    trustedProxies === 'railway' &&
+    (!process.env.RAILWAY_PROJECT_ID || !process.env.RAILWAY_ENVIRONMENT_ID)
+  )
+    throw new Error('railway 代理模式只能在 Railway 项目环境中启用');
   const executionRuntimeVersion = Number(
     process.env.PROOFRUN_EXECUTION_RUNTIME_VERSION ?? '1',
   );
@@ -161,6 +205,8 @@ export function loadConfig(): ApiConfig {
     ...(feishu ? { feishu } : {}),
     ...(caseProfile ? { caseProfile } : {}),
     databaseUrl,
+    trustedProxies,
+    trustedCdn,
     adminToken,
     workerToken,
     publicUrl: publicUrl.origin,

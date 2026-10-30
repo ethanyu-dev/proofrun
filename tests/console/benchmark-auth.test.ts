@@ -33,7 +33,7 @@ test('Benchmark 与其他管理路由共用连接门禁，已保存凭据也要�
         key === 'proofrun.console.credential' ? token : null,
     },
   });
-  for (const hash of ['#/benchmarks', '#/tasks', '#/nodes']) {
+  for (const hash of ['#/benchmarks', '#/tasks', '#/nodes', '#/access-logs']) {
     Object.defineProperty(globalThis, 'location', {
       configurable: true,
       value: { hash },

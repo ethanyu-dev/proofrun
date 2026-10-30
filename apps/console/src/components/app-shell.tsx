@@ -13,6 +13,7 @@ const NAVIGATION = [
   },
   { href: '/browser-tasks', label: '浏览器任务', prefixes: ['/browser-tasks'] },
   { href: '/nodes', label: '执行节点', prefixes: ['/nodes', '/node-profiles'] },
+  { href: '/access-logs', label: '访问记录', prefixes: ['/access-logs'] },
 ];
 
 /** 控制台外壳只处理布局与导航；连接验证和业务数据仍由原页面管理。 */

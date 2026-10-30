@@ -11,6 +11,7 @@ import { Database } from '../../apps/api/dist/db.js';
 import { recoverLostRuntimes } from '../../apps/api/dist/modules/execution-runtime/supervisor.js';
 import {
   SimulatedNode,
+  SimulatedWorker,
   task,
   until,
   PNG,
@@ -924,11 +925,18 @@ test(
       await suite.test('worker 未续租时终止服务端等待', async () => {
         const fixture = await enqueue();
         const grant = await until(() => client.claim(), Boolean);
-        await client.runtimeStart(grant, runtimeConfig);
-        await until(
-          () => client.runtimeView(grant, 0, new AbortController().signal),
-          (view) => view.decisions.length === 1,
-        );
+        // 准备阶段维持夹具租约，避免 CI 负载把 1.8 秒租约耗尽在首帧之前。
+        // 决定帧就绪后明确停止续租，再验证服务端等待不能自行延长权限。
+        const preparing = new SimulatedWorker(base, grant);
+        try {
+          await client.runtimeStart(grant, runtimeConfig);
+          await until(
+            () => client.runtimeView(grant, 0, new AbortController().signal),
+            (view) => view.decisions.length === 1,
+          );
+        } finally {
+          await preparing.close();
+        }
         const initial = (
           await db.query(
             'SELECT lease_expires_at FROM pr_executions WHERE id=$1',
