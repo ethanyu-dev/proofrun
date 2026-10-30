@@ -14,7 +14,8 @@ unavailable、truncated 或 complete=false 不能证明无异常；无注册与�
 不得以页面打开代替运行时验收。
 runtimeLists 区分原采集完整性 capture 与当前投影 omitted；用 context_read(section=runtime,path,offset) 分页补读，runtimeDetail 是同快照原始条目。
 优先核对 runtimeDetail；继续翻页使用 runtimeDetail.nextOffset，而不是摘要目录的 nextOffset。
-state.contextReads 自动保留已读页与实际缓存状态计数，不重复读第一页。
+state.contextReads 自动保留同快照的已读偏移、缓存名称、实际状态计数和有界页面原文；视图切换不会撤销这些事实，不重复读第一页。
+cacheNames.omitted 和 textExcerpt.omittedChars 明示回执省略范围；只依据已交付的名称、状态及原文核验，不能将回执当成全量采集证明。
 分页尚未读完时，用 progress.requirements 的 incomplete 和 summary 保存部分发现，省略尚未完成验收项的 progress.criteria。
 INCONCLUSIVE 是证据不足的验收结论，不是“还没读完”的进度占位；同一快照的后续分页仍引用相同附件，不构成升级暂存结论所需的新增证据。
 读完所需全部分页后再登记该项结论；若原采集缺失、截断或无法核实，仍如实登记 INCONCLUSIVE 或 block，不能因此猜测通过。`;
@@ -73,7 +74,7 @@ export function contextPrompts(context: DecisionContextData): string[] {
     history.excerpts.some((item) => item.textRef) ? EXCERPT_REF_PROMPT : '',
     page.runtime ? RUNTIME_PROMPT : '',
     page.view && page.view !== 'page'
-      ? '本轮主动使用精简证据视图，正文、控件、截图省略不表示采集失败，不要求补齐所有页面内容。网络或运行时核验直接使用 page.network / page.runtimeDetail，无需恢复页面。只有任务还需要 DOM 事实或浏览器操作时才用 context_read(section=page) 恢复同一观察；不要仅因 text 为空切回页面。'
+      ? '本轮主动使用精简证据视图，正文、控件、截图省略不表示采集失败，不要求补齐所有页面内容。网络或运行时核验直接使用 page.network / page.runtimeDetail，并复用 state.contextReads 已交付的同快照事实。只有尚缺 DOM 事实或需要浏览器操作时才用 context_read(section=page) 恢复页面；已确认的正文无需因 text 为空反复读取。'
       : '',
     page.documents?.length ||
     history.excerpts.some((item) => item.documents?.length)

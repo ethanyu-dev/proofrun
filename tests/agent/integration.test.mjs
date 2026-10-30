@@ -1203,16 +1203,24 @@ test(
       await suite.test(
         '活动节点长连接不阻止控制面退出',
         { timeout: 5000 },
-        async () => {
+        async (closingTest) => {
           const node = nodes.find((node) => node.socket?.readyState === 1);
           assert(node);
           // 模拟重连后旧连接无法回应关闭握手；业务连接表只保留新 socket。
           const previous = node.socket;
           previous.pause();
-          await node.connect();
           let closing;
           let timeout;
+          // 超时或重连失败也必须释放暂停的旧连接，不能让清理等待掩盖最初的故障。
+          const releasePrevious = () => {
+            previous.terminate();
+            previous.resume();
+          };
+          closingTest.signal.addEventListener('abort', releasePrevious, {
+            once: true,
+          });
           try {
+            await node.connect();
             closing = app.close();
             const completed = await Promise.race([
               closing.then(() => true),
@@ -1228,8 +1236,8 @@ test(
             );
           } finally {
             clearTimeout(timeout);
-            previous.terminate();
-            previous.resume();
+            releasePrevious();
+            closingTest.signal.removeEventListener('abort', releasePrevious);
             await closing;
           }
         },

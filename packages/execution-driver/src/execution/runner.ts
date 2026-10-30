@@ -2132,7 +2132,7 @@ class Execution {
             );
           this.contextSelection = selectContext(this.current!, decision);
           this.feedback =
-            '已读取同一观察：page.runtimeDetail 是本页原始条目；state.contextReads 保留已读偏移及缓存状态计数。翻页使用 runtimeDetail.nextOffset，不从摘要预览的 nextOffset 重新开始。仅需 DOM 事实或页面操作时恢复 page。';
+            '已读取同一观察：page.runtimeDetail 是本页原始条目；state.contextReads 保留已读偏移、缓存名称、状态计数和页面原文摘录。翻页使用 runtimeDetail.nextOffset，不从摘要目录重新开始。视图省略不撤销已读事实；已有依据足够时登记结论，不反复恢复页面或重读缓存名称。';
           errors = 0;
           finalReview = false;
           continue;
