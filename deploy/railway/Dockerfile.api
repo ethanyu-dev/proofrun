@@ -8,14 +8,15 @@ RUN pnpm build:devpass && pnpm --filter @proofrun/contracts build && pnpm build:
 RUN pnpm --filter @proofrun/agent build && node scripts/benchmarks/agent-loop.mjs
 RUN pnpm --filter @proofrun/api build && pnpm --filter @proofrun/api deploy --prod --legacy /runtime
 
-# 真实运行在构建外完成；构建上下文只接收无密钥的结果，源码变化即失效。
-FROM build AS verified
-RUN node scripts/benchmarks/release-gate.mjs && node scripts/benchmarks/write-build-info.mjs --output /runtime/dist/build-info.json
+# 真实基准由 CI 校验；镜像独立记录提交和源码指纹，不依赖报告。
+FROM build AS versioned
+ARG RAILWAY_GIT_COMMIT_SHA
+RUN node scripts/benchmarks/write-build-info.mjs --output /runtime/dist/build-info.json
 
 FROM node:24.21.0-bookworm-slim
 ENV NODE_ENV=production
 WORKDIR /app
-COPY --from=verified /runtime ./
+COPY --from=versioned /runtime ./
 # 配置在启动时读取；模型密钥和业务环境不进入镜像层。
 COPY deploy/railway/api-entry.mjs ./railway-entry.mjs
 ENV PROOFRUN_API_HOST=:: PROOFRUN_ARTIFACT_DIRECTORY=/data/artifacts

@@ -15,6 +15,6 @@ target
 artifacts
 release
 
-# 仅带入无密钥的真实基准候选，供最终镜像构建核验。
+# 镜像仅接收 CI 提取的无密钥版本信息，真实报告只在 CI 发布阶段校验。
 .benchmark-release/*
-!.benchmark-release/real.json
+!.benchmark-release/build-info.json

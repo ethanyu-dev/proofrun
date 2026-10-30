@@ -1,6 +1,13 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, mkdir, copyFile, readFile, rm } from 'node:fs/promises';
+import {
+  mkdtemp,
+  mkdir,
+  copyFile,
+  readFile,
+  writeFile,
+  rm,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseBenchmark } from '../contracts/dist/benchmark.js';
@@ -27,7 +34,7 @@ export function verifyReleaseCI(run, repository, commit) {
   )
     throw new Error('发布被阻止：必须使用当前 main 提交的完整成功 CI');
 }
-/** 干净归档只包含受版本管理的源码和本次 CI 报告，不上传工作区凭据、日志或旧结果。 */
+/** 干净归档包含源码、本次 CI 报告和提取的版本清单，不上传工作区凭据、日志或旧结果。 */
 export async function prepareReleaseSource({
   ci,
   repository,
@@ -63,6 +70,11 @@ export async function prepareReleaseSource({
     verifyRelease(run, await sourceFingerprint(directory));
     await mkdir(join(directory, '.benchmark-release'), { recursive: true });
     await copyFile(report, join(directory, '.benchmark-release', 'real.json'));
+    // 镜像仅消费版本清单；真实报告的来源、有效期与通过状态已在上传前校验。
+    await writeFile(
+      join(directory, '.benchmark-release', 'build-info.json'),
+      JSON.stringify(run.release, null, 2) + '\n',
+    );
     return { temporary, directory, release: run.release };
   } catch (error) {
     await rm(temporary, { recursive: true, force: true });

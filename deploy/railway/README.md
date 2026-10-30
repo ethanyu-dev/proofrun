@@ -4,9 +4,9 @@ Railway 运行 API、Web Console、执行 Agent 和 PostgreSQL；访问业务页
 
 ## 发布入口与真实报告传递
 
-使用 `Release Railway` 工作流发布：仅在当前 `main` 的完整 CI 成功后启动，从同一次 CI 下载 `real-agent-benchmark-release`。发布脚本核对提交、CI 尝试号、24 小时有效期和源码指纹，再生成只包含 Git 源码与 `.benchmark-release/real.json` 的干净上传目录。API、Agent、Web 都使用该目录构建，Dockerfile 中原有真实门禁保持启用。
+使用 `Release Railway` 工作流发布：仅在当前 `main` 的完整 CI 成功后启动，从同一次 CI 下载 `real-agent-benchmark-release`。发布脚本核对提交、CI 尝试号、24 小时有效期和源码指纹，再生成包含 Git 源码、真实报告与独立 `.benchmark-release/build-info.json` 版本清单的干净上传目录。API、Agent、Web 都使用该目录构建；Docker 只带入版本清单，不读取真实报告。
 
-**三个应用服务应关闭 Railway 的 Git 自动部署。** Git 直接拉取不包含被忽略的 CI 报告，会在真实门禁处失败；Wait for CI 只控制时序，不会把报告传进构建。不要把报告提交到 Git，也不要删除 Dockerfile 的门禁。下文 Watch Paths 设置只涉及路径过滤，不能替代该发布入口。
+**常规代码发布仍使用 `Release Railway`，建议关闭 Railway 的 Git 自动部署，避免重复发布。** 修改配置后允许 Railway 直接从 Git 构建，不要求真实报告；此入口不执行报告校验。真实基准及报告来源、有效期、源码指纹检查保留在 CI 和正式发布脚本中，不要把报告提交到 Git。下文 Watch Paths 设置只涉及路径过滤。
 
 GitHub 配置 `PROOFRUN_RAILWAY_TOKEN` Secret（仅目标项目及生产环境范围），以及 `PROOFRUN_RAILWAY_PROJECT_ID`、`PROOFRUN_RAILWAY_ENVIRONMENT_ID` Variables。工作流不会将模型密钥或管理员凭据写入源码包；管理员凭据仅在发布进程内从指定环境读取，用于检查活动任务和实际 API 版本。
 
@@ -146,14 +146,11 @@ Agent 是后台 worker，启动命令包含 `serve`，不提供 HTTP 健康端�
 3. 配置并部署 Agent，从 Console 注册节点池和一次性配对码，再在 Linux 机器安装 Browser Node。
 4. 运行真实测试任务，确认节点在线，报告与证据通过 Web 访问，人工操作与实时画面直连 Node 的 HTTPS 域名。显式多控制面绑定还需在 Node 本机批准此环境的 Console Origin。
 
-发布前必须在当前源码运行真实模型 + Chrome 基准，并将通过的 `.benchmark-release/real.json` 带入构建上下文；最终 Dockerfile 会核实完整套件、24 小时有效期及源码指纹。直接从 Git 构建且未传入报告会失败，需要使用受控 CI 的报告产物构建/部署，不能仅依靠分支自动部署。模型密钥不进入构建上下文，配置见 [真实基准说明](../../scripts/benchmarks/README.md)。不在 Railway 容器运行节点安装脚本。启用 Railway 的 Wait for CI，避免 CI 未通过的提交直接部署。升级前等待活动任务结束并备份 PostgreSQL 和 `/data`；有数据库迁移时不能仅切回旧镜像来代替数据恢复。Browser Node 登录态和本地 SQLite 需在节点机另行备份。
+正式 CI 发布前必须在当前源码运行真实模型 + Chrome 基准，发布脚本会核实完整套件、24 小时有效期及源码指纹。Docker 构建不读取报告，允许直接从 Git 重建以应用配置变更；这类直接部署不代表真实基准已通过。模型密钥不进入构建上下文，配置见 [真实基准说明](../../scripts/benchmarks/README.md)。不在 Railway 容器运行节点安装脚本。启用 Railway 的 Wait for CI，避免 CI 未通过的提交直接部署。升级前等待活动任务结束并备份 PostgreSQL 和 `/data`；有数据库迁移时不能仅切回旧镜像来代替数据恢复。Browser Node 登录态和本地 SQLite 需在节点机另行备份。
 
 本地镜像回归：
 
 ```sh
-pnpm benchmark:setup
-pnpm benchmark:release --version v0.1.0 --env-file .proofrun/local.env
-pnpm benchmark:gate
 docker build -f deploy/railway/Dockerfile.api -t proofrun-railway-api:test .
 docker build -f deploy/railway/Dockerfile.web -t proofrun-railway-web:test .
 docker build -f deploy/railway/Dockerfile.agent -t proofrun-railway-agent:test .
@@ -166,7 +163,9 @@ node --test tests/railway/smoke.test.mjs
 
 ## 部署版本与线上 Benchmark
 
-API、Agent、Web 最终镜像将真实发布报告中的 `release` 写入构建清单。API/Agent 读取各自镜像内的 `dist/build-info.json`，不以 Railway 运行时变量冒充代码版本。正式发布通过真实基准工作流的 `release_version` 指定版本，三个镜像使用同一工作流报告构建；开发编译产物缺少清单时不能发起线上基准。
+API、Agent、Web 最终镜像始终生成 `build-info.json`。CI 发布脚本先校验真实报告，再提取独立版本清单，保留发布版本和 CI 构建编号；镜像核对清单的源码指纹。Railway 直接构建通过 Docker `ARG RAILWAY_GIT_COMMIT_SHA` 记录完整提交，使用 `git-<短 SHA>` 版本和 `source-<源码指纹>` 构建身份，无需报告。版本清单只标识源码，不证明基准通过。
+
+本地构建可传 `--build-arg RAILWAY_GIT_COMMIT_SHA="$(git rev-parse HEAD)"`；未提供提交时仍生成带源码指纹的 development 清单，不能发起线上基准。API/Agent 读取各自镜像内的 `dist/build-info.json`，Web 提供 `/build-info.json`；运行时变量不能覆盖已嵌入的身份。正式发布通过真实基准工作流的 `release_version` 指定版本，三个镜像使用同一份 CI 版本清单。构建参数声明遵循 [Railway Dockerfile 变量规则](https://docs.railway.com/builds/dockerfiles#using-variables-at-build-time)。
 
 API 增加 `PROOFRUN_BENCHMARK_NODE_POOL`（已配对的基准节点池）与 `PROOFRUN_BENCHMARK_ENVIRONMENT`（如 staging / production）。同时升级 API 和 Agent，数据库启动时应用迁移 044。节点需能访问公开 API 的合成页面；建议为基准使用独立节点池，以免与业务任务竞争资源。模型仍使用 Agent 的现有配置，管理员网页不接触密钥。
 

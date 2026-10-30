@@ -59,7 +59,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
       # 发布来源与报告传递回归不连接 Railway，也不把夹具报告当作真实门禁材料。
-      - run: node --test tests/railway/release.test.mjs tests/railway/client-ip.test.mjs
+      - run: node --test tests/railway/release.test.mjs tests/railway/build-info.test.mjs tests/railway/client-ip.test.mjs
       # 测试进程泄漏连接时尽早失败并保留日志，避免耗尽整个 check 的 30 分钟预算。
       - run: pnpm test:api
         timeout-minutes: 5
@@ -126,18 +126,12 @@ jobs:
         with:
           node-version-file: .node-version
       - run: node --test tests/railway/watch-paths.test.mjs tests/railway/api-entry.test.mjs
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: github.event_name != 'pull_request'
-        with:
-          name: real-agent-benchmark-release
-          path: .benchmark-release
-      # PR 无供应商凭据时仅验证构建阶段；最终可部署镜像仍强制真实报告。
+      # 所有事件均验证无报告的最终镜像；main 仍须先通过独立的真实基准作业。
       - name: 构建服务镜像
         env:
-          BUILD_TARGET: ${{ github.event_name == 'pull_request' && '--target build' || '' }}
+          BUILD_COMMIT: ${{ github.sha }}
         run: |
-          docker build $BUILD_TARGET -f deploy/railway/Dockerfile.api -t proofrun-railway-api:test .
-          docker build $BUILD_TARGET -f deploy/railway/Dockerfile.web -t proofrun-railway-web:test .
-          docker build $BUILD_TARGET -f deploy/railway/Dockerfile.agent -t proofrun-railway-agent:test .
+          docker build --build-arg RAILWAY_GIT_COMMIT_SHA="$BUILD_COMMIT" -f deploy/railway/Dockerfile.api -t proofrun-railway-api:test .
+          docker build --build-arg RAILWAY_GIT_COMMIT_SHA="$BUILD_COMMIT" -f deploy/railway/Dockerfile.web -t proofrun-railway-web:test .
+          docker build --build-arg RAILWAY_GIT_COMMIT_SHA="$BUILD_COMMIT" -f deploy/railway/Dockerfile.agent -t proofrun-railway-agent:test .
       - run: node --test tests/railway/smoke.test.mjs
-        if: github.event_name != 'pull_request'
