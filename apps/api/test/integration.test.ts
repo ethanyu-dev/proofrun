@@ -45,6 +45,10 @@ const LEASE_BOUNDARY_MARGIN_MS = 100;
 const SNAPSHOT_REQUEST_MS = 1500;
 /** 超过 API 业务连接池的读请求数，确保写锁回归会形成可观察的排队。 */
 const SNAPSHOT_READERS = 20;
+/** 语义约束测试统一使用正常命令窗口；状态轮询仍由原有六秒上限约束。 */
+const COMMAND_TIMEOUT_MS = 15_000;
+/** 人工额度回归跨过旧的一秒命令窗口；用于区分额度约束与投递延迟，不做性能验收。 */
+const HITL_DELIVERY_DELAY_MS = 1100;
 
 // 范围：真实 PostgreSQL、HTTP 与 WebSocket 的控制面约束；浏览器行为由协议夹具模拟。
 test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => {
@@ -239,7 +243,7 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
     const request = {
       type: 'execution.command',
       commandId: id,
-      timeoutMs: 15_000,
+      timeoutMs: COMMAND_TIMEOUT_MS,
       command: operation,
     };
     const submitted = await api(
@@ -3335,6 +3339,8 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
           resumed.taskDeadlineAt,
         );
         // 恢复后重新服从时限；只有人工暂停可越过旧 deadline。
+        // 此处主动结束执行，先停止存活夹具续租；预期撤权不能被后台心跳误报为异常。
+        await worker.close();
         await sql.query(
           'UPDATE pr_tasks SET deadline_at=clock_timestamp() WHERE id=$1',
           [definition.taskId],
@@ -3469,7 +3475,7 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
       },
     );
 
-    // 范围：真实控制面中 Agent 额度耗尽后人工仍能操作、去重且不加时/加额度；节点为协议夹具，不验证真实登录。
+    // 范围：真实控制面中 Agent 额度耗尽后人工仍能操作、延迟投递及去重不加额度；节点为协议夹具，不验证真实登录或性能。
     await suite.test(
       'HITL 不受 Agent 动作预算限制，迁移校准活动执行计数',
       async (t) => {
@@ -3510,6 +3516,27 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
           },
           execution.leaseToken,
         );
+        // 人工操作的预算测试不能依赖节点在一秒内回执；重复投递仍等待同一个延迟操作。
+        const execute = node.execute.bind(node);
+        let delayedId: string | undefined;
+        let delayedTimer: ReturnType<typeof setTimeout> | undefined;
+        let pending = false;
+        node.execute = (envelope) => {
+          if (pending && envelope.commandId === delayedId) return;
+          if (
+            !delayedId &&
+            envelope.actor === 'HUMAN' &&
+            envelope.command.type.startsWith('browser.')
+          ) {
+            delayedId = envelope.commandId;
+            pending = true;
+            delayedTimer = setTimeout(() => {
+              pending = false;
+              execute(envelope);
+            }, HITL_DELIVERY_DELAY_MS);
+          } else execute(envelope);
+        };
+        t.after(() => clearTimeout(delayedTimer));
         const operations = [
           { type: 'browser.input', action: 'scroll', x: 1, y: 1, deltaY: 20 },
           {
@@ -3527,20 +3554,24 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
             type: 'execution.command',
             commandId,
             controlRevision: 1,
-            timeoutMs: 1000,
+            timeoutMs: COMMAND_TIMEOUT_MS,
             command: operation,
           };
           assert.equal(
             (await api('POST', `${adminPath}/commands`, request)).status,
             202,
           );
-          await until(
+          const completed = await until(
             async () => (await api('GET', `${adminPath}/activity`)).data,
             (d) =>
               d.commands.some(
-                (c: any) => c.id === commandId && c.status === 'SUCCEEDED',
+                (c: any) => c.id === commandId && c.status !== null,
               ),
           );
+          const receipt = completed.commands.find(
+            (c: any) => c.id === commandId,
+          );
+          assert.equal(receipt.status, 'SUCCEEDED', JSON.stringify(receipt));
           assert.equal(
             (await api('POST', `${adminPath}/commands`, request)).status,
             202,
@@ -3593,6 +3624,7 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         );
         assert.equal(denied.status, 409);
         assert.equal(denied.data.code, 'ACTION_BUDGET_EXCEEDED');
+        await worker.close();
         await api('POST', `/v1/tasks/${definition.taskId}/cancel`);
         await cleaned(definition.taskId);
       },
