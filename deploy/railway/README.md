@@ -109,6 +109,16 @@ Web：
 
 Web 的 Caddy 监听 Railway 提供的 `PORT`，TLS 由 Railway 边缘处理。`/v1/*`、`/v2/*`、`/health/*` 及 WebSocket 握手转发到 API，其余路径提供 Console 静态页面。Web 不保存管理员凭据，也不注入前端密钥。
 
+### 真实客户端 IP
+
+当前生产两个自定义域名均经过 Cloudflare：控制台链路为 Cloudflare → Railway → Web Caddy → API，API 域名链路为 Cloudflare → Railway → API。在 **API 服务**设置 `PROOFRUN_TRUSTED_PROXIES=railway` 和 `PROOFRUN_TRUSTED_CDN=cloudflare`；Web 保留上游 `X-Real-IP` 和 `CF-Connecting-IP`，无需把 Caddy 重建的 `X-Forwarded-For` 当成原始客户端地址。
+
+[Railway 网络规范](https://docs.railway.com/networking/public-networking/specs-and-limits) 指定 `X-Real-IP` 表示边缘连接的客户端，[官方支持确认](https://station.railway.com/questions/supported-client-ip-trust-boundary-for-f-0e4c52d9) 边缘会覆盖客户端提交的同名头，但没有稳定的边缘 IP 网段；同环境私网请求不经过该重写。因此仅在私网服务均可信且 API/Web 未开放 TCP Proxy 时启用此模式，不能复制到任意自建 HTTP 服务。
+
+API 先读取 Railway 重写的地址，再检查其是否命中 [Cloudflare 官方网段](https://www.cloudflare.com/ips/)，命中后才使用 [CF-Connecting-IP](https://developers.cloudflare.com/fundamentals/reference/http-headers/#cf-connecting-ip)。直连 Railway 域名的访客即使伪造 Cloudflare 头也不会命中此信任条件。缺失、非法或多值来源头回退到上一跳，不选取任意列表元素。此方案仅用于审计，不能作为登录或权限依据。
+
+更新变量时使用 `railway variable set ... --skip-deploys`，随通过 CI 的代码一起发布，避免提前重启旧版本。发布后分别通过两个自定义域名和 Railway 原生域名发送登录及 HTTP 请求，再从管理员访问记录核对来源、状态，并验证伪造转发头未污染记录。仅看到变量已保存或健康检查成功不表示真实 IP 验证完成。
+
 `/docs`、`/docs/*` 和 `/openapi.json` 也转发到 API，提供同源在线文档。当前生产额外为 API 绑定 `api-proofrun.ethankit.com`，供外部服务端调用与文档接入；它不是 Console 的 Origin，不能据此把 `PROOFRUN_PUBLIC_URL` 改成 API 域名。更换 Console 域名后，需同步更新公开地址和 Console 地址并重新部署 API，否则实时画面会因 Origin 不匹配而被拒绝。
 
 Agent：

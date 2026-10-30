@@ -272,3 +272,4 @@ export type { RuntimeRequest };
 export const validateRuntimeRequest = ajv.compile<RuntimeRequest>(
   readSchema('runtime-request'),
 );
+export type { AccessKind, AccessRecord, AccessLogPage } from './access-log.js';

@@ -11,8 +11,8 @@ import {
   suspendCredentialRestore,
 } from '../credential-storage';
 
-/** 沿用手动连接的只读探测接口，验证通过前不挂载业务页面。 */
-const CONNECTION_CHECK_PATH = '/v1/tasks?limit=1';
+/** 手动连接和自动恢复共用凭据验证入口，服务端据此单独记录登录访问。 */
+const CONNECTION_CHECK_PATH = '/v1/admin/console-login';
 
 /** 自动恢复仅在挂载时发起；取消或卸载后忽略迟到结果，避免重新建立已断开的连接。 */
 export function Connect({
@@ -38,7 +38,7 @@ export function Connect({
     const controller = new AbortController();
     active.current = controller;
     const api = new ApiClient(restoreToken);
-    void api.json(CONNECTION_CHECK_PATH, controller.signal).then(
+    void api.json(CONNECTION_CHECK_PATH, controller.signal, {}).then(
       () => {
         if (!controller.signal.aborted) onConnect(api, true);
       },
@@ -61,7 +61,7 @@ export function Connect({
     setError(undefined);
     const api = new ApiClient(token.trim());
     try {
-      await api.json(CONNECTION_CHECK_PATH, controller.signal);
+      await api.json(CONNECTION_CHECK_PATH, controller.signal, {});
       if (!controller.signal.aborted)
         onConnect(api, saveCredential(token.trim()));
     } catch (error) {

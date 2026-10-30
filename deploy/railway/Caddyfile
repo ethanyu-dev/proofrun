@@ -11,7 +11,8 @@
     }
     @control path /v1/* /v2/* /health/* /docs /docs/* /openapi.json
     handle @control {
-        # API 只走 Railway 私网，浏览器与节点始终使用 Web 的公开同源地址。
+        # 保留 Railway 边缘重写的 X-Real-IP 与 Cloudflare 来源头，API 的 railway 模式负责解析。
+        # 不用 Caddy 自动重建的 X-Forwarded-For 作为客户端身份，避免丢失跨层来源。
         reverse_proxy {$PROOFRUN_API_UPSTREAM}
     }
     handle {

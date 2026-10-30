@@ -32,6 +32,16 @@ ProofRun 的最小控制面：接收上层已定义的任务，持久化全局�
 
 ## 运行边界
 
+控制台“访问记录”读取管理员接口 `GET /v1/admin/access-logs`，按入库顺序倒序展示最近 30 天的来源 IP、请求时间、路由模板、响应状态和耗时。每页 50 条，可用 `kind=console_login|http`、完整 `ip` 和 `before` 游标筛选。`POST /v1/admin/console-login` 验证管理员凭据，手动连接及自动恢复均走此入口，成功与失败均记录；登录请求单独归类，不重复记为普通 HTTP。API 收到的其他 HTTP 请求（含健康检查、内部接口、404 和鉴权失败）也会记录，不采集由静态服务器直接处理的页面/资源访问及 WebSocket 消息。
+
+升级自动执行 `048-access-logs.sql`，只从升级后开始采集，不回填历史。查询立即排除超过 30 天的记录，启动时及每分钟分批清理过期行。写入发生在响应完成后，记录失败会输出服务端错误日志，不回滚业务请求。记录不含凭据、正文、查询参数和动态路径参数；未知路由只保存占位说明。API 应先于 Console 升级，以提供新的登录验证入口。
+
+`PROOFRUN_TRUSTED_PROXIES` 可设置逗号分隔的反向代理 IP/CIDR；默认不信任转发头，只记录 TCP 对端。使用仓库同机 Caddy 时配置为 `127.0.0.1,::1`。远端部署须按实际网络设置代理地址，确保代理正确重建 `X-Forwarded-For` 且 API 只接受这些代理的流量。多层代理（例如 Railway 边缘再到 Web Caddy）需要各层保留并验证上游来源；仅配置 API 不能恢复已被上游覆盖的客户端 IP。未配置时页面中的 IP 可能是代理地址。
+
+Railway 部署使用 `PROOFRUN_TRUSTED_PROXIES=railway`，按平台协议读取边缘重写的单值 `X-Real-IP`，不会全局开启 Fastify 的转发头信任。此模式只允许在存在 Railway 项目/环境标记时启动，依赖同项目同环境私网内服务可信、API/Web 不开放原始 TCP Proxy。没有有效平台头的内部请求仍记录连接对端；缺失或多值头不会从任意 `X-Forwarded-For` 猜测来源。Railway 不保证稳定的边缘 IP 网段，不应将当前观察到的 `100.x` 地址固化为生产 allowlist。
+
+自定义域名开启 Cloudflare 代理时增加 `PROOFRUN_TRUSTED_CDN=cloudflare`。仅在已解析的上一跳属于 Cloudflare 官方 IPv4/IPv6 出口网段时采用有效的 `CF-Connecting-IP`，否则保留上一跳。网段快照维护于 `modules/access/client-ip.ts`；更新时核对官方列表。该 IP 只用于访问审计，不能替代凭据认证。生产配置与两条入口的验证见 [Railway 部署说明](../../deploy/railway/README.md)。
+
 一个 Fastify 进程、一个 PostgreSQL 数据库、一块持久证据磁盘。当前不引入 Redis、独立调度服务或通用工作流引擎。数据库实例锁保证同一数据库只有一个活动 API；多台 Browser Node 和多个 worker 可并发接入。
 
 - API 拥有全局任务、队列、容量预留、worker 租约和报告。

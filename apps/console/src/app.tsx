@@ -47,6 +47,11 @@ const TaskSubmitPage = lazy(() =>
     default: module.TaskSubmitPage,
   })),
 );
+const AccessLogsPage = lazy(() =>
+  import('./pages/access-logs').then((module) => ({
+    default: module.AccessLogsPage,
+  })),
+);
 const NodesPage = lazy(() =>
   import('./pages/nodes').then((module) => ({ default: module.NodesPage })),
 );
@@ -144,6 +149,7 @@ export function App() {
   else if (nodeProfileId)
     page = <NodeProfilePage key={nodeProfileId} api={api} id={nodeProfileId} />;
   else if (path === '/nodes') page = <NodesPage api={api} />;
+  else if (path === '/access-logs') page = <AccessLogsPage api={api} />;
   else
     page = (
       <Empty title="页面不存在">

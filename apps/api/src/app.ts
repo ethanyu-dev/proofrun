@@ -1,4 +1,5 @@
 import { deployedRelease } from '@proofrun/contracts/deployment';
+import { AccessLogs, CONSOLE_LOGIN_ROUTE } from './modules/access/service.js';
 import { Benchmarks } from './modules/benchmarks/service.js';
 import { registerBenchmarks } from './modules/benchmarks/routes.js';
 import { benchmarkPorts } from './modules/benchmarks/driver.js';
@@ -60,6 +61,9 @@ export async function buildApp(
         ? false
         : { redact: ['req.headers.authorization'] },
     bodyLimit: MAX_MESSAGE_BYTES,
+    trustProxy: Array.isArray(config.trustedProxies)
+      ? config.trustedProxies
+      : false,
   });
   const db = new Database(config.databaseUrl);
   try {
@@ -151,6 +155,8 @@ export async function buildApp(
     await db.close();
     throw error;
   }
+  // 在任何路由插件注册前安装全局记录，确保内部 HTTP 与公开接口同样覆盖。
+  const accessLogs = new AccessLogs(db, app, config);
   registerExecutionRuntime(app, runtime);
   const authenticatedNodes = new WeakMap<
     FastifyRequest,
@@ -164,6 +170,14 @@ export async function buildApp(
     reply.header('Cache-Control', 'no-store');
     reply.header('X-Content-Type-Options', 'nosniff');
   };
+  app.post(CONSOLE_LOGIN_ROUTE, { preHandler: admin }, async () => ({
+    connected: true,
+  }));
+  app.get<{ Querystring: Record<string, unknown> }>(
+    '/v1/admin/access-logs',
+    { preHandler: admin },
+    (request) => accessLogs.list(request.query),
+  );
   app.get<{ Querystring: Record<string, unknown> }>(
     '/v1/admin/statistics',
     { preHandler: admin },
@@ -849,6 +863,7 @@ export async function buildApp(
     ]);
   }
   app.addHook('onClose', async () => {
+    await accessLogs.close();
     await coordinator.externalAccounts.close();
     await db.close();
   });
