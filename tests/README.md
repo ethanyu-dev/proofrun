@@ -141,7 +141,7 @@ pnpm test:agent:browser
 
 ## Agent Loop 发布基础基准
 
-运行 `pnpm benchmark:setup` 后执行 `pnpm benchmark:release --version v0.1.0 --env-file .proofrun/local.env`，真实模型和独立 Chrome 完成八个固定场景（原五例加选择控件、跨标签、展开阅读），并保留逐轮 context、工具调用、截图及独立服务端写入事实。`pnpm benchmark:gate` 核实真实套件、当前源码与 24 小时有效期。Console 默认运行真实套件，发布工作流和最终 Docker 镜像必须通过真实门禁。
+运行 `pnpm benchmark:setup` 后执行 `pnpm benchmark:release --version v0.1.0 --env-file .proofrun/local.env`，真实模型和独立 Chrome 完成固定场景，并保留逐轮 context、工具调用、截图及独立服务端写入事实。`pnpm benchmark:gate` 核实真实套件、当前源码与 24 小时有效期。Console 默认运行真实套件，CI 发布工作流必须通过真实门禁；Docker 镜像可无报告构建，独立记录提交及源码指纹，构建成功不等于真实基准通过。
 
 `pnpm benchmark:agent` 保留无凭据的脚本协议回归。`pnpm test:benchmark` 覆盖归档、基线、发布门禁拒绝路径、本地 HTTP 事实与接口边界；这些单元测试不调用真实模型，不能代替真实验收。真实套件仍使用本地控制端口适配、合成业务与明确故障注入，不覆盖生产控制面和远程监管；配置和 CI secrets 见 [基准说明](../scripts/benchmarks/README.md)。
 

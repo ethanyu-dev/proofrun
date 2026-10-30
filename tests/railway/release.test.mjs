@@ -12,6 +12,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sourceFingerprint } from '../../scripts/benchmarks/source.mjs';
+import { buildIdentity } from '../../scripts/benchmarks/write-build-info.mjs';
 import {
   verifyReleaseCI,
   prepareReleaseSource,
@@ -210,6 +211,12 @@ test('干净发布包带入同提交 CI 报告，拒绝缺失、错配、过期�
         ),
       ),
       report,
+    );
+    // 校验后的独立清单保留 CI 身份，镜像没有真实报告也能生成版本。
+    await rm(join(prepared.directory, '.benchmark-release/real.json'));
+    assert.deepEqual(
+      await buildIdentity({ root: prepared.directory }),
+      report.release,
     );
     await assert.rejects(access(join(prepared.directory, '.env')));
     await assert.rejects(access(join(prepared.directory, '.git')));

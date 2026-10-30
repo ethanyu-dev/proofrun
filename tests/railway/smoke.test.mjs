@@ -31,6 +31,34 @@ async function ready(read) {
   throw new Error('Railway 镜像启动超时', { cause: last });
 }
 
+// 范围：读取三个真实镜像的清单，验证跨服务一致与运行时不可覆盖；不证明真实基准或 Railway 部署通过。
+test('三个镜像保留相同源码身份，运行时变量不能覆盖版本', async () => {
+  const identities = [];
+  for (const service of ['api', 'agent', 'web']) {
+    const identity = JSON.parse(
+      await docker(
+        'run',
+        '--rm',
+        '--entrypoint',
+        'cat',
+        '-e',
+        `RAILWAY_GIT_COMMIT_SHA=${'f'.repeat(40)}`,
+        `proofrun-railway-${service}:test`,
+        service === 'web'
+          ? '/srv/build-info.json'
+          : '/app/dist/build-info.json',
+      ),
+    );
+    assert.match(identity.sourceFingerprint, /^[a-f0-9]{64}$/);
+    assert.notEqual(identity.commit, 'f'.repeat(40));
+    assert(identity.buildId);
+    assert(identity.version);
+    identities.push(identity);
+  }
+  assert.deepEqual(identities[0], identities[1]);
+  assert.deepEqual(identities[0], identities[2]);
+});
+
 // 范围：真实三个发布镜像、私网代理、PORT、profile 变量、迁移、持久卷和 worker 轮询。
 // 不调用供应商模型或业务浏览器；不代表 Railway 账号中的域名、Volume 和变量已经配置。
 test(

@@ -140,7 +140,7 @@ Console 默认“真实模型 + Chrome”，填写发布版本后点击“运行
 
 CI 主分支和手动运行调用 `.github/workflows/real-agent-benchmark.yml`。仓库需设置三个同名模型 secrets；模型其它选项使用同名 repository variables。凭据缺失直接失败，不回退脚本。PR 不调用带密钥的模型，只执行脚本及编译检查。Browser Node release 同时依赖脚本与真实套件成功。
 
-API、Agent、Web 最终 Docker 镜像在 `verified` 阶段校验 `.benchmark-release/real.json`；CI 仅从同一次工作流下载通过的真实报告。本地需先执行真实套件，再构建镜像；源码变动或报告过期应先重跑，不复用旧的构建缓存作为新的发布证明。Railway 等远端构建也必须通过受控 CI 将当前报告带入构建上下文，直接从 Git 构建且无报告会被拒绝。模型密钥、浏览器配置和证据目录不进入镜像。`--target build` 仅用于无密钥 PR 的编译检查，不产出可部署的最终服务镜像。
+真实报告校验保留在 CI 的 `benchmark:gate` 和 `Release Railway` 上传前的发布检查中，仍要求同提交、完整通过且在 24 小时有效期内。API、Agent、Web 的 Docker 构建不读取报告，允许无报告构建最终镜像，便于配置变更后重新部署。CI 的 main 镜像作业仍依赖真实基准成功；PR 验证无报告的最终镜像及容器 smoke。模型密钥、真实报告、浏览器配置和证据目录不进入镜像。镜像构建成功本身不证明真实基准已通过。
 
 ### V2 真实任务
 
@@ -166,7 +166,7 @@ V2 可在本地执行，也可在已连接的生产 Console 中选择「线上�
 
 本地用 `--version v0.1.0` 或 `PROOFRUN_RELEASE_VERSION` 指定版本；`benchmark:release` 必填，普通本地运行留空生成 `dev-<源码指纹>`。`PROOFRUN_BUILD_ID` 可指定构建身份，默认本地源码指纹或 CI 的 run ID + attempt。CI 自动检查使用 `ci-<完整 SHA>`；手动真实基准工作流的 `release_version`、Browser Node 发布的 `version` 会传入报告。正式服务发布应在真实基准工作流显式指定同一发布版本，并使用该次工作流生成的报告构建三个镜像。
 
-最终镜像在门禁成功后生成 `build-info.json`，API 和 Agent 从各自编译产物旁读取它。运行时变量和网页不能覆盖清单；缺失时明确显示 development，禁止发起线上基准。API、Agent 的版本和源码指纹必须匹配这次入队身份，Node 记录独立发布版本及 sourceCommit；滚动发布导致的组件漂移会失败并展示实际值。
+最终镜像独立生成 `build-info.json`，API 和 Agent 从各自编译产物旁读取它。CI 发布在报告校验后提取独立版本清单，构建时核对源码指纹；直接构建使用 `RAILWAY_GIT_COMMIT_SHA` 构建参数和实际源码指纹生成身份。运行时变量和网页不能覆盖清单；无提交或缺失清单时明确显示 development，禁止发起线上基准。API、Agent 的版本和源码指纹必须匹配这次入队身份，Node 记录独立发布版本及 sourceCommit；滚动发布导致的组件漂移会失败并展示实际值。
 
 线上 API 配置 `PROOFRUN_BENCHMARK_NODE_POOL` 和 `PROOFRUN_BENCHMARK_ENVIRONMENT`，节点池需有可用的已配对 Browser Node，并能访问 `PROOFRUN_PUBLIC_URL`。Console 连接管理员后选择“线上调度与存储”，直接发起 `agent-loop-deployed-v2`。请求只提交幂等 UUID，固定七个合成任务进入原有持久队列，实际 Agent 调用已配置模型，实际远程 Node 执行独立访客会话。旧 worker 不领取新基准；API 与 Agent 都需升级。
 

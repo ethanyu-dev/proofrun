@@ -8,6 +8,7 @@ import pg from 'pg';
 import type { AccessLogPage } from '@proofrun/contracts';
 import { buildApp } from '../src/app.js';
 import { parseTrustedProxies } from '../src/config.js';
+import { until } from './fixture.js';
 
 /** 测试凭据和模拟 IP 仅用于隔离库；不连接实际部署服务。 */
 const ADMIN = 'access-log-test-admin-fixture';
@@ -40,7 +41,7 @@ test('代理配置只接受明确地址及网段', () => {
     );
 });
 
-// 范围：真实迁移、SQL、Fastify 生命周期和重启持久性；地址由注入夹具提供，不等同于实际反向代理验收。
+// 范围：真实迁移、SQL、Fastify 生命周期、重启持久性及连接关闭；地址由注入夹具提供，不等同于实际反向代理验收。
 test(
   '访问记录覆盖登录、错误请求、来源解析、分页和保留期',
   { timeout: 60_000 },
@@ -55,7 +56,9 @@ test(
     const url = new URL(DATABASE_URL);
     url.pathname = `/${name}`;
     const directory = await mkdtemp(join(tmpdir(), 'proofrun-access-'));
-    const sql = new pg.Pool({ connectionString: url.toString() });
+    // 单连接的 end 等待 socket 关闭，避免 Pool.end 返回后删库与断连竞争。
+    const sql = new pg.Client({ connectionString: url.toString() });
+    await sql.connect();
     const config = {
       databaseUrl: url.toString(),
       adminToken: ADMIN,
@@ -73,7 +76,20 @@ test(
     t.after(async () => {
       await app?.close();
       await sql.end();
-      await admin.query(`DROP DATABASE ${name} WITH (FORCE)`);
+      // 服务连接池清空后，仍须等待 PostgreSQL 确认所有连接已退出；超时暴露泄漏，不强制踢连接。
+      await until(
+        async () =>
+          Number(
+            (
+              await admin.query(
+                'SELECT count(*) AS count FROM pg_stat_activity WHERE datname=$1',
+                [name],
+              )
+            ).rows[0].count,
+          ),
+        (count) => count === 0,
+      );
+      await admin.query(`DROP DATABASE ${name}`);
       await admin.end();
       await rm(directory, { recursive: true, force: true });
     });
