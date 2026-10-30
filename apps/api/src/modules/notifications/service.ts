@@ -151,6 +151,7 @@ export class CaseNotifications {
       WHERE t.created_at>=d.started_at AND COALESCE(t.definition->>'purpose','verification')<>'cleanup'
         AND NOT EXISTS(SELECT 1 FROM pr_request_runs a WHERE a.task_id=t.id)
         AND NOT EXISTS(SELECT 1 FROM pr_node_profiles p WHERE p.task_id=t.id)
+        AND NOT EXISTS(SELECT 1 FROM pr_benchmark_cases b WHERE b.task_id=t.id)
         AND NOT EXISTS(SELECT 1 FROM pr_feishu_runs r WHERE r.destination_id=$1 AND r.run_key=t.id)
       ORDER BY t.created_at,t.id LIMIT $2 ON CONFLICT DO NOTHING`,
       [this.destination, DISCOVERY_LIMIT],
@@ -171,9 +172,21 @@ export class CaseNotifications {
     const [requestId, rerunHash] = run.run_key
       .slice(REQUEST_RUN_PREFIX.length)
       .split(':');
-    const snapshot = run.run_key.startsWith(REQUEST_RUN_PREFIX)
-      ? await readRequest(this.db, requestId!, rerunHash ?? null)
-      : await readCase(this.db, run.run_key);
+    // Benchmark 只在看板归档；旧版本已入队的记录也停止发送、重试和更新。
+    // 依赖服务端登记关系，不能凭任务名称或用户可控文本抑制业务通知。
+    const benchmark =
+      !run.run_key.startsWith(REQUEST_RUN_PREFIX) &&
+      (
+        await this.db.query(
+          'SELECT 1 FROM pr_benchmark_cases WHERE task_id=$1',
+          [run.run_key],
+        )
+      ).rowCount;
+    const snapshot = benchmark
+      ? null
+      : run.run_key.startsWith(REQUEST_RUN_PREFIX)
+        ? await readRequest(this.db, requestId!, rerunHash ?? null)
+        : await readCase(this.db, run.run_key);
     // 请求已切换到新轮次时停止旧队列，不能将新状态写入旧轮次或补发旧事件。
     if (!snapshot) {
       await this.db.query(
