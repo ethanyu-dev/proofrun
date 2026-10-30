@@ -12,6 +12,10 @@ const execute = promisify(execFile);
 export function verifyReleaseCI(run, repository, commit) {
   if (
     !/^[a-f0-9]{40}$/.test(commit) ||
+    !Number.isSafeInteger(run.id) ||
+    run.id < 1 ||
+    !Number.isSafeInteger(run.run_attempt) ||
+    run.run_attempt < 1 ||
     run.repository?.full_name !== repository ||
     run.head_repository?.full_name !== repository ||
     run.head_sha !== commit ||
@@ -44,11 +48,16 @@ export async function prepareReleaseSource({
     );
     await execute('tar', ['-xf', archive, '-C', directory]);
     const run = parseBenchmark(await readFile(report, 'utf8'));
+    // 只重跑失败作业时，已成功的真实基准可能来自同一 CI 的较早尝试；仍核对提交、指纹和原有效期。
+    const build = /^ci-(\d+)-(\d+)$/.exec(run.release?.buildId ?? '');
     if (
       run.origin !== 'ci' ||
       run.release?.commit !== commit ||
       run.source.revision !== commit ||
-      run.release.buildId !== `ci-${ci.id}-${ci.run_attempt}`
+      !build ||
+      build[1] !== String(ci.id) ||
+      Number(build[2]) < 1 ||
+      Number(build[2]) > ci.run_attempt
     )
       throw new Error('发布被阻止：报告不是该 CI 作业与提交生成');
     verifyRelease(run, await sourceFingerprint(directory));

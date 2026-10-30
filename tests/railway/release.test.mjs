@@ -213,7 +213,16 @@ test('干净发布包带入同提交 CI 报告，拒绝缺失、错配、过期�
     );
     await assert.rejects(access(join(prepared.directory, '.env')));
     await assert.rejects(access(join(prepared.directory, '.git')));
+    // 同一 CI 只重跑其他失败作业时，已通过的较早真实报告仍受相同提交、指纹和有效期校验。
+    const earlier = structuredClone(report);
+    earlier.release.buildId = 'ci-123-1';
+    await writeFile(path, JSON.stringify(earlier));
+    const resumed = await prepareReleaseSource(options);
+    await rm(resumed.temporary, { recursive: true, force: true });
     for (const mutate of [
+      (run) => {
+        run.release.buildId = 'ci-123-3';
+      },
       (run) => {
         run.release.buildId = 'ci-other';
       },

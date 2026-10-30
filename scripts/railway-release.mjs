@@ -68,17 +68,23 @@ export async function releaseRailway(
   };
   const target = ['--project', project, '--environment', environment];
   try {
-    await run('gh', [
-      'run',
-      'download',
-      runId,
-      '--repo',
-      repository,
-      '--name',
-      'real-agent-benchmark-release',
-      '--dir',
-      download,
-    ]);
+    try {
+      await run('gh', [
+        'run',
+        'download',
+        runId,
+        '--repo',
+        repository,
+        '--name',
+        'real-agent-benchmark-release',
+        '--dir',
+        download,
+      ]);
+    } catch {
+      throw new Error(
+        '发布被阻止：当前 CI 的真实报告缺失或已过期，请重新运行完整 CI',
+      );
+    }
     prepared = await prepare({
       ci,
       repository,
