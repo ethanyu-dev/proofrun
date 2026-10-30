@@ -135,10 +135,10 @@ test('发布门禁拒绝脚本、不完整、过期、失败和源码变化', as
       run.cases[0].verification = {};
     },
     (run) => {
-      run.suite = 'agent-loop-real-v1';
+      run.suite = 'agent-loop-real-v3';
     },
     (run) => {
-      run.cases = run.cases.slice(0, 5);
+      run.cases = run.cases.slice(0, 10);
     },
     (run) => {
       run.release.commit = null;
@@ -322,6 +322,85 @@ test('网络场景响应头来自服务端，缺少实际视图切换不能通�
           site.facts(id),
         ),
       /网络专用/,
+    );
+  }
+});
+
+// 范围：真实 HTTP 页面可达与独立判定器拒绝伪交付、逆序及重复写入；浏览器行为由完整真实基准另行验证。
+test('基础交互必须观察中间状态再完成，不能用模型正文替代实际操作', async (t) => {
+  const site = await realSite();
+  t.after(() => site.close());
+  for (const id of ['browser-validation', 'browser-search']) {
+    const scenario = realCases.find((c) => c.id === id);
+    assert.equal((await fetch(`${site.origin}/${id}`)).status, 200);
+    const validation = id === 'browser-validation';
+    const before = validation ? '请填写城市；尚未保存' : '没有匹配结果';
+    const after = validation
+      ? '已保存：Alice / Hangzhou；保存次数 1'
+      : '条目编号 BOOK-42；库存 7 件';
+    if (validation)
+      await fetch(`${site.origin}/${id}/save`, {
+        method: 'POST',
+        body: JSON.stringify({ name: 'Alice', city: 'Hangzhou' }),
+      });
+    const control = {
+      commands: [before, after].map((text) => ({
+        operation: { type: 'browser.observe' },
+        status: 'SUCCEEDED',
+        result: { text },
+      })),
+    };
+    const report = {
+      verdict: null,
+      executionDisposition: 'EXECUTED',
+      browserResult: {
+        outcome: 'COMPLETED',
+        output: `${before}；${after}`,
+        evidenceRefs: ['fixture'],
+      },
+    };
+    const facts = site.facts(id);
+    assert.doesNotThrow(() => verifyRealCase(scenario, control, report, facts));
+    assert.throws(
+      () =>
+        verifyRealCase(
+          scenario,
+          { commands: control.commands.slice(1) },
+          report,
+          facts,
+        ),
+      /有序观察/,
+    );
+    assert.throws(
+      () =>
+        verifyRealCase(
+          scenario,
+          { commands: [...control.commands].reverse() },
+          report,
+          facts,
+        ),
+      /有序观察/,
+    );
+    assert.throws(
+      () =>
+        verifyRealCase(
+          scenario,
+          control,
+          {
+            ...report,
+            browserResult: { ...report.browserResult, output: '已完成' },
+          },
+          facts,
+        ),
+      /实际交付/,
+    );
+    assert.throws(
+      () =>
+        verifyRealCase(scenario, control, report, {
+          ...facts,
+          writes: [...facts.writes, { name: 'Alice', city: 'Hangzhou' }],
+        }),
+      /副作用/,
     );
   }
 });

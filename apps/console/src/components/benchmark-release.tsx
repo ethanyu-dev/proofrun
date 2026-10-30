@@ -1,5 +1,6 @@
 import {
   benchmarkPassed,
+  isV2BenchmarkSuite,
   benchmarkReleaseIssues,
   type BenchmarkRun,
 } from '@proofrun/contracts/benchmark';
@@ -10,9 +11,22 @@ export function benchmarkReleaseStatus(run: BenchmarkRun) {
     !!run.completedAt &&
     run.cases.length > 0 &&
     run.cases.every(benchmarkPassed);
+  // V2 的失败仍是诊断失败，但没有发布阻断项，也不能充当基础套件的发布证明。
+  if (isV2BenchmarkSuite(run.suite))
+    return {
+      label: !run.completedAt
+        ? '诊断进行中'
+        : complete
+          ? '诊断通过'
+          : '诊断未通过',
+      passed: complete,
+      issues: [] as string[],
+      requiredForRelease: false,
+    };
   const issues = benchmarkReleaseIssues(run);
   const development = run.release?.kind === 'development';
   return {
+    requiredForRelease: true,
     label:
       run.mode === 'scripted'
         ? '需真实运行'
@@ -31,9 +45,15 @@ export function benchmarkReleaseStatus(run: BenchmarkRun) {
   };
 }
 
-/** 所有未满足条件直接展示，避免十个场景通过却只显示模糊的红色阻断。 */
+/** 所有未满足条件直接展示，避免所有场景通过却只显示模糊的红色阻断。 */
 export function BenchmarkReleaseConditions({ run }: { run: BenchmarkRun }) {
-  const { issues } = benchmarkReleaseStatus(run);
+  const { issues, requiredForRelease } = benchmarkReleaseStatus(run);
+  if (!requiredForRelease)
+    return (
+      <div className="bench-notice">
+        V2 真实任务仅用于诊断，不参与发布门禁；失败或未运行不阻塞发布。
+      </div>
+    );
   return (
     <div className="bench-notice" aria-label="发布条件说明">
       <strong>

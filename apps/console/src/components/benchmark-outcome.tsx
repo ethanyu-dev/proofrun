@@ -21,7 +21,7 @@ export function benchmarkOutcome(item: BenchmarkCase) {
   if (item.verdict === '仅完成能力预检')
     return { label: '未执行', summary: '仅评估任务定义，尚未执行真实验证' };
   if (benchmarkPassed(item))
-    return { label: '通过', summary: '全部门禁检查通过' };
+    return { label: '通过', summary: '全部场景检查通过' };
   const steps = item.verification?.steps ?? [];
   const incomplete = steps.filter((step) => step.status !== 'COMPLETED');
   if (incomplete.length)

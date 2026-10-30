@@ -1,3 +1,4 @@
+import { DEPLOYED_V2_BENCHMARK_SUITE } from '@proofrun/contracts/benchmark';
 import { randomUUID } from 'node:crypto';
 import { validateVerificationTask } from '@proofrun/contracts';
 import {
@@ -6,6 +7,8 @@ import {
 } from '@proofrun/contracts/release';
 import {
   BENCHMARK_SCENARIOS,
+  DEPLOYED_BENCHMARK_SUITE,
+  LEGACY_DEPLOYED_BENCHMARK_SUITE,
   benchmarkTask,
   benchmarkPage,
 } from '@proofrun/contracts/benchmark-scenarios';
@@ -118,13 +121,16 @@ export class Benchmarks {
       )
         throw new ApiError(409, 'BENCHMARK_BUSY', '已有线上基准正在排队或执行');
       await client.query(
-        "INSERT INTO pr_benchmark_runs(id,release,environment,deadline_at,family) VALUES($1,$2,$3,clock_timestamp()+$4*interval '1 millisecond',$5)",
+        "INSERT INTO pr_benchmark_runs(id,release,environment,deadline_at,family,suite) VALUES($1,$2,$3,clock_timestamp()+$4*interval '1 millisecond',$5,$6)",
         [
           id,
           this.release,
           this.config.benchmarkEnvironment,
           family === 'v2' ? V2_RUN_MS : RUN_MS,
           family,
+          family === 'v2'
+            ? DEPLOYED_V2_BENCHMARK_SUITE
+            : DEPLOYED_BENCHMARK_SUITE,
         ],
       );
       const scenarios =
@@ -217,7 +223,11 @@ export class Benchmarks {
     const expired = active.deadline_at.getTime() <= Date.now();
     const terminal =
       cases.length ===
-        (active.family === 'v2' ? 2 : BENCHMARK_SCENARIOS.length) &&
+        (active.family === 'v2'
+          ? 2
+          : active.suite === LEGACY_DEPLOYED_BENCHMARK_SUITE
+            ? 5
+            : BENCHMARK_SCENARIOS.length) &&
       cases.every(
         (row) =>
           !['QUEUED', 'RUNNING'].includes(row.state) &&

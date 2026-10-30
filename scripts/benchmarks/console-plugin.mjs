@@ -12,8 +12,8 @@ const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const V2_MAX_FILE_BYTES = 64 * 1024 * 1024;
 const MAX_RUNS = 20;
 const RUN_TIMEOUT_MS = 120000;
-/** 真实套件十例各三分钟，另留构建与关闭预算。 */
-const REAL_TIMEOUT_MS = 35 * 60 * 1000;
+/** 真实套件十二例各三分钟，另留构建与关闭预算。 */
+const REAL_TIMEOUT_MS = 41 * 60 * 1000;
 /** 两项历史 V2 完整步骤含既有收尾预算，总宿主上限固定为三小时，不改变任务内预算。 */
 const V2_TIMEOUT_MS = 180 * 60 * 1000;
 const V2_SUITE = 'agent-loop-v2-live-v1';

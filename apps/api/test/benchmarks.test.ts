@@ -1,3 +1,7 @@
+import {
+  BENCHMARK_SCENARIOS,
+  DEPLOYED_BENCHMARK_SUITE,
+} from '@proofrun/contracts/benchmark-scenarios';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomUUID } from 'node:crypto';
@@ -139,7 +143,7 @@ test(
         assert.equal(
           (await sql.query('SELECT count(*)::int AS n FROM pr_tasks')).rows[0]
             .n,
-          5,
+          BENCHMARK_SCENARIOS.length,
         );
         assert.equal(
           (await request('/v1/admin/benchmarks', { id: randomUUID() }))
@@ -150,7 +154,8 @@ test(
         assert.equal(detail.statusCode, 200, detail.body);
         const run = parseBenchmark(JSON.stringify(detail.json().run));
         assert.equal(run.release?.version, RELEASE.version);
-        assert.equal(run.cases.length, 5);
+        assert.equal(run.cases.length, BENCHMARK_SCENARIOS.length);
+        assert.equal(run.suite, DEPLOYED_BENCHMARK_SUITE);
         assert.equal(run.completedAt, null);
         const row = (
           await sql.query('SELECT task_id FROM pr_benchmark_cases LIMIT 1')

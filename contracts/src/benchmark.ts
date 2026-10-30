@@ -9,7 +9,7 @@ import type { StepResult } from './generated/step-result.js';
 /** 本地协议基准独立版本；场景或门限改变时必须升级，禁止跨版本判定回归。 */
 export const BENCHMARK_SUITE = 'agent-loop-basic-v1';
 /** 真实模型与 Chrome 的发布套件，不能用脚本模式归档替代。 */
-export const REAL_BENCHMARK_SUITE = 'agent-loop-real-v3';
+export const REAL_BENCHMARK_SUITE = 'agent-loop-real-v4';
 /** 真实站点 V2 任务单独归档；不能替代固定合成场景发布门禁。 */
 export const V2_BENCHMARK_SUITE = 'agent-loop-v2-live-v1';
 /** 线上 V2 单独版本，不把本地执行端口结果当作部署链路验证。 */
@@ -29,6 +29,8 @@ export const REAL_BENCHMARK_CASES = [
   'browser-disclosures',
   'network-runtime',
   'network-page-return',
+  'browser-validation',
+  'browser-search',
 ] as const;
 /** 导入上限同时约束浏览器内存和本地接口响应体。 */
 export const BENCHMARK_MAX_BYTES = 20 * 1024 * 1024;
