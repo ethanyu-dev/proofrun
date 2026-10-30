@@ -9,6 +9,7 @@ import {
 import { useExecutionTimeline } from '../use-execution-timeline';
 import { ExecutionControl } from './execution-control';
 import { LivePage } from './live-page';
+import { ModelCallStatus } from './model-call-status';
 import { Button } from './ui/button';
 import { ErrorNotice, Status } from './ui';
 
@@ -101,6 +102,12 @@ export function StepPlayback({
           className="execution-stage"
           aria-label={live ? '实时交互' : browser ? '操作回放' : '步骤回放'}
         >
+          <ModelCallStatus
+            api={api}
+            executionId={execution.id}
+            active={active}
+            stepId={live || browser ? undefined : step?.id}
+          />
           {live ? (
             <>
               <div className="section-heading">

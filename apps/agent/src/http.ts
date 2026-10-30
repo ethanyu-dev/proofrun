@@ -1,4 +1,10 @@
 import type { Dispatcher } from 'undici';
+import {
+  responseDiagnostics,
+  responseFormat,
+  responseReason,
+  type ModelDiagnostics,
+} from './model/diagnostics.js';
 
 /** JSON 回复限额覆盖控制面单帧，图片使用独立的 8 MiB 限额。 */
 const MAX_JSON_BYTES = 2 * 1024 * 1024;
@@ -73,6 +79,14 @@ export async function jsonRequest(
   const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
   requestSignal.throwIfAborted();
   const dispatcher = transport?.(duration, requestSignal);
+  let diagnostics: ModelDiagnostics = {
+    phase: 'REQUEST',
+    httpStatus: null,
+    contentType: null,
+    responseFormat: 'unknown',
+    responseBytes: null,
+    reason: 'TRANSPORT_FAILURE',
+  };
   try {
     const response = await fetch(url, {
       ...(dispatcher ? { dispatcher } : {}),
@@ -86,10 +100,20 @@ export async function jsonRequest(
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       signal: requestSignal,
     });
+    diagnostics = responseDiagnostics(response);
     const bytes = await readBytes(response, MAX_JSON_BYTES);
+    const bodyText = bytes.toString();
+    diagnostics = {
+      ...diagnostics,
+      phase: 'RESPONSE_PARSE',
+      responseBytes: bytes.length,
+      responseFormat: responseFormat(bodyText),
+      reason: responseReason(response.status, bodyText),
+    };
     let value: unknown;
     try {
-      value = JSON.parse(bytes.toString());
+      value = JSON.parse(bodyText);
+      diagnostics.responseFormat = 'json';
     } catch {
       throw new AgentFault(
         'INVALID_JSON',
@@ -98,6 +122,7 @@ export async function jsonRequest(
       );
     }
     if (!response.ok) {
+      diagnostics.phase = 'HTTP_STATUS';
       const providerLimit =
         value &&
         typeof value === 'object' &&
@@ -124,14 +149,24 @@ export async function jsonRequest(
     return value;
   } catch (error) {
     if (signal?.aborted) throw signal.reason;
-    if (error instanceof AgentFault) throw error;
+    if (error instanceof AgentFault)
+      throw new AgentFault(error.code, error.message, error.status, {
+        ...diagnostics,
+        reason:
+          error.code === 'RESPONSE_TOO_LARGE'
+            ? 'RESPONSE_TOO_LARGE'
+            : diagnostics.reason,
+      });
     const cause = (error as { cause?: { code?: unknown } } | null)?.cause;
     const code = timeout.aborted
       ? 'TRANSPORT_REQUEST_TIMEOUT'
       : typeof cause?.code === 'string'
         ? (TRANSPORT_CODES.get(cause.code) ?? 'TRANSPORT_ERROR')
         : 'TRANSPORT_ERROR';
-    throw new AgentFault(code, '服务请求超时或连接中断');
+    throw new AgentFault(code, '服务请求超时或连接中断', 0, {
+      ...diagnostics,
+      reason: timeout.aborted ? 'REQUEST_TIMEOUT' : 'TRANSPORT_FAILURE',
+    });
   } finally {
     // 请求专属连接在成功、拒绝、超时及取消后都释放；默认控制面连接池不受影响。
     await dispatcher?.destroy();

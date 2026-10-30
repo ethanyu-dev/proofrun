@@ -20,6 +20,7 @@ export async function modelRequest(
   purpose: ModelCall['purpose'],
   body: Record<string, unknown>,
   send: () => Promise<unknown>,
+  timeoutMs?: number,
 ): Promise<unknown> {
   // 原始摘要对应实际派发正文；展示副本中的图片只替换 base64，不改变模型收到的内容。
   const raw = JSON.stringify(body);
@@ -51,6 +52,7 @@ export async function modelRequest(
     request,
     requestSha256: createHash('sha256').update(raw).digest('hex'),
     imagesOmitted,
+    ...(timeoutMs === undefined ? {} : { timeoutMs }),
   });
   input.recordRequest?.(model);
   const started = performance.now();
@@ -66,6 +68,9 @@ export async function modelRequest(
       promptTokens: null,
       completionTokens: null,
       elapsedMs: Math.round(performance.now() - started),
+      ...(error instanceof AgentFault && error.diagnostics
+        ? { diagnostics: error.diagnostics }
+        : {}),
     });
     throw error;
   }

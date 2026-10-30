@@ -2171,6 +2171,18 @@ summary {
 .execution-stage {
   min-width: 0;
 }
+.execution-model-calls {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 20px;
+  overflow-wrap: anywhere;
+}
+.execution-model-calls summary {
+  cursor: pointer;
+}
+.execution-model-calls li {
+  margin-top: 10px;
+}
 .execution-stage h2 {
   font-size: 18px;
 }

@@ -93,6 +93,82 @@
     "stepId": {
       "type": "string",
       "pattern": "^[A-Za-z0-9_-]{1,80}$"
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 3,
+      "description": "当前决策纠错链的实际尝试次数，由执行器记录；缺失的历史记录不推算。"
+    },
+    "maxAttempts": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 3,
+      "description": "连续决策错误上限；不承诺剩余预算足够执行下一次重试。"
+    },
+    "timeoutMs": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 600000,
+      "description": "派发前计算的单次请求时限上限；存档后仍按剩余步骤期限收紧，不延长执行预算。"
+    },
+    "diagnostics": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "封闭诊断字段，不包含原始正文、地址、认证头或任意供应商文本。",
+      "properties": {
+        "phase": {
+          "enum": ["REQUEST", "RESPONSE_BODY", "RESPONSE_PARSE", "HTTP_STATUS"],
+          "description": "失败发生阶段；REQUEST 不能进一步区分建连与等待响应头。"
+        },
+        "httpStatus": {
+          "type": ["integer", "null"],
+          "minimum": 100,
+          "maximum": 599,
+          "description": "已收到的 HTTP 状态；未收到响应头时为空。"
+        },
+        "contentType": {
+          "enum": [
+            "application/json",
+            "text/html",
+            "text/plain",
+            "other",
+            null
+          ],
+          "description": "归一化响应媒体类型；不保存原始头参数，缺失时为空。"
+        },
+        "responseFormat": {
+          "enum": ["json", "html", "text", "empty", "unknown"],
+          "description": "已读完整正文的结构类别，未读完时为 unknown。"
+        },
+        "responseBytes": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "已完整读取的响应字节数；未读完或超限时为空。"
+        },
+        "reason": {
+          "enum": [
+            "RATE_LIMITED",
+            "GATEWAY_TIMEOUT",
+            "UPSTREAM_UNAVAILABLE",
+            "AUTH_REJECTED",
+            "CONTEXT_LIMIT",
+            "INVALID_RESPONSE",
+            "REQUEST_TIMEOUT",
+            "TRANSPORT_FAILURE",
+            "RESPONSE_TOO_LARGE"
+          ],
+          "description": "按状态及有限特征生成的分类摘要，不复制供应商错误消息。"
+        }
+      },
+      "required": [
+        "phase",
+        "httpStatus",
+        "contentType",
+        "responseFormat",
+        "responseBytes",
+        "reason"
+      ]
     }
   },
   "required": [

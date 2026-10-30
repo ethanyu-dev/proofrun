@@ -105,6 +105,7 @@ test('浏览器任务列表与详情按显式类型隔离历史验证', async (c
       };
     }
     if (path.endsWith('/timeline')) return { commands: [], nextCursor: null };
+    if (path.endsWith('/model-calls')) return { calls: [] };
     if (path.endsWith('/intervention'))
       return { intervention: { path: '#/hitl/fixture/token' } };
     if (path.endsWith('/requests')) return { requests: [] };

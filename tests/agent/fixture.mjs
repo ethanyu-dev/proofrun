@@ -189,6 +189,14 @@ export async function modelServer(decide) {
         typeof content === 'string' ? content : content[0].text,
       );
       const value = await decide(context, requests.length, body, request);
+      // 显式 HTTP 故障夹具用于验证传输诊断，不能与模型返回的非法工具参数混为一谈。
+      if (value?.httpError) {
+        response.writeHead(value.httpError.status, {
+          'content-type': value.httpError.contentType,
+        });
+        response.end(value.httpError.body);
+        return;
+      }
       response.setHeader('content-type', 'application/json');
       response.end(
         JSON.stringify(

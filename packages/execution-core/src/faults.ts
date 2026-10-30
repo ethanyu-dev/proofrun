@@ -1,3 +1,5 @@
+import type { ModelCall } from '@proofrun/contracts';
+
 /** 只映射运行时的封闭错误码；原始异常可能包含地址、代理凭据或请求正文。 */
 const TRANSPORT_CODES = new Map([
   ['UND_ERR_CONNECT_TIMEOUT', 'TRANSPORT_CONNECT_TIMEOUT'],
@@ -22,6 +24,8 @@ export class ExecutionFault extends Error {
     readonly code: string,
     message: string,
     readonly status = 0,
+    /** 仅携带传输层已归一化的诊断，不传播原始响应或异常。 */
+    readonly diagnostics?: ModelCall['diagnostics'],
   ) {
     super(message);
   }

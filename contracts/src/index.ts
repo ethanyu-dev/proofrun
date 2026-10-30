@@ -152,10 +152,10 @@ import type { ModelCall } from './generated/model-call.js';
 import type { ModelCallWrite } from './generated/model-call-write.js';
 export type { ModelCall, ModelCallWrite };
 /** 调用审计与节点动作分开校验，记录不能授权新的浏览器操作。 */
-export const validateModelCall = ajv.compile<ModelCall>(
-  readSchema('model-call'),
-);
-ajv.addSchema({ $ref: readSchema('model-call').$id }, 'model-call.schema.json');
+const modelCallSchema = readSchema('model-call');
+// 注册完整定义以支持运行时协议引用诊断子结构，不能用仅含 $ref 的别名解析属性片段。
+ajv.addSchema(modelCallSchema, 'model-call.schema.json');
+export const validateModelCall = ajv.compile<ModelCall>(modelCallSchema);
 export const validateModelCallWrite = ajv.compile<ModelCallWrite>(
   readSchema('model-call-write'),
 );

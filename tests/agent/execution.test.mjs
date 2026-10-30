@@ -270,6 +270,7 @@ test('填写、提交、观察成功文本并生成可追溯报告', async () =>
     assert.deepEqual(JSON.parse(item.body.record.request), requests[index]);
     assert.equal(item.body.record.callIndex, index + 1);
     assert.equal(item.body.record.decisionIndex, index + 1);
+    assert.equal(item.body.record.attempt, 1);
     assert.ok(!item.body.record.request.includes(config.modelKey));
     const receipt = client.modelCalls.find(
       (entry) => entry.id === item.id && entry.body.phase === 'finish',
@@ -2997,4 +2998,55 @@ test('结构化任务不再按关键词跳过步骤', async () => {
   );
   assert.equal(report.verdict, null);
   assert.equal(report.criteria.length, 3);
+});
+
+// 范围：真实本地 HTTP 故障贯通三次尝试、审计回执和停止行为；浏览器为夹具，不是线上供应商验收。
+test('模型非 JSON 临时错误保留每次诊断与明确的重试编号', async () => {
+  let requests = 0;
+  const server = createServer((request, response) => {
+    requests++;
+    request.resume();
+    response.writeHead(502, { 'content-type': 'text/html' });
+    response.end('<html>upstream unavailable private-fixture-secret</html>');
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const settings = {
+    ...config,
+    modelUrl: `http://127.0.0.1:${server.address().port}`,
+  };
+  const client = new FakeControl();
+  try {
+    const report = await execute(
+      settings,
+      client,
+      new ChatModel(settings),
+      grant(),
+    );
+    assert.equal(report.executionDetails.reasonCode, 'RETRYABLE_MODEL_ERROR');
+    assert.equal(requests, 3);
+    const starts = client.modelCalls
+      .filter((item) => item.body.phase === 'start')
+      .map((item) => item.body.record);
+    assert.deepEqual(
+      starts.map((item) => item.attempt),
+      [1, 2, 3],
+    );
+    assert.ok(
+      starts.every((item) => item.maxAttempts === 3 && item.timeoutMs > 0),
+    );
+    const receipts = client.modelCalls
+      .filter((item) => item.body.phase === 'finish')
+      .map((item) => item.body.result);
+    assert.equal(receipts.length, 3);
+    assert.ok(
+      receipts.every(
+        (item) =>
+          item.error === 'INVALID_JSON' && item.diagnostics.httpStatus === 502,
+      ),
+    );
+    assert.ok(!JSON.stringify(receipts).includes('private-fixture-secret'));
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
 });

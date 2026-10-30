@@ -1871,6 +1871,8 @@ class Execution {
                 id,
                 callIndex: this.details.modelCalls + 1,
                 decisionIndex,
+                attempt: errors + 1,
+                maxAttempts: MAX_DECISION_ERRORS,
                 startedAt: new Date().toISOString(),
                 finishedAt: null,
                 status: 'PENDING',

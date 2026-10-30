@@ -825,6 +825,52 @@ test(
         assert.equal(runtime.report.executionDetails.promptTokens, 27);
         assert.equal(runtime.report.executionDetails.completionTokens, 13);
       });
+      // 范围：本地 HTTP、真实 API/数据库和两条执行路径贯通诊断与重试存档；节点与模型均为夹具，不代表线上故障复现。
+      await suite.test(
+        '非 JSON 网关错误的诊断经 runtime 回执持久化并可由管理员查询',
+        async () => {
+          for (const version of [0, 1]) {
+            const result = await run(version, 'verification', () => ({
+              httpError: {
+                status: 504,
+                contentType: 'text/html; fixture=private-secret',
+                body: '<html>Gateway Timeout private-secret</html>',
+              },
+            }));
+            assert.equal(
+              result.report.executionDetails.reasonCode,
+              'RETRYABLE_MODEL_ERROR',
+            );
+            const path = `/v1/admin/executions/${result.grant.id}/model-calls`;
+            const { calls } = await ok('GET', path);
+            assert.deepEqual(
+              calls.map((call) => call.attempt),
+              [1, 2, 3],
+            );
+            assert.ok(
+              calls.every(
+                (call) => call.maxAttempts === 3 && call.timeoutMs > 0,
+              ),
+            );
+            assert.ok(
+              calls.every(
+                (call) =>
+                  call.error === 'INVALID_JSON' &&
+                  call.diagnostics.httpStatus === 504 &&
+                  call.diagnostics.contentType === 'text/html',
+              ),
+            );
+            assert.ok(
+              calls.every(
+                (call) => !('request' in call) && !('response' in call),
+              ),
+            );
+            assert.ok(!JSON.stringify(calls).includes('private-secret'));
+            const detail = await ok('GET', `${path}/${calls[0].id}`);
+            assert.deepEqual(detail.diagnostics, calls[0].diagnostics);
+          }
+        },
+      );
       // 范围：管理员暂停使旧模型回复失效，恢复后重取观察；只验证交接协议，不进行真实人工登录。
       await suite.test('控制代次变化拒绝旧决定，恢复后重新观察', async () => {
         let resumed;
