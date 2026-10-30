@@ -75,3 +75,27 @@ test('开发场景全过显示回归通过，同时解释缺少发布版本', ()
   assert.equal(benchmarkReleaseStatus(run).label, '开发回归未通过');
   assert.equal(benchmarkReleaseStatus(run).passed, false);
 });
+
+// 范围：V2 失败和未运行不会被展示为发布阻断；不改变其诊断结果，也不允许用 V2 代替真实基础报告。
+test('V2 仅用于诊断，失败或未完成没有发布阻断项', () => {
+  for (const suite of ['agent-loop-v2-live-v1', 'agent-loop-v2-deployed-v1']) {
+    const run = {
+      suite,
+      mode: 'real',
+      completedAt: null,
+      cases: [],
+    } as unknown as BenchmarkRun;
+    for (const completedAt of [null, new Date().toISOString()]) {
+      run.completedAt = completedAt;
+      const status = benchmarkReleaseStatus(run);
+      assert.equal(status.requiredForRelease, false);
+      assert.equal(status.passed, false);
+      assert.deepEqual(status.issues, []);
+      const html = renderToStaticMarkup(
+        createElement(BenchmarkReleaseConditions, { run }),
+      );
+      assert.match(html, /不参与发布门禁/);
+      assert.doesNotMatch(html, /尚未满足发布条件/);
+    }
+  }
+});

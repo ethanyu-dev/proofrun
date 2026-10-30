@@ -1,3 +1,7 @@
+import {
+  basicInteractionObjective,
+  basicInteractionChecks,
+} from '@proofrun/contracts/benchmark-interactions';
 import type { Database } from '../../db.js';
 import {
   DEPLOYED_V2_BENCHMARK_SUITE,
@@ -13,6 +17,7 @@ import {
   V2_CONTEXT_CHARS,
   v2CallLimit,
   DEPLOYED_BENCHMARK_SUITE,
+  LEGACY_DEPLOYED_BENCHMARK_SUITE,
 } from '@proofrun/contracts/benchmark-scenarios';
 import { canonical } from '../../domain.js';
 import { archiveV2Checks } from './v2-archive.js';
@@ -35,7 +40,7 @@ export async function benchmarkArchive(
   ].sort();
   const run: BenchmarkRun = {
     schemaVersion: 2,
-    suite: v2 ? DEPLOYED_V2_BENCHMARK_SUITE : DEPLOYED_BENCHMARK_SUITE,
+    suite: v2 ? DEPLOYED_V2_BENCHMARK_SUITE : job.suite,
     id: job.id,
     createdAt: job.created_at.toISOString(),
     completedAt: complete ? new Date().toISOString() : null,
@@ -66,7 +71,16 @@ export async function benchmarkArchive(
   };
   const scenarios = v2
     ? rows.map((row) => row.source).sort((a, b) => a.id.localeCompare(b.id))
-    : BENCHMARK_SCENARIOS;
+    : job.suite === LEGACY_DEPLOYED_BENCHMARK_SUITE
+      ? BENCHMARK_SCENARIOS.slice(0, 5)
+      : BENCHMARK_SCENARIOS;
+  if (
+    !v2 &&
+    ![LEGACY_DEPLOYED_BENCHMARK_SUITE, DEPLOYED_BENCHMARK_SUITE].includes(
+      job.suite,
+    )
+  )
+    throw new Error('未知基础验证套件');
   for (const scenario of scenarios) {
     const row = rows.find((entry) => entry.scenario === scenario.id);
     if (!row) throw new Error('持久化基准场景缺失');
@@ -94,7 +108,14 @@ export async function benchmarkArchive(
         0,
         (row.finished_at?.getTime() ?? Date.now()) - row.created_at.getTime(),
       ),
-      verdict: row.report?.verdict ?? row.error?.code ?? row.state,
+      verdict:
+        row.report?.browserResult?.outcome ??
+        row.report?.verdict ??
+        row.error?.code ??
+        row.state,
+      ...(row.report?.browserResult
+        ? { browserResult: row.report.browserResult }
+        : {}),
       checks: [],
       calls,
       commands,
@@ -154,6 +175,14 @@ export async function benchmarkArchive(
       run.cases.push(item);
       continue;
     }
+    const interaction = basicInteractionObjective(scenario.id);
+    if (interaction)
+      item.checks.push(
+        ...basicInteractionChecks(scenario.id, row.report, commands, {
+          visits: row.visits,
+          writes: row.writes,
+        }),
+      );
     const readOnly = scenario.id === 'read-only';
     const writesCorrect =
       canonical(row.writes) ===
@@ -169,11 +198,12 @@ export async function benchmarkArchive(
           command.operation.type === 'browser.act' &&
           command.operation.action !== 'navigate',
       );
-    check(
-      '真实业务事实与副作用',
-      row.visits > 0 && writesCorrect && resultCorrect && readonlyCorrect,
-      `访问 ${row.visits} 次；写入 ${row.writes.length} 次；结论 ${item.verdict}`,
-    );
+    if (!interaction)
+      check(
+        '真实业务事实与副作用',
+        row.visits > 0 && writesCorrect && resultCorrect && readonlyCorrect,
+        `访问 ${row.visits} 次；写入 ${row.writes.length} 次；结论 ${item.verdict}`,
+      );
     const malformed = calls.find(
       (call) =>
         call.status !== 'RECEIVED' ||

@@ -1,8 +1,13 @@
+import {
+  BASIC_INTERACTIONS,
+  basicInteractionObjective,
+  basicInteractionChecks,
+} from '../../contracts/dist/benchmark-interactions.js';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { benchmarkContext } from '../../contracts/dist/benchmark.js';
 
-/** 真实模型成本按完整十例预留，不按失败追加重试；各场景的轮次及时间上限保持不变。 */
+/** 真实模型成本按完整十二例预留，不按失败追加重试；各场景的轮次及时间上限保持不变。 */
 export const REAL_LIMITS = {
   maxTurns: 12,
   maxContextChars: 12000,
@@ -23,6 +28,7 @@ export const realCases = [
   { id: 'network-runtime', name: '网络 context：请求详情与缓存分页' },
   // 验证同快照恢复后真实点击，不用重新观察或页面文字代替网络详情。
   { id: 'network-page-return', name: '网络 context：核验后恢复页面操作' },
+  ...BASIC_INTERACTIONS,
 ];
 
 /** 通用浏览器任务以交付正文完成，不生成空验收项的 PASSED 结论。 */
@@ -46,7 +52,8 @@ const NETWORK_OBJECTIVES = {
 /** 业务目标只是任务定义，模型仍使用项目正式提示词，不提供脚本回复或替代模型决定。 */
 export function realGrant(scenario, origin) {
   const readOnly = scenario.id === 'read-only';
-  const browser = BROWSER_OBJECTIVES[scenario.id];
+  const browser =
+    BROWSER_OBJECTIVES[scenario.id] ?? basicInteractionObjective(scenario.id);
   return {
     id: randomUUID(),
     leaseToken: 'local-benchmark-lease',
@@ -106,6 +113,16 @@ export function realGrant(scenario, origin) {
 /** 独立服务端真值与执行器报告交叉核对；故障场景要求故障确实触发，不能静默算作通过。 */
 export function verifyRealCase(scenario, control, report, facts) {
   assert(facts.visits > 0, '浏览器必须实际访问本地页面');
+  if (basicInteractionObjective(scenario.id)) {
+    for (const check of basicInteractionChecks(
+      scenario.id,
+      report,
+      control.commands,
+      facts,
+    ))
+      assert(check.passed, check.name + '：' + check.detail);
+    return;
+  }
   if (NETWORK_OBJECTIVES[scenario.id]) {
     assert.equal(report.verdict, 'PASSED');
     assert.deepEqual(facts.writes, []);

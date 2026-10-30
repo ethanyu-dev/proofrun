@@ -167,6 +167,9 @@ test('生产模式 V2 页签可以发起线上测试，重试保持身份且不�
     assert(button('发起线上基准'));
     await switchTab('V2 真实任务');
     assert.equal(button('开始 V2 测试').disabled, false);
+    assert.match(container.textContent!, /不参与发布门禁/);
+    assert.match(container.textContent!, /失败或未运行不阻塞发布/);
+    assert.doesNotMatch(container.textContent!, /尚未满足发布条件/);
     assert(reads.some((path) => path.includes('/benchmarks?family=v2')));
     assert(reads.some((path) => path.endsWith('/versions?family=v2')));
     await act(async () => button('开始 V2 测试').click());
@@ -177,7 +180,7 @@ test('生产模式 V2 页签可以发起线上测试，重试保持身份且不�
     assert.equal(posts[1].family, 'v2');
     assert.equal(Object.keys(posts[1]).sort().join(), 'family,id');
     assert.match(container.textContent!, /接口历史任务夹具/);
-    await switchTab('浏览器任务');
+    await switchTab('基础验证');
     assert.doesNotMatch(container.textContent!, /接口历史任务夹具/);
     assert.match(container.textContent!, /正在运行另一个测试集：V2 真实任务/);
     assert.equal(button('运行中…').disabled, true);

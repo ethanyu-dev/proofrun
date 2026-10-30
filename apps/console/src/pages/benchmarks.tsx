@@ -155,7 +155,7 @@ function CaseDetail({
         open={!pending && !benchmarkPassed(item)}
       >
         <summary>
-          门禁检查 · {item.checks.filter((check) => check.passed).length}/
+          场景检查 · {item.checks.filter((check) => check.passed).length}/
           {item.checks.length} 通过
         </summary>
         {item.checks.map((check, index) => (
@@ -264,7 +264,7 @@ export function BenchmarksPage({ api }: { api: ApiClient | null }) {
         onValueChange={(value) => setFamily(value as 'browser' | 'v2')}
       >
         <TabsList variant="line" aria-label="Benchmark 测试集">
-          <TabsTrigger value="browser">浏览器任务</TabsTrigger>
+          <TabsTrigger value="browser">基础验证</TabsTrigger>
           <TabsTrigger value="v2">V2 真实任务</TabsTrigger>
         </TabsList>
         <TabsContent value={family}>
@@ -339,7 +339,7 @@ function BenchmarkWorkspace({
             Agent Loop Benchmark
           </h1>
           <p className="muted">
-            {live ? 'V2 真实任务 · 完整步骤与原预算' : '基础场景回归'} ·
+            {live ? 'V2 真实任务 · 完整步骤与原预算' : '基础验证 · 发布必需'} ·
             逐轮上下文 · 工具调用
           </p>
         </div>
@@ -428,15 +428,16 @@ function BenchmarkWorkspace({
       <ErrorNotice message={state.error} />
       <div className="bench-notice">
         {live
-          ? `真实模型访问历史任务指定的生产站点，保留原始验收标准、步骤预算和来源任务。${api ? `由后台调度 Agent 与浏览器节点，离开页面后继续；目标环境：${state.server?.environment ?? '读取中'}；API 版本：${state.server?.release.version ?? '未记录'}。` : '由本地独立 Chrome 执行。'}`
+          ? `诊断任务，不参与发布门禁；失败或未运行不阻塞发布。真实模型访问历史任务指定的生产站点，保留原始验收标准、步骤预算和来源任务。${api ? `由后台调度 Agent 与浏览器节点，离开页面后继续；目标环境：${state.server?.environment ?? '读取中'}；API 版本：${state.server?.release.version ?? '未记录'}。` : '由本地独立 Chrome 执行。'}`
           : api
-            ? `目标环境：${state.server?.environment ?? '读取中'}；实际 API 版本：${state.server?.release.version ?? '未记录'}。由后台队列调度实际 Agent 和浏览器节点。`
+            ? `目标环境：${state.server?.environment ?? '读取中'}；实际 API 版本：${state.server?.release.version ?? '未记录'}。由后台队列调度实际 Agent 和浏览器节点。此处为部署后验证，发布门禁以本地/CI 完整十二场景为准。`
             : run?.mode === 'scripted'
               ? '当前为脚本协议回归，不能代替真实发布检查。'
-              : '真实模型 + 独立 Chrome · 本地合成业务 · 固定十场景，包含网络 context、通用浏览器任务及两项明确故障注入。'}
+              : '真实模型 + 独立 Chrome · 本地合成业务 · 固定十二场景，包含网络 context、通用浏览器任务及两项明确故障注入。'}
         {!api && !live && (
           <>
-            发布要求完整真实运行通过、24 小时内且源码指纹一致。
+            仅基础验证参与发布门禁：完整真实运行全部通过、24
+            小时内且源码指纹一致。V2 真实任务仅用于诊断。
             <code>
               pnpm benchmark:release --version vX.Y.Z --env-file
               .proofrun/local.env
@@ -450,7 +451,7 @@ function BenchmarkWorkspace({
       {state.running && (
         <p role="status" className="bench-notice">
           {state.activeFamily && state.activeFamily !== family
-            ? `正在运行另一个测试集：${state.activeFamily === 'v2' ? 'V2 真实任务' : '浏览器任务'}。请切换对应页签查看结果。`
+            ? `正在运行另一个测试集：${state.activeFamily === 'v2' ? 'V2 真实任务' : '基础验证'}。请切换对应页签查看结果。`
             : api
               ? '后台存在排队或执行中的基准，离开页面后继续运行。'
               : live
@@ -516,7 +517,7 @@ function BenchmarkWorkspace({
             {api
               ? live
                 ? '由后台发起两项完整历史 V2 任务，结果持续保存在数据库。'
-                : '由后台发起固定五场景，结果持续保存在数据库。'
+                : '由后台发起固定七场景，结果持续保存在数据库。'
               : live
                 ? '运行已冻结的两项历史任务，或导入对应 V2 归档。'
                 : '运行基础场景，或导入 CI / 本地生成的结果 JSON。'}
@@ -593,7 +594,7 @@ function BenchmarkWorkspace({
             <div>
               <span>
                 {live
-                  ? 'V2 真实任务'
+                  ? 'V2 诊断 · 不阻塞发布'
                   : run.mode === 'deployed'
                     ? '线上基准'
                     : run.release?.kind === 'development'
@@ -667,7 +668,7 @@ function BenchmarkWorkspace({
           <section className="bench-cases">
             <div className="bench-section-title">
               <h2>
-                {live ? '历史真实任务' : '浏览器场景'}{' '}
+                {live ? '历史真实任务' : '基础场景'}{' '}
                 <span className="muted">{visible.length}</span>
               </h2>
               <div className="bench-filters">
@@ -694,7 +695,7 @@ function BenchmarkWorkspace({
                 <thead>
                   <tr>
                     <th>场景</th>
-                    <th>门禁</th>
+                    <th>{live ? '检查' : '门禁'}</th>
                     <th>轮次 / Δ</th>
                     <th>Context 峰值 / Δ</th>
                     <th>派发命令</th>

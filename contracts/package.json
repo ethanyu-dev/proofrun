@@ -40,6 +40,10 @@
     "./benchmark-v2": {
       "types": "./dist/benchmark-v2.d.ts",
       "default": "./dist/benchmark-v2.js"
+    },
+    "./benchmark-interactions": {
+      "types": "./dist/benchmark-interactions.d.ts",
+      "default": "./dist/benchmark-interactions.js"
     }
   },
   "files": [

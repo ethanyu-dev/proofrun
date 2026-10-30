@@ -1,3 +1,7 @@
+import {
+  BASIC_INTERACTIONS,
+  basicInteractionPage,
+} from '../../contracts/dist/benchmark-interactions.js';
 import { createServer } from 'node:http';
 
 /** 合成业务站点没有外部请求、账号或真实用户数据；独立真值只通过进程内方法读取。 */
@@ -35,6 +39,7 @@ export async function realSite() {
           'browser-disclosures',
           'network-runtime',
           'network-page-return',
+          ...BASIC_INTERACTIONS.map((c) => c.id),
         ].includes(id)
       ) {
         response.writeHead(404).end();
@@ -91,6 +96,12 @@ export async function realSite() {
               caching +
               'document.querySelector("#ready").textContent="准备完成";})();</script></html>',
           );
+        return;
+      }
+      const interaction = basicInteractionPage(id);
+      if (interaction) {
+        response.setHeader('Content-Type', 'text/html; charset=utf-8');
+        response.end(HEAD + interaction + '</html>');
         return;
       }
       const page =
