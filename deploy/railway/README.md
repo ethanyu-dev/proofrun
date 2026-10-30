@@ -2,6 +2,26 @@
 
 Railway 运行 API、Web Console、执行 Agent 和 PostgreSQL；访问业务页面的 Browser Node 安装在 Linux 节点机。节点安装与升级见 [节点 release](../../scripts/node-release/README.md)。
 
+## 发布入口与真实报告传递
+
+使用 `Release Railway` 工作流发布：仅在当前 `main` 的完整 CI 成功后启动，从同一次 CI 下载 `real-agent-benchmark-release`。发布脚本核对提交、CI 尝试号、24 小时有效期和源码指纹，再生成只包含 Git 源码与 `.benchmark-release/real.json` 的干净上传目录。API、Agent、Web 都使用该目录构建，Dockerfile 中原有真实门禁保持启用。
+
+**三个应用服务应关闭 Railway 的 Git 自动部署。** Git 直接拉取不包含被忽略的 CI 报告，会在真实门禁处失败；Wait for CI 只控制时序，不会把报告传进构建。不要把报告提交到 Git，也不要删除 Dockerfile 的门禁。下文 Watch Paths 设置只涉及路径过滤，不能替代该发布入口。
+
+GitHub 配置 `PROOFRUN_RAILWAY_TOKEN` Secret（仅目标项目及生产环境范围），以及 `PROOFRUN_RAILWAY_PROJECT_ID`、`PROOFRUN_RAILWAY_ENVIRONMENT_ID` Variables。工作流不会将模型密钥或管理员凭据写入源码包；管理员凭据仅在发布进程内从指定环境读取，用于检查活动任务和实际 API 版本。
+
+发布独立串行运行，不被下一次 CI 推送取消。升级前要求队列与运行任务为空，并确认 API 和 PostgreSQL 卷备份；按 API、Agent、Web 顺序等待每个部署成功，API/Web 另核对实际构建版本。任何阶段失败立即停止后续服务，保留失败部署 ID。数据库迁移自身的活动资源保护也保持启用，不能自动取消任务来绕过。
+
+失败后可手动运行 `Release Railway`，填写同一成功 CI 的 `ci_run_id`；若报告已过期或 main 已更新，需要对应提交重新完成 CI。也可在该提交的干净 checkout 中使用已登录的 CLI：
+
+```bash
+pnpm install --frozen-lockfile
+pnpm --filter @proofrun/contracts build
+# 只生成并校验发布目录，不访问生产变量、备份或部署。
+node scripts/railway-release.mjs --repository OWNER/REPO --run CI_RUN_ID --project PROJECT_ID --environment ENVIRONMENT_ID --prepare-only
+# 去掉 --prepare-only 后完成备份与三个服务的顺序发布。
+```
+
 ## 服务与配置文件
 
 在同一 Railway 项目和环境中添加 PostgreSQL，然后从同一个 GitHub 仓库创建三个服务。**三个服务的 Root Directory 均保持仓库根目录**，通过服务设置或 `RAILWAY_DOCKERFILE_PATH` 指定下表的 Dockerfile。清空自动识别产生的 Build Command 和 Start Command，使用镜像内的构建步骤和启动命令。不要把 Root Directory 改成 apps 子目录，否则 workspace 契约及锁文件不可见；`contracts` 是共享代码包，不创建独立服务。

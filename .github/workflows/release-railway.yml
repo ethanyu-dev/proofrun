@@ -1,0 +1,61 @@
+name: Release Railway
+on:
+  workflow_run:
+    workflows: [CI]
+    branches: [main]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      ci_run_id:
+        description: '已完整通过的当前 main CI 运行 ID（仍执行原报告门禁）'
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+# 发布独立于 CI 的取消策略；已经开始的三服务升级不能被下一次推送中断。
+concurrency:
+  group: railway-production-release
+  cancel-in-progress: false
+jobs:
+  release:
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 85
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_REPOSITORY: ${{ github.repository }}
+      RELEASE_CI_RUN: ${{ inputs.ci_run_id || github.event.workflow_run.id }}
+    steps:
+      - name: 定位受信任的完整 CI 提交
+        id: source
+        run: |
+          node --input-type=module <<'JS'
+          import { execFileSync } from 'node:child_process';
+          import { appendFileSync } from 'node:fs';
+          const { RELEASE_REPOSITORY: repository, RELEASE_CI_RUN: id } = process.env;
+          if (!/^\d+$/.test(id)) throw Error('CI ID 无效');
+          const run = JSON.parse(execFileSync('gh', ['api', `repos/${repository}/actions/runs/${id}`], { encoding: 'utf8' }));
+          if (run.repository?.full_name !== repository || run.head_repository?.full_name !== repository || run.head_branch !== 'main' || run.event !== 'push' || run.path !== '.github/workflows/ci.yml' || run.status !== 'completed' || run.conclusion !== 'success' || !/^[a-f0-9]{40}$/.test(run.head_sha)) throw Error('需要本仓库 main 的完整成功 CI');
+          appendFileSync(process.env.GITHUB_OUTPUT, `commit=${run.head_sha}\n`);
+          JS
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.source.outputs.commit }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @proofrun/contracts build
+      - run: npm install --global @railway/cli@5.30.1
+      - name: 校验 CI 报告、备份并依次发布 API / Agent / Web
+        env:
+          RAILWAY_TOKEN: ${{ secrets.PROOFRUN_RAILWAY_TOKEN }}
+          RELEASE_PROJECT: ${{ vars.PROOFRUN_RAILWAY_PROJECT_ID }}
+          RELEASE_ENVIRONMENT: ${{ vars.PROOFRUN_RAILWAY_ENVIRONMENT_ID }}
+        run: |
+          test -n "$RAILWAY_TOKEN" || { echo '缺少生产环境范围的 Railway 项目凭据'; exit 1; }
+          node scripts/railway-release.mjs --repository "$RELEASE_REPOSITORY" --run "$RELEASE_CI_RUN" --project "$RELEASE_PROJECT" --environment "$RELEASE_ENVIRONMENT"
