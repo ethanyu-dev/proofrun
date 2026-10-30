@@ -175,6 +175,9 @@
               "type": "integer",
               "minimum": 0,
               "maximum": 1
+            },
+            "timeoutMs": {
+              "$ref": "model-call.schema.json#/properties/timeoutMs"
             }
           },
           "required": [
@@ -237,6 +240,9 @@
               "type": ["integer", "null"],
               "minimum": 0,
               "description": "一次供应商请求的耗时，不含记录交付。"
+            },
+            "diagnostics": {
+              "$ref": "model-call.schema.json#/properties/diagnostics"
             }
           },
           "required": [

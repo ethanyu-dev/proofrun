@@ -219,7 +219,7 @@ test('报告保留当前运行的环境阻塞原因', () => {
   assert.match(html, />0 \/ 1</);
 });
 
-// 范围：执行页移除旧模块、完整读取分页并保留来源；HTTP 为夹具，不覆盖真实浏览器会话。
+// 范围：执行页读取当前运行的模型元数据与完整操作分页并保留来源；HTTP 为夹具，不覆盖真实浏览器会话。
 test('执行页仅显示当前运行并读完操作分页', async (context) => {
   const window = new Window({
     url: 'http://localhost/#/tasks/fixture-run-second?request=request-fixture',
@@ -251,6 +251,7 @@ test('执行页仅显示当前运行并读完操作分页', async (context) => {
   context.mock.method(localApi, 'json', async (path: string) => {
     calls.push(path);
     if (path === '/v1/tasks/fixture-run-second') return fixture('second');
+    if (path.endsWith('/model-calls')) return { calls: [] };
     if (path.endsWith('/timeline'))
       return {
         commands: [
@@ -312,10 +313,9 @@ test('执行页仅显示当前运行并读完操作分页', async (context) => {
         '/v1/admin/executions/execution-second/timeline?after=first',
       ],
     );
+    assert(calls.includes('/v1/admin/executions/execution-second/model-calls'));
     assert(
-      !calls.some((path) =>
-        /comparison|model-calls|live-frame|execution-first/.test(path),
-      ),
+      !calls.some((path) => /comparison|live-frame|execution-first/.test(path)),
     );
   } finally {
     await act(async () => root.unmount());

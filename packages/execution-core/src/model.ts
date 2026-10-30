@@ -13,7 +13,12 @@ export interface DecisionInput {
   traceRequest?: (
     request: Pick<
       ModelCall,
-      'model' | 'purpose' | 'request' | 'requestSha256' | 'imagesOmitted'
+      | 'model'
+      | 'purpose'
+      | 'request'
+      | 'requestSha256'
+      | 'imagesOmitted'
+      | 'timeoutMs'
     >,
   ) => Promise<
     (

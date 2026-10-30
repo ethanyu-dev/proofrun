@@ -91,6 +91,17 @@ export class ChatModel implements DecisionModel {
       })),
       tool_choice: toolChoice(this.config),
     };
+    const timeoutMs = Math.max(
+      1,
+      Math.floor(
+        Math.min(
+          this.config.modelMs,
+          input.modelDeadline === undefined
+            ? Infinity
+            : Math.max(1, input.modelDeadline - performance.now()),
+        ),
+      ),
+    );
     const raw = (await modelRequest(
       input,
       this.config.model,
@@ -102,8 +113,9 @@ export class ChatModel implements DecisionModel {
           this.config.modelKey,
           'POST',
           body,
+          // 存档本身会耗时；真正派发时再次收紧期限，诊断不能延长原来的收尾预算。
           Math.min(
-            this.config.modelMs,
+            timeoutMs,
             input.modelDeadline === undefined
               ? Infinity
               : Math.max(1, input.modelDeadline - performance.now()),
@@ -112,6 +124,7 @@ export class ChatModel implements DecisionModel {
           undefined,
           modelTransport,
         ),
+      timeoutMs,
     )) as {
       choices?: Array<{
         finish_reason?: string;

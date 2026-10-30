@@ -54,6 +54,10 @@ export type RuntimeRequest =
         request: string;
         requestSha256: string;
         imagesOmitted: number;
+        /**
+         * 派发前计算的单次请求时限上限；存档后仍按剩余步骤期限收紧，不延长执行预算。
+         */
+        timeoutMs?: number;
       };
     }
   | {
@@ -88,6 +92,7 @@ export type RuntimeRequest =
          * 一次供应商请求的耗时，不含记录交付。
          */
         elapsedMs: number | null;
+        diagnostics?: Diagnostics;
       };
     };
 /**
@@ -460,4 +465,42 @@ export interface RecordVerification {
    */
   summary: string;
   progress: Progress;
+}
+/**
+ * 封闭诊断字段，不包含原始正文、地址、认证头或任意供应商文本。
+ */
+export interface Diagnostics {
+  /**
+   * 失败发生阶段；REQUEST 不能进一步区分建连与等待响应头。
+   */
+  phase: 'REQUEST' | 'RESPONSE_BODY' | 'RESPONSE_PARSE' | 'HTTP_STATUS';
+  /**
+   * 已收到的 HTTP 状态；未收到响应头时为空。
+   */
+  httpStatus: number | null;
+  /**
+   * 归一化响应媒体类型；不保存原始头参数，缺失时为空。
+   */
+  contentType: 'application/json' | 'text/html' | 'text/plain' | 'other' | null;
+  /**
+   * 已读完整正文的结构类别，未读完时为 unknown。
+   */
+  responseFormat: 'json' | 'html' | 'text' | 'empty' | 'unknown';
+  /**
+   * 已完整读取的响应字节数；未读完或超限时为空。
+   */
+  responseBytes: number | null;
+  /**
+   * 按状态及有限特征生成的分类摘要，不复制供应商错误消息。
+   */
+  reason:
+    | 'RATE_LIMITED'
+    | 'GATEWAY_TIMEOUT'
+    | 'UPSTREAM_UNAVAILABLE'
+    | 'AUTH_REJECTED'
+    | 'CONTEXT_LIMIT'
+    | 'INVALID_RESPONSE'
+    | 'REQUEST_TIMEOUT'
+    | 'TRANSPORT_FAILURE'
+    | 'RESPONSE_TOO_LARGE';
 }

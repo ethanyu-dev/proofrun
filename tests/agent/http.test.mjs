@@ -260,3 +260,126 @@ test('Worker 直接领取任务，不依赖已移除的身份选择接口', asyn
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+// 范围：本地 HTTP 错误页、JSON 限流与超限响应的分类和脱敏；不证明真实网关或供应商故障原因。
+test('HTTP 失败保留状态与封闭摘要，不保存错误页中的秘密', async () => {
+  const secret = 'private-key-fixture-do-not-store';
+  const server = createServer((request, response) => {
+    request.resume();
+    if (request.url === '/html') {
+      response.writeHead(504, {
+        'content-type': `text/html; secret=${secret}`,
+      });
+      response.end(
+        `<html>Gateway Timeout ${secret} https://secret.example/token</html>`,
+      );
+    } else if (request.url === '/rate') {
+      response.writeHead(429, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ error: { message: secret } }));
+    } else if (request.url === '/large') {
+      response.writeHead(502, { 'content-type': 'text/plain' });
+      response.end('x'.repeat(2 * 1024 * 1024 + 1));
+    } else {
+      response.writeHead(200, { 'content-type': `application/x-${secret}` });
+      response.end(secret);
+    }
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    for (const [path, status, code, phase, reason, format] of [
+      [
+        '/html',
+        504,
+        'INVALID_JSON',
+        'RESPONSE_PARSE',
+        'GATEWAY_TIMEOUT',
+        'html',
+      ],
+      ['/rate', 429, 'HTTP_ERROR', 'HTTP_STATUS', 'RATE_LIMITED', 'json'],
+      [
+        '/plain',
+        200,
+        'INVALID_JSON',
+        'RESPONSE_PARSE',
+        'INVALID_RESPONSE',
+        'text',
+      ],
+      [
+        '/large',
+        502,
+        'RESPONSE_TOO_LARGE',
+        'RESPONSE_BODY',
+        'RESPONSE_TOO_LARGE',
+        'unknown',
+      ],
+    ]) {
+      await assert.rejects(
+        jsonRequest(
+          `http://127.0.0.1:${server.address().port}${path}`,
+          secret,
+          'POST',
+          {},
+          2000,
+        ),
+        (error) => {
+          assert.equal(error.code, code);
+          assert.equal(error.diagnostics.httpStatus, status);
+          assert.equal(error.diagnostics.phase, phase);
+          assert.equal(error.diagnostics.reason, reason);
+          assert.equal(error.diagnostics.responseFormat, format);
+          assert.ok(!JSON.stringify(error).includes(secret));
+          if (path === '/plain')
+            assert.equal(error.diagnostics.contentType, 'other');
+          if (path === '/html')
+            assert.equal(error.diagnostics.contentType, 'text/html');
+          return true;
+        },
+      );
+    }
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+// 范围：未收到响应头与正文未读完的本地超时有不同阶段，取消不改写租约错误；不测远端计算停止。
+test('超时诊断区分等待响应头和读取正文', async () => {
+  const server = createServer((request, response) => {
+    request.resume();
+    if (request.url === '/body') {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.write('{');
+    }
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    for (const path of ['/headers', '/body']) {
+      await assert.rejects(
+        jsonRequest(
+          `http://127.0.0.1:${server.address().port}${path}`,
+          'fixture',
+          'POST',
+          {},
+          100,
+        ),
+        (error) => {
+          assert.equal(error.code, 'TRANSPORT_REQUEST_TIMEOUT');
+          assert.equal(
+            error.diagnostics.phase,
+            path === '/body' ? 'RESPONSE_BODY' : 'REQUEST',
+          );
+          assert.equal(
+            error.diagnostics.httpStatus,
+            path === '/body' ? 200 : null,
+          );
+          assert.equal(error.diagnostics.responseBytes, null);
+          assert.equal(error.diagnostics.reason, 'REQUEST_TIMEOUT');
+          return true;
+        },
+      );
+    }
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

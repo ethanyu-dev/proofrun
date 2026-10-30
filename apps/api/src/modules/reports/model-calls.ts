@@ -84,7 +84,11 @@ export class ModelCalls {
           record.error !== null ||
           record.elapsedMs !== null ||
           record.promptTokens !== null ||
-          record.completionTokens !== null
+          record.completionTokens !== null ||
+          record.diagnostics !== undefined ||
+          (record.attempt === undefined) !==
+            (record.maxAttempts === undefined) ||
+          (record.attempt !== undefined && record.attempt > record.maxAttempts!)
         )
           throw new ApiError(
             400,
@@ -179,6 +183,7 @@ export class ModelCalls {
           !result.finishedAt ||
           result.status === 'PENDING' ||
           result.elapsedMs === null ||
+          (result.status !== 'ERROR' && result.diagnostics !== undefined) ||
           (result.status === 'ERROR'
             ? !result.error || result.response !== null
             : result.error !== null || result.response === null)
