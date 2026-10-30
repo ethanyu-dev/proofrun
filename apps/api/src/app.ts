@@ -41,11 +41,6 @@ import { ModelCalls } from './modules/reports/model-calls.js';
 import { CaseV2Service } from './modules/cases/v2.js';
 import { CaseService } from './modules/cases/service.js';
 import { registerPublicDocs } from './modules/docs/routes.js';
-import { registerTaskMcp } from './modules/mcp/routes.js';
-import { PublicTaskService } from './modules/public-execution/service.js';
-import { validatePublicCredentials } from './modules/public-execution/auth.js';
-import { ExternalExecution } from './modules/external-execution/service.js';
-import { ExternalEngine } from './modules/external-execution/engine.js';
 import { ExecutionRuntime } from './modules/execution-runtime/service.js';
 import { RuntimeDriver } from './modules/execution-runtime/driver.js';
 import { registerExecutionRuntime } from './modules/execution-runtime/routes.js';
@@ -59,9 +54,6 @@ export async function buildApp(
   config: ApiConfig = loadConfig(),
   options: { logger?: boolean } = {},
 ) {
-  // 在持有数据库实例锁之前拒绝错误配置，避免初始化失败遗留连接。
-  if (config.publicCredentials)
-    validatePublicCredentials(config.publicCredentials);
   const app = Fastify({
     logger:
       options.logger === false
@@ -151,16 +143,9 @@ export async function buildApp(
     artifacts,
     (grant, ports) => benchmarkPorts(benchmarks, grant, ports),
   );
-  const external = new ExternalExecution(
-    db,
-    coordinator,
-    new ExternalEngine(db, driver, config.publicUrl, config.externalIdleMs),
-    config,
-  );
   const runtime = new ExecutionRuntime(db, driver, config.publicUrl);
   try {
     await runtime.recover();
-    await external.recover();
   } catch (error) {
     // 恢复失败时尚未安装关闭钩子，必须释放实例锁，不能留下半初始化的控制面。
     await db.close();
@@ -219,19 +204,6 @@ export async function buildApp(
       );
   });
   registerPublicDocs(app);
-  await registerTaskMcp(
-    app,
-    config,
-    new PublicTaskService(
-      db,
-      config,
-      casesV2,
-      coordinator,
-      requestReader,
-      artifacts,
-    ),
-    external,
-  );
   await app.register(websocket, {
     options: { maxPayload: MAX_MESSAGE_BYTES },
     // 统一接管退出顺序，避免默认关闭握手留下业务连接表之外的旧连接。
@@ -621,7 +593,6 @@ export async function buildApp(
       body.profileTabsVersion,
       body.executionPlanVersion,
       body.runtimeVersion,
-      undefined,
       body.benchmarkVersion,
     );
   });
@@ -848,7 +819,6 @@ export async function buildApp(
     ticking = coordinator
       .tick()
       .then(() => nodeProfiles.tick())
-      .then(() => external.tick())
       .then(() => benchmarks.tick())
       .catch((error) => {
         app.log.error({ err: error }, '调度扫描失败');
@@ -865,7 +835,6 @@ export async function buildApp(
     clearInterval(timer);
     await notifications.close();
     await ticking;
-    await external.close();
     await runtime.close();
     // 先取得网关在途事件的等待对象，连接关闭事件随后可能移除业务路由记录。
     const draining = gateway.close();

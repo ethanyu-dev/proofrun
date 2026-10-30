@@ -139,10 +139,6 @@ pnpm test:agent:browser
 
 浏览器任务回归：`apps/api/test/browser-tasks.test.ts` 覆盖精简接口、类型隔离、配置冻结、幂等、分页、重跑和报告证据归属；`tests/agent/execution.test.mjs` 覆盖无证据拒绝完成和部分结果交付；`tests/console/browser-task.test.ts` 覆盖双字段输入、草稿保留、网络重试和安全结果渲染。模型与浏览器均使用夹具，不代表真实浏览器任务成功率。
 
-## 真实 Codex MCP 联调
-
-`pnpm test:mcp:codex` 使用真实已登录的 Codex CLI，通过两套 MCP 完成准备、浏览器操作、验证、清理与报告。需要独立 PostgreSQL 和 Linux/systemd/Chromium 容器依赖；配置、审计产物及覆盖边界见 [联调说明](mcp-real/README.md)。`pnpm test:mcp:regression` 运行 `tests/mcp-real/` 下无需真实模型的配置传递和验收审核器回归；本地启动配置用例归入此入口，`test:deploy` 只运行部署冒烟，避免 CI 重复执行。
-
 ## Agent Loop 发布基础基准
 
 运行 `pnpm benchmark:setup` 后执行 `pnpm benchmark:release --version v0.1.0 --env-file .proofrun/local.env`，真实模型和独立 Chrome 完成八个固定场景（原五例加选择控件、跨标签、展开阅读），并保留逐轮 context、工具调用、截图及独立服务端写入事实。`pnpm benchmark:gate` 核实真实套件、当前源码与 24 小时有效期。Console 默认运行真实套件，发布工作流和最终 Docker 镜像必须通过真实门禁。

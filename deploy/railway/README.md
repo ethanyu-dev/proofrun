@@ -69,9 +69,7 @@ API：
 
 密钥可分别使用 `openssl rand -hex 32` 生成。不要把密钥写入仓库、Docker build arguments 或 `VITE_*` 变量。
 
-需要接入浏览器和验证 MCP 时，在 API 服务配置 `PROOFRUN_MCP_CREDENTIALS_JSON`，内容为 [公共凭据配置](../../apps/api/README.md#任务级-mcp-与-v3-api) 中的摘要数组；不能填客户端明文令牌。启动入口将 JSON 写入权限 0600 的临时文件，再交给 API 原有验证器。也可使用已有挂载文件的 `PROOFRUN_MCP_CREDENTIALS_FILE`，两种来源只能选一种。未配置时保持关闭；配置变更需要重新部署 API。
-
-Web 代理必须同时转发 `/mcp/*` 和 `/v3/*`。部署后分别检查 `/mcp/browser`、`/mcp/verification` 和 `/v3/verification/capabilities`：未授权请求应返回 401 JSON，不能返回 Console HTML；再用公共凭据完成 MCP initialize 与 tools/list。管理员令牌不能代替公共凭据。旧管理 API 创建的 Case 不自动归属 MCP principal；重复验证应复制原业务定义为新的 requestId/caseId，通过 MCP 以 external 提交，保留原记录。
+从含 v3 的版本升级时，先按 [v3 退役升级](../../apps/api/README.md#v3-退役升级) 结束 external 运行并回收资源；API 会在仍有活动资源时拒绝迁移。
 
 需要飞书群通知时，仅在 API 增加 `PROOFRUN_FEISHU_APP_ID`、`PROOFRUN_FEISHU_APP_SECRET` 和 `PROOFRUN_FEISHU_CHAT_ID`，三个变量同时填写。使用已发布的企业自建应用机器人并将其加入目标群，权限与卡片同步规则见 [Case 飞书生命周期通知](../../apps/api/README.md#case-飞书生命周期通知)。
 

@@ -17,8 +17,3 @@ export const REPEATED_RECORD_FEEDBACK = `CRITERIA_ALREADY_RECORDED:
 使用 verification_finish（progress.criteria 可以为空）；若缺口无法补齐，
 使用 verification_block 说明已尝试动作、现有证据和缺失前提。
 不要再次重送相同结论。`;
-
-/** 外部等待耗尽探索窗口后只交付已有事实，不能继续占用收尾额度执行页面操作。 */
-export const EXTERNAL_SETTLEMENT_FEEDBACK = `探索决定窗口已到期；
-请立即用 verification.record 保存已有结论，再 finish 或 block。
-剩余额度只用于原步骤收尾，不再派发浏览器操作。`;

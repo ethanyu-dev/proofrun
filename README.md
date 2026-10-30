@@ -239,7 +239,6 @@ pnpm accept:task /absolute/path/to/verification-task.json
 
 - [Agent 运行与模型配置](apps/agent/README.md)
 - [整体架构](docs/architecture.md)
-- [双 MCP 与外部验证执行设计](docs/mcp-execution-design.md)
 - [DevPass 外部账号配置与使用](apps/api/src/modules/account-providers/README.md#devpass-外部账号)
 - [Console 运行与业务页面](apps/console/README.md)
 - [Console 视觉规范与 x.ai 样式研究](docs/console-design.md)

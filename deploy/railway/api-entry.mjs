@@ -13,27 +13,6 @@ if (!EXECUTION_MODES.includes(mode))
 // Railway 分配 PORT；显式的应用端口仍优先，私网同时支持 IPv4 和 IPv6。
 process.env.PROOFRUN_API_PORT ??= process.env.PORT ?? '4100';
 process.env.PROOFRUN_API_HOST ??= '::';
-// Railway 变量保存摘要配置，启动时落为私有文件；原始客户端令牌不属于服务配置。
-const mcpJson = process.env.PROOFRUN_MCP_CREDENTIALS_JSON;
-if (mcpJson && process.env.PROOFRUN_MCP_CREDENTIALS_FILE)
-  throw new Error('MCP 凭据的 JSON 与文件配置只能选择一种');
-if (mcpJson) {
-  let value;
-  try {
-    value = JSON.parse(mcpJson);
-  } catch {
-    // JSON 解析器可能附带原文片段，不能让误填的明文令牌进入启动日志。
-    throw new Error('MCP 凭据 JSON 格式无效');
-  }
-  const path = join(
-    mkdtempSync(join(tmpdir(), 'proofrun-mcp-credentials-')),
-    'credentials.json',
-  );
-  writeFileSync(path, JSON.stringify(value), { mode: 0o600 });
-  process.env.PROOFRUN_MCP_CREDENTIALS_FILE = path;
-  delete process.env.PROOFRUN_MCP_CREDENTIALS_JSON;
-  // 文件内容仍由 API 的公共凭据验证器校验，不在部署入口另建授权规则。
-}
 // 平台变量可配置 case profile，省去手工向运行容器上传文件；两种来源不能同时启用。
 const profileJson = process.env.PROOFRUN_CASE_PROFILE_JSON;
 const profileFile = process.env.PROOFRUN_CASE_PROFILE_FILE;

@@ -28,6 +28,14 @@ test('公开规范与共享契约一致，并将在线调试限制到当前来�
   assert.deepEqual(document.security, [{ AdminBearer: [] }]);
   assert.ok(document.paths['/v2/cases']);
   assert.ok(document.paths['/v1/cases']);
+  assert.ok(
+    Object.keys(document.paths).every((path) => !path.startsWith('/v3/')),
+  );
+  assert.deepEqual(Object.keys(document.components.securitySchemes), [
+    'AdminBearer',
+  ]);
+  assert.equal(document.components.schemas.ExternalExecutionRequest, undefined);
+  assert.equal(document.components.schemas.McpTaskCall, undefined);
   assert.equal(document.paths['/v1/nodes'], undefined);
 });
 

@@ -1,7 +1,12 @@
 # 两个副本均设 PROOFRUN_API_HA=true；地址示例为同机双进程，跨主机请换成内网地址。
 # 主备共享数据库、密钥和证据目录；ready 只有持锁并健康的活动副本返回 200。
 {$PROOFRUN_DOMAIN} {
-    @control path /v1/* /v2/* /v3/* /mcp/* /health/* /docs /docs/* /openapi.json
+    # 退役入口不得落入 Console 的 SPA 回退。
+    @retired path /v3/* /mcp/*
+    handle @retired {
+        respond 404
+    }
+    @control path /v1/* /v2/* /health/* /docs /docs/* /openapi.json
     handle @control {
         reverse_proxy {$PROOFRUN_API_A:127.0.0.1:4101} {$PROOFRUN_API_B:127.0.0.1:4102} {
             health_uri /health/ready
