@@ -1390,3 +1390,99 @@ test('运行时回执保留分页进度，采集覆盖元数据不被摘要化',
   current.observationId = 'new';
   assert.deepEqual(ledger.view(current), []);
 });
+
+// 范围：同一附件的分页进度与验收结论分离，全部读完才提交；模型和缓存均为夹具，不证明供应商遵循提示。
+test('缓存分页用要求进度保存部分发现，同一快照读完后首次登记验收', async () => {
+  const client = new FakeControl();
+  const command = client.command.bind(client);
+  client.command = async (...args) => {
+    const result = await command(...args);
+    if (args[2].type === 'browser.observe') {
+      result.data.runtime = {
+        cacheStorage: {
+          entries: Array.from({ length: 24 }, (_, i) => ({
+            url: `https://fixture.test/cache-${i}`,
+            responseStatus: 200,
+          })),
+        },
+      };
+      const artifact = {
+        id: 'runtime-pagination-evidence',
+        kind: 'RUNTIME',
+        sha256: 'a'.repeat(64),
+        state: 'AVAILABLE',
+      };
+      client.artifacts.push(artifact);
+      result.data.artifactRefs.push({
+        artifactId: artifact.id,
+        kind: artifact.kind,
+        sha256: artifact.sha256,
+      });
+    }
+    return result;
+  };
+  const execution = grant();
+  execution.task.acceptanceCriteria[0].evidenceKinds = ['RUNTIME'];
+  let round = 0;
+  const model = {
+    async decide({ context }) {
+      round++;
+      let decision;
+      if (round <= 2) {
+        assert.deepEqual(context.state.criteria, []);
+        decision = {
+          type: 'context.read',
+          observationId: context.page.observationId,
+          section: 'runtime',
+          path: 'cacheStorage.entries',
+          offset: round === 1 ? 0 : 20,
+        };
+        if (round === 2) {
+          assert.equal(context.page.runtimeDetail.nextOffset, 20);
+          decision.progress = {
+            requirements: [
+              {
+                id: context.task.requirements[0].id,
+                status: 'incomplete',
+                summary: '前 20 条状态为 200，剩余 4 条待读',
+                evidenceRefs: ['runtime-pagination-evidence'],
+              },
+            ],
+          };
+        }
+      } else {
+        assert.equal(round, 3, JSON.stringify(context.feedback));
+        assert.deepEqual(context.state.criteria, []);
+        assert.equal(context.state.requirements[0].status, 'incomplete');
+        assert.equal(context.page.runtimeDetail.nextOffset, null);
+        assert.deepEqual(
+          context.state.contextReads.map((r) => r.returned),
+          [20, 4],
+        );
+        assert.equal(
+          client.artifacts.filter((a) => a.kind === 'RUNTIME').length,
+          1,
+        );
+        decision = finish(context);
+        decision.progress.requirements = [
+          {
+            id: context.task.requirements[0].id,
+            status: 'complete',
+            summary: '已读完全部 24 条，状态均为 200',
+            evidenceRefs: ['runtime-pagination-evidence'],
+          },
+        ];
+      }
+      return { decision, promptTokens: 0, completionTokens: 0 };
+    },
+  };
+  const report = await execute(
+    { ...config, maxContextChars: 12000 },
+    client,
+    model,
+    execution,
+  );
+  assert.equal(report.verdict, 'PASSED', JSON.stringify(report));
+  assert.equal(report.executionDetails.modelCalls, 3);
+  assert.equal(client.observedIds.length, 1);
+});
