@@ -294,10 +294,27 @@ test('结论持久化失败后不派发下一动作', async () => {
 // 范围：偶发慢请求仍影响收尾预留，但不能把下一轮也当同样慢，避免过早放弃可执行任务。
 test('一次慢请求不重复放大下一轮和收尾估算', () => {
   const b = new SettlementBudget(300000);
-  for (const ms of [60000, 6500, 4500, 8900, 2900]) b.observe(ms);
+  for (const ms of [5000, 60000, 6500, 4500, 8900, 2900]) b.observe(ms);
   assert.equal(b.shouldSettle(140000, 20), false);
   assert.equal(b.shouldSettle(80000, 20), true);
   assert.equal(b.requestMs(140000, false), 64000);
+});
+
+// 范围：复现线上首轮 68 秒后的时间分配，不模拟供应商速度；总期限、最后一次模型额度及收尾预留不增加。
+test('首轮慢响应不直接终止仍有可用预算的任务，后续慢响应仍触发收尾', () => {
+  const b = new SettlementBudget(180000);
+  b.observe(68146);
+  assert.equal(b.shouldSettle(86000, 11), false);
+  assert.equal(b.requestMs(86000, false), 40000);
+  assert.equal(b.reserve(), 46000);
+  assert.equal(b.shouldSettle(55000, 11), true);
+  assert.equal(b.shouldSettle(86000, 1), true);
+  b.observe(23000);
+  assert.equal(b.shouldSettle(60000, 10), false);
+  assert.equal(b.requestMs(60000, false), 30250);
+  b.observe(40000);
+  assert.equal(b.shouldSettle(20000, 9), true);
+  assert.equal(b.requestMs(20000, true), 19000);
 });
 
 /** 为协议夹具生成当前原步骤的声明；不推断真实网页的业务完成情况。 */

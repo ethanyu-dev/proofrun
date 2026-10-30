@@ -1577,7 +1577,7 @@ export class Coordinator {
     ) {
       // 只对节点证明尚未启动的资源拒绝重排；丢失响应和未知效果仍走关闭核实。
       const used = await client.query(
-        "SELECT 1 FROM pr_commands WHERE execution_id=$1 AND kind LIKE 'browser.%' UNION ALL SELECT 1 FROM pr_model_calls WHERE execution_id=$1",
+        "SELECT 1 FROM pr_commands WHERE execution_id=$1 AND kind LIKE 'browser.%' UNION ALL SELECT 1 FROM pr_model_calls WHERE execution_id=$1 UNION ALL SELECT 1 FROM pr_runtime_decisions WHERE execution_id=$1 UNION ALL SELECT 1 FROM pr_runtime_operations WHERE execution_id=$1",
         [context.id],
       );
       if (used.rowCount)
@@ -1608,6 +1608,13 @@ export class Coordinator {
       ]);
       await client.query(
         'DELETE FROM pr_control_events WHERE execution_id=$1',
+        [context.id],
+      );
+      // Worker 可在节点准入回执到达前建立运行时；此时尚无决定或浏览器意图。
+      // 只删除上面已证明未使用的空壳，避免执行外键使重排回滚并反复断开节点。
+      // 旧驱动后续读取原执行会失效，不能把其授权转移到重新领取的执行。
+      await client.query(
+        'DELETE FROM pr_execution_runtimes WHERE execution_id=$1',
         [context.id],
       );
       await client.query('DELETE FROM pr_executions WHERE id=$1', [context.id]);

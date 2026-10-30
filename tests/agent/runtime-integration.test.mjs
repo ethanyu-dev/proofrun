@@ -310,6 +310,94 @@ test(
     };
     await app.listen({ host: '127.0.0.1', port });
     try {
+      // 范围：真实 API/数据库复现运行时先于准入回执创建的竞态，验证重排、旧令牌撤销和节点连接；资源拒绝来自协议夹具，不验收真实机器容量。
+      await suite.test(
+        '运行时已启动但节点拒绝准入时安全重排，不能连带断开节点',
+        async () => {
+          const fixture = await enqueue();
+          const original = fixture.node.execute.bind(fixture.node);
+          let opening;
+          fixture.node.execute = (command) => {
+            if (command.command.type === 'session.open' && !opening) {
+              opening = command;
+              return;
+            }
+            original(command);
+          };
+          const first = await until(() => client.claim(), Boolean);
+          await until(() => opening, Boolean);
+          await client.runtimeStart(first, runtimeConfig);
+          assert.equal(
+            (
+              await db.query(
+                'SELECT state FROM pr_execution_runtimes WHERE execution_id=$1',
+                [first.id],
+              )
+            ).rows[0].state,
+            'ACTIVE',
+          );
+          const socket = fixture.node.socket;
+          fixture.node.rejectOpen = true;
+          original(opening);
+          await until(
+            () => stored(fixture.id),
+            (value) => value.state === 'QUEUED',
+          );
+          assert.equal(
+            (
+              await db.query(
+                'SELECT 1 FROM pr_execution_runtimes WHERE execution_id=$1',
+                [first.id],
+              )
+            ).rowCount,
+            0,
+          );
+          assert.equal(
+            socket.readyState,
+            1,
+            '资源拒绝回执必须正常提交并保持网关连接',
+          );
+          assert.equal(
+            (
+              await api(
+                'POST',
+                `/v1/executions/${first.id}/runtime`,
+                { type: 'start', config: runtimeConfig },
+                first.leaseToken,
+              )
+            ).status,
+            404,
+          );
+          await db.query(
+            'UPDATE pr_nodes SET admission_retry_at=clock_timestamp() WHERE id=$1',
+            [fixture.node.id],
+          );
+          const second = await until(() => client.claim(), Boolean);
+          assert.notEqual(second.id, first.id);
+          await until(
+            () => stored(fixture.id),
+            (value) => value.executions[0]?.session_state === 'ACTIVE',
+          );
+          // 重送旧回执只能命中 inbox 去重，不能删除或终止新执行。
+          fixture.node.send(fixture.node.results.get(opening.commandId));
+          assert.equal(
+            (
+              await api(
+                'POST',
+                `/v1/executions/${first.id}/heartbeat`,
+                {},
+                first.leaseToken,
+              )
+            ).status,
+            404,
+          );
+          assert.equal((await stored(fixture.id)).executions[0].id, second.id);
+          await ok('POST', `/v1/tasks/${fixture.id}/cancel`, {});
+          await closed(fixture.id);
+          assert.equal(socket.readyState, 1);
+        },
+      );
+
       // 范围：运行版本在入队时冻结、旧 worker 不抢新任务；没有启动模型或真实浏览器。
       await suite.test('领取协商和旧写入围栏', async () => {
         const fixture = await enqueue();
