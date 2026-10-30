@@ -78,6 +78,8 @@ const DELIVERY_INTERVAL_MS = 2000;
 const CLEANUP_RETRY_MS = 5000;
 /** 上层任务的最长总预算，包括排队时间。 */
 const MAX_TASK_MS = 86_400_000;
+/** 与节点 HOST_STARTUP_LIMIT_MS 对齐，覆盖冷启动和初始化探测；仍受任务截止时间与租约约束。 */
+const SESSION_STARTUP_MS = 120_000;
 
 /** 控制面协调器：事务只改变事实，传输由独立投递循环完成。 */
 export class Coordinator {
@@ -689,7 +691,7 @@ export class Coordinator {
                   heartbeat.limits.maxSessionMs,
                 ),
               },
-              Math.min(external ? 120_000 : 15_000, remaining),
+              Math.min(SESSION_STARTUP_MS, remaining),
             ),
           );
           const benchmark = (
