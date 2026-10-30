@@ -92,7 +92,7 @@ export class ControlClient {
         profileTabsVersion: 1,
         executionPlanVersion: 1,
         runtimeVersion: 1,
-        benchmarkVersion: 1,
+        benchmarkVersion: 2,
       },
       this.config.requestMs,
       signal,

@@ -17,7 +17,13 @@ test('V2 固定双任务保留完整历史定义和逐步预算', async () => {
   );
   for (const item of cases) {
     const source = JSON.parse(
-      await readFile(new URL(`./v2/${item.id}.json`, import.meta.url), 'utf8'),
+      await readFile(
+        new URL(
+          `../../contracts/fixtures/benchmark-v2/${item.id}.json`,
+          import.meta.url,
+        ),
+        'utf8',
+      ),
     );
     for (const key of [
       'steps',

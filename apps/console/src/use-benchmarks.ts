@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   BENCHMARK_MAX_BYTES,
   V2_BENCHMARK_MAX_BYTES,
-  V2_BENCHMARK_SUITE,
+  isV2BenchmarkSuite,
   parseBenchmark,
   type BenchmarkRun,
 } from '@proofrun/contracts/benchmark';
@@ -43,6 +43,7 @@ export function useBenchmarks(
     release: ReleaseIdentity;
     environment: string;
     nodePool: string | null;
+    activeFamily: 'browser' | 'v2' | null;
   }>();
   const selectedRef = useRef('');
   const pendingId = useRef<string | null>(null);
@@ -75,9 +76,11 @@ export function useBenchmarks(
         AbortSignal.timeout(REQUEST_MS),
       );
       const run = parseBenchmark(JSON.stringify(result.run));
+      if (isV2BenchmarkSuite(run.suite) !== (family === 'v2'))
+        throw new Error('运行属于另一测试集');
       if (mounted.current && epoch === generation.current) merge([run], true);
     },
-    [api, merge],
+    [api, family, merge],
   );
   const refresh = useCallback(
     async (more = false) => {
@@ -87,7 +90,7 @@ export function useBenchmarks(
       setLoading(true);
       try {
         if (api) {
-          const params = new URLSearchParams();
+          const params = new URLSearchParams({ family });
           if (version !== 'all') params.set('version', version);
           if (more && nextCursor) params.set('after', nextCursor);
           const [list, groups, status] = await Promise.all([
@@ -96,7 +99,7 @@ export function useBenchmarks(
               AbortSignal.timeout(REQUEST_MS),
             ),
             api.json<{ versions: { version: string }[] }>(
-              `${REMOTE}/versions`,
+              `${REMOTE}/versions?family=${family}`,
               AbortSignal.timeout(REQUEST_MS),
             ),
             api.json<NonNullable<typeof server>>(
@@ -117,11 +120,8 @@ export function useBenchmarks(
           setError(undefined);
           setVersions(groups.versions.map((row) => row.version));
           setServer(status);
-          setRunning(
-            list.runs.some((row) =>
-              ['QUEUED', 'RUNNING'].includes(row.state ?? ''),
-            ),
-          );
+          setRunning(!!status.activeFamily);
+          setActiveFamily(status.activeFamily ?? null);
           const target = selectedRef.current || list.runs[0]?.id;
           if (target) {
             choose(target);
@@ -211,7 +211,7 @@ export function useBenchmarks(
         const result = await api.json<{ id: string }>(
           REMOTE,
           AbortSignal.timeout(REQUEST_MS),
-          { id: pendingId.current },
+          { id: pendingId.current, family },
         );
         pendingId.current = null;
         choose(result.id);
@@ -249,9 +249,7 @@ export function useBenchmarks(
         files.map(async (file) => parseBenchmark(await file.text())),
       );
       if (
-        items.some(
-          (run) => (run.suite === V2_BENCHMARK_SUITE) !== (family === 'v2'),
-        )
+        items.some((run) => isV2BenchmarkSuite(run.suite) !== (family === 'v2'))
       )
         throw new Error('归档属于另一测试集，请切换对应页签后导入');
       merge(items);
@@ -263,7 +261,7 @@ export function useBenchmarks(
   };
   const localEntries: BenchmarkEntry[] = runs.filter(
     (run) =>
-      (run.suite === V2_BENCHMARK_SUITE) === (family === 'v2') &&
+      isV2BenchmarkSuite(run.suite) === (family === 'v2') &&
       (version === 'all' ||
         (run.release?.version ?? 'unversioned') === version),
   );

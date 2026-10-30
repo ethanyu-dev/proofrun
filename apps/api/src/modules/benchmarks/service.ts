@@ -6,18 +6,32 @@ import {
 } from '@proofrun/contracts/release';
 import {
   BENCHMARK_SCENARIOS,
-  BENCHMARK_LIMITS,
   benchmarkTask,
   benchmarkPage,
 } from '@proofrun/contracts/benchmark-scenarios';
 import type { Database } from '../../db.js';
 import type { ApiConfig } from '../../config.js';
 import { ApiError, canonical, digest } from '../../domain.js';
+import { v2BenchmarkCases } from '@proofrun/contracts/benchmark-v2';
+import type { BenchmarkFamily } from '@proofrun/contracts/benchmark-scenarios';
 import { benchmarkArchive } from './archive.js';
 
 /** 队列和关闭有固定期限，不因 API 重启或无人领取无限等待。 */
 const RUN_MS = 10 * 60_000;
+/** 与本地双任务宿主上限一致；每个任务仍沿用冻结定义中的逐步预算。 */
+const V2_RUN_MS = 180 * 60_000;
+/** 客户端只提供运行身份，不能把路径或命令作为 ID 传入。 */
 const ID = /^[a-f0-9-]{36}$/;
+/** 省略测试集兼容旧基础入口；拒绝未知值，避免悄悄启动错误套件。 */
+function benchmarkFamily(value: unknown = 'browser'): BenchmarkFamily {
+  if (value !== 'browser' && value !== 'v2')
+    throw new ApiError(
+      400,
+      'INVALID_BENCHMARK_FAMILY',
+      '测试集必须为 browser 或 v2',
+    );
+  return value;
+}
 /** 管理员创建固定套件；后台复用原任务调度器，数据库保存状态和完整归档。 */
 export class Benchmarks {
   constructor(
@@ -25,8 +39,14 @@ export class Benchmarks {
     readonly config: ApiConfig,
     readonly release: ReleaseIdentity,
   ) {}
-  status() {
+  async status() {
+    const active = (
+      await this.db.query(
+        "SELECT family FROM pr_benchmark_runs WHERE state IN ('QUEUED','RUNNING') LIMIT 1",
+      )
+    ).rows[0];
     return {
+      activeFamily: active?.family ?? null,
       enabled: !!(
         this.config.benchmarkNodePool &&
         this.config.benchmarkEnvironment &&
@@ -41,10 +61,10 @@ export class Benchmarks {
   }
   /** 创建身份由客户端预先生成以支持未知网络结果后的幂等核查；版本始终取服务端构建清单。 */
   async create(body: unknown) {
-    const input = body as { id?: unknown } | null;
+    const input = body as { id?: unknown; family?: unknown } | null;
     if (
       !input ||
-      Object.keys(input).join() !== 'id' ||
+      Object.keys(input).some((key) => !['id', 'family'].includes(key)) ||
       typeof input.id !== 'string' ||
       !ID.test(input.id)
     )
@@ -54,6 +74,7 @@ export class Benchmarks {
         '需要独立运行 UUID，不接受指定部署版本或目标地址',
       );
     const id = input.id;
+    const family = benchmarkFamily(input.family);
     if (!this.config.benchmarkNodePool || !this.config.benchmarkEnvironment)
       throw new ApiError(
         409,
@@ -74,14 +95,20 @@ export class Benchmarks {
       await client.query(
         "SELECT pg_advisory_xact_lock(hashtextextended('benchmark-create',0))",
       );
-      if (
-        (
-          await client.query('SELECT id FROM pr_benchmark_runs WHERE id=$1', [
-            id,
-          ])
-        ).rowCount
-      )
+      const existing = (
+        await client.query('SELECT family FROM pr_benchmark_runs WHERE id=$1', [
+          id,
+        ])
+      ).rows[0];
+      if (existing) {
+        if (existing.family !== family)
+          throw new ApiError(
+            409,
+            'IDEMPOTENCY_CONFLICT',
+            '同一运行身份不能切换测试集',
+          );
         return;
+      }
       if (
         (
           await client.query(
@@ -91,39 +118,60 @@ export class Benchmarks {
       )
         throw new ApiError(409, 'BENCHMARK_BUSY', '已有线上基准正在排队或执行');
       await client.query(
-        "INSERT INTO pr_benchmark_runs(id,release,environment,deadline_at) VALUES($1,$2,$3,clock_timestamp()+$4*interval '1 millisecond')",
-        [id, this.release, this.config.benchmarkEnvironment, RUN_MS],
+        "INSERT INTO pr_benchmark_runs(id,release,environment,deadline_at,family) VALUES($1,$2,$3,clock_timestamp()+$4*interval '1 millisecond',$5)",
+        [
+          id,
+          this.release,
+          this.config.benchmarkEnvironment,
+          family === 'v2' ? V2_RUN_MS : RUN_MS,
+          family,
+        ],
       );
-      for (const scenario of BENCHMARK_SCENARIOS) {
-        const taskId = randomUUID();
-        const task = benchmarkTask(
-          taskId,
-          scenario.id,
-          `${this.config.publicUrl.replace(/\/$/, '')}/v1/benchmark-fixtures/${taskId}`,
-          this.config.benchmarkNodePool!,
-        );
+      const scenarios =
+        family === 'v2'
+          ? v2BenchmarkCases(() => randomUUID(), {
+              id: this.config.benchmarkEnvironment!,
+              nodePool: this.config.benchmarkNodePool!,
+              allowIntervention: false,
+            })
+          : BENCHMARK_SCENARIOS.map((scenario) => {
+              const taskId = randomUUID();
+              return {
+                ...scenario,
+                task: benchmarkTask(
+                  taskId,
+                  scenario.id,
+                  `${this.config.publicUrl.replace(/\/$/, '')}/v1/benchmark-fixtures/${taskId}`,
+                  this.config.benchmarkNodePool!,
+                ),
+              };
+            });
+      for (const scenario of scenarios) {
+        const { task, ...source } = scenario;
         if (!validateVerificationTask(task))
           throw new Error('内置基准任务不符合协议');
         await client.query(
           "INSERT INTO pr_tasks(id,definition,definition_hash,state,deadline_at,runtime_version) VALUES($1,$2,$3,'QUEUED',clock_timestamp()+$4*interval '1 millisecond',1)",
-          [taskId, task, digest(canonical(task)), BENCHMARK_LIMITS.timeoutMs],
+          [task.taskId, task, digest(canonical(task)), task.budget.timeoutMs],
         );
+        // 两类基准均在同一事务登记，通知扫描不会把 V2 当作普通业务任务。
         await client.query(
-          'INSERT INTO pr_benchmark_cases(task_id,run_id,scenario) VALUES($1,$2,$3)',
-          [taskId, id, scenario.id],
+          'INSERT INTO pr_benchmark_cases(task_id,run_id,scenario,source) VALUES($1,$2,$3,$4)',
+          [task.taskId, id, scenario.id, family === 'v2' ? source : null],
         );
       }
     });
     return { id };
   }
   /** 按版本分页读取轻量元数据，展开某次运行才读取完整上下文。 */
-  async list(version?: string, after?: string) {
+  async list(version?: string, after?: string, requestedFamily?: string) {
+    const family = benchmarkFamily(requestedFamily);
     if ((version && version.length > 128) || (after && !ID.test(after)))
       throw new ApiError(400, 'INVALID_QUERY', '版本或游标无效');
     const rows = (
       await this.db.query(
-        `SELECT id,release,environment,state,created_at AS "createdAt",finished_at AS "finishedAt" FROM pr_benchmark_runs WHERE ($1::text IS NULL OR release->>'version'=$1) AND ($2::text IS NULL OR (created_at,id)<(SELECT created_at,id FROM pr_benchmark_runs WHERE id=$2)) ORDER BY created_at DESC,id DESC LIMIT 21`,
-        [version ?? null, after ?? null],
+        `SELECT id,release,environment,family,state,created_at AS "createdAt",finished_at AS "finishedAt" FROM pr_benchmark_runs WHERE family=$3 AND ($1::text IS NULL OR release->>'version'=$1) AND ($2::text IS NULL OR (created_at,id)<(SELECT created_at,id FROM pr_benchmark_runs WHERE id=$2 AND family=$3)) ORDER BY created_at DESC,id DESC LIMIT 21`,
+        [version ?? null, after ?? null, family],
       )
     ).rows;
     return {
@@ -131,11 +179,13 @@ export class Benchmarks {
       nextCursor: rows.length > 20 ? rows[19]!.id : null,
     };
   }
-  async versions() {
+  async versions(requestedFamily?: string) {
+    const family = benchmarkFamily(requestedFamily);
     return {
       versions: (
         await this.db.query(
-          `SELECT release->>'version' AS version,count(*)::int AS count,max(created_at) AS "latestAt" FROM pr_benchmark_runs GROUP BY release->>'version' ORDER BY max(created_at) DESC LIMIT 200`,
+          `SELECT release->>'version' AS version,count(*)::int AS count,max(created_at) AS "latestAt" FROM pr_benchmark_runs WHERE family=$1 GROUP BY release->>'version' ORDER BY max(created_at) DESC LIMIT 200`,
+          [family],
         )
       ).rows,
     };
@@ -166,7 +216,8 @@ export class Benchmarks {
     ).rows;
     const expired = active.deadline_at.getTime() <= Date.now();
     const terminal =
-      cases.length === BENCHMARK_SCENARIOS.length &&
+      cases.length ===
+        (active.family === 'v2' ? 2 : BENCHMARK_SCENARIOS.length) &&
       cases.every(
         (row) =>
           !['QUEUED', 'RUNNING'].includes(row.state) &&
@@ -269,6 +320,7 @@ export class Benchmarks {
       ).rows[0];
       if (
         !row ||
+        !BENCHMARK_SCENARIOS.some((scenario) => scenario.id === row.scenario) ||
         row.state !== 'RUNNING' ||
         row.deadline_at.getTime() <= Date.now()
       )

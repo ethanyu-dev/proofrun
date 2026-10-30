@@ -89,3 +89,43 @@ export function benchmarkTask(
     },
   };
 }
+
+/** V2 保持本地完整任务的正文、命令与证据预算；基础套件额度不变。 */
+export const V2_CONTEXT_CHARS = 64000;
+export type BenchmarkFamily = 'browser' | 'v2';
+/** 原任务全部步骤与清理的模型额度，不提供额外重试额度。 */
+export function v2CallLimit(task: VerificationTask): number {
+  if (!task.stepBudget) throw new Error('V2 缺少原步骤预算');
+  return (
+    task.stepBudget.steps.reduce((sum, step) => sum + step.maxModelCalls, 0) +
+    (task.cleanupStepIds?.length ? task.stepBudget.cleanup.maxModelCalls : 0)
+  );
+}
+/** 宿主寿命覆盖原任务及已有步骤收尾、清理窗口，不修改任务内的逐步预算。 */
+export function v2TimeLimit(task: VerificationTask): number {
+  if (!task.stepBudget) throw new Error('V2 缺少原步骤预算');
+  return (
+    task.budget.timeoutMs +
+    task.stepBudget.steps.length * task.stepBudget.settleMs +
+    (task.cleanupStepIds?.length ? task.stepBudget.cleanup.timeoutMs : 0)
+  );
+}
+/** Agent 与服务端分别从授权及数据库的测试集选择同一固定配置。 */
+export function benchmarkRuntimeLimits(
+  family: BenchmarkFamily,
+  task: VerificationTask,
+) {
+  return family === 'v2'
+    ? {
+        maxTurns: v2CallLimit(task),
+        maxContextChars: V2_CONTEXT_CHARS,
+        commandMs: 20000,
+        evidenceMs: 5000,
+      }
+    : {
+        maxTurns: BENCHMARK_LIMITS.maxTurns,
+        maxContextChars: BENCHMARK_LIMITS.maxContextChars,
+        commandMs: BENCHMARK_LIMITS.commandMs,
+        evidenceMs: BENCHMARK_LIMITS.evidenceMs,
+      };
+}

@@ -11,13 +11,19 @@ export function registerBenchmarks(
   app.get('/v1/admin/benchmarks/status', { preHandler: admin }, () =>
     service.status(),
   );
-  app.get('/v1/admin/benchmarks/versions', { preHandler: admin }, () =>
-    service.versions(),
-  );
-  app.get<{ Querystring: { version?: string; after?: string } }>(
-    '/v1/admin/benchmarks',
+  app.get<{ Querystring: { family?: string } }>(
+    '/v1/admin/benchmarks/versions',
     { preHandler: admin },
-    (request) => service.list(request.query.version, request.query.after),
+    (request) => service.versions(request.query.family),
+  );
+  app.get<{
+    Querystring: { version?: string; after?: string; family?: string };
+  }>('/v1/admin/benchmarks', { preHandler: admin }, (request) =>
+    service.list(
+      request.query.version,
+      request.query.after,
+      request.query.family,
+    ),
   );
   app.post(
     '/v1/admin/benchmarks',

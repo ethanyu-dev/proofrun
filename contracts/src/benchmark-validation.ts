@@ -344,6 +344,15 @@ export const validateBenchmarkRun = new Ajv({
       },
     },
     {
+      if: { properties: { suite: { const: 'agent-loop-v2-deployed-v1' } } },
+      then: {
+        properties: {
+          mode: { const: 'deployed' },
+          cases: { items: { required: ['verification', 'deployment'] } },
+        },
+      },
+    },
+    {
       if: { properties: { schemaVersion: { const: 2 } } },
       then: { required: ['release', 'origin'] },
     },

@@ -98,8 +98,8 @@
           "description": "可只执行模型决定，由服务端 runtime 管理版本 1 运行。"
         },
         "benchmarkVersion": {
-          "const": 1,
-          "description": "支持冻结实际构建身份与基础基准预算；旧 worker 不领取基准任务。"
+          "enum": [1, 2],
+          "description": "版本 1 支持基础套件，版本 2 同时支持 V2 原步骤预算；旧 worker 不领取基准任务。"
         }
       },
       "required": ["type", "workerId"]

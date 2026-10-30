@@ -12,6 +12,12 @@ export const BENCHMARK_SUITE = 'agent-loop-basic-v1';
 export const REAL_BENCHMARK_SUITE = 'agent-loop-real-v3';
 /** 真实站点 V2 任务单独归档；不能替代固定合成场景发布门禁。 */
 export const V2_BENCHMARK_SUITE = 'agent-loop-v2-live-v1';
+/** 线上 V2 单独版本，不把本地执行端口结果当作部署链路验证。 */
+export const DEPLOYED_V2_BENCHMARK_SUITE = 'agent-loop-v2-deployed-v1';
+/** 两种 V2 归档共用真实任务页签与正文上限，比较仍区分模式和套件。 */
+export function isV2BenchmarkSuite(suite: string): boolean {
+  return [V2_BENCHMARK_SUITE, DEPLOYED_V2_BENCHMARK_SUITE].includes(suite);
+}
 export const REAL_BENCHMARK_CASES = [
   'form-submit',
   'read-only',
@@ -181,7 +187,7 @@ export function parseBenchmark(text: string): BenchmarkRun {
     throw new Error('结果文件不能超过 64 MiB');
   const value: unknown = JSON.parse(text);
   if (
-    (value as BenchmarkRun)?.suite !== V2_BENCHMARK_SUITE &&
+    !isV2BenchmarkSuite((value as BenchmarkRun)?.suite) &&
     bytes > BENCHMARK_MAX_BYTES
   )
     throw new Error('基础套件结果文件不能超过 20 MiB');

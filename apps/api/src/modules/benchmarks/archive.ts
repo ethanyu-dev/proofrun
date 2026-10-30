@@ -1,5 +1,6 @@
 import type { Database } from '../../db.js';
 import {
+  DEPLOYED_V2_BENCHMARK_SUITE,
   benchmarkContext,
   benchmarkTools,
   parseBenchmark,
@@ -9,9 +10,12 @@ import {
 import {
   BENCHMARK_SCENARIOS,
   BENCHMARK_LIMITS,
+  V2_CONTEXT_CHARS,
+  v2CallLimit,
   DEPLOYED_BENCHMARK_SUITE,
 } from '@proofrun/contracts/benchmark-scenarios';
 import { canonical } from '../../domain.js';
+import { archiveV2Checks } from './v2-archive.js';
 
 /** 从持久化事实投影归档，终态保存一次；尚未完成的场景不能借模型结论变成通过。 */
 export async function benchmarkArchive(
@@ -21,16 +25,17 @@ export async function benchmarkArchive(
 ): Promise<BenchmarkRun> {
   const rows = (
     await db.query(
-      `SELECT b.*,t.state,t.report,t.error,t.created_at,t.finished_at,e.id AS execution_id,s.node_runtime,s.closure_verified FROM pr_benchmark_cases b JOIN pr_tasks t ON t.id=b.task_id LEFT JOIN pr_executions e ON e.task_id=t.id LEFT JOIN pr_sessions s ON s.execution_id=e.id WHERE b.run_id=$1`,
+      `SELECT b.*,t.state,t.report,t.error,t.definition,t.step_results,t.created_at,t.finished_at,e.id AS execution_id,s.node_runtime,s.closure_verified FROM pr_benchmark_cases b JOIN pr_tasks t ON t.id=b.task_id LEFT JOIN pr_executions e ON e.task_id=t.id LEFT JOIN pr_sessions s ON s.execution_id=e.id WHERE b.run_id=$1`,
       [job.id],
     )
   ).rows;
+  const v2 = job.family === 'v2';
   const modelNames = [
     ...new Set(rows.map((row) => row.model_config?.name).filter(Boolean)),
   ].sort();
   const run: BenchmarkRun = {
     schemaVersion: 2,
-    suite: DEPLOYED_BENCHMARK_SUITE,
+    suite: v2 ? DEPLOYED_V2_BENCHMARK_SUITE : DEPLOYED_BENCHMARK_SUITE,
     id: job.id,
     createdAt: job.created_at.toISOString(),
     completedAt: complete ? new Date().toISOString() : null,
@@ -52,12 +57,17 @@ export async function benchmarkArchive(
     },
     config: {
       model: modelNames.join(' / ') || '等待 Agent',
-      maxTurns: BENCHMARK_LIMITS.maxTurns,
-      maxContextChars: BENCHMARK_LIMITS.maxContextChars,
+      maxTurns: v2
+        ? Math.max(...rows.map((row) => v2CallLimit(row.definition)))
+        : BENCHMARK_LIMITS.maxTurns,
+      maxContextChars: v2 ? V2_CONTEXT_CHARS : BENCHMARK_LIMITS.maxContextChars,
     },
     cases: [],
   };
-  for (const scenario of BENCHMARK_SCENARIOS) {
+  const scenarios = v2
+    ? rows.map((row) => row.source).sort((a, b) => a.id.localeCompare(b.id))
+    : BENCHMARK_SCENARIOS;
+  for (const scenario of scenarios) {
     const row = rows.find((entry) => entry.scenario === scenario.id);
     if (!row) throw new Error('持久化基准场景缺失');
     const calls = row.execution_id
@@ -77,8 +87,9 @@ export async function benchmarkArchive(
     const item: BenchmarkCase = {
       id: scenario.id,
       name: scenario.name,
-      scope:
-        '线上 API → 实际 Agent → 浏览器节点；独立访客会话和合成页面。旧观察及丢回执是明确故障注入，不覆盖生产账号和实际业务站点。',
+      scope: v2
+        ? '线上 API → 实际 Agent → 浏览器节点；完整历史 V2 定义与原预算，访问真实生产站点。站点变化及缺失能力如实记录，不替代基础发布套件。'
+        : '线上 API → 实际 Agent → 浏览器节点；独立访客会话和合成页面。旧观察及丢回执是明确故障注入，不覆盖生产账号和实际业务站点。',
       elapsedMs: Math.max(
         0,
         (row.finished_at?.getTime() ?? Date.now()) - row.created_at.getTime(),
@@ -100,12 +111,16 @@ export async function benchmarkArchive(
             },
           }
         : {}),
-      facts: {
-        visits: row.visits,
-        writes: row.writes,
-        sessionClosed: row.closure_verified === true,
-        injected: row.injected,
-      },
+      ...(v2
+        ? {}
+        : {
+            facts: {
+              visits: row.visits,
+              writes: row.writes,
+              sessionClosed: row.closure_verified === true,
+              injected: row.injected,
+            },
+          }),
       deployment: {
         api: row.api_release,
         agent: row.agent_release,
@@ -134,6 +149,11 @@ export async function benchmarkArchive(
       !!identity,
       `API ${row.api_release?.version ?? '未记录'}；Agent ${row.agent_release?.version ?? '未记录'}；Node ${row.node_runtime?.version ?? '未记录'}`,
     );
+    if (v2) {
+      archiveV2Checks(item, row);
+      run.cases.push(item);
+      continue;
+    }
     const readOnly = scenario.id === 'read-only';
     const writesCorrect =
       canonical(row.writes) ===

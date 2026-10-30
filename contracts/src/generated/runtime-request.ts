@@ -11,6 +11,9 @@ export type RuntimeRequest =
         vision: boolean;
         commandMs: number;
         evidenceMs: number;
+        /**
+         * 支持完整 V2 多步骤总额度；服务端仍按测试集固定预算核验，普通任务上限保持 200。
+         */
         maxTurns: number;
         maxContextChars: number;
       };

@@ -903,61 +903,62 @@ test(
       });
 
       // 范围：真实数据库中的 Benchmark 归属同时抑制新通知、旧队列重试和卡片更新；不访问真实飞书或执行浏览器基准。
-      await suite.test(
-        'Benchmark 不发送通知，升级前的待发送及已发送记录停止投递',
-        async () => {
-          const sent = await create();
-          const run = randomUUID();
-          // 模拟升级前已进入队列的任务：一例成功投递，一例发送失败等待重试。
-          await sync(sent, 1);
-          const pending = await create();
-          remote.failSend = true;
-          for (let i = 0; i < 4 && !(await messages(pending)).length; i++)
-            await tick();
-          remote.failSend = false;
-          assert.ok(
-            (await messages(pending)).some(
-              (row) => row.send_attempts > 0 && !row.message_id,
-            ),
-          );
-          const fresh = await create();
-          await db.query(
-            "INSERT INTO pr_benchmark_runs(id,release,environment,state,deadline_at) VALUES($1,'{}','fixture','COMPLETED',clock_timestamp())",
-            [run],
-          );
-          for (const [index, id] of [fresh, pending, sent].entries()) {
-            await db.query(
-              'INSERT INTO pr_benchmark_cases(task_id,run_id,scenario) VALUES($1,$2,$3)',
-              [id, run, `fixture-${index}`],
+      for (const family of ['browser', 'v2'])
+        await suite.test(
+          `${family} Benchmark 不发送通知，升级前的待发送及已发送记录停止投递`,
+          async () => {
+            const sent = await create();
+            const run = randomUUID();
+            // 模拟升级前已进入队列的任务：一例成功投递，一例发送失败等待重试。
+            await sync(sent, 1);
+            const pending = await create();
+            remote.failSend = true;
+            for (let i = 0; i < 4 && !(await messages(pending)).length; i++)
+              await tick();
+            remote.failSend = false;
+            assert.ok(
+              (await messages(pending)).some(
+                (row) => row.send_attempts > 0 && !row.message_id,
+              ),
             );
-            await finish(id);
-          }
-          const sends = remote.sends.length;
-          const updates = remote.updates.length;
-          const ordinary = await create();
-          await sync(ordinary, 1);
-          for (let i = 0; i < 8; i++) await tick();
-          assert.equal(
-            remote.sends.length,
-            sends + 1,
-            '普通任务继续发送，Benchmark 不补发或重试',
-          );
-          assert.equal(
-            remote.updates.length,
-            updates,
-            '旧 Benchmark 卡片不再更新',
-          );
-          assert.equal((await messages(fresh)).length, 0);
-          const queue = (
+            const fresh = await create();
             await db.query(
-              'SELECT settled_at FROM pr_feishu_runs WHERE run_key=ANY($1::text[])',
-              [[pending, sent]],
-            )
-          ).rows;
-          assert.equal(queue.length, 2);
-          assert.ok(queue.every((row) => row.settled_at));
-        },
-      );
+              "INSERT INTO pr_benchmark_runs(id,release,environment,state,deadline_at,family) VALUES($1,'{}','fixture','COMPLETED',clock_timestamp(),$2)",
+              [run, family],
+            );
+            for (const [index, id] of [fresh, pending, sent].entries()) {
+              await db.query(
+                'INSERT INTO pr_benchmark_cases(task_id,run_id,scenario) VALUES($1,$2,$3)',
+                [id, run, `fixture-${index}`],
+              );
+              await finish(id);
+            }
+            const sends = remote.sends.length;
+            const updates = remote.updates.length;
+            const ordinary = await create();
+            await sync(ordinary, 1);
+            for (let i = 0; i < 8; i++) await tick();
+            assert.equal(
+              remote.sends.length,
+              sends + 1,
+              '普通任务继续发送，Benchmark 不补发或重试',
+            );
+            assert.equal(
+              remote.updates.length,
+              updates,
+              '旧 Benchmark 卡片不再更新',
+            );
+            assert.equal((await messages(fresh)).length, 0);
+            const queue = (
+              await db.query(
+                'SELECT settled_at FROM pr_feishu_runs WHERE run_key=ANY($1::text[])',
+                [[pending, sent]],
+              )
+            ).rows;
+            assert.equal(queue.length, 2);
+            assert.ok(queue.every((row) => row.settled_at));
+          },
+        );
 
       // 范围：节点模板、独立清理和首次启用前已存在的任务不推送，切换群不操作旧群消息；不验收真实应用群权限。
       await suite.test('过滤非业务会话并隔离不同群的投递记录', async () => {

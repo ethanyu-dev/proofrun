@@ -22,6 +22,19 @@ export function benchmarkPorts(
     command: async (...args) => {
       const row = await scenario();
       if (!row) return ports.command(...args);
+      const navigation = args[2];
+      if (
+        row.source &&
+        navigation.type === 'browser.act' &&
+        ['navigate', 'tab.new'].includes(navigation.action)
+      ) {
+        const target = new URL(navigation.target!);
+        const origins = new Set(
+          grant.task.steps!.map((step) => new URL(step.url).origin),
+        );
+        if (target.username || target.password || !origins.has(target.origin))
+          throw new Error('V2 基准禁止导航到任务之外的站点');
+      }
       await service.db.query(
         'UPDATE pr_benchmark_cases SET api_release=coalesce(api_release,$2) WHERE task_id=$1',
         [row.task_id, service.release],
@@ -35,14 +48,14 @@ export function benchmarkPorts(
         revision,
         stepId,
       ] = args;
-      const decisionIndex = Number(
-        (
-          await service.db.query(
-            "SELECT record->>'decisionIndex' AS n FROM pr_model_calls WHERE execution_id=$1 ORDER BY call_index DESC LIMIT 1",
-            [grant.id],
-          )
-        ).rows[0]?.n ?? 0,
-      );
+      // 并行步骤会复用轮次号；绑定同一步骤的实际调用，不能取整个执行的最后一轮。
+      const call = (
+        await service.db.query(
+          "SELECT record FROM pr_model_calls WHERE execution_id=$1 AND ($2::text IS NULL OR record->>'stepId'=$2) ORDER BY call_index DESC LIMIT 1",
+          [grant.id, stepId ?? null],
+        )
+      ).rows[0]?.record;
+      const decisionIndex = call?.decisionIndex ?? 0;
       const invoke = async (
         id: string,
         command: typeof operation,
@@ -50,6 +63,8 @@ export function benchmarkPorts(
       ) => {
         const record: BenchmarkCommand = {
           decisionIndex,
+          ...(call ? { callId: call.id } : {}),
+          ...(stepId ? { stepId } : {}),
           operation: { ...command },
           status: 'PENDING',
           effect: 'NOT_STARTED',

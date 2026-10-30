@@ -420,7 +420,7 @@ export class Coordinator {
       const tasks = await client.query<{ id: string }>(
         `SELECT candidate.id FROM unnest($1::text[]) AS pool(name)
         CROSS JOIN LATERAL (SELECT id,created_at FROM pr_tasks WHERE state='QUEUED'
-          AND ($10 OR NOT EXISTS(SELECT 1 FROM pr_benchmark_cases b WHERE b.task_id=pr_tasks.id)) AND (runtime_version=0 OR $8) AND executor_kind=CASE WHEN $9::text IS NULL THEN 'builtin' ELSE 'external' END AND ($9::text IS NULL OR (id=$9 AND EXISTS(SELECT 1 FROM pr_external_controllers c WHERE c.run_id=pr_tasks.id AND c.state='ACTIVE' AND c.idle_deadline_at>clock_timestamp()))) AND deadline_at>clock_timestamp() AND definition#>>'{environment,nodePool}'=pool.name AND ($3 OR NOT (definition ? 'steps')) AND ($4 OR NOT (definition ? 'stepBudget')) AND ($5 OR NOT (definition ? 'sessionPlan') OR (NOT (definition ? 'steps') AND definition#>>'{sessionPlan,profileSource}'='node-default' AND definition#>>'{sessionPlan,mode}'='manual' AND definition#>'{sessionPlan,requirements}'='[]'::jsonb)) AND ($6 OR NOT (definition ? 'profilePlan')) AND ($7 OR NOT (definition ? 'executionPlan'))
+          AND (NOT EXISTS(SELECT 1 FROM pr_benchmark_cases b JOIN pr_benchmark_runs r ON r.id=b.run_id WHERE b.task_id=pr_tasks.id AND ($10::int < CASE WHEN r.family='v2' THEN 2 ELSE 1 END))) AND (runtime_version=0 OR $8) AND executor_kind=CASE WHEN $9::text IS NULL THEN 'builtin' ELSE 'external' END AND ($9::text IS NULL OR (id=$9 AND EXISTS(SELECT 1 FROM pr_external_controllers c WHERE c.run_id=pr_tasks.id AND c.state='ACTIVE' AND c.idle_deadline_at>clock_timestamp()))) AND deadline_at>clock_timestamp() AND definition#>>'{environment,nodePool}'=pool.name AND ($3 OR NOT (definition ? 'steps')) AND ($4 OR NOT (definition ? 'stepBudget')) AND ($5 OR NOT (definition ? 'sessionPlan') OR (NOT (definition ? 'steps') AND definition#>>'{sessionPlan,profileSource}'='node-default' AND definition#>>'{sessionPlan,mode}'='manual' AND definition#>'{sessionPlan,requirements}'='[]'::jsonb)) AND ($6 OR NOT (definition ? 'profilePlan')) AND ($7 OR NOT (definition ? 'executionPlan'))
           ORDER BY created_at,id LIMIT $2) candidate ORDER BY candidate.created_at,candidate.id`,
         [
           pools,
@@ -432,7 +432,7 @@ export class Coordinator {
           executionPlanVersion === 1,
           runtimeVersion === 1,
           externalRunId ?? null,
-          benchmarkVersion === 1,
+          benchmarkVersion ?? 0,
         ],
       );
       for (const candidate of tasks.rows) {
@@ -716,10 +716,12 @@ export class Coordinator {
           );
           const benchmark = (
             await client.query(
-              'SELECT run_id AS "runId",scenario AS "caseId" FROM pr_benchmark_cases WHERE task_id=$1',
+              'SELECT b.run_id AS "runId",b.scenario AS "caseId",r.family FROM pr_benchmark_cases b JOIN pr_benchmark_runs r ON r.id=b.run_id WHERE b.task_id=$1',
               [task.taskId],
             )
           ).rows[0];
+          // 滚动升级时基础 worker 仍使用旧授权结构，不能给它追加未知字段。
+          if (benchmark && benchmarkVersion === 1) delete benchmark.family;
           return {
             execution: {
               ...(benchmark ? { benchmark } : {}),

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { deployedRelease } from '@proofrun/contracts/deployment';
-import { BENCHMARK_LIMITS } from '@proofrun/contracts/benchmark-scenarios';
+import { benchmarkRuntimeLimits } from '@proofrun/contracts/benchmark-scenarios';
 import { randomUUID } from 'node:crypto';
 import type { ExecutionGrant } from '@proofrun/contracts';
 import { ControlClient } from './client.js';
@@ -28,10 +28,10 @@ async function runExecution(
       );
     config = {
       ...config,
-      maxTurns: BENCHMARK_LIMITS.maxTurns,
-      maxContextChars: BENCHMARK_LIMITS.maxContextChars,
-      commandMs: BENCHMARK_LIMITS.commandMs,
-      evidenceMs: BENCHMARK_LIMITS.evidenceMs,
+      ...benchmarkRuntimeLimits(
+        grant.benchmark.family ?? 'browser',
+        grant.task,
+      ),
     };
     await client.benchmarkBuild(
       grant,

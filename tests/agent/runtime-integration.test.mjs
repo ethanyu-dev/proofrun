@@ -398,7 +398,7 @@ test(
         },
       );
 
-      // 范围：运行版本在入队时冻结、旧 worker 不抢新任务；没有启动模型或真实浏览器。
+      // 范围：运行版本、旧写入围栏和普通任务轮次上限；没有启动模型或真实浏览器。
       await suite.test('领取协商和旧写入围栏', async () => {
         const fixture = await enqueue();
         config.executionRuntimeVersion = 0;
@@ -447,6 +447,24 @@ test(
           ).status,
           401,
         );
+        // V2 传输协议支持多步骤总量，普通任务不能借此突破原 200 轮配置上限。
+        await until(
+          async () =>
+            (
+              await db.query('SELECT state FROM pr_tasks WHERE id=$1', [
+                fixture.id,
+              ])
+            ).rows[0].state,
+          (state) => state === 'RUNNING',
+        );
+        const overBudget = await api(
+          'POST',
+          `/v1/executions/${grant.id}/runtime`,
+          { type: 'start', config: { ...runtimeConfig, maxTurns: 201 } },
+          grant.leaseToken,
+        );
+        assert.equal(overBudget.status, 400);
+        assert.equal(overBudget.body.code, 'INVALID_RUNTIME_CONFIG');
         await closed(fixture.id);
       });
       // 范围：准备、policy 新观察、验收和清理顺序及统计一致；不将模拟证据解释成站点通过。
