@@ -1,4 +1,3 @@
-import type { PoolClient } from 'pg';
 import { dashboardRange, validDashboardDate } from '@proofrun/contracts';
 import type {
   RequestResultV2,
@@ -72,20 +71,16 @@ export class RequestReader {
       await client.query(
         'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY',
       );
-      return this.snapshot(client, id);
+      const rows = (
+        await client.query<RequestRow>(
+          'SELECT * FROM pr_verification_requests WHERE request_id=$1 AND deleted_at IS NULL',
+          [id],
+        )
+      ).rows;
+      if (!rows.length)
+        throw new ApiError(404, 'REQUEST_MISSING', '请求不存在');
+      return (await this.projector.project(client, rows, true))[0]!;
     });
-  }
-
-  /** 供已有事务读取请求快照，避免持锁时再占用第二条连接。 */
-  async snapshot(client: PoolClient, id: string): Promise<RequestResultV2> {
-    const rows = (
-      await client.query<RequestRow>(
-        'SELECT * FROM pr_verification_requests WHERE request_id=$1 AND deleted_at IS NULL',
-        [id],
-      )
-    ).rows;
-    if (!rows.length) throw new ApiError(404, 'REQUEST_MISSING', '请求不存在');
-    return (await this.projector.project(client, rows, true))[0]!;
   }
 
   /** 反向导航显示全部关联，不假定共享 case 只有一个来源请求。 */
