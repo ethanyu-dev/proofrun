@@ -132,8 +132,6 @@ async function verifyMigration(historical: boolean) {
         tasks.map((row) => ({
           ...row,
           runtime_version: 0,
-          executor_kind: 'builtin',
-          binding_deadline_at: null,
         })),
       );
 

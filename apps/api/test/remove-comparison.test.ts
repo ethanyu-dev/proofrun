@@ -146,14 +146,6 @@ test(
           table,
         );
       assert.deepEqual(
-        (await sql.query('SELECT call_key FROM pr_public_calls')).rows,
-        [{ call_key: 'normal' }],
-      );
-      assert.deepEqual(
-        (await sql.query('SELECT resource_id FROM pr_public_owners')).rows,
-        [{ resource_id: 'source' }],
-      );
-      assert.deepEqual(
         (
           await sql.query(
             'SELECT run_key,settled_at IS NOT NULL AS settled FROM pr_feishu_runs ORDER BY run_key',

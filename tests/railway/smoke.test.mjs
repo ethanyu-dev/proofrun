@@ -6,11 +6,7 @@ import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
-import {
-  checkPublicMcp,
-  publicCredentials,
-  PUBLIC_ORIGIN,
-} from '../deploy/public-mcp.mjs';
+import { checkRetiredApi, PUBLIC_ORIGIN } from '../deploy/retired-api.mjs';
 
 /** 容器创建有界；仅使用事先构建的本项目测试标签。 */
 const execute = promisify(execFile);
@@ -50,7 +46,6 @@ test(
     const admin = randomUUID(),
       worker = randomUUID(),
       password = randomUUID();
-    const publicToken = randomUUID();
     const label = `proofrun.railway-test=${id}`;
     t.after(async () => {
       const names = (await docker('ps', '-aq', '--filter', `label=${label}`))
@@ -126,8 +121,6 @@ test(
         '-e',
         `PROOFRUN_PUBLIC_URL=${PUBLIC_ORIGIN}`,
         '-e',
-        `PROOFRUN_MCP_CREDENTIALS_JSON=${JSON.stringify(publicCredentials(publicToken))}`,
-        '-e',
         `PROOFRUN_CASE_PROFILE_JSON=${JSON.stringify(profile)}`,
         'proofrun-railway-api:test',
       );
@@ -189,7 +182,7 @@ test(
       await rejected.json();
     }
     const page = await fetch(`${base}/tasks/fixture`);
-    await checkPublicMcp(base, publicToken);
+    await checkRetiredApi(base);
     assert.equal(page.status, 200);
     assert.match(await page.text(), /<html/);
     const cases = JSON.parse(

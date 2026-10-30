@@ -36,7 +36,6 @@ import { StepAllowance } from '@proofrun/execution-core/execution/step-budget';
 import { HANDOFF_REVIEW_FEEDBACK } from '../prompts/action-replay.js';
 import { settlementRepairFeedback } from '../prompts/settlement.js';
 import {
-  EXTERNAL_SETTLEMENT_FEEDBACK,
   PREPARATION_BLOCK_REVIEW,
   REPEATED_RECORD_FEEDBACK,
   WAIT_NOT_MET_FEEDBACK,
@@ -142,8 +141,6 @@ export type ExecutionClient = Pick<
   /** 只由 profile 编排器共享意图与当前人工确认代次，不暴露认证数据。 */
   profileEnvironment?: () =>
     { mode: 'guest' | 'configured'; confirmedRevision?: number } | undefined;
-  /** 外部决定的领域错误保存在操作回执；不得根据错误重放写入。 */
-  decisionError?: (error: unknown) => Promise<void>;
   /** 合法进度在动作参数校验与派发之前落库；旧运行适配器可省略。 */
   checkpoint?: (
     context: NonNullable<DecisionInput['context']>,
@@ -2461,17 +2458,6 @@ class Execution {
           await this.observe();
         }
       } catch (error) {
-        await this.client.decisionError?.(error);
-        // 外部等待也服从探索截止点；保留原步骤余额，发布新的只读收尾帧，不重放动作。
-        if (
-          error instanceof AgentFault &&
-          error.code === 'DECISION_WINDOW_EXPIRED'
-        ) {
-          settling = true;
-          finalReview = false;
-          this.feedback = EXTERNAL_SETTLEMENT_FEEDBACK;
-          continue;
-        }
         // 收尾协议错误复用原有纠错上限；只重交声明，不重放动作或增加时间与请求额度。
         if (
           finalReview &&

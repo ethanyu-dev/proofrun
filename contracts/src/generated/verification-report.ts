@@ -46,6 +46,10 @@ export type VerificationReport = {
     output: string;
     evidenceRefs: string[];
   };
+  /**
+   * @deprecated
+   * 仅兼容退役 external 运行的历史报告；当前执行器不再生成此字段。
+   */
   executor?: {
     kind: 'external';
     judgmentSource: 'external_agent';
@@ -153,7 +157,8 @@ export interface StepResult {
       maxModelCalls: number;
     };
     /**
-     * 外部决定计数；不代表平台模型调用。
+     * @deprecated
+     * 仅兼容退役 external 运行的历史决定计数，不代表平台模型调用；当前执行器不再生成此字段。
      */
     decisionCalls?: number;
   };

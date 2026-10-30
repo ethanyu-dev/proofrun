@@ -272,6 +272,50 @@ test('控制面持久化与故障集成', { timeout: 90_000 }, async (suite) => 
         ),
     );
   try {
+    // 范围：普通会话启动预算及持久化截止时间；使用协议夹具，不证明真实浏览器启动耗时。
+    await suite.test('会话启动允许冷启动，且不超过任务剩余预算', async () => {
+      const node = await addNode('session-startup-budget');
+      for (const timeoutMs of [180_000, 30_000]) {
+        const definition = {
+          ...task(node.pool),
+          budget: { timeoutMs, maxActions: 20 },
+        };
+        await submit(definition);
+        const execution = await claim();
+        assert.ok(execution);
+        await ready(execution);
+        const open = node.sessions.get(execution.sessionId)!;
+        const persisted = (
+          await sql.query(
+            `SELECT c.created_at,c.deadline_at,t.deadline_at AS task_deadline
+             FROM pr_commands c JOIN pr_executions e ON e.id=c.execution_id
+             JOIN pr_tasks t ON t.id=e.task_id WHERE c.id=$1`,
+            [open.commandId],
+          )
+        ).rows[0];
+        // 长任务采用节点的启动上限；短任务扣除排队时间后使用剩余预算。
+        if (timeoutMs > 120_000) assert.equal(open.timeoutMs, 120_000);
+        else {
+          assert.ok(open.timeoutMs > 15_000);
+          assert.ok(open.timeoutMs <= timeoutMs);
+          assert.ok(
+            Math.abs(
+              persisted.deadline_at.getTime() -
+                persisted.task_deadline.getTime(),
+            ) < 100,
+          );
+        }
+        assert.ok(
+          Math.abs(
+            persisted.deadline_at.getTime() -
+              persisted.created_at.getTime() -
+              open.timeoutMs,
+          ) < 100,
+        );
+        await api('POST', `/v1/tasks/${definition.taskId}/cancel`);
+        await cleaned(definition.taskId);
+      }
+    });
     // 范围：真实 HTTP/数据库冻结偏好、能力升级门禁和缺失证明拒绝；节点和浏览器由协议夹具模拟。
     await suite.test(
       '动画偏好等待新版节点，传递显式配置并拒绝缺失证明',

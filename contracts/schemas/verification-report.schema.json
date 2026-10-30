@@ -280,7 +280,9 @@
         "modelCalls",
         "promptTokens",
         "completionTokens"
-      ]
+      ],
+      "description": "仅兼容退役 external 运行的历史报告；当前执行器不再生成此字段。",
+      "deprecated": true
     }
   },
   "$schema": "http://json-schema.org/draft-07/schema#",

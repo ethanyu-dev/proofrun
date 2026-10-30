@@ -14,14 +14,6 @@ import { validateCaseProfile, type CaseProfile } from './profile.js';
 import { extendRerunTimeBudget, parseRerunTimeBudget } from './rerun-budget.js';
 import { compileCase, MAX_CASE_BATCH, V2_PREFIX } from './structured.js';
 
-/** 编译只需要冻结定义；公共事务注入同连接读取，避免持有连接时再申请连接。 */
-export interface CaseDefinitionReader {
-  /** 按明确运行读取，包括重试时已存在的目标定义。 */
-  run(runId: string): Promise<VerificationTask>;
-  /** 沿用 Case 可见性与最新运行规则，也可固定来源运行。 */
-  case(caseId: string, runId?: string): Promise<VerificationTask>;
-}
-
 /** 新旧公开入口各自投影结果；不将平台配置或浏览器会话凭据返回上游。 */
 export class CaseV2Service {
   constructor(
@@ -54,10 +46,7 @@ export class CaseV2Service {
   }
 
   /** 先校验整批，再由调度器事务接收；配置改变后重提仍复用首次冻结的快照。 */
-  async prepare(
-    input: unknown,
-    reader?: CaseDefinitionReader,
-  ): Promise<VerificationTask[]> {
+  async prepare(input: unknown): Promise<VerificationTask[]> {
     if (
       !Array.isArray(input) ||
       !input.length ||
@@ -73,15 +62,13 @@ export class CaseV2Service {
       throw new ApiError(422, 'INVALID_CASE', '批次内 caseId 不能重复');
     const definitions: VerificationTask[] = [];
     for (const item of input) {
-      const existing = await (
-        reader
-          ? reader.case(item.caseId)
-          : this.stored(item.caseId).then((task) => task.definition)
-      ).catch((error: unknown) => {
-        if (error instanceof ApiError && error.code === 'CASE_MISSING')
-          return null;
-        throw error;
-      });
+      const existing = await this.stored(item.caseId)
+        .then((task) => task.definition)
+        .catch((error: unknown) => {
+          if (error instanceof ApiError && error.code === 'CASE_MISSING')
+            return null;
+          throw error;
+        });
       if (existing) {
         if (canonical(existing.caseV2Definition) !== canonical(item))
           throw new ApiError(409, 'CASE_CONFLICT', 'caseId 已绑定另一份定义');
@@ -118,7 +105,6 @@ export class CaseV2Service {
     // 请求内重跑沿用该请求当前运行，避免共享 case 被其他请求的新运行改变配置。
     sourceTaskId?: string,
     session?: unknown,
-    reader?: CaseDefinitionReader,
   ): Promise<VerificationTask> {
     if (typeof runId !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(runId))
       throw new ApiError(400, 'INVALID_RERUN', '重跑需要一个有效 runId');
@@ -131,15 +117,14 @@ export class CaseV2Service {
       );
     const time = parseRerunTimeBudget(timeBudget);
     const taskId = `case-run-${runId}`;
-    const previous = await (
-      reader
-        ? reader.run(taskId)
-        : this.tasks.task(taskId).then((task) => task.definition)
-    ).catch((error: unknown) => {
-      if (error instanceof ApiError && error.code === 'TASK_MISSING')
-        return null;
-      throw error;
-    });
+    const previous = await this.tasks
+      .task(taskId)
+      .then((task) => task.definition)
+      .catch((error: unknown) => {
+        if (error instanceof ApiError && error.code === 'TASK_MISSING')
+          return null;
+        throw error;
+      });
     if (previous) {
       assertSupportedSession(previous.sessionPlan);
       if (previous.caseV2Definition?.caseId !== id)
@@ -154,9 +139,7 @@ export class CaseV2Service {
         );
       return previous;
     }
-    const definition = reader
-      ? await reader.case(id, sourceTaskId)
-      : (await this.stored(id, sourceTaskId)).definition;
+    const definition = (await this.stored(id, sourceTaskId)).definition;
     const profile: CaseProfile = {
       // 保留原人工权限；退役身份迁移和显式人工配置再按当前平台权限决定是否允许交接。
       environment: {

@@ -4,10 +4,6 @@ import {
   type DevPassConfig,
 } from './modules/account-providers/config.js';
 import { resolve } from 'node:path';
-import {
-  loadPublicCredentials,
-  type PublicCredential,
-} from './modules/public-execution/auth.js';
 import { loadCaseProfile, type CaseProfile } from './modules/cases/profile.js';
 import {
   feishuConfig,
@@ -32,10 +28,6 @@ export interface ApiConfig {
   buildIdentity?: ReleaseIdentity;
   /** 新入队运行的冻结驱动版本；省略保留程序化旧接入，部署配置默认启用版本 1。 */
   executionRuntimeVersion?: 0 | 1;
-  /** 可选任务级 MCP 服务凭据；未配置时不注册公共接入端点。 */
-  publicCredentials?: PublicCredential[];
-  /** 外部控制空闲期限；不覆盖任务、账号或步骤的硬期限。 */
-  externalIdleMs?: number;
   /** 受控的外部账号来源，密钥不进入任务。 */
   devPass?: DevPassConfig;
   /** 可选飞书企业自建应用；未配置时关闭 Case 生命周期通知。 */
@@ -157,9 +149,6 @@ export function loadConfig(): ApiConfig {
       '飞书通知已改为企业自建应用，请移除旧 WEBHOOK_URL/SIGNING_SECRET 并配置 APP_ID、APP_SECRET、CHAT_ID',
     );
   const devPass = loadDevPass(process.env.PROOFRUN_DEVPASS_CONFIG_FILE);
-  const publicCredentials = loadPublicCredentials(
-    process.env.PROOFRUN_MCP_CREDENTIALS_FILE,
-  );
   return {
     ...(process.env.PROOFRUN_BENCHMARK_NODE_POOL
       ? { benchmarkNodePool: process.env.PROOFRUN_BENCHMARK_NODE_POOL }
@@ -168,7 +157,6 @@ export function loadConfig(): ApiConfig {
       ? { benchmarkEnvironment: process.env.PROOFRUN_BENCHMARK_ENVIRONMENT }
       : {}),
     executionRuntimeVersion,
-    ...(publicCredentials ? { publicCredentials } : {}),
     ...(devPass ? { devPass } : {}),
     ...(feishu ? { feishu } : {}),
     ...(caseProfile ? { caseProfile } : {}),

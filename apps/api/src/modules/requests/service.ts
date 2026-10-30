@@ -2,29 +2,11 @@ import {
   validateVerificationRequest,
   validateRequestRerun,
   type RequestResultV2,
-  type VerificationRequest,
 } from '@proofrun/contracts';
 import { ApiError, canonical, digest } from '../../domain.js';
 import type { Coordinator } from '../scheduling/coordinator.js';
 import type { CaseV2Service } from '../cases/v2.js';
 import { RequestReader } from './reader.js';
-
-/** 公开入口与 MCP 共用请求身份规则；成员排序不改变首次接收定义。 */
-export function requestIdentity(input: VerificationRequest) {
-  const title = input.title ?? input.requestId;
-  return {
-    requestId: input.requestId,
-    title,
-    hash: digest(
-      canonical({
-        title,
-        cases: [...input.cases].sort((a, b) =>
-          a.caseId.localeCompare(b.caseId),
-        ),
-      }),
-    ),
-  };
-}
 
 /** 请求只负责归属和一次原子接收，实际执行继续复用 case 服务。 */
 export class RequestService {
@@ -63,7 +45,15 @@ export class RequestService {
       );
     if (new Set(input.cases.map((c) => c.caseId)).size !== input.cases.length)
       throw new ApiError(422, 'INVALID_CASE', '请求内 caseId 不能重复');
-    const { title, hash } = requestIdentity(input);
+    const title = input.title ?? input.requestId;
+    const hash = digest(
+      canonical({
+        title,
+        cases: [...input.cases].sort((a, b) =>
+          a.caseId.localeCompare(b.caseId),
+        ),
+      }),
+    );
     const replay = await this.replay(input.requestId, hash);
     if (replay) return replay;
     const definitions = await this.cases.prepare(input.cases);

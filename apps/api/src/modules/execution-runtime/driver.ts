@@ -62,7 +62,7 @@ export class RuntimeDriver {
   }
 
   /** 每一步独立保存账本，模型请求快照与已接受进度分开；不复制证据原文。 */
-  async checkpoint(executionId: string, context: DecisionContextData) {
+  private async checkpoint(executionId: string, context: DecisionContextData) {
     const saved = await this.db.query(
       `UPDATE pr_execution_runtimes SET snapshot=jsonb_set(coalesce(snapshot,'{}'),ARRAY[$2],$3::jsonb,true),updated_at=clock_timestamp() WHERE execution_id=$1 AND state='ACTIVE'`,
       [executionId, context.task.stepId ?? 'browser', context],

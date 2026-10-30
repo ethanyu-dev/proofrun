@@ -42,36 +42,28 @@ interface Cursor {
   filter: string;
 }
 
-/** 统一 Case 运行选择规则；查询端口可来自数据库池或调用方已有事务。 */
-export async function caseRunId(
-  db: Pick<Database, 'query'>,
-  id: string,
-  runId?: string,
-): Promise<string> {
-  if (
-    typeof id !== 'string' ||
-    !/^[A-Za-z0-9_-]{1,80}$/.test(id) ||
-    (runId !== undefined &&
-      (typeof runId !== 'string' || !/^[A-Za-z0-9_-]{1,160}$/.test(runId)))
-  )
-    throw new ApiError(400, 'INVALID_RUN', '运行身份无效');
-  const row = (
-    await db.query<{ run_id: string }>(
-      `SELECT run_id FROM pr_case_runs WHERE case_id=$1 AND deleted_at IS NULL AND ($2::text IS NULL OR run_id=$2) ORDER BY created_at DESC,run_id DESC LIMIT 1`,
-      [id, runId ?? null],
-    )
-  ).rows[0];
-  if (!row) throw new ApiError(404, 'CASE_MISSING', 'Case 不存在或运行已删除');
-  return row.run_id;
-}
-
 /** 查询对象不是协议写入，不参与任务调度或修改任务定义。 */
 export class TaskReader {
   constructor(private readonly db: Database) {}
 
   /** 兼容旧主任务身份；默认读取最新未删除运行，历史运行必须属于指定 case。 */
   async caseTask(id: string, runId?: string) {
-    return this.task(await caseRunId(this.db, id, runId));
+    if (
+      typeof id !== 'string' ||
+      !/^[A-Za-z0-9_-]{1,80}$/.test(id) ||
+      (runId !== undefined &&
+        (typeof runId !== 'string' || !/^[A-Za-z0-9_-]{1,160}$/.test(runId)))
+    )
+      throw new ApiError(400, 'INVALID_RUN', '运行身份无效');
+    const row = (
+      await this.db.query<{ run_id: string }>(
+        `SELECT run_id FROM pr_case_runs WHERE case_id=$1 AND deleted_at IS NULL AND ($2::text IS NULL OR run_id=$2) ORDER BY created_at DESC,run_id DESC LIMIT 1`,
+        [id, runId ?? null],
+      )
+    ).rows[0];
+    if (!row)
+      throw new ApiError(404, 'CASE_MISSING', 'Case 不存在或运行已删除');
+    return this.task(row.run_id);
   }
 
   /** 历史只返回可见运行，报告和证据通过原任务详情读取。 */

@@ -12,7 +12,7 @@ const LEGACY_WRITE = new Set([
   '/v1/executions/:id/control',
   '/v1/executions/:id/model-calls/:callId',
 ]);
-/** 内部运行时不注册到两套公共 MCP，也不接受公共服务凭据。 */
+/** 内部运行时仅接受单次执行租约凭据。 */
 export function registerExecutionRuntime(
   app: FastifyInstance,
   runtime: ExecutionRuntime,
