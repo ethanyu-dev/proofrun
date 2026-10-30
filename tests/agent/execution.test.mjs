@@ -3000,12 +3000,25 @@ test('结构化任务不再按关键词跳过步骤', async () => {
   assert.equal(report.criteria.length, 3);
 });
 
-// 范围：真实本地 HTTP 故障贯通三次尝试、审计回执和停止行为；浏览器为夹具，不是线上供应商验收。
+// 范围：本地 HTTP 故障贯通三次尝试，请求先存档且与派发正文一致；浏览器与存储为夹具，不是线上供应商验收。
 test('模型非 JSON 临时错误保留每次诊断与明确的重试编号', async () => {
   let requests = 0;
-  const server = createServer((request, response) => {
+  const requestBodies = [];
+  const recordedAtArrival = [];
+  const client = new FakeControl();
+  const server = createServer(async (request, response) => {
     requests++;
-    request.resume();
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString());
+    requestBodies.push(body);
+    // 供应商收到正文时，请求记录必须已存在，不能等成功响应后才保存。
+    const start = client.modelCalls
+      .filter((item) => item.body.phase === 'start')
+      .at(-1);
+    recordedAtArrival.push(
+      start ? JSON.parse(start.body.record.request) : null,
+    );
     response.writeHead(502, { 'content-type': 'text/html' });
     response.end('<html>upstream unavailable private-fixture-secret</html>');
   });
@@ -3014,7 +3027,6 @@ test('模型非 JSON 临时错误保留每次诊断与明确的重试编号', as
     ...config,
     modelUrl: `http://127.0.0.1:${server.address().port}`,
   };
-  const client = new FakeControl();
   try {
     const report = await execute(
       settings,
@@ -3024,9 +3036,14 @@ test('模型非 JSON 临时错误保留每次诊断与明确的重试编号', as
     );
     assert.equal(report.executionDetails.reasonCode, 'RETRYABLE_MODEL_ERROR');
     assert.equal(requests, 3);
+    assert.deepEqual(recordedAtArrival, requestBodies);
     const starts = client.modelCalls
       .filter((item) => item.body.phase === 'start')
       .map((item) => item.body.record);
+    assert.deepEqual(
+      starts.map((item) => JSON.parse(item.request)),
+      requestBodies,
+    );
     assert.deepEqual(
       starts.map((item) => item.attempt),
       [1, 2, 3],

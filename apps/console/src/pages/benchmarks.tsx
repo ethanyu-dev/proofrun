@@ -14,6 +14,7 @@ import {
   benchmarkComparison,
   benchmarkContext,
   benchmarkMetrics,
+  benchmarkRequestMetrics,
   benchmarkPassed,
   benchmarkTools,
   type BenchmarkCase,
@@ -53,6 +54,26 @@ function delta(current: number, previous: number | undefined) {
   if (previous === undefined) return '—';
   const value = current - previous;
   return `${value > 0 ? '+' : ''}${value.toLocaleString()}`;
+}
+
+/** 基础与 V2 共用请求口径；汇总传入全部请求，避免平均场景百分比造成偏差。 */
+function RequestSuccess({ calls }: { calls: BenchmarkCase['calls'] }) {
+  const metrics = benchmarkRequestMetrics(calls);
+  return (
+    <span className="bench-request-success">
+      <span>
+        {metrics.successRate === null
+          ? '—'
+          : `${(metrics.successRate * 100).toFixed(1)}%`}
+      </span>
+      <small>
+        {metrics.total
+          ? `${metrics.succeeded}/${metrics.total} 成功 · ${metrics.failed} 失败`
+          : '暂无请求'}
+        {metrics.pending > 0 && ` · ${metrics.pending} 等待回执`}
+      </small>
+    </span>
+  );
 }
 
 /** 场景切换重新选择轮次，避免同序号残留上一个场景的上下文。 */
@@ -206,7 +227,10 @@ function CaseDetail({
               <code>
                 {benchmarkTools(entry)
                   .map((tool) => tool.name)
-                  .join(', ') || entry.status}
+                  .join(', ') ||
+                  (entry.error
+                    ? `${entry.status} · ${entry.error}`
+                    : entry.status)}
               </code>
               <span className="muted note">
                 {commandsFor(entry).length} 条派发 · {entry.elapsedMs ?? '—'} ms
@@ -640,6 +664,14 @@ function BenchmarkWorkspace({
               </strong>
             </div>
             <div>
+              <span>LLM 请求成功率</span>
+              <strong>
+                <RequestSuccess
+                  calls={run.cases.flatMap((item) => item.calls)}
+                />
+              </strong>
+            </div>
+            <div>
               <span>Context 峰值</span>
               <strong>
                 {Math.max(
@@ -665,6 +697,12 @@ function BenchmarkWorkspace({
               </strong>
             </div>
           </div>
+          <p className="muted note">
+            LLM 请求成功率 = 收到响应的请求数 / 总请求数（含重试及等待回执）。
+            收到响应不代表工具调用有效或任务验收通过。
+            {run.mode === 'scripted' &&
+              '当前为脚本夹具，不代表真实模型服务成功率。'}
+          </p>
           <section className="bench-cases">
             <div className="bench-section-title">
               <h2>
@@ -697,6 +735,7 @@ function BenchmarkWorkspace({
                     <th>场景</th>
                     <th>{live ? '检查' : '门禁'}</th>
                     <th>轮次 / Δ</th>
+                    <th>LLM 请求成功率</th>
                     <th>Context 峰值 / Δ</th>
                     <th>派发命令</th>
                     <th>耗时</th>
@@ -752,6 +791,9 @@ function BenchmarkWorkspace({
                         <td className="mono">
                           {metrics.rounds}
                           <small>{delta(metrics.rounds, old?.rounds)}</small>
+                        </td>
+                        <td className="mono">
+                          <RequestSuccess calls={item.calls} />
                         </td>
                         <td className="mono">
                           {metrics.peakContext.toLocaleString()}
