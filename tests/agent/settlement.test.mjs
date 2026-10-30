@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { compileStepBudget } from '../../contracts/dist/index.js';
-import { AgentFault } from '../../apps/agent/dist/http.js';
 import { SettlementBudget } from '../../packages/execution-core/dist/execution/settlement-budget.js';
 import { ChatModel } from '../../apps/agent/dist/model/chat.js';
 import { execute } from '../../packages/execution-driver/dist/execution/runner.js';
@@ -467,32 +466,6 @@ test('收尾纠错不能重新执行浏览器动作', async () => {
         }
       : { type: 'browser.act', action: 'click', target: '@e2' },
   );
-  assert.equal(
-    client.calls.filter((c) => c.operation.action === 'click').length,
-    0,
-  );
-});
-
-// 范围：外部探索等待到期沿共享循环转为只读收尾，保存已取得结论；时钟由适配器故障模拟，不连接真实 Agent。
-test('外部决定窗口到期发布收尾帧，仍可保存结论而不重放浏览器操作', async () => {
-  const client = new FakeControl();
-  let calls = 0;
-  const model = {
-    async decide(input) {
-      if (++calls === 1)
-        throw new AgentFault('DECISION_WINDOW_EXPIRED', '等待到期夹具');
-      assert.equal(input.context.state.settlement, 'budget');
-      assert.match(input.context.feedback[0].message, /保存已有结论/);
-      return {
-        decision: finish(input.context),
-        promptTokens: 0,
-        completionTokens: 0,
-      };
-    },
-  };
-  const report = await execute(config, client, model, execution());
-  assert.equal(calls, 2);
-  assert.equal(report.criteria[0].verdict, 'PASSED');
   assert.equal(
     client.calls.filter((c) => c.operation.action === 'click').length,
     0,

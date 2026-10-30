@@ -103,26 +103,13 @@ export class Coordinator {
 
   /** 重试沿用首次冻结的配置；同一身份不能改变业务输入或挪用历史任务。 */
   async submitBrowser(input: BrowserTaskRequest) {
-    return this.submit(await this.browserDefinition(input, this.db));
+    return this.submit(await this.browserDefinition(input));
   }
 
-  /** 公共接入的归属、回执和入队共用调用方事务；不在提交前启动浏览器。 */
-  async submitBrowserInTransaction(
-    input: BrowserTaskRequest,
-    client: PoolClient,
-  ) {
-    const task = await this.browserDefinition(input, client);
-    this.validateSubmission(task);
-    await this.enqueue([task], task.taskId, client);
-  }
-
-  /** 两种入口使用同一业务定义和重试检查，客户端不能覆盖平台配置。 */
-  private async browserDefinition(
-    input: BrowserTaskRequest,
-    query: Pick<Database, 'query'>,
-  ) {
+  /** 浏览器任务复用冻结定义和重试检查，客户端不能覆盖平台配置。 */
+  private async browserDefinition(input: BrowserTaskRequest) {
     const existing = (
-      await query.query<{ definition: VerificationTask }>(
+      await this.db.query<{ definition: VerificationTask }>(
         'SELECT definition FROM pr_tasks WHERE id=$1',
         [input.taskId],
       )
@@ -199,11 +186,7 @@ export class Coordinator {
   }
 
   /** 同一提交身份串行入队；整批事务在任一任务冲突时回滚。 */
-  private async enqueue(
-    tasks: VerificationTask[],
-    identity: string,
-    transaction?: PoolClient,
-  ) {
+  private async enqueue(tasks: VerificationTask[], identity: string) {
     const write = async (client: PoolClient) => {
       await client.query(
         'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
@@ -250,15 +233,13 @@ export class Coordinator {
           );
       }
     };
-    if (transaction) await write(transaction);
-    else await this.db.transaction(write);
+    await this.db.transaction(write);
   }
 
   /** 整批原子入队；锁按身份排序，交叉批次不会因请求顺序形成死锁。 */
   async submitCaseBatch(
     tasks: VerificationTask[],
     request?: RequestRegistration,
-    transaction?: PoolClient,
   ) {
     const write = async (client: PoolClient) => {
       if (request && !(await registerRequest(client, request))) return;
@@ -326,8 +307,7 @@ export class Coordinator {
       }
       if (request) await registerMembers(client, request, tasks, created);
     };
-    if (transaction) await write(transaction);
-    else await this.db.transaction(write);
+    await this.db.transaction(write);
   }
 
   /** 步骤快照随执行令牌写入；只允许当前执行的证据和完整原步骤集合。 */
@@ -405,7 +385,6 @@ export class Coordinator {
     profileTabsVersion?: number,
     executionPlanVersion?: number,
     runtimeVersion?: number,
-    externalRunId?: string,
     benchmarkVersion?: number,
   ) {
     const live = this.gateway.live();
@@ -420,7 +399,7 @@ export class Coordinator {
       const tasks = await client.query<{ id: string }>(
         `SELECT candidate.id FROM unnest($1::text[]) AS pool(name)
         CROSS JOIN LATERAL (SELECT id,created_at FROM pr_tasks WHERE state='QUEUED'
-          AND ($10 OR NOT EXISTS(SELECT 1 FROM pr_benchmark_cases b WHERE b.task_id=pr_tasks.id)) AND (runtime_version=0 OR $8) AND executor_kind=CASE WHEN $9::text IS NULL THEN 'builtin' ELSE 'external' END AND ($9::text IS NULL OR (id=$9 AND EXISTS(SELECT 1 FROM pr_external_controllers c WHERE c.run_id=pr_tasks.id AND c.state='ACTIVE' AND c.idle_deadline_at>clock_timestamp()))) AND deadline_at>clock_timestamp() AND definition#>>'{environment,nodePool}'=pool.name AND ($3 OR NOT (definition ? 'steps')) AND ($4 OR NOT (definition ? 'stepBudget')) AND ($5 OR NOT (definition ? 'sessionPlan') OR (NOT (definition ? 'steps') AND definition#>>'{sessionPlan,profileSource}'='node-default' AND definition#>>'{sessionPlan,mode}'='manual' AND definition#>'{sessionPlan,requirements}'='[]'::jsonb)) AND ($6 OR NOT (definition ? 'profilePlan')) AND ($7 OR NOT (definition ? 'executionPlan'))
+          AND ($9 OR NOT EXISTS(SELECT 1 FROM pr_benchmark_cases b WHERE b.task_id=pr_tasks.id)) AND (runtime_version=0 OR $8) AND deadline_at>clock_timestamp() AND definition#>>'{environment,nodePool}'=pool.name AND ($3 OR NOT (definition ? 'steps')) AND ($4 OR NOT (definition ? 'stepBudget')) AND ($5 OR NOT (definition ? 'sessionPlan') OR (NOT (definition ? 'steps') AND definition#>>'{sessionPlan,profileSource}'='node-default' AND definition#>>'{sessionPlan,mode}'='manual' AND definition#>'{sessionPlan,requirements}'='[]'::jsonb)) AND ($6 OR NOT (definition ? 'profilePlan')) AND ($7 OR NOT (definition ? 'executionPlan'))
           ORDER BY created_at,id LIMIT $2) candidate ORDER BY candidate.created_at,candidate.id`,
         [
           pools,
@@ -431,7 +410,6 @@ export class Coordinator {
           profileTabsVersion === 1,
           executionPlanVersion === 1,
           runtimeVersion === 1,
-          externalRunId ?? null,
           benchmarkVersion === 1,
         ],
       );
@@ -1188,8 +1166,8 @@ export class Coordinator {
     return this.reader.task(id);
   }
 
-  /** 指定运行的取消可与公共操作回执原子提交，不重新解析 Case 的最新运行。 */
-  async cancelInTransaction(id: string, client: PoolClient) {
+  /** 取消固定运行，不重新解析 Case 的最新运行。 */
+  private async cancelInTransaction(id: string, client: PoolClient) {
     const queued = await client.query(
       "UPDATE pr_tasks SET state='CANCELLED',finished_at=clock_timestamp() WHERE id=$1 AND state='QUEUED' RETURNING id",
       [id],

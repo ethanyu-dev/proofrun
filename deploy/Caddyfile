@@ -1,6 +1,11 @@
 # 域名从服务环境提供；API 与 Console 同源，WebSocket 由反向代理自动升级。
 {$PROOFRUN_DOMAIN} {
-    @control path /v1/* /v2/* /v3/* /mcp/* /health/* /docs /docs/* /openapi.json
+    # 退役入口不得落入 Console 的 SPA 回退。
+    @retired path /v3/* /mcp/*
+    handle @retired {
+        respond 404
+    }
+    @control path /v1/* /v2/* /health/* /docs /docs/* /openapi.json
     handle @control {
         reverse_proxy 127.0.0.1:4100
     }

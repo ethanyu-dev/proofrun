@@ -150,7 +150,6 @@ export async function executeProfile(
     };
     const scoped: GroupExecutionClient = {
       ...(client.checkpoint ? { checkpoint: client.checkpoint } : {}),
-      ...(client.decisionError ? { decisionError: client.decisionError } : {}),
       profileEnvironment: () => sharedEnvironment,
       view: async (_grant, abortSignal) =>
         project(await client.view(grant, abortSignal), active) as ExecutionView,

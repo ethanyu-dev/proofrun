@@ -9,7 +9,7 @@ import type { Coordinator } from '../scheduling/coordinator.js';
 import type { CaseV2Service } from '../cases/v2.js';
 import { RequestReader } from './reader.js';
 
-/** 公开入口与 MCP 共用请求身份规则；成员排序不改变首次接收定义。 */
+/** 公开入口共用请求身份规则；成员排序不改变首次接收定义。 */
 export function requestIdentity(input: VerificationRequest) {
   const title = input.title ?? input.requestId;
   return {

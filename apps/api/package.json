@@ -19,14 +19,14 @@
     "ws": "8.21.3",
     "@dev-pass/client": "workspace:*",
     "@dev-pass/contracts": "workspace:*",
-    "@modelcontextprotocol/sdk": "1.32.1",
     "@proofrun/execution-core": "workspace:*",
     "@proofrun/execution-driver": "workspace:*"
   },
   "devDependencies": {
     "@types/pg": "8.23.1",
     "@types/ws": "8.18.1",
-    "jose": "^6.1.0"
+    "jose": "^6.1.0",
+    "@modelcontextprotocol/sdk": "1.32.1"
   },
   "files": [
     "dist",
