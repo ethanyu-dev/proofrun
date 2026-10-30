@@ -17,10 +17,7 @@ state.networkReads 保留同一网络快照的近期查询和匹配数量（包�
 不能在列表与详情之间往返读取已知结果。
 空结果只说明已采集范围无匹配；缺少必要证据时以 INCONCLUSIVE 或 block 明确说明，不能重复查询假装补采。
 
-默认每轮一个工具；
-可以一次返回最多 4 个纯 network_requests/network_request_detail 调用，
-结果分别位于 page.network 和 additionalResults，
-不能混入浏览器操作、finish、record 或 progress。
-批次任一参数无效则整批不执行；需要登记事实时单独使用本轮可用的进度工具。
+每轮只调用一个 network_requests 或 network_request_detail；先读最必要的一项，再根据结果决定下一轮是否还需查询。
+page.network 是最近结果；若存在 additionalResults，其中也是已经交付的只读结果，可以复用，不表示允许本轮返回多个工具。
 网络读取仍只消耗本轮真实模型调用额度，任何重复读取都不产生新浏览器事实；
 连续重读已知结果（包括交替查询）会被终止。`;
