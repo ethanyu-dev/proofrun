@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { BENCHMARK_LIMITS } from '@proofrun/contracts/benchmark-scenarios';
+import { benchmarkRuntimeLimits } from '@proofrun/contracts/benchmark-scenarios';
 import type { ExecutionGrant, RuntimeRequest } from '@proofrun/contracts';
 import { execute } from '@proofrun/execution-driver/execution/runner';
 import { ExecutionFault } from '@proofrun/execution-core/faults';
@@ -120,17 +120,25 @@ export class ExecutionRuntime {
       // 基准预算由服务端固定，不能由错误配置的 worker 放宽；先记录实际构建身份再执行。
       const benchmark = (
         await client.query(
-          'SELECT agent_release FROM pr_benchmark_cases WHERE task_id=$1',
+          'SELECT b.agent_release,r.family FROM pr_benchmark_cases b JOIN pr_benchmark_runs r ON r.id=b.run_id WHERE b.task_id=$1',
           [context.task_id],
         )
       ).rows[0];
+      if (!benchmark && config.maxTurns > 200)
+        throw new ApiError(
+          400,
+          'INVALID_RUNTIME_CONFIG',
+          '普通任务模型轮次不能超过 200',
+        );
+      const limits =
+        benchmark &&
+        benchmarkRuntimeLimits(benchmark.family, context.definition);
       if (
         benchmark &&
         (!benchmark.agent_release ||
-          config.maxTurns !== BENCHMARK_LIMITS.maxTurns ||
-          config.maxContextChars !== BENCHMARK_LIMITS.maxContextChars ||
-          config.commandMs !== BENCHMARK_LIMITS.commandMs ||
-          config.evidenceMs !== BENCHMARK_LIMITS.evidenceMs)
+          Object.entries(limits!).some(
+            ([key, value]) => config[key as keyof RuntimeConfig] !== value,
+          ))
       )
         throw new ApiError(
           409,

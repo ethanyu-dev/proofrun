@@ -55,6 +55,10 @@
         },
         "caseId": {
           "type": "string"
+        },
+        "family": {
+          "enum": ["browser", "v2"],
+          "description": "V2 需要支持版本 2 的基准 worker；省略兼容历史基础套件。"
         }
       },
       "description": "由调度器根据持久化关联生成，不接受任务输入自行开启故障注入。"

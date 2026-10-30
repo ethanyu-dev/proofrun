@@ -14,7 +14,10 @@ unavailable、truncated 或 complete=false 不能证明无异常；无注册与�
 不得以页面打开代替运行时验收。
 runtimeLists 区分原采集完整性 capture 与当前投影 omitted；用 context_read(section=runtime,path,offset) 分页补读，runtimeDetail 是同快照原始条目。
 优先核对 runtimeDetail；继续翻页使用 runtimeDetail.nextOffset，而不是摘要目录的 nextOffset。
-state.contextReads 保留已读页与实际缓存状态计数；翻页前用 progress 保存本页发现，不重复读第一页。`;
+state.contextReads 自动保留已读页与实际缓存状态计数，不重复读第一页。
+分页尚未读完时，用 progress.requirements 的 incomplete 和 summary 保存部分发现，省略尚未完成验收项的 progress.criteria。
+INCONCLUSIVE 是证据不足的验收结论，不是“还没读完”的进度占位；同一快照的后续分页仍引用相同附件，不构成升级暂存结论所需的新增证据。
+读完所需全部分页后再登记该项结论；若原采集缺失、截断或无法核实，仍如实登记 INCONCLUSIVE 或 block，不能因此猜测通过。`;
 
 /** 历史正文只证明当时事实，不能作为当前状态或操作目标。 */
 const EXCERPT_PROMPT = `history.excerpts 保留对应观察的正文与 documents，不代表当前状态；

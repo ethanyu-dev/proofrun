@@ -253,7 +253,7 @@ function CaseDetail({
   );
 }
 
-/** 紧凑的本地基准工作台；发布版可离线导入，开发版额外提供固定命令运行入口。 */
+/** 两个测试集均可选择线上调度；本地开发执行与导入归档保持独立数据源。 */
 export function BenchmarksPage({ api }: { api: ApiClient | null }) {
   const [source, setSource] = useState(api ? 'server' : 'local');
   const [family, setFamily] = useState<'browser' | 'v2'>('browser');
@@ -269,30 +269,20 @@ export function BenchmarksPage({ api }: { api: ApiClient | null }) {
         </TabsList>
         <TabsContent value={family}>
           <div className="bench-toolbar bench-source">
-            {family === 'browser' ? (
-              <>
-                <SelectField
-                  label="结果来源"
-                  value={source}
-                  onValueChange={setSource}
-                >
-                  <SelectItem value="local">本地运行 / 导入归档</SelectItem>
-                  {api && (
-                    <SelectItem value="server">线上调度与存储</SelectItem>
-                  )}
-                </SelectField>
-                {!api && <a href="#/tasks">连接控制台以使用线上基准</a>}
-              </>
-            ) : (
-              <span className="muted">
-                真实生产站点 · 历史 V2 任务 · 本地执行 / 导入归档
-              </span>
-            )}
+            <SelectField
+              label="结果来源"
+              value={source}
+              onValueChange={setSource}
+            >
+              <SelectItem value="local">本地运行 / 导入归档</SelectItem>
+              {api && <SelectItem value="server">线上调度与存储</SelectItem>}
+            </SelectField>
+            {!api && <a href="#/tasks">连接控制台以使用线上基准</a>}
           </div>
           <BenchmarkWorkspace
             key={`${source}-${family}`}
             family={family}
-            api={family === 'browser' && source === 'server' ? api : null}
+            api={source === 'server' ? api : null}
           />
         </TabsContent>
       </Tabs>
@@ -424,7 +414,9 @@ function BenchmarkWorkspace({
                 {state.running
                   ? '运行中…'
                   : api
-                    ? '发起线上基准'
+                    ? live
+                      ? '开始 V2 测试'
+                      : '发起线上基准'
                     : mode === 'real'
                       ? '运行真实基准'
                       : '运行协议回归'}
@@ -436,7 +428,7 @@ function BenchmarkWorkspace({
       <ErrorNotice message={state.error} />
       <div className="bench-notice">
         {live
-          ? '真实模型访问历史任务指定的生产站点；不使用脚本回复。保留原始验收标准、步骤预算和来源任务，结果随站点现状变化。'
+          ? `真实模型访问历史任务指定的生产站点，保留原始验收标准、步骤预算和来源任务。${api ? `由后台调度 Agent 与浏览器节点，离开页面后继续；目标环境：${state.server?.environment ?? '读取中'}；API 版本：${state.server?.release.version ?? '未记录'}。` : '由本地独立 Chrome 执行。'}`
           : api
             ? `目标环境：${state.server?.environment ?? '读取中'}；实际 API 版本：${state.server?.release.version ?? '未记录'}。由后台队列调度实际 Agent 和浏览器节点。`
             : run?.mode === 'scripted'
@@ -457,10 +449,10 @@ function BenchmarkWorkspace({
       </div>
       {state.running && (
         <p role="status" className="bench-notice">
-          {api
-            ? '后台存在排队或执行中的基准，离开页面后继续运行。'
-            : state.activeFamily && state.activeFamily !== family
-              ? `正在运行另一个测试集：${state.activeFamily === 'v2' ? 'V2 真实任务' : '浏览器任务'}。请切换对应页签查看结果。`
+          {state.activeFamily && state.activeFamily !== family
+            ? `正在运行另一个测试集：${state.activeFamily === 'v2' ? 'V2 真实任务' : '浏览器任务'}。请切换对应页签查看结果。`
+            : api
+              ? '后台存在排队或执行中的基准，离开页面后继续运行。'
               : live
                 ? '正在运行两项完整 V2 任务；结束后读取逐步结果与完整调用归档。'
                 : '正在构建并运行全部基础场景，完成后自动读取结果。'}
@@ -522,7 +514,9 @@ function BenchmarkWorkspace({
           <h2>{state.loading ? '正在读取结果…' : '开始第一轮基准测试'}</h2>
           <p className="muted">
             {api
-              ? '由后台发起固定五场景，结果持续保存在数据库。'
+              ? live
+                ? '由后台发起两项完整历史 V2 任务，结果持续保存在数据库。'
+                : '由后台发起固定五场景，结果持续保存在数据库。'
               : live
                 ? '运行已冻结的两项历史任务，或导入对应 V2 归档。'
                 : '运行基础场景，或导入 CI / 本地生成的结果 JSON。'}

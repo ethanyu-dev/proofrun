@@ -640,6 +640,10 @@ export interface ExecutionGrant {
   benchmark?: {
     runId: string;
     caseId: string;
+    /**
+     * V2 需要支持版本 2 的基准 worker；省略兼容历史基础套件。
+     */
+    family?: 'browser' | 'v2';
   };
 }
 /**

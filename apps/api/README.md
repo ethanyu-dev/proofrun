@@ -292,8 +292,10 @@ API 不再代理实时画面或 HITL 输入。`POST /v1/hitl/bootstrap` 用处�
 
 ## 线上 Benchmark
 
-配置 `PROOFRUN_BENCHMARK_NODE_POOL`、`PROOFRUN_BENCHMARK_ENVIRONMENT` 且镜像包含正式构建清单后开放发起。管理员接口：`GET /v1/admin/benchmarks/status` 查看开关/实际 API 版本，`GET /v1/admin/benchmarks/versions` 返回最近 200 个版本，`GET /v1/admin/benchmarks?version=...&after=<run UUID>` 分页查询，`GET /v1/admin/benchmarks/:id` 返回状态与完整归档。`POST /v1/admin/benchmarks` 只接受 `{ "id": "<新 UUID>" }`，返回 202；重送同一 UUID 幂等，已有其他活动套件返回 409。
+配置 `PROOFRUN_BENCHMARK_NODE_POOL`、`PROOFRUN_BENCHMARK_ENVIRONMENT` 且镜像包含正式构建清单后开放发起。管理员接口：`GET /v1/admin/benchmarks/status` 查看开关、实际 API 版本及当前活动测试集，`GET /v1/admin/benchmarks/versions?family=browser|v2` 返回对应测试集最近 200 个版本，`GET /v1/admin/benchmarks?family=browser|v2&version=...&after=<run UUID>` 分页查询，`GET /v1/admin/benchmarks/:id` 返回状态与完整归档。`POST /v1/admin/benchmarks` 只接受 `{ "id": "<新 UUID>", "family": "browser|v2" }`，省略 family 兼容基础套件，返回 202；重送同一 UUID 幂等，同一身份不能更改测试集，已有其他活动套件返回 409。
 
-`modules/benchmarks` 通过迁移 044 保存运行、场景及实际派发回执；复用原调度器和执行运行时，不在 HTTP 请求内启动 shell。Agent 通过当前执行令牌登记自己的构建清单和无密钥模型选项，旧 worker 不领取基准。API 从实际执行进程记录版本，Node 从会话准入快照记录版本。所有版本与配置冻结保存；终态归档不随后续部署改写。详情和模型原文只允许管理员读取。
+`modules/benchmarks` 通过迁移 044 / 046 保存运行、测试集、冻结来源、场景及实际派发回执；复用原调度器和执行运行时，不在 HTTP 请求内启动 shell。Agent 通过当前执行令牌登记自己的构建清单和无密钥模型选项，旧 worker 不领取基准；benchmarkVersion=1 只领取基础场景，版本 2 才可领取 V2。API 从实际执行进程记录版本，Node 从会话准入快照记录版本。所有版本与配置冻结保存；终态归档不随后续部署改写。详情和模型原文只允许管理员读取。
 
 固定随机任务路径下的合成页面只有任务运行期间可访问，记录合成表单的真实写入次数；不使用业务账号和实际站点。旧观察/丢回执场景在登记任务的执行端口内明确注入，正常任务不受影响。每例 3 分钟、套件 10 分钟兜底结算，重启只继续对账，不重放未知副作用。覆盖范围及本地/CI 发布门禁见 [基准说明](../../scripts/benchmarks/README.md)。
+
+V2 使用同一份 `contracts/fixtures/benchmark-v2/` 冻结历史任务（14 步与 9 步），不修改验收标准、步骤和清理预算。服务端与 Agent 分别核对测试集的执行配置，普通任务仍限制最多 200 轮；V2 多步骤总额度使用原任务额度之和。V2 套件宿主上限为三小时，任务内期限仍由正式调度器约束。详情保存真实站点逐步报告，不使用合成表单账本判定通过；跳过、受阻或未关闭均不通过。V2 复用 `pr_benchmark_cases` 的通知排除关系，不发飞书通知。部署时先升级 API，再升级 Agent 和 Web。

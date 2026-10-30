@@ -36,12 +36,17 @@
     "./verification-capabilities": {
       "types": "./dist/verification-capabilities.d.ts",
       "default": "./dist/verification-capabilities.js"
+    },
+    "./benchmark-v2": {
+      "types": "./dist/benchmark-v2.d.ts",
+      "default": "./dist/benchmark-v2.js"
     }
   },
   "files": [
     "dist",
     "schemas",
-    "public-api.openapi.json"
+    "public-api.openapi.json",
+    "fixtures"
   ],
   "scripts": {
     "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.json"

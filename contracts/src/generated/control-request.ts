@@ -414,9 +414,9 @@ export interface ClaimExecution {
    */
   runtimeVersion?: 1;
   /**
-   * 支持冻结实际构建身份与基础基准预算；旧 worker 不领取基准任务。
+   * 版本 1 支持基础套件，版本 2 同时支持 V2 原步骤预算；旧 worker 不领取基准任务。
    */
-  benchmarkVersion?: 1;
+  benchmarkVersion?: 1 | 2;
 }
 export interface SubmitBrowserCommand {
   /**

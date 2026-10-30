@@ -143,7 +143,10 @@ test('前端保留能力缺口定义并允许提交给执行器', () => {
   assert.deepEqual(parseTaskDefinition(JSON.stringify(task)), task);
   const item = JSON.parse(
     readFileSync(
-      new URL('../benchmarks/v2/novita-site.json', import.meta.url),
+      new URL(
+        '../../contracts/fixtures/benchmark-v2/novita-site.json',
+        import.meta.url,
+      ),
       'utf8',
     ),
   ).task.caseV2Definition;

@@ -43,7 +43,10 @@ test('单任务、浏览器任务及 case 批次均允许缺少能力的任务�
   );
   const novita = JSON.parse(
     await readFile(
-      new URL('../../../tests/benchmarks/v2/novita-site.json', import.meta.url),
+      new URL(
+        '../../../contracts/fixtures/benchmark-v2/novita-site.json',
+        import.meta.url,
+      ),
       'utf8',
     ),
   );
