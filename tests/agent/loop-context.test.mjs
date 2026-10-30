@@ -911,78 +911,90 @@ test('模型连接修复仍服从更短的步骤期限并记录超时', async ()
   }
 });
 
-// 范围：真实 HTTP 出站规则与审计保留，重现首轮双 fill 后整批拒绝且不隐式重试；回复是夹具，实际模型遵从率由真实基准验证。
-test('首轮双浏览器动作保持原文并整批拒绝，单调用约束进入实际请求', async () => {
-  const { args } = await input();
-  const calls = ['first-field', 'second-field'].map((target) => ({
-    type: 'function',
-    function: {
-      name: 'browser_act',
-      arguments: JSON.stringify({ action: 'fill', target, value: 'synthetic' }),
-    },
-  }));
-  const reply = {
-    choices: [
-      {
-        finish_reason: 'tool_calls',
-        message: { role: 'assistant', tool_calls: calls },
+// 范围：HTTP 出站与审计保留，双动作或动作附带观察均整批拒绝且无隐式重试；回复是夹具，实际模型遵从率由真实基准验证。
+for (const extraTool of ['browser_act', 'browser_observe'])
+  test(`首轮动作附带 ${extraTool} 保持原文并整批拒绝，单调用约束进入实际请求`, async () => {
+    const { args } = await input();
+    const calls = ['first-field', 'second-field'].map((target) => ({
+      type: 'function',
+      function: {
+        name: 'browser_act',
+        arguments: JSON.stringify({
+          action: 'fill',
+          target,
+          value: 'synthetic',
+        }),
       },
-    ],
-    usage: { prompt_tokens: 20, completion_tokens: 10 },
-  };
-  const server = await modelServer(() => ({ raw: reply }));
-  const receipts = [];
-  let sent,
-    count = 0;
-  try {
-    await assert.rejects(
-      new ChatModel({
-        ...config,
-        modelUrl: server.url,
-        thinking: 'enabled',
-        reasoningEffort: 'high',
-      }).decide(
+    }));
+    if (extraTool === 'browser_observe')
+      calls[1].function = { name: extraTool, arguments: '{}' };
+    const reply = {
+      choices: [
         {
-          ...decisionContext(args),
-          recordRequest: () => {
-            count++;
-          },
-          traceRequest: async (record) => {
-            sent = JSON.parse(record.request);
-            return async (receipt) => {
-              receipts.push(receipt);
-            };
-          },
+          finish_reason: 'tool_calls',
+          message: { role: 'assistant', tool_calls: calls },
         },
-        new AbortController().signal,
-      ),
-      { code: 'INVALID_MODEL_DECISION' },
-    );
-    assert.equal(server.requests.length, 1);
-    assert.equal(count, 1);
-    assert.deepEqual(sent, server.requests[0]);
-    assert.equal(sent.parallel_tool_calls, false);
-    assert.equal(sent.tool_choice, 'auto');
-    assert.equal(sent.thinking.type, 'enabled');
-    assert.match(sent.messages[0].content, /tool_calls 数组长度必须为 1/);
-    assert.match(sent.messages[0].content, /这种回复会整批拒绝/);
-    assert.doesNotMatch(sent.messages[0].content, /特殊批次|最多 4 个纯/);
-    assert.match(
-      sent.tools.find((tool) => tool.function.name === 'browser_act').function
-        .description,
-      /填写多个字段也必须拆到不同轮次/,
-    );
-    assert.equal(receipts.length, 1);
-    assert.equal(receipts[0].status, 'RECEIVED');
-    assert.deepEqual(
-      JSON.parse(receipts[0].response).choices[0].message.tool_calls,
-      calls,
-    );
-    assert.deepEqual(server.errors, []);
-  } finally {
-    await server.close();
-  }
-});
+      ],
+      usage: { prompt_tokens: 20, completion_tokens: 10 },
+    };
+    const server = await modelServer(() => ({ raw: reply }));
+    const receipts = [];
+    let sent,
+      count = 0;
+    try {
+      await assert.rejects(
+        new ChatModel({
+          ...config,
+          modelUrl: server.url,
+          thinking: 'enabled',
+          reasoningEffort: 'high',
+        }).decide(
+          {
+            ...decisionContext(args),
+            recordRequest: () => {
+              count++;
+            },
+            traceRequest: async (record) => {
+              sent = JSON.parse(record.request);
+              return async (receipt) => {
+                receipts.push(receipt);
+              };
+            },
+          },
+          new AbortController().signal,
+        ),
+        { code: 'INVALID_MODEL_DECISION' },
+      );
+      assert.equal(server.requests.length, 1);
+      assert.equal(count, 1);
+      assert.deepEqual(sent, server.requests[0]);
+      assert.equal(sent.parallel_tool_calls, false);
+      assert.equal(sent.tool_choice, 'auto');
+      assert.equal(sent.thinking.type, 'enabled');
+      assert.match(sent.messages[0].content, /tool_calls 数组长度必须为 1/);
+      assert.match(sent.messages[0].content, /这种回复会整批拒绝/);
+      assert.match(
+        sent.messages[0].content,
+        /调用 browser_act 后不要追加 browser_observe/,
+      );
+      assert(sent.messages[0].content.endsWith('下一步只能在下一轮决定。'));
+      assert.doesNotMatch(sent.messages[0].content, /特殊批次|最多 4 个纯/);
+      assert.match(
+        sent.tools.find((tool) => tool.function.name === 'browser_act').function
+          .description,
+        /填写多个字段也必须拆到不同轮次/,
+      );
+      assert.equal(receipts.length, 1);
+      assert.equal(receipts[0].status, 'RECEIVED');
+      assert.deepEqual(
+        JSON.parse(receipts[0].response).choices[0].message.tool_calls,
+        calls,
+      );
+      assert.deepEqual(server.errors, []);
+    } finally {
+      await server.close();
+    }
+  });
 
 // 范围：工具 schema 随真实 context 开关阅读入口，防止普通核验误填 itemId；HTTP 模型是夹具，不证明真实模型质量或引文真实性。
 test('没有面板账本时不提供 readings，存在或裁剪后的账本保留原校验入口', async () => {

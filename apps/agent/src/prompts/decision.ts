@@ -3,7 +3,10 @@ import { CORE_PROMPT, TASK_ROLES } from './core.js';
 import { contextPrompts } from './context-rules.js';
 import { NETWORK_PROMPT } from './network.js';
 import { PHASE_PROMPTS, SETTLEMENT_PROMPT } from './phases.js';
-import { SINGLE_TOOL_CALL_PROMPT } from './tool-calls.js';
+import {
+  SINGLE_TOOL_CALL_PROMPT,
+  TOOL_REPLY_END_PROMPT,
+} from './tool-calls.js';
 import type { DecisionContextData } from '@proofrun/execution-core/execution/context';
 import type { DecisionTool } from '../model/tools.js';
 
@@ -25,6 +28,7 @@ export function decisionPrompt(
     ...contextPrompts(context),
     networkAvailable ? NETWORK_PROMPT : '',
     context.state.settlement ? SETTLEMENT_PROMPT : '',
+    TOOL_REPLY_END_PROMPT,
   ]
     .filter(Boolean)
     .join('\n\n');
