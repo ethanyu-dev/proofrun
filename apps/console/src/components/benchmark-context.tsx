@@ -7,6 +7,7 @@ import {
 } from '@proofrun/contracts/benchmark';
 import { Button } from './ui/button';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from './ui/tabs';
+import { ModelCallDiagnostic } from './model-call-status';
 
 /** 颜色只标识模块，不表示成功或失败；浅深主题共用并提供文字图例。 */
 export const MODULE_LABELS = {
@@ -66,7 +67,24 @@ export function BenchmarkContext({
         {call.completionTokens ?? '—'} · 图片 {call.imagesOmitted}{' '}
         张（原文省略二进制）
       </p>
-      <Tabs defaultValue="context">
+      {call.status === 'ERROR' && (
+        <>
+          <p className="bench-notice">
+            请求失败 ·{' '}
+            {call.request !== null
+              ? '原始请求已保存，可在下方查看。'
+              : call.archived
+                ? '该记录已归档，当前未提供请求正文。'
+                : '此记录未保存请求正文，无法还原当时请求。'}
+          </p>
+          <ModelCallDiagnostic call={call} />
+        </>
+      )}
+      {/* 在途调用转为失败时也切到原文，避免继续停留在先前的分布面板。 */}
+      <Tabs
+        key={call.status === 'ERROR' ? 'failed' : 'normal'}
+        defaultValue={call.status === 'ERROR' ? 'raw' : 'context'}
+      >
         <TabsList aria-label="轮次诊断">
           <TabsTrigger value="context">Context 分布</TabsTrigger>
           <TabsTrigger value="tools">工具与回执</TabsTrigger>
@@ -195,11 +213,23 @@ export function BenchmarkContext({
         <TabsContent value="raw">
           <details open>
             <summary>请求 JSON</summary>
-            <pre className="bench-code">{call.request ?? '未记录'}</pre>
+            <pre className="bench-code">
+              {call.request ??
+                (call.archived
+                  ? '该记录已归档，当前未提供请求正文。'
+                  : '此记录未保存请求正文，无法还原当时请求。')}
+            </pre>
           </details>
-          <details>
+          <details open={call.status === 'ERROR'}>
             <summary>模型回复</summary>
-            <pre className="bench-code">{call.response ?? '未记录'}</pre>
+            <pre className="bench-code">
+              {call.response ??
+                (call.status === 'ERROR'
+                  ? '请求失败，未保存可用的模型响应正文；失败信息见上方。'
+                  : call.status === 'PENDING'
+                    ? '尚未收到模型回执。'
+                    : '未记录模型响应正文。')}
+            </pre>
           </details>
         </TabsContent>
       </Tabs>

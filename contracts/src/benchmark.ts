@@ -403,6 +403,23 @@ export function benchmarkComparison(
   return null;
 }
 
+/** 按实际请求计数，重试单独计入分母；收到回复不代表工具有效或业务验收通过。 */
+export function benchmarkRequestMetrics(
+  calls: readonly Pick<ModelCall, 'status'>[],
+) {
+  const succeeded = calls.filter((call) => call.status === 'RECEIVED').length;
+  const failed = calls.filter((call) => call.status === 'ERROR').length;
+  const pending = calls.filter((call) => call.status === 'PENDING').length;
+  return {
+    total: calls.length,
+    succeeded,
+    failed,
+    pending,
+    // 在途请求尚未成功但不计为失败；零请求没有成功率，不能显示为 0% 或 100%。
+    successRate: calls.length ? succeeded / calls.length : null,
+  };
+}
+
 /** 统一汇总口径供 CLI 门禁和看板使用；字符与供应商 token 分开统计，不推算费用。 */
 export function benchmarkMetrics(item: BenchmarkCase) {
   return {

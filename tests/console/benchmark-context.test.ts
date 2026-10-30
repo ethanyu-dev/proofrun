@@ -52,6 +52,57 @@ test('上下文详情标注字符口径并转义页面内容，缺失正文不�
   assert.match(absent, /上下文未记录/);
 });
 
+// 范围：失败轮次默认展示已保存请求并区分无响应，原文按文本转义；不验证真实供应商或数据库写入。
+test('ERROR 轮次直接显示原始请求与失败原因，不把无响应显示为请求未记录', () => {
+  const call = {
+    status: 'ERROR',
+    error: 'INVALID_JSON',
+    decisionIndex: 1,
+    request: JSON.stringify({
+      messages: [{ role: 'user', content: '<script>请求夹具</script>' }],
+    }),
+    response: null,
+    imagesOmitted: 0,
+    diagnostics: {
+      reason: 'UPSTREAM_UNAVAILABLE',
+      phase: 'RESPONSE_PARSE',
+      httpStatus: 502,
+      contentType: 'text/html',
+      responseFormat: 'html',
+      responseBytes: 100,
+    },
+  } as ModelCall;
+  const html = renderToStaticMarkup(
+    createElement(BenchmarkContext, { call, commands: [] }),
+  );
+  assert.match(html, /原始请求已保存/);
+  assert.match(html, /请求 JSON/);
+  assert.match(html, /&lt;script&gt;请求夹具&lt;\/script&gt;/);
+  assert.doesNotMatch(html, /<script>/);
+  assert.match(html, /INVALID_JSON/);
+  assert.match(html, /HTTP 502/);
+  assert.match(html, /未保存可用的模型响应正文/);
+});
+
+// 范围：历史缺失与归档后的缺失如实提示，不伪造请求正文；不验证线上保留策略。
+test('ERROR 轮次缺少请求时不声称已经保存', () => {
+  for (const archived of [false, true]) {
+    const html = renderToStaticMarkup(
+      createElement(BenchmarkContext, {
+        call: {
+          status: 'ERROR',
+          request: null,
+          response: null,
+          archived,
+        } as ModelCall,
+        commands: [],
+      }),
+    );
+    assert.doesNotMatch(html, /原始请求已保存/);
+    assert.match(html, archived ? /该记录已归档/ : /无法还原当时请求/);
+  }
+});
+
 // 范围：旧归档也可拆分实际页面字段，图片不混入字符统计；不验证真实 token 或浏览器视觉布局。
 test('页面细分区分缓存、网络和正文并保持互斥计数', () => {
   const context = {
