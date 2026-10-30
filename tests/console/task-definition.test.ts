@@ -135,3 +135,17 @@ test('JSON 模式可解析结构化 case 数组', async () => {
     /格式不正确/,
   );
 });
+
+// 范围：缺少能力的定义可提交，不能在前端删除标准或拒绝重跑；不访问真实站点。
+test('前端保留能力缺口定义并允许提交给执行器', () => {
+  const task = structuredClone(TASK);
+  task.acceptanceCriteria[0].expectedResult = '读取 canonical 属性';
+  assert.deepEqual(parseTaskDefinition(JSON.stringify(task)), task);
+  const item = JSON.parse(
+    readFileSync(
+      new URL('../benchmarks/v2/novita-site.json', import.meta.url),
+      'utf8',
+    ),
+  ).task.caseV2Definition;
+  assert.deepEqual(parseCaseBatch(JSON.stringify([item]))[0], item);
+});

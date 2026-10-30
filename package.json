@@ -46,7 +46,14 @@
     "test:identity:ephemeral": "cargo build --locked -p proofrun-node && python3 tests/browser-node/auth_network_smoke.py",
     "build:execution": "pnpm --filter @proofrun/execution-core build && pnpm --filter @proofrun/execution-driver build",
     "test:mcp:codex": "pnpm build:devpass && pnpm --filter @proofrun/contracts build && pnpm build:execution && pnpm --filter @proofrun/api build && node tests/mcp-real/run.mjs",
-    "test:mcp:regression": "pnpm --filter @proofrun/api build && node --test tests/mcp-real/*.test.mjs"
+    "test:mcp:regression": "pnpm --filter @proofrun/api build && node --test tests/mcp-real/*.test.mjs",
+    "benchmark:agent": "pnpm --filter @proofrun/contracts build && pnpm build:execution && pnpm --filter @proofrun/agent build && node scripts/benchmarks/agent-loop.mjs",
+    "test:benchmark": "node --test tests/benchmarks/*.test.mjs",
+    "benchmark:setup": "node scripts/benchmarks/setup.mjs",
+    "benchmark:real": "pnpm --filter @proofrun/contracts build && pnpm build:execution && pnpm --filter @proofrun/agent build && cargo build --locked -p proofrun-node && node -- scripts/benchmarks/real-agent-loop.mjs",
+    "benchmark:release": "pnpm --filter @proofrun/contracts build && pnpm build:execution && pnpm --filter @proofrun/agent build && cargo build --locked -p proofrun-node && node -- scripts/benchmarks/real-agent-loop.mjs --release-report .benchmark-release/real.json",
+    "benchmark:gate": "node scripts/benchmarks/release-gate.mjs",
+    "benchmark:v2": "pnpm --filter @proofrun/contracts build && pnpm build:execution && pnpm --filter @proofrun/agent build && cargo build --locked -p proofrun-node && node -- scripts/benchmarks/v2-agent-loop.mjs"
   },
   "devDependencies": {
     "@types/node": "24.13.6",

@@ -449,14 +449,16 @@ export class ExternalExecution {
                   principal.scopes.includes(
                     current!.task.kind === 'browser' ||
                       type.startsWith('browser.') ||
-                      type.startsWith('network.')
+                      type.startsWith('network.') ||
+                      type === 'context.read'
                       ? 'browser:control'
                       : 'verification:control',
                   ) &&
                   principal.channels.includes(
                     current!.task.kind === 'browser' ||
                       type.startsWith('browser.') ||
-                      type.startsWith('network.')
+                      type.startsWith('network.') ||
+                      type === 'context.read'
                       ? 'browser'
                       : 'verification',
                   ) &&
@@ -580,7 +582,8 @@ export class ExternalExecution {
         definition.taskKind === 'browser' ||
         (input.type === 'decide' &&
           (input.decision.type.startsWith('browser.') ||
-            input.decision.type.startsWith('network.')));
+            input.decision.type.startsWith('network.') ||
+            input.decision.type === 'context.read'));
       this.permission(
         principal,
         isBrowser ? 'browser:control' : 'verification:control',

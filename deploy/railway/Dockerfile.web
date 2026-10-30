@@ -4,10 +4,15 @@ RUN corepack enable && corepack prepare pnpm@10.30.2 --activate
 COPY . .
 RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @proofrun/contracts build
+RUN pnpm build:execution && pnpm --filter @proofrun/agent build && node scripts/benchmarks/agent-loop.mjs
 RUN pnpm --filter @proofrun/console build
 
+# 真实运行在构建外完成；构建上下文只接收无密钥的结果，源码变化即失效。
+FROM build AS verified
+RUN node scripts/benchmarks/release-gate.mjs && node scripts/benchmarks/write-build-info.mjs --output /source/apps/console/dist/build-info.json
+
 FROM caddy:2-alpine@sha256:6aeddd44c3078b0f9a35206472a11420648a79c184603ef95957d0a20044cb2b
-COPY --from=build /source/apps/console/dist /srv
+COPY --from=verified /source/apps/console/dist /srv
 COPY deploy/railway/Caddyfile /etc/caddy/Caddyfile
 ENV PORT=8080
 EXPOSE 8080

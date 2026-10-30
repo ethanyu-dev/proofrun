@@ -36,6 +36,22 @@ export function decisionTools(
       ? { enum: context.task.requirements.map((item) => item.id) }
       : {}),
   };
+  // 普通页面核验没有面板阅读身份，不能暴露可让模型猜测 itemId 的无效入口。
+  // 已发现但正文被裁剪的账本仍保留原协议，具体引文继续由执行器严格核验。
+  Object.assign(progress.properties.readings, {
+    description: '仅在 progress.readings 内登记已观察子项，不是工具顶层字段。',
+  });
+  Object.assign(progress.properties.readings.items.properties.quote, {
+    description:
+      '从 state.readings.items 对应项的 text 逐字复制连续片段，不拼入 name 或 heading；最多 600 字符。',
+  });
+  const { readings: _readings, ...withoutReadings } = progress.properties;
+  const progressSchema = {
+    ...progress,
+    properties: context.state.readings?.discovered
+      ? progress.properties
+      : withoutReadings,
+  };
   return tools
     .filter((tool) => allowedDecisionTypes(context).includes(tool.type))
     .map((tool) => {
@@ -44,7 +60,20 @@ export function decisionTools(
         required?: string[];
         allOf?: object[];
       };
-      parameters.properties.progress = structuredClone(progress);
+      parameters.properties.progress = structuredClone(progressSchema);
+      if (tool.type === 'context.read') {
+        parameters.properties.observationId = {
+          type: 'string',
+          const: context.page.observationId,
+        };
+        if (context.page.runtimeLists?.length)
+          parameters.properties.path = {
+            type: 'string',
+            enum: context.page.runtimeLists.map((item) => item.path),
+          };
+        if (!context.page.runtimeLists?.length)
+          parameters.properties.section = { const: 'page' };
+      }
       if (tool.type.startsWith('network.') && context.page.network) {
         parameters.properties.observationId = {
           type: 'string',

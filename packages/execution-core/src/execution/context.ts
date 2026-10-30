@@ -1,3 +1,8 @@
+import {
+  runtimeContext,
+  type ContextSelection,
+  type ContextReads,
+} from './context-view.js';
 import type { NetworkReadReceipt } from '../evidence/network-reads.js';
 import { evidenceExcerpt } from '../model/evidence-excerpt.js';
 import {
@@ -99,6 +104,10 @@ export interface ContextInput {
   current: Observation;
   /** 本轮主动读取的网络列表或详情；新观察自动使旧选择失效。 */
   networkSelection?: NetworkSelection;
+  /** 同快照的显式页面恢复或运行时分页选择。 */
+  contextSelection?: ContextSelection | undefined;
+  /** 已读页回执用于跨视图继续核验，不能替代验收结论。 */
+  contextReads?: ReturnType<ContextReads['view']>;
   /** 同一模型回复中其它纯读取的结果，仅保留最近批次。 */
   networkBatchSelections?: NetworkSelection[];
   /** 当前网络快照中的有界读取回执，保留零匹配和已读身份。 */
@@ -182,6 +191,13 @@ function contextData(input: ContextInput) {
     input.networkBatchSelections?.some(
       (item) => item.observationId === current.observationId,
     );
+  const selection =
+    input.contextSelection?.observationId === current.observationId
+      ? input.contextSelection
+      : undefined;
+  const compact =
+    selection?.section === 'runtime' ||
+    (!!hasNetworkQuery && selection?.section !== 'page');
   return {
     task: {
       kind: input.task.taskKind ?? 'verification',
@@ -211,6 +227,9 @@ function contextData(input: ContextInput) {
         ? (input.verificationReview.reason ?? 'stalled')
         : null,
       criteria: structuredClone(input.recordedCriteria ?? []),
+      contextReads: input.contextReads?.length
+        ? structuredClone(input.contextReads)
+        : undefined,
       networkReads: input.networkReads?.length
         ? structuredClone(input.networkReads)
         : undefined,
@@ -238,13 +257,18 @@ function contextData(input: ContextInput) {
           : undefined,
     },
     page: {
+      view: compact
+        ? selection?.section === 'runtime'
+          ? 'runtime'
+          : 'network'
+        : 'page',
       observationId: current.observationId,
       url: current.url,
       title: current.title,
-      text: current.text,
+      text: compact ? '' : current.text,
       documents: structuredClone(current.documents),
-      targets: current.targets.map(({ comparisonKey: _key, ...target }) =>
-        structuredClone(target),
+      targets: (compact ? [] : current.targets).map(
+        ({ comparisonKey: _key, ...target }) => structuredClone(target),
       ),
       tabs: structuredClone(current.tabs),
       viewport: structuredClone(current.viewport),
@@ -256,19 +280,22 @@ function contextData(input: ContextInput) {
             input.networkBatchSelections,
           )
         : networkOverview(networkPage),
-      runtime: structuredClone(current.runtime),
-      artifactRefs: artifactSections(networkPage.artifactRefs, !!input.image),
+      ...runtimeContext(networkPage, selection),
+      artifactRefs: artifactSections(
+        networkPage.artifactRefs,
+        !compact && !!input.image,
+      ),
       coverage: {
         capture: structuredClone(current.coverage ?? { status: 'unknown' }),
         text: {
-          truncated: current.truncated === true,
+          truncated: compact || current.truncated === true,
           originalChars: current.text.length,
-          returnedChars: current.text.length,
+          returnedChars: compact ? 0 : current.text.length,
         },
         controls: {
           observed: current.targets.length,
-          returned: current.targets.length,
-          omitted: 0,
+          returned: compact ? 0 : current.targets.length,
+          omitted: compact ? current.targets.length : 0,
           detailsTruncated: false,
         },
         /** 裁剪器仅在确有缺口时填充说明，避免每轮重复携带无关提示。 */
@@ -290,13 +317,13 @@ function contextData(input: ContextInput) {
         ).values(),
       ],
       omittedCommands: input.actionMemory?.omitted ?? 0,
-      excerpts: [...excerpts.values()].map((item) => ({
+      excerpts: (compact ? [] : [...excerpts.values()]).map((item) => ({
         ...item,
         text: contentKey(item) === currentKey ? undefined : item.text,
         textRef: contentKey(item) === currentKey ? 'page.text' : undefined,
         artifactRefs: artifactSections(item.artifactRefs),
       })),
-      omittedExcerpts: 0,
+      omittedExcerpts: compact ? excerpts.size : 0,
     },
     evidence: input.evidence.map(({ id, kind }) => ({ id, kind })),
     budget: { ...input.budgetRemaining },
@@ -339,7 +366,7 @@ function trimRuntimeLists(...values: unknown[]): boolean {
         const bytes = JSON.stringify(item).length;
         if (!candidate || bytes > candidate.bytes)
           candidate = { parent, key, bytes };
-      } else visit(item);
+      } else if (key !== 'coverage') visit(item);
     }
   };
   values.forEach(visit);
@@ -396,11 +423,25 @@ export function boundContext(
   // 说明本身也计入预算，不能在裁剪完成后额外追加导致请求超过上限。
   const serialize = () => {
     const { coverage } = context.page;
+    // 后续总预算裁剪也必须同步分页目录，不能将已省略的样本标为交付。
+    for (const list of context.page.runtimeLists ?? []) {
+      let value: unknown = context.page.runtime;
+      for (const key of list.path.split('.'))
+        value =
+          value && typeof value === 'object'
+            ? (value as Record<string, unknown>)[key]
+            : undefined;
+      list.returned = Array.isArray(value) ? value.length : 0;
+      list.omitted = list.total - list.returned;
+      list.nextOffset = list.omitted ? list.returned : null;
+    }
     coverage.recovery =
       coverage.text.truncated ||
       coverage.controls.omitted > 0 ||
       coverage.controls.detailsTruncated
-        ? COVERAGE_RECOVERY
+        ? context.page.view !== 'page'
+          ? '正文、控件和截图已按需省略；context_read(section=page) 可恢复同一快照，不刷新页面。'
+          : COVERAGE_RECOVERY
         : undefined;
     return JSON.stringify(context);
   };
@@ -465,8 +506,11 @@ export function boundContext(
 
 /** 返回同一裁剪快照；图片必须与当前观察匹配，完整观察留在执行器。 */
 export function decisionContext(input: ContextInput): DecisionInput {
+  const bounded = boundContext(contextData(input), input.maxContextChars);
   return {
-    ...boundContext(contextData(input), input.maxContextChars),
-    ...(input.image ? { image: input.image } : {}),
+    ...bounded,
+    ...(input.image && bounded.context.page.view === 'page'
+      ? { image: input.image }
+      : {}),
   };
 }

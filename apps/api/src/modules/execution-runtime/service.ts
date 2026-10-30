@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { BENCHMARK_LIMITS } from '@proofrun/contracts/benchmark-scenarios';
 import type { ExecutionGrant, RuntimeRequest } from '@proofrun/contracts';
 import { execute } from '@proofrun/execution-driver/execution/runner';
 import { ExecutionFault } from '@proofrun/execution-core/faults';
@@ -116,6 +117,26 @@ export class ExecutionRuntime {
       throw new ApiError(503, 'SERVICE_UNAVAILABLE', '运行时正在关闭');
     const grant = await this.db.transaction(async (client) => {
       const context = await this.authorized(client, id, token, true);
+      // 基准预算由服务端固定，不能由错误配置的 worker 放宽；先记录实际构建身份再执行。
+      const benchmark = (
+        await client.query(
+          'SELECT agent_release FROM pr_benchmark_cases WHERE task_id=$1',
+          [context.task_id],
+        )
+      ).rows[0];
+      if (
+        benchmark &&
+        (!benchmark.agent_release ||
+          config.maxTurns !== BENCHMARK_LIMITS.maxTurns ||
+          config.maxContextChars !== BENCHMARK_LIMITS.maxContextChars ||
+          config.commandMs !== BENCHMARK_LIMITS.commandMs ||
+          config.evidenceMs !== BENCHMARK_LIMITS.evidenceMs)
+      )
+        throw new ApiError(
+          409,
+          'BENCHMARK_CONFIG_CONFLICT',
+          '基准要求登记构建身份并使用固定执行预算',
+        );
       await client.query(
         "INSERT INTO pr_execution_runtimes(execution_id,state,config) VALUES($1,'ACTIVE',$2) ON CONFLICT DO NOTHING",
         [id, config],

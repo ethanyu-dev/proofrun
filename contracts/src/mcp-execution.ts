@@ -81,6 +81,14 @@ export const executionMcpCatalog: readonly ExecutionTool[] = [
       '等待明确 selector/text 条件；仍占一个在途决定并受原执行期限约束。先查原 operationId，再读最新上下文，不因客户端超时重复派发。',
   },
   {
+    name: 'browser_context_read',
+    request: 'decide',
+    decisionType: 'context.read',
+    scope: 'browser:control',
+    description:
+      '读取同一 observationId 的 context 视图。section=page 恢复正文、控件和截图；section=runtime 用 runtimeLists 的 path/offset 分页。不会重新观察或请求网络，保留原预算与证据身份。',
+  },
+  {
     name: 'browser_network_list',
     request: 'decide',
     decisionType: 'network.requests',

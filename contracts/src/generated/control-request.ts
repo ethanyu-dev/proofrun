@@ -409,6 +409,10 @@ export interface ClaimExecution {
    * 可只执行模型决定，由服务端 runtime 管理版本 1 运行。
    */
   runtimeVersion?: 1;
+  /**
+   * 支持冻结实际构建身份与基础基准预算；旧 worker 不领取基准任务。
+   */
+  benchmarkVersion?: 1;
 }
 export interface SubmitBrowserCommand {
   /**

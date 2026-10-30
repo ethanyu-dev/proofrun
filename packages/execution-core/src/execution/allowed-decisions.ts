@@ -13,6 +13,9 @@ export function allowedDecisionTypes(
     .filter(
       (type: AgentDecision['type']) =>
         type !== 'verification.environment' &&
+        (type !== 'context.read' ||
+          (context.page.view && context.page.view !== 'page') ||
+          !!context.page.runtimeLists?.length) &&
         (type !== 'verification.record' ||
           !['PREPARING', 'CHECKING'].includes(context.state.phase)) &&
         (!context.state.settlement ||
@@ -24,7 +27,11 @@ export function allowedDecisionTypes(
               ]
             : ['verification.record', 'verification.block']
           )
-            .concat(['network.requests', 'network.request_detail'])
+            .concat([
+              'network.requests',
+              'network.request_detail',
+              'context.read',
+            ])
             .includes(type)) &&
         (!type.startsWith('network.') ||
           !!context.page.network?.evidenceRefs.length) &&
@@ -32,6 +39,9 @@ export function allowedDecisionTypes(
           context.task.permissions.allowIntervention) &&
         (type !== 'browser.cookies.clear' ||
           context.state.phase === 'CLEANUP') &&
+        (!['browser.act', 'browser.wait'].includes(type) ||
+          !context.page.view ||
+          context.page.view === 'page') &&
         (type !== 'browser.act' || context.budget.actions > 0) &&
         (type !== 'browser.observe' ||
           !context.feedback.some(

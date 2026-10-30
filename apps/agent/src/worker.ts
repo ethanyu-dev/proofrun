@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto';
+import { deployedRelease } from '@proofrun/contracts/deployment';
+import { BENCHMARK_LIMITS } from '@proofrun/contracts/benchmark-scenarios';
 import { randomUUID } from 'node:crypto';
 import type { ExecutionGrant } from '@proofrun/contracts';
 import { ControlClient } from './client.js';
@@ -17,6 +20,39 @@ async function runExecution(
   grant: ExecutionGrant,
   signal: AbortSignal,
 ): Promise<void> {
+  if (grant.benchmark) {
+    if (grant.runtimeVersion !== 1)
+      throw new AgentFault(
+        'BENCHMARK_RUNTIME_REQUIRED',
+        '线上基准必须使用部署运行时',
+      );
+    config = {
+      ...config,
+      maxTurns: BENCHMARK_LIMITS.maxTurns,
+      maxContextChars: BENCHMARK_LIMITS.maxContextChars,
+      commandMs: BENCHMARK_LIMITS.commandMs,
+      evidenceMs: BENCHMARK_LIMITS.evidenceMs,
+    };
+    await client.benchmarkBuild(
+      grant,
+      {
+        release: deployedRelease(new URL('./build-info.json', import.meta.url)),
+        model: {
+          name: config.model,
+          vision: config.vision,
+          tokenParameter: config.tokenParameter,
+          maxTokens: config.maxTokens,
+          thinking: config.thinking ?? 'default',
+          reasoningEffort: config.reasoningEffort ?? 'default',
+          endpointFingerprint: createHash('sha256')
+            .update(config.modelUrl)
+            .digest('hex'),
+          modelMs: config.modelMs,
+        },
+      },
+      signal,
+    );
+  }
   const report = await (grant.runtimeVersion === 1 ? executeRuntime : execute)(
     config,
     client,

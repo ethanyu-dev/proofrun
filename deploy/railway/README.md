@@ -118,17 +118,28 @@ Agent 是后台 worker，启动命令包含 `serve`，不提供 HTTP 健康端�
 3. 配置并部署 Agent，从 Console 注册节点池和一次性配对码，再在 Linux 机器安装 Browser Node。
 4. 运行真实测试任务，确认节点在线，报告与证据通过 Web 访问，人工操作与实时画面直连 Node 的 HTTPS 域名。显式多控制面绑定还需在 Node 本机批准此环境的 Console Origin。
 
-后续通过 GitHub 分支更新触发 Railway 部署，不在 Railway 容器运行节点安装脚本。启用 Railway 的 Wait for CI，避免 CI 未通过的提交直接部署。升级前等待活动任务结束并备份 PostgreSQL 和 `/data`；有数据库迁移时不能仅切回旧镜像来代替数据恢复。Browser Node 登录态和本地 SQLite 需在节点机另行备份。
+发布前必须在当前源码运行真实模型 + Chrome 基准，并将通过的 `.benchmark-release/real.json` 带入构建上下文；最终 Dockerfile 会核实完整套件、24 小时有效期及源码指纹。直接从 Git 构建且未传入报告会失败，需要使用受控 CI 的报告产物构建/部署，不能仅依靠分支自动部署。模型密钥不进入构建上下文，配置见 [真实基准说明](../../scripts/benchmarks/README.md)。不在 Railway 容器运行节点安装脚本。启用 Railway 的 Wait for CI，避免 CI 未通过的提交直接部署。升级前等待活动任务结束并备份 PostgreSQL 和 `/data`；有数据库迁移时不能仅切回旧镜像来代替数据恢复。Browser Node 登录态和本地 SQLite 需在节点机另行备份。
 
 本地镜像回归：
 
 ```sh
+pnpm benchmark:setup
+pnpm benchmark:release --version v0.1.0 --env-file .proofrun/local.env
+pnpm benchmark:gate
 docker build -f deploy/railway/Dockerfile.api -t proofrun-railway-api:test .
 docker build -f deploy/railway/Dockerfile.web -t proofrun-railway-web:test .
 docker build -f deploy/railway/Dockerfile.agent -t proofrun-railway-agent:test .
 node --test tests/railway/smoke.test.mjs
 ```
 
-回归使用独立临时数据库，验证编译产物、profile 变量、PORT、API 鉴权、WebSocket 升级、worker 领取协议和持久卷重建；不调用真实模型或业务浏览器，也不证明 Railway 项目中的域名、权限、容量和备份已经验收。
+镜像 smoke 回归使用独立临时数据库，验证编译产物、profile 变量、PORT、API 鉴权、WebSocket 升级、worker 领取协议和持久卷重建；不调用真实模型或业务浏览器，也不证明 Railway 项目中的域名、权限、容量和备份已经验收。
 
 配置依据：[Railway Dockerfile](https://docs.railway.com/builds/dockerfiles)、[配置文件](https://docs.railway.com/config-as-code/reference)、[健康检查](https://docs.railway.com/deployments/healthchecks)、[持久卷](https://docs.railway.com/volumes)。
+
+## 部署版本与线上 Benchmark
+
+API、Agent、Web 最终镜像将真实发布报告中的 `release` 写入构建清单。API/Agent 读取各自镜像内的 `dist/build-info.json`，不以 Railway 运行时变量冒充代码版本。正式发布通过真实基准工作流的 `release_version` 指定版本，三个镜像使用同一工作流报告构建；开发编译产物缺少清单时不能发起线上基准。
+
+API 增加 `PROOFRUN_BENCHMARK_NODE_POOL`（已配对的基准节点池）与 `PROOFRUN_BENCHMARK_ENVIRONMENT`（如 staging / production）。同时升级 API 和 Agent，数据库启动时应用迁移 044。节点需能访问公开 API 的合成页面；建议为基准使用独立节点池，以免与业务任务竞争资源。模型仍使用 Agent 的现有配置，管理员网页不接触密钥。
+
+Console 连接后进入 Benchmark → 线上调度与存储 → 发起线上基准。后台自动调度固定五场景并保存逐轮记录，归档包含入队发布身份与实际 API、Agent、Node 身份；组件版本不匹配、模型记录不全或未核实会话关闭均判为失败。线上结果作为部署后检查，本地/CI 的发布前门禁仍然必需。数据库记录需随 PostgreSQL 一起备份；目前不自动清除基准归档。

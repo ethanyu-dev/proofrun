@@ -6,6 +6,11 @@ on:
       - main
   pull_request:
   workflow_dispatch:
+    inputs:
+      release_version:
+        description: 本次候选发布版本（留空使用 CI 提交身份）
+        type: string
+        required: false
 
 permissions:
   contents: read
@@ -15,6 +20,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  agent-benchmark:
+    uses: ./.github/workflows/agent-benchmark.yml
+    with:
+      release_version: ${{ inputs.release_version || '' }}
+
+  real-agent-benchmark:
+    if: github.event_name != 'pull_request'
+    uses: ./.github/workflows/real-agent-benchmark.yml
+    with:
+      release_version: ${{ inputs.release_version || '' }}
+    secrets: inherit
+
   check:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -97,6 +114,8 @@ jobs:
           retention-days: 7
 
   railway-images:
+    needs: real-agent-benchmark
+    if: ${{ !cancelled() && (github.event_name == 'pull_request' || needs.real-agent-benchmark.result == 'success') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -105,7 +124,18 @@ jobs:
         with:
           node-version-file: .node-version
       - run: node --test tests/railway/watch-paths.test.mjs tests/railway/api-entry.test.mjs
-      - run: docker build -f deploy/railway/Dockerfile.api -t proofrun-railway-api:test .
-      - run: docker build -f deploy/railway/Dockerfile.web -t proofrun-railway-web:test .
-      - run: docker build -f deploy/railway/Dockerfile.agent -t proofrun-railway-agent:test .
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        if: github.event_name != 'pull_request'
+        with:
+          name: real-agent-benchmark-release
+          path: .benchmark-release
+      # PR 无供应商凭据时仅验证构建阶段；最终可部署镜像仍强制真实报告。
+      - name: 构建服务镜像
+        env:
+          BUILD_TARGET: ${{ github.event_name == 'pull_request' && '--target build' || '' }}
+        run: |
+          docker build $BUILD_TARGET -f deploy/railway/Dockerfile.api -t proofrun-railway-api:test .
+          docker build $BUILD_TARGET -f deploy/railway/Dockerfile.web -t proofrun-railway-web:test .
+          docker build $BUILD_TARGET -f deploy/railway/Dockerfile.agent -t proofrun-railway-agent:test .
       - run: node --test tests/railway/smoke.test.mjs
+        if: github.event_name != 'pull_request'

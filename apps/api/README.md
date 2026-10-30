@@ -501,3 +501,11 @@ Codex 直接完成正式验证的顺序：
 实现分工：`external-execution/routes` 解析 HTTP；`service` 管理归属、scope、版本和幂等；`engine` 将外部决定接入共享 DecisionModel 端口；实际命令、截图校验、步骤记录和报告提交复用 `RuntimeDriver`。既有内置 Agent 路径不读取外部决定，也不接管外部租约。
 
 回归执行 `PROOFRUN_TEST_DATABASE_URL=... pnpm test:agent:integration` 与 `pnpm test:api`。外部回归覆盖完整 Case、浏览器操作、权限组合、重复派发、进度保存、未知效果、人工接管、期限及重启恢复；使用真实 API/PostgreSQL 和模拟节点，不构成真实 Chromium、DevPass 或外部模型验收。
+
+## 线上 Benchmark
+
+配置 `PROOFRUN_BENCHMARK_NODE_POOL`、`PROOFRUN_BENCHMARK_ENVIRONMENT` 且镜像包含正式构建清单后开放发起。管理员接口：`GET /v1/admin/benchmarks/status` 查看开关/实际 API 版本，`GET /v1/admin/benchmarks/versions` 返回最近 200 个版本，`GET /v1/admin/benchmarks?version=...&after=<run UUID>` 分页查询，`GET /v1/admin/benchmarks/:id` 返回状态与完整归档。`POST /v1/admin/benchmarks` 只接受 `{ "id": "<新 UUID>" }`，返回 202；重送同一 UUID 幂等，已有其他活动套件返回 409。
+
+`modules/benchmarks` 通过迁移 044 保存运行、场景及实际派发回执；复用原调度器和执行运行时，不在 HTTP 请求内启动 shell。Agent 通过当前执行令牌登记自己的构建清单和无密钥模型选项，旧 worker 不领取基准。API 从实际执行进程记录版本，Node 从会话准入快照记录版本。所有版本与配置冻结保存；终态归档不随后续部署改写。详情和模型原文只允许管理员读取。
+
+固定随机任务路径下的合成页面只有任务运行期间可访问，记录合成表单的真实写入次数；不使用业务账号和实际站点。旧观察/丢回执场景在登记任务的执行端口内明确注入，正常任务不受影响。每例 3 分钟、套件 10 分钟兜底结算，重启只继续对账，不重放未知副作用。覆盖范围及本地/CI 发布门禁见 [基准说明](../../scripts/benchmarks/README.md)。

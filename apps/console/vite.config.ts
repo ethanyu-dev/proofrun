@@ -2,11 +2,12 @@ import { defineConfig } from 'vite';
 import tailwindcss from '@tailwindcss/vite';
 import { fileURLToPath, URL } from 'node:url';
 import { readFileSync } from 'node:fs';
+import { benchmarkConsole } from '../../scripts/benchmarks/console-plugin.mjs';
 
 /** 仅开发服务器读取代理地址；管理员凭据始终由当前页面发送，不能在此注入。 */
 const apiTarget = process.env.PROOFRUN_API_PROXY ?? 'http://127.0.0.1:4100';
 export default defineConfig({
-  plugins: [tailwindcss()],
+  plugins: [tailwindcss(), benchmarkConsole()],
   resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
   server: {
     // 本地双画面预览可选 TLS；证书留在忽略目录，不把私钥打进前端构建。

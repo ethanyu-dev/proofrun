@@ -1,3 +1,7 @@
+import {
+  selectContext,
+  ContextReads,
+} from '../../packages/execution-core/dist/execution/context-view.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { validateAgentDecision } from '../../contracts/dist/index.js';
@@ -446,6 +450,18 @@ test('执行器按需加载详情与筛选列表，读取结果可引用且刷�
     }
     if (turn === 4) {
       assert.equal(view.detail.captured.image.source, '/image-20.png');
+      assert.equal(context.page.view, 'network');
+      assert(!body.tools.some((tool) => tool.function.name === 'browser_act'));
+      return {
+        type: 'context.read',
+        section: 'page',
+        observationId: context.page.observationId,
+      };
+    }
+    if (turn === 5) {
+      assert.equal(context.page.view, 'page');
+      assert.equal(view.detail.captured.image.source, '/image-20.png');
+      assert.equal(context.history.commands.length, 2);
       return { type: 'browser.act', action: 'scroll', value: 'down' };
     }
     assert.equal(view.detail, null);
@@ -468,7 +484,7 @@ test('执行器按需加载详情与筛选列表，读取结果可引用且刷�
     );
     assert.deepEqual(server.errors, []);
     assert.equal(report.verdict, 'PASSED');
-    assert.equal(report.executionDetails.modelCalls, 5);
+    assert.equal(report.executionDetails.modelCalls, 6);
     assert.equal(report.executionDetails.actions, 2);
     assert.deepEqual(
       client.calls.map((c) => c.operation.type),
@@ -1094,4 +1110,283 @@ test('覆盖快照时钟不是网络进展，实际覆盖变化仍可补证', ()
   assert.equal(ledger.read(current, [read]), undefined);
   current.network.coverage.startedAt = 35;
   assert(ledger.read(current, [read]));
+});
+
+// 范围：同快照网络精简、图片隔离、恢复及原始证据不变；合成页不代表真实浏览器验收。
+test('网络视图按实际读取切换，恢复页面不丢网络详情与历史身份', () => {
+  const current = page();
+  current.text = '页面正文'.repeat(800);
+  current.targets = [{ target: 'button-1', role: 'button', name: '继续' }];
+  const original = structuredClone(current);
+  const args = {
+    ...contextInput(current),
+    image: 'verified-image',
+    previousObservations: [{ ...current }],
+    maxContextChars: 64000,
+  };
+  const full = decisionContext(args);
+  assert.equal(full.context.page.view, 'page');
+  const networkSelection = {
+    observationId: current.observationId,
+    requestId: networkView(current).requests[0].id,
+  };
+  const compact = decisionContext({ ...args, networkSelection });
+  assert.equal(compact.context.page.text, '');
+  assert.deepEqual(compact.context.page.targets, []);
+  assert.equal(compact.image, undefined);
+  assert.equal(compact.context.history.excerpts.length, 0);
+  assert.equal(compact.context.history.omittedExcerpts, 1);
+  assert.equal(compact.context.page.coverage.text.returnedChars, 0);
+  assert.equal(compact.context.page.coverage.controls.omitted, 1);
+  assert(compact.text.length < full.text.length);
+  const restored = decisionContext({
+    ...args,
+    networkSelection,
+    contextSelection: selectContext(current, {
+      observationId: current.observationId,
+      section: 'page',
+    }),
+  });
+  assert.equal(restored.image, args.image);
+  assert.equal(restored.context.page.text, original.text);
+  assert.deepEqual(restored.context.page.targets, original.targets);
+  assert.deepEqual(restored.context.page.network, compact.context.page.network);
+  assert.equal(restored.context.history.excerpts[0].textRef, 'page.text');
+  assert.deepEqual(current, original);
+  current.observationId = 'new-snapshot';
+  const fresh = decisionContext({ ...args, current, networkSelection });
+  assert.equal(fresh.context.page.view, 'page');
+  assert.equal(fresh.context.page.network.detail, null);
+});
+
+// 范围：运行时目录分页、采集缺口、错误样本与证据保留；缓存内容由夹具提供，不操作真实 Cache Storage。
+test('运行时清单默认摘要，分页原文无损且不会提升采集完整性', () => {
+  const current = page();
+  current.runtime = {
+    version: 1,
+    cacheStorage: {
+      names: ['bench'],
+      entries: Array.from({ length: 45 }, (_, i) => ({
+        url: `https://fixture.test/${i}`,
+        responseStatus: 200,
+      })),
+      truncated: true,
+      complete: false,
+    },
+    console: { entries: [{ level: 'error', message: 'boom' }], complete: true },
+  };
+  current.artifactRefs.push({
+    artifactId: 'runtime-evidence',
+    kind: 'RUNTIME',
+    sha256: 'a'.repeat(64),
+  });
+  const original = structuredClone(current);
+  const args = contextInput(current);
+  const summary = decisionContext(args).context.page;
+  assert.deepEqual(summary.runtime.cacheStorage.entries, []);
+  assert.equal(summary.runtime.console.entries[0].message, 'boom');
+  assert.equal(
+    summary.runtimeLists.find((item) => item.path === 'cacheStorage.entries')
+      .omitted,
+    45,
+  );
+  const entries = [];
+  let offset = 0;
+  do {
+    const selection = selectContext(current, {
+      observationId: current.observationId,
+      section: 'runtime',
+      path: 'cacheStorage.entries',
+      offset,
+    });
+    const result = decisionContext({
+      ...args,
+      contextSelection: selection,
+      image: 'verified-image',
+    });
+    assert.equal(result.context.page.view, 'runtime');
+    assert.equal(result.image, undefined);
+    const detail = result.context.page.runtimeDetail;
+    assert.deepEqual(detail.capture, { complete: false, truncated: true });
+    assert.deepEqual(detail.evidenceRefs, ['runtime-evidence']);
+    entries.push(...detail.entries);
+    offset = detail.nextOffset;
+  } while (offset !== null);
+  assert.deepEqual(entries, original.runtime.cacheStorage.entries);
+  assert.deepEqual(current, original);
+  for (const selection of [
+    { observationId: 'old', section: 'page' },
+    {
+      observationId: current.observationId,
+      section: 'runtime',
+      path: '__proto__',
+    },
+    {
+      observationId: current.observationId,
+      section: 'runtime',
+      path: 'cacheStorage.entries',
+      offset: 45,
+    },
+  ])
+    assert.throws(() => selectContext(current, selection), {
+      code: 'INVALID_MODEL_DECISION',
+    });
+  assert.equal(
+    validateAgentDecision({
+      type: 'context.read',
+      observationId: current.observationId,
+      section: 'runtime',
+    }),
+    false,
+  );
+  assert.equal(
+    validateAgentDecision({
+      type: 'context.read',
+      observationId: current.observationId,
+      section: 'page',
+      offset: 0,
+    }),
+    false,
+  );
+});
+
+// 范围：主动详情不能被总预算裁剪成伪完整列表；不评估真实供应商 token 限制。
+test('超预算运行时条目明确失败，不能静默裁剪主动分页', () => {
+  const current = page();
+  current.runtime = { cacheStorage: { entries: [{ url: 'x'.repeat(20000) }] } };
+  assert.throws(
+    () =>
+      decisionContext({
+        ...contextInput(current),
+        contextSelection: {
+          observationId: current.observationId,
+          section: 'runtime',
+          path: 'cacheStorage.entries',
+        },
+      }),
+    { code: 'CONTEXT_BUDGET_EXCEEDED' },
+  );
+});
+
+// 范围：缓存读取只消耗原模型轮次，不能借视图恢复增加动作或续费；模型和节点是协议夹具。
+test('同快照恢复仍受原模型预算限制', async () => {
+  const server = await modelServer((context) => ({
+    type: 'context.read',
+    observationId: context.page.observationId,
+    section: 'page',
+  }));
+  const client = new FakeControl();
+  const command = client.command.bind(client);
+  client.command = async (...args) => {
+    const result = await command(...args);
+    if (args[2].type === 'browser.observe')
+      result.data.runtime = { cacheStorage: { entries: [] } };
+    return result;
+  };
+  try {
+    const settings = { ...config, modelUrl: server.url, maxTurns: 1 };
+    const report = await execute(
+      settings,
+      client,
+      new ChatModel(settings),
+      grant(),
+    );
+    assert.deepEqual(server.errors, []);
+    assert.equal(report.executionDetails.modelCalls, 1);
+    assert.equal(report.executionDetails.actions, 1);
+    assert.equal(client.observedIds.length, 1);
+    assert.equal(
+      report.executionDetails.reasonCode,
+      'MODEL_TURN_BUDGET_EXCEEDED',
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+// 范围：绕过 ChatModel 的决定仍被执行端阻止隐藏页面动作；浏览器与网络数据为夹具。
+test('执行端拒绝网络视图中的动作，恢复视图不重置网络读取', async () => {
+  const client = new FakeControl();
+  withNetwork(client);
+  let turn = 0,
+    observedId;
+  const model = {
+    async decide(input) {
+      const context = input.context;
+      turn++;
+      let decision;
+      if (turn === 1) {
+        observedId = context.page.observationId;
+        decision = { type: 'network.requests', observationId: observedId };
+      } else if (turn === 2) {
+        assert.equal(context.page.view, 'network');
+        decision = { type: 'browser.act', action: 'reload' };
+      } else if (turn === 3) {
+        assert.equal(context.page.observationId, observedId);
+        assert.match(JSON.stringify(context.feedback), /context_read/);
+        decision = {
+          type: 'context.read',
+          observationId: observedId,
+          section: 'page',
+        };
+      } else {
+        assert.equal(context.page.view, 'page');
+        assert.equal(context.page.observationId, observedId);
+        assert.equal(context.state.networkReads.length, 1);
+        decision = finish(context);
+      }
+      return { decision, promptTokens: 0, completionTokens: 0 };
+    },
+  };
+  const report = await execute(config, client, model, grant());
+  assert.equal(report.verdict, 'PASSED');
+  assert.equal(report.executionDetails.actions, 1);
+  assert.equal(client.observedIds.length, 1);
+  assert.equal(report.executionDetails.modelCalls, 4);
+});
+
+// 范围：已读回执避免跨视图丢失页进度，交替读取不能重置保护；数据是合成缓存，不代表真实页面。
+test('运行时回执保留分页进度，采集覆盖元数据不被摘要化', () => {
+  const current = page();
+  current.runtime = {
+    cacheStorage: {
+      entries: Array.from({ length: 24 }, (_, i) => ({
+        url: String(i),
+        responseStatus: 200,
+      })),
+    },
+    console: {
+      coverage: { complete: true, excludedScopes: ['a', 'b', 'c', 'd'] },
+      entries: [],
+    },
+  };
+  const context = decisionContext(contextInput(current)).context;
+  assert.deepEqual(
+    context.page.runtime.console.coverage,
+    current.runtime.console.coverage,
+  );
+  assert(
+    !context.page.runtimeLists.some((item) => item.path.includes('coverage')),
+  );
+  const ledger = new ContextReads();
+  const runtime = {
+    observationId: current.observationId,
+    section: 'runtime',
+    path: 'cacheStorage.entries',
+    offset: 0,
+  };
+  const restored = { observationId: current.observationId, section: 'page' };
+  assert(ledger.read(current, runtime));
+  assert(ledger.read(current, restored));
+  assert.equal(ledger.view(current)[0].nextOffset, 20);
+  assert.deepEqual(ledger.view(current)[0].responseStatuses, [
+    { status: '200', count: 20 },
+  ]);
+  assert(ledger.read(current, runtime));
+  assert.equal(ledger.read(current, restored), false);
+  assert(ledger.read(current, { ...runtime, offset: 20 }));
+  assert.equal(ledger.view(current).at(-1).returned, 4);
+  assert.equal(ledger.view(current).at(-1).nextOffset, null);
+  current.observationId = 'new';
+  assert.deepEqual(ledger.view(current), []);
 });

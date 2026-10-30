@@ -5,6 +5,7 @@ import { ThemeToggle } from './ui';
 /** 导航仅映射已有路由，详情与历史入口归属对应业务模块。 */
 const NAVIGATION = [
   { href: '/dashboard', label: '验证看板', prefixes: ['/dashboard'] },
+  { href: '/benchmarks', label: 'Benchmark', prefixes: ['/benchmarks'] },
   {
     href: '/tasks',
     label: '验证任务',

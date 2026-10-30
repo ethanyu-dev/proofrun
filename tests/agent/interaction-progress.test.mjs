@@ -263,6 +263,12 @@ test('FAQ 引文只规范化空白，已登记子项重复提交保留首次原�
   assert.equal(ledger.view().revision, 1);
   assert.deepEqual(ledger.view().recordedItemIds, ['item-1']);
   assert.equal(ledger.results()[0].quote, original);
+  // 标题不属于面板原文；拒绝反馈必须指明字段层级，避免模型恢复时移到顶层。
+  assert.throws(
+    () =>
+      ledger.validate([{ itemId: 'item-1', quote: '面板标题\n' + original }]),
+    /progress\.readings.*name\/heading.*顶层/,
+  );
   const fresh = new InteractionProgress();
   fresh.observe(observation);
   fresh.record(

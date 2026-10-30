@@ -2742,6 +2742,41 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
+              "type": { "const": "context.read" },
+              "observationId": { "type": "string", "minLength": 1 },
+              "section": { "enum": ["page", "runtime"] },
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300,
+                "description": "runtimeLists 中提供的列表路径；page 视图不填写。"
+              },
+              "offset": { "type": "integer", "minimum": 0 },
+              "progress": {
+                "$ref": "#/components/schemas/AgentDecision/definitions/progress"
+              }
+            },
+            "required": ["type", "observationId", "section"],
+            "description": "只读恢复同一观察的页面视图，或分页读取 runtimeLists 的运行时列表；不刷新浏览器、不产生网络请求，不增加预算。",
+            "allOf": [
+              {
+                "if": { "properties": { "section": { "const": "runtime" } } },
+                "then": { "required": ["path"], "properties": { "path": {} } },
+                "else": {
+                  "not": {
+                    "anyOf": [
+                      { "properties": { "path": {} }, "required": ["path"] },
+                      { "properties": { "offset": {} }, "required": ["offset"] }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
               "type": { "const": "network.request_detail" },
               "observationId": {
                 "type": "string",

@@ -1,0 +1,67 @@
+name: Real Agent Loop Release Benchmark
+on:
+  workflow_call:
+    inputs:
+      release_version:
+        type: string
+        required: false
+    secrets:
+      PROOFRUN_MODEL_BASE_URL:
+        required: true
+      PROOFRUN_MODEL_API_KEY:
+        required: true
+      PROOFRUN_MODEL:
+        required: true
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: '本次候选发布版本'
+        type: string
+        required: true
+permissions:
+  contents: read
+jobs:
+  real-baseline:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: rustup show active-toolchain
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm benchmark:setup
+      # 缺失凭据必须失败，禁止用脚本模型替代发布检查；密钥只存在于运行进程。
+      - run: pnpm benchmark:release
+        env:
+          PROOFRUN_RELEASE_VERSION: ${{ inputs.release_version || format('ci-{0}', github.sha) }}
+          PROOFRUN_MODEL_BASE_URL: ${{ secrets.PROOFRUN_MODEL_BASE_URL }}
+          PROOFRUN_MODEL_API_KEY: ${{ secrets.PROOFRUN_MODEL_API_KEY }}
+          PROOFRUN_MODEL: ${{ secrets.PROOFRUN_MODEL }}
+          PROOFRUN_MODEL_VISION: ${{ vars.PROOFRUN_MODEL_VISION || 'false' }}
+          PROOFRUN_MODEL_TOKEN_PARAMETER: ${{ vars.PROOFRUN_MODEL_TOKEN_PARAMETER || 'max_completion_tokens' }}
+          PROOFRUN_MODEL_THINKING: ${{ vars.PROOFRUN_MODEL_THINKING || 'default' }}
+          PROOFRUN_MODEL_REASONING_EFFORT: ${{ vars.PROOFRUN_MODEL_REASONING_EFFORT || 'default' }}
+          PROOFRUN_MODEL_MAX_TOKENS: ${{ vars.PROOFRUN_MODEL_MAX_TOKENS || '8192' }}
+          PROOFRUN_AGENT_MODEL_MS: '180000'
+      - run: pnpm benchmark:gate
+      - name: 保存真实上下文、工具回执和页面证据
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: real-agent-benchmark-evidence
+          path: .proofrun/benchmarks/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
+      - name: 传递当前源码的真实发布报告
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: real-agent-benchmark-release
+          path: .benchmark-release/real.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1

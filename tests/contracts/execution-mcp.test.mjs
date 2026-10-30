@@ -25,8 +25,8 @@ const base = {
 test('操作工具从底层契约派生，输入输出自包含且按决定收窄', () => {
   const ajv = new Ajv({ strict: true });
   formats(ajv);
-  assert.equal(executionMcpTools.length, 17);
-  assert.equal(new Set(executionMcpTools.map((t) => t.name)).size, 17);
+  assert.equal(executionMcpTools.length, 18);
+  assert.equal(new Set(executionMcpTools.map((t) => t.name)).size, 18);
   for (const tool of executionMcpTools) {
     assert.ok(!JSON.stringify(tool).includes('$ref'), tool.name);
     const validate = ajv.compile(tool.inputSchema);
@@ -93,6 +93,47 @@ test('操作工具从底层契约派生，输入输出自包含且按决定收�
   const { stepId, ...missing } = finish;
   assert.equal(
     validateExecutionMcpArguments.get('verification_finish_step')(missing),
+    false,
+  );
+});
+
+// 范围：恢复和运行时分页复用严格决定协议，不给予浏览器动作或任意字段权限；不连接真实控制面。
+test('MCP 同快照 context 读取具有独立工具与严格参数', () => {
+  const validate = validateExecutionMcpArguments.get('browser_context_read');
+  const page = {
+    ...base,
+    decision: {
+      type: 'context.read',
+      observationId: 'current',
+      section: 'page',
+    },
+  };
+  assert(validate(page));
+  assert(
+    validate({
+      ...page,
+      decision: {
+        ...page.decision,
+        section: 'runtime',
+        path: 'cacheStorage.entries',
+        offset: 20,
+      },
+    }),
+  );
+  for (const decision of [
+    { ...page.decision, offset: 1 },
+    { ...page.decision, section: 'runtime' },
+    {
+      ...page.decision,
+      section: 'runtime',
+      path: 'cacheStorage.entries',
+      offset: -1,
+    },
+    { type: 'browser.act', action: 'reload' },
+  ])
+    assert.equal(validate({ ...base, decision }), false);
+  assert.equal(
+    validateExecutionMcpArguments.get('browser_observe')(page),
     false,
   );
 });

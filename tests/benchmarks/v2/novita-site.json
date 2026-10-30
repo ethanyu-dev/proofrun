@@ -1,0 +1,559 @@
+{
+  "id": "novita-site",
+  "name": "Novita 官网：导航、网络与页面核验",
+  "sourceTaskId": "case-run-run-e31122c3-ba6f-4875-bcfb-1a9a5998ce84",
+  "sourceCreatedAt": "2026-10-27T07:24:14.770Z",
+  "sourceDefinitionSha256": "6867991b3b99f3f6a8a9ff0fd75e908f79b5f4ff0485795cb2af82aa26900c96",
+  "historicalVerdict": "INCONCLUSIVE",
+  "task": {
+    "steps": [
+      {
+        "url": "https://novita.ai/",
+        "type": "setup",
+        "policy": [
+          "Chromium 内核浏览器，视口 1440×900",
+          "禁用浏览器扩展，不清除站点 Cookie"
+        ],
+        "stepId": "step-1",
+        "expected": [],
+        "exec_order": 1,
+        "description": "使用全新浏览器上下文打开官网首页，保持默认 Accept-Language 为 zh-CN，记录首屏语言与控制台报错"
+      },
+      {
+        "url": "https://novita.ai/",
+        "type": "verification",
+        "policy": ["停留至 networkidle 后再判断"],
+        "stepId": "step-2",
+        "expected": [
+          "HTTP 200，首屏无 Error、Application error、白屏或布局塌陷",
+          "Models、GPU Cloud、Pricing、Docs 等主导航入口可见且可点击",
+          "图片、字体、样式均加载成功，控制台无未捕获异常"
+        ],
+        "exec_order": 2,
+        "description": "检查首页首屏、主导航、页脚与静态资源加载"
+      },
+      {
+        "url": "https://novita.ai/zh/pricing",
+        "type": "verification",
+        "policy": ["不先访问无前缀页面"],
+        "stepId": "step-3",
+        "expected": [
+          "HTTP 200，地址保持 /zh/pricing，不跳回无前缀路径",
+          "价格表、计费单位和说明文案为中文，无英文残留",
+          "canonical 与 hreflang 指向当前语言及对应语言版本"
+        ],
+        "exec_order": 3,
+        "description": "直接访问本地化价格页，检查语言前缀、内容与 SEO 标签"
+      },
+      {
+        "url": "https://novita.ai/dashboard/billing",
+        "type": "verification",
+        "policy": ["使用不跟随重定向的请求或在 Network 面板查看 308 响应"],
+        "stepId": "step-4",
+        "expected": [
+          "返回 308，Location 指向新账单路径并保留语言前缀",
+          "响应包含 no-store 或等价禁止缓存头",
+          "不出现 404、500 或重定向循环"
+        ],
+        "exec_order": 4,
+        "description": "访问历史账单入口，检查中间件 308 重定向与缓存头"
+      },
+      {
+        "url": "https://novita.ai/blog",
+        "type": "verification",
+        "policy": ["使用默认博客入口，不手动改写子站地址"],
+        "stepId": "step-5",
+        "expected": [
+          "博客首页 HTTP 200，URL 不出现重复语言前缀",
+          "文章列表、封面图与正文正常渲染",
+          "文章详情可返回且不出现代理 502/504"
+        ],
+        "exec_order": 5,
+        "description": "访问博客首页并打开任一文章，检查子站代理与图片"
+      },
+      {
+        "url": "https://novita.ai/models/llm",
+        "type": "verification",
+        "policy": ["选择列表中第一个可点击模型，不手工拼接不存在的 slug"],
+        "stepId": "step-6",
+        "expected": [
+          "详情页 HTTP 200，Playground 与模型信息正常渲染",
+          "页面 title 含模型名，canonical 等于当前详情 URL",
+          "OG title/description 存在且不是首页默认值"
+        ],
+        "exec_order": 6,
+        "description": "从 LLM 模型列表打开任一模型详情，检查动态路由与 metadata"
+      },
+      {
+        "url": "https://novita.ai/gpus",
+        "type": "verification",
+        "policy": ["选择列表中第一个可点击 GPU 型号"],
+        "stepId": "step-7",
+        "expected": [
+          "详情页 HTTP 200，规格、价格与可用区域正常展示",
+          "页面 title 与 canonical 对应具体 GPU 型号",
+          "返回列表后筛选与滚动位置可用"
+        ],
+        "exec_order": 7,
+        "description": "从 GPU 列表打开任一 GPU 详情，检查动态参数与页面渲染"
+      },
+      {
+        "url": "https://novita.ai/",
+        "type": "verification",
+        "policy": [
+          "只重放页面已加载图片的参数，不构造不存在的上游资源",
+          "私网地址使用 127.0.0.1 或 10.0.0.1 的图片 URL"
+        ],
+        "stepId": "step-8",
+        "expected": [
+          "q=75 返回 200，Content-Type 为 image/webp 或 image/avif，并带公共缓存头",
+          "q=50 返回 400，响应说明 quality 不在允许列表",
+          "私网 url 返回 400 或 403，不返回图片内容"
+        ],
+        "exec_order": 8,
+        "description": "在开发者工具中取首页任一图片的 /_next/image 请求，分别以 q=75、q=50 和私网 url 重放"
+      },
+      {
+        "url": "https://novita.ai/definitely-not-a-real-page-3348",
+        "type": "verification",
+        "policy": ["使用未注册的随机路径"],
+        "stepId": "step-9",
+        "expected": [
+          "返回 HTTP 404，展示站点 404 页面",
+          "不返回 500、空白页或首页内容冒充"
+        ],
+        "exec_order": 9,
+        "description": "访问不存在的路径，检查 404 处理"
+      }
+    ],
+    "budget": {
+      "timeoutMs": 2700000,
+      "maxActions": 136
+    },
+    "target": {
+      "url": "https://novita.ai/"
+    },
+    "taskId": "case-run-run-e31122c3-ba6f-4875-bcfb-1a9a5998ce84",
+    "purpose": "verification",
+    "objective": "Novita 官网（novita.ai 生产站，未登录）：按定义步骤执行并逐项验收",
+    "stepBudget": {
+      "steps": [
+        {
+          "stepId": "step-1",
+          "timeoutMs": 300000,
+          "maxActions": 10,
+          "maxModelCalls": 20
+        },
+        {
+          "stepId": "step-2",
+          "timeoutMs": 300000,
+          "maxActions": 16,
+          "maxModelCalls": 32
+        },
+        {
+          "stepId": "step-3",
+          "timeoutMs": 300000,
+          "maxActions": 16,
+          "maxModelCalls": 32
+        },
+        {
+          "stepId": "step-4",
+          "timeoutMs": 300000,
+          "maxActions": 16,
+          "maxModelCalls": 32
+        },
+        {
+          "stepId": "step-5",
+          "timeoutMs": 300000,
+          "maxActions": 16,
+          "maxModelCalls": 32
+        },
+        {
+          "stepId": "step-6",
+          "timeoutMs": 300000,
+          "maxActions": 16,
+          "maxModelCalls": 32
+        },
+        {
+          "stepId": "step-7",
+          "timeoutMs": 300000,
+          "maxActions": 16,
+          "maxModelCalls": 32
+        },
+        {
+          "stepId": "step-8",
+          "timeoutMs": 300000,
+          "maxActions": 16,
+          "maxModelCalls": 32
+        },
+        {
+          "stepId": "step-9",
+          "timeoutMs": 300000,
+          "maxActions": 14,
+          "maxModelCalls": 28
+        }
+      ],
+      "cleanup": {
+        "timeoutMs": 180000,
+        "maxActions": 10,
+        "maxModelCalls": 20
+      },
+      "version": 1,
+      "settleMs": 120000
+    },
+    "environment": {
+      "id": "production",
+      "nodePool": "internal",
+      "allowIntervention": true
+    },
+    "profilePlan": {
+      "groups": [
+        {
+          "id": "group-1",
+          "stepIds": [
+            "step-1",
+            "step-2",
+            "step-3",
+            "step-4",
+            "step-5",
+            "step-6",
+            "step-7",
+            "step-8",
+            "step-9"
+          ]
+        }
+      ],
+      "version": 1,
+      "maxConcurrency": 1,
+      "environmentGateStepId": "step-1"
+    },
+    "sessionPlan": {
+      "mode": "guest",
+      "version": 1,
+      "automatic": {
+        "loginRequired": false
+      },
+      "candidates": [],
+      "requirements": [],
+      "preparationMs": 120000,
+      "reducedMotion": true
+    },
+    "executionMode": "llm",
+    "executionPlan": {
+      "version": 1,
+      "environment": {
+        "mode": "guest",
+        "basis": [],
+        "source": "default",
+        "resolverVersion": 1
+      },
+      "evidenceKinds": ["DOM", "NETWORK", "RUNTIME"],
+      "requiredCapabilities": ["runtimeEvidenceV1", "networkDetailsV1"]
+    },
+    "cleanupStepIds": [],
+    "protocolVersion": "0.1",
+    "caseV2Definition": {
+      "entry": "https://novita.ai/",
+      "steps": [
+        {
+          "url": "https://novita.ai/",
+          "type": "setup",
+          "policy": [
+            "Chromium 内核浏览器，视口 1440×900",
+            "禁用浏览器扩展，不清除站点 Cookie"
+          ],
+          "expected": [],
+          "exec_order": 1,
+          "description": "使用全新浏览器上下文打开官网首页，保持默认 Accept-Language 为 zh-CN，记录首屏语言与控制台报错"
+        },
+        {
+          "url": "https://novita.ai/",
+          "type": "verification",
+          "policy": ["停留至 networkidle 后再判断"],
+          "expected": [
+            "HTTP 200，首屏无 Error、Application error、白屏或布局塌陷",
+            "Models、GPU Cloud、Pricing、Docs 等主导航入口可见且可点击",
+            "图片、字体、样式均加载成功，控制台无未捕获异常"
+          ],
+          "exec_order": 2,
+          "description": "检查首页首屏、主导航、页脚与静态资源加载"
+        },
+        {
+          "url": "https://novita.ai/zh/pricing",
+          "type": "verification",
+          "policy": ["不先访问无前缀页面"],
+          "expected": [
+            "HTTP 200，地址保持 /zh/pricing，不跳回无前缀路径",
+            "价格表、计费单位和说明文案为中文，无英文残留",
+            "canonical 与 hreflang 指向当前语言及对应语言版本"
+          ],
+          "exec_order": 3,
+          "description": "直接访问本地化价格页，检查语言前缀、内容与 SEO 标签"
+        },
+        {
+          "url": "https://novita.ai/dashboard/billing",
+          "type": "verification",
+          "policy": ["使用不跟随重定向的请求或在 Network 面板查看 308 响应"],
+          "expected": [
+            "返回 308，Location 指向新账单路径并保留语言前缀",
+            "响应包含 no-store 或等价禁止缓存头",
+            "不出现 404、500 或重定向循环"
+          ],
+          "exec_order": 4,
+          "description": "访问历史账单入口，检查中间件 308 重定向与缓存头"
+        },
+        {
+          "url": "https://novita.ai/blog",
+          "type": "verification",
+          "policy": ["使用默认博客入口，不手动改写子站地址"],
+          "expected": [
+            "博客首页 HTTP 200，URL 不出现重复语言前缀",
+            "文章列表、封面图与正文正常渲染",
+            "文章详情可返回且不出现代理 502/504"
+          ],
+          "exec_order": 5,
+          "description": "访问博客首页并打开任一文章，检查子站代理与图片"
+        },
+        {
+          "url": "https://novita.ai/models/llm",
+          "type": "verification",
+          "policy": ["选择列表中第一个可点击模型，不手工拼接不存在的 slug"],
+          "expected": [
+            "详情页 HTTP 200，Playground 与模型信息正常渲染",
+            "页面 title 含模型名，canonical 等于当前详情 URL",
+            "OG title/description 存在且不是首页默认值"
+          ],
+          "exec_order": 6,
+          "description": "从 LLM 模型列表打开任一模型详情，检查动态路由与 metadata"
+        },
+        {
+          "url": "https://novita.ai/gpus",
+          "type": "verification",
+          "policy": ["选择列表中第一个可点击 GPU 型号"],
+          "expected": [
+            "详情页 HTTP 200，规格、价格与可用区域正常展示",
+            "页面 title 与 canonical 对应具体 GPU 型号",
+            "返回列表后筛选与滚动位置可用"
+          ],
+          "exec_order": 7,
+          "description": "从 GPU 列表打开任一 GPU 详情，检查动态参数与页面渲染"
+        },
+        {
+          "url": "https://novita.ai/",
+          "type": "verification",
+          "policy": [
+            "只重放页面已加载图片的参数，不构造不存在的上游资源",
+            "私网地址使用 127.0.0.1 或 10.0.0.1 的图片 URL"
+          ],
+          "expected": [
+            "q=75 返回 200，Content-Type 为 image/webp 或 image/avif，并带公共缓存头",
+            "q=50 返回 400，响应说明 quality 不在允许列表",
+            "私网 url 返回 400 或 403，不返回图片内容"
+          ],
+          "exec_order": 8,
+          "description": "在开发者工具中取首页任一图片的 /_next/image 请求，分别以 q=75、q=50 和私网 url 重放"
+        },
+        {
+          "url": "https://novita.ai/definitely-not-a-real-page-3348",
+          "type": "verification",
+          "policy": ["使用未注册的随机路径"],
+          "expected": [
+            "返回 HTTP 404，展示站点 404 页面",
+            "不返回 500、空白页或首页内容冒充"
+          ],
+          "exec_order": 9,
+          "description": "访问不存在的路径，检查 404 处理"
+        }
+      ],
+      "caseId": "case-9467cb21-79c6-4cf9-bccc-51d53026aa3d",
+      "cleanup": [],
+      "platform": "Novita 官网（novita.ai 生产站，未登录）"
+    },
+    "acceptanceCriteria": [
+      {
+        "id": "step-2-expected-1",
+        "stepId": "step-2",
+        "description": "检查首页首屏、主导航、页脚与静态资源加载",
+        "evidenceKinds": ["DOM", "NETWORK"],
+        "expectedResult": "HTTP 200，首屏无 Error、Application error、白屏或布局塌陷",
+        "requiredCapabilities": ["networkDetailsV1"]
+      },
+      {
+        "id": "step-2-expected-2",
+        "stepId": "step-2",
+        "description": "检查首页首屏、主导航、页脚与静态资源加载",
+        "evidenceKinds": ["DOM", "NETWORK"],
+        "expectedResult": "Models、GPU Cloud、Pricing、Docs 等主导航入口可见且可点击",
+        "requiredCapabilities": ["networkDetailsV1"]
+      },
+      {
+        "id": "step-2-expected-3",
+        "stepId": "step-2",
+        "description": "检查首页首屏、主导航、页脚与静态资源加载",
+        "evidenceKinds": ["DOM", "NETWORK", "RUNTIME"],
+        "expectedResult": "图片、字体、样式均加载成功，控制台无未捕获异常",
+        "requiredCapabilities": ["runtimeEvidenceV1", "networkDetailsV1"]
+      },
+      {
+        "id": "step-3-expected-1",
+        "stepId": "step-3",
+        "description": "直接访问本地化价格页，检查语言前缀、内容与 SEO 标签",
+        "evidenceKinds": ["DOM", "NETWORK"],
+        "expectedResult": "HTTP 200，地址保持 /zh/pricing，不跳回无前缀路径",
+        "requiredCapabilities": ["networkDetailsV1"]
+      },
+      {
+        "id": "step-3-expected-2",
+        "stepId": "step-3",
+        "description": "直接访问本地化价格页，检查语言前缀、内容与 SEO 标签",
+        "evidenceKinds": ["DOM", "NETWORK"],
+        "expectedResult": "价格表、计费单位和说明文案为中文，无英文残留",
+        "requiredCapabilities": []
+      },
+      {
+        "id": "step-3-expected-3",
+        "stepId": "step-3",
+        "description": "直接访问本地化价格页，检查语言前缀、内容与 SEO 标签",
+        "evidenceKinds": ["DOM", "NETWORK"],
+        "expectedResult": "canonical 与 hreflang 指向当前语言及对应语言版本",
+        "requiredCapabilities": []
+      },
+      {
+        "id": "step-4-expected-1",
+        "stepId": "step-4",
+        "description": "访问历史账单入口，检查中间件 308 重定向与缓存头",
+        "evidenceKinds": ["DOM", "NETWORK"],
+        "expectedResult": "返回 308，Location 指向新账单路径并保留语言前缀",
+        "requiredCapabilities": ["networkDetailsV1"]
+      },
+      {
+        "id": "step-4-expected-2",
+        "stepId": "step-4",
+        "description": "访问历史账单入口，检查中间件 308 重定向与缓存头",
+        "evidenceKinds": ["DOM", "NETWORK"],
+        "expectedResult": "响应包含 no-store 或等价禁止缓存头",
+        "requiredCapabilities": ["networkDetailsV1"]
+      },
+      {
+        "id": "step-4-expected-3",
+        "stepId": "step-4",
+        "description": "访问历史账单入口，检查中间件 308 重定向与缓存头",
+        "evidenceKinds": ["DOM", "NETWORK"],
+        "expectedResult": "不出现 404、500 或重定向循环",
+        "requiredCapabilities": ["networkDetailsV1"]
+      },
+      {
+        "id": "step-5-expected-1",
+        "stepId": "step-5",
+        "description": "访问博客首页并打开任一文章，检查子站代理与图片",
+        "evidenceKinds": ["DOM", "NETWORK"],
+        "expectedResult": "博客首页 HTTP 200，URL 不出现重复语言前缀",
+        "requiredCapabilities": ["networkDetailsV1"]
+      },
+      {
+        "id": "step-5-expected-2",
+        "stepId": "step-5",
+        "description": "访问博客首页并打开任一文章，检查子站代理与图片",
+        "evidenceKinds": ["DOM", "NETWORK"],
+        "expectedResult": "文章列表、封面图与正文正常渲染",
+        "requiredCapabilities": []
+      },
+      {
+        "id": "step-5-expected-3",
+        "stepId": "step-5",
+        "description": "访问博客首页并打开任一文章，检查子站代理与图片",
+        "evidenceKinds": ["DOM", "NETWORK"],
+        "expectedResult": "文章详情可返回且不出现代理 502/504",
+        "requiredCapabilities": ["networkDetailsV1"]
+      },
+      {
+        "id": "step-6-expected-1",
+        "stepId": "step-6",
+        "description": "从 LLM 模型列表打开任一模型详情，检查动态路由与 metadata",
+        "evidenceKinds": ["DOM", "NETWORK"],
+        "expectedResult": "详情页 HTTP 200，Playground 与模型信息正常渲染",
+        "requiredCapabilities": ["networkDetailsV1"]
+      },
+      {
+        "id": "step-6-expected-2",
+        "stepId": "step-6",
+        "description": "从 LLM 模型列表打开任一模型详情，检查动态路由与 metadata",
+        "evidenceKinds": ["DOM", "NETWORK"],
+        "expectedResult": "页面 title 含模型名，canonical 等于当前详情 URL",
+        "requiredCapabilities": []
+      },
+      {
+        "id": "step-6-expected-3",
+        "stepId": "step-6",
+        "description": "从 LLM 模型列表打开任一模型详情，检查动态路由与 metadata",
+        "evidenceKinds": ["DOM", "NETWORK"],
+        "expectedResult": "OG title/description 存在且不是首页默认值",
+        "requiredCapabilities": []
+      },
+      {
+        "id": "step-7-expected-1",
+        "stepId": "step-7",
+        "description": "从 GPU 列表打开任一 GPU 详情，检查动态参数与页面渲染",
+        "evidenceKinds": ["DOM", "NETWORK"],
+        "expectedResult": "详情页 HTTP 200，规格、价格与可用区域正常展示",
+        "requiredCapabilities": ["networkDetailsV1"]
+      },
+      {
+        "id": "step-7-expected-2",
+        "stepId": "step-7",
+        "description": "从 GPU 列表打开任一 GPU 详情，检查动态参数与页面渲染",
+        "evidenceKinds": ["DOM", "NETWORK"],
+        "expectedResult": "页面 title 与 canonical 对应具体 GPU 型号",
+        "requiredCapabilities": []
+      },
+      {
+        "id": "step-7-expected-3",
+        "stepId": "step-7",
+        "description": "从 GPU 列表打开任一 GPU 详情，检查动态参数与页面渲染",
+        "evidenceKinds": ["DOM", "NETWORK"],
+        "expectedResult": "返回列表后筛选与滚动位置可用",
+        "requiredCapabilities": []
+      },
+      {
+        "id": "step-8-expected-1",
+        "stepId": "step-8",
+        "description": "在开发者工具中取首页任一图片的 /_next/image 请求，分别以 q=75、q=50 和私网 url 重放",
+        "evidenceKinds": ["DOM", "NETWORK"],
+        "expectedResult": "q=75 返回 200，Content-Type 为 image/webp 或 image/avif，并带公共缓存头",
+        "requiredCapabilities": ["networkDetailsV1"]
+      },
+      {
+        "id": "step-8-expected-2",
+        "stepId": "step-8",
+        "description": "在开发者工具中取首页任一图片的 /_next/image 请求，分别以 q=75、q=50 和私网 url 重放",
+        "evidenceKinds": ["DOM", "NETWORK"],
+        "expectedResult": "q=50 返回 400，响应说明 quality 不在允许列表",
+        "requiredCapabilities": ["networkDetailsV1"]
+      },
+      {
+        "id": "step-8-expected-3",
+        "stepId": "step-8",
+        "description": "在开发者工具中取首页任一图片的 /_next/image 请求，分别以 q=75、q=50 和私网 url 重放",
+        "evidenceKinds": ["DOM", "NETWORK"],
+        "expectedResult": "私网 url 返回 400 或 403，不返回图片内容",
+        "requiredCapabilities": ["networkDetailsV1"]
+      },
+      {
+        "id": "step-9-expected-1",
+        "stepId": "step-9",
+        "description": "访问不存在的路径，检查 404 处理",
+        "evidenceKinds": ["DOM", "NETWORK"],
+        "expectedResult": "返回 HTTP 404，展示站点 404 页面",
+        "requiredCapabilities": ["networkDetailsV1"]
+      },
+      {
+        "id": "step-9-expected-2",
+        "stepId": "step-9",
+        "description": "访问不存在的路径，检查 404 处理",
+        "evidenceKinds": ["DOM", "NETWORK"],
+        "expectedResult": "不返回 500、空白页或首页内容冒充",
+        "requiredCapabilities": ["networkDetailsV1"]
+      }
+    ]
+  }
+}

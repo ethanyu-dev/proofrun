@@ -1,0 +1,821 @@
+{
+  "id": "jiekou-referral",
+  "name": "接口邀请活动：五语言访客核验",
+  "sourceTaskId": "case-run-scroll-loop-2026-10-24T15-33-28-163Z",
+  "sourceCreatedAt": "2026-10-24T15:33:28.238Z",
+  "sourceDefinitionSha256": "5f006443dd74b1fba2027a600c6163955180962d6287be41195c4eb2b1f509d5",
+  "historicalVerdict": "PASSED",
+  "task": {
+    "steps": [
+      {
+        "url": "https://jiekou.ai/referral",
+        "type": "setup",
+        "policy": [
+          "进入页面前清除 token 等登录态 Cookie，全程保持未登录访客状态。",
+          "不提交邀请码、不点击注册或第三方登录。",
+          "活动数据来自 /v1/activity/invite-activity-info，等该数据返回并渲染后再判定文案。"
+        ],
+        "stepId": "step-1",
+        "expected": [],
+        "exec_order": 1,
+        "description": "清除登录态后以未登录访客身份打开 https://jiekou.ai/referral，确认页面语言为简体中文（html lang=zh-CN），等待「活动奖励说明」「注册引导」「常见问题」区块内容加载完成。"
+      },
+      {
+        "url": "https://jiekou.ai/referral",
+        "type": "verification",
+        "policy": [
+          "金额、百分比、次数等数值以接口返回为准，不作为语言判定依据。",
+          "Lite/Pro/Max、GitHub、API、接口AI 等专有名称与品牌名按既有口径保留。"
+        ],
+        "stepId": "step-2",
+        "expected": [
+          "活动一标题为简体中文，不再出现英文原文「🎉 Campaign 1: Existing User Invitation Rewards」。",
+          "活动一正文为简体中文，不再出现「💰 Invite friends and earn unlimited rebate vouchers!」「Share your exclusive invite code. For each friend who successfully registers and completes their first top-up」「and you'll also receive tiered rebate voucher rewards!」等英文句子。",
+          "「返券机制」小节标题为简体中文，不再出现「Rebate voucher mechanism:」。",
+          "返券机制两条列表项为简体中文，不再出现「Tiered model: the higher the invited user's top-up amount, the higher the rebate voucher ratio」「Unlimited rebate vouchers: the inviter can receive」「a certain percentage of the top-up amount as rebate vouchers」等英文句子。",
+          "阶梯返券表格的 3 个表头为简体中文，不再出现「Invited user's single top-up amount」「Invite code reward rebate voucher ratio」「Reward rebate voucher description」。",
+          "表格数据行的说明文案为简体中文，不再出现「The referrer receives」「rebate vouchers」等英文片段。",
+          "表格末行金额后缀为简体中文（如「$X 及以上」），不出现英文「and above」。",
+          "品牌名显示为「接口AI」，不出现英文「Interface AI」。"
+        ],
+        "exec_order": 2,
+        "description": "查看「活动奖励说明」区中的活动一（老用户邀请奖励）：标题、正文、返券机制说明的两条列表项，以及阶梯返券表格的 3 个表头与全部数据行说明。"
+      },
+      {
+        "url": "https://jiekou.ai/referral",
+        "type": "verification",
+        "policy": ["与活动一使用同一页面状态和同一份接口数据。"],
+        "stepId": "step-3",
+        "expected": [
+          "活动二标题为简体中文，不再出现「🎉 Campaign 2: Invite Friends to Subscribe and Earn Trial Vouchers」。",
+          "活动二正文为简体中文，不再出现「After a new user links an invite code and successfully pays for any subscription package for the first time」等英文句子。",
+          "「活动规则」小节标题为简体中文，不再出现「Campaign rules:」。",
+          "3 条活动规则为简体中文，不再出现「When the invitee successfully pays for any subscription package for the first time」「There is no limit on invitation rewards」「The trial voucher will take effect in the next cycle」等英文句子。",
+          "Lite/Pro/Max 档位名称与奖励金额保持与接口一致，其前后描述文案为简体中文。"
+        ],
+        "exec_order": 3,
+        "description": "继续查看活动二（邀请好友订阅得体验券）：标题、正文、活动规则小节标题与 3 条规则列表（含邀请对象订阅 Lite/Pro/Max 的奖励条目）。"
+      },
+      {
+        "url": "https://jiekou.ai/referral",
+        "type": "verification",
+        "policy": ["保持未登录访客状态，不实际提交邀请码或进入注册流程。"],
+        "stepId": "step-4",
+        "expected": [
+          "区块标题为简体中文，不再出现「How to get the reward」。",
+          "步骤 1 标题与邀请码输入框占位提示为简体中文，不再出现「Enter invitation code」。",
+          "步骤 2 标题与按钮文案为简体中文，不再出现「Create account」。",
+          "步骤 3 标题、奖励说明与充值按钮为简体中文，不再出现「New user exclusive」「First top-up rebate voucher」「Go to top up」。",
+          "邮箱注册入口为简体中文（如「通过邮箱注册」）。"
+        ],
+        "exec_order": 4,
+        "description": "查看「注册引导」区（未登录态）：区块标题、步骤 1 标题与邀请码输入框占位提示、步骤 2 标题与按钮文案、步骤 3 标题/奖励说明/充值按钮，以及邮箱注册入口文案。"
+      },
+      {
+        "url": "https://jiekou.ai/referral",
+        "type": "verification",
+        "policy": ["与前面步骤使用同一构建版本和同一浏览器会话。"],
+        "stepId": "step-5",
+        "expected": [
+          "首屏、邀请活动流程、常见问题（含展开后的问答）与免责声明文案保持简体中文，与修复前一致，未回退为英文或混入其他语言。",
+          "页面未出现词条键名直出（如 src/app/referral/...）、空白占位或未翻译提示。"
+        ],
+        "exec_order": 5,
+        "description": "在同一中文页面查看首屏、邀请活动流程、常见问题（逐条展开问答）与底部免责声明等区块文案。"
+      },
+      {
+        "url": "https://jiekou.ai/en/referral",
+        "type": "setup",
+        "policy": [
+          "保持同一浏览器会话与未登录访客状态。",
+          "切换语言后等待页面文案刷新完成再检查。"
+        ],
+        "stepId": "step-6",
+        "expected": [],
+        "exec_order": 6,
+        "description": "使用页面顶部语言切换器（aria-label=Language）切换到 English，或直接打开 https://jiekou.ai/en/referral，确认页面语言为英文（html lang=en）。"
+      },
+      {
+        "url": "https://jiekou.ai/en/referral",
+        "type": "verification",
+        "policy": [
+          "本次改动涉及的英文词条不得回退；判定语言时忽略 Lite/Pro/Max、GitHub、API 等专有名称与品牌名。",
+          "不实际提交邀请码或完成注册。"
+        ],
+        "stepId": "step-7",
+        "expected": [
+          "活动一/活动二标题、正文、返券机制说明、表格表头与数据行说明保持英文，未混入本次新增的中文译文。",
+          "注册引导区的区块标题、邀请码标签与占位提示、按钮与状态文案保持英文。",
+          "活动奖励说明区不再出现中文片段：返券机制第二条列表项中「前 N 次」的位置显示英文表达，不出现中文「前」「次」。",
+          "阶梯返券表格末行金额后缀显示英文（如「and above」），不出现中文「及以上」。",
+          "常见问题区块的标题与展开后的问答均为英文，不再出现中文问句或中文答案。",
+          "邀请码校验与绑定失败提示为英文，不再出现「请输入邀请码」「请输入正确的邀请码」「邀请码无效」「已绑定邀请码，不可重复绑定」「绑定失败，请重试」等中文提示。",
+          "页面未出现词条键名直出、空白占位或未翻译提示。"
+        ],
+        "exec_order": 7,
+        "description": "在英文页查看活动奖励说明区与注册引导区，逐条展开常见问题（FAQ）问答，并在邀请码输入框输入无效邀请码触发校验提示。"
+      },
+      {
+        "url": "https://jiekou.ai/ja/referral",
+        "type": "setup",
+        "policy": ["保持未登录访客状态，并等待页面文案刷新完成。"],
+        "stepId": "step-8",
+        "expected": [],
+        "exec_order": 8,
+        "description": "使用页面顶部语言切换器切换到 日本語，或直接打开 https://jiekou.ai/ja/referral，确认页面语言为日语（html lang=ja）。"
+      },
+      {
+        "url": "https://jiekou.ai/ja/referral",
+        "type": "verification",
+        "policy": [
+          "判定语言时忽略 Lite/Pro/Max、GitHub、API 等专有名称与品牌名。"
+        ],
+        "stepId": "step-9",
+        "expected": [
+          "活动一/活动二标题、正文、返券机制说明、表格表头与数据行说明为日文，不再整段沿用英文原文（如「🎉 Campaign 1: Existing User Invitation Rewards」「Reward rebate voucher description」）。",
+          "注册引导区的区块标题、邀请码标签与占位提示、各步骤标题与按钮、奖励说明为日文，不再出现「How to get the reward」「Enter invitation code」「Create account」「New user exclusive」「First top-up rebate voucher」「Go to top up」。",
+          "活动奖励说明区、注册引导区与展开后的常见问题均不出现中文片段（如「前 N 次」「及以上」及中文问答）。",
+          "页面未出现词条键名直出、空白占位或未翻译提示。"
+        ],
+        "exec_order": 9,
+        "description": "在日文页查看活动奖励说明区、注册引导区，并逐条展开常见问题问答。"
+      },
+      {
+        "url": "https://jiekou.ai/de/referral",
+        "type": "setup",
+        "policy": ["保持未登录访客状态，并等待页面文案刷新完成。"],
+        "stepId": "step-10",
+        "expected": [],
+        "exec_order": 10,
+        "description": "使用页面顶部语言切换器切换到 Deutsch，或直接打开 https://jiekou.ai/de/referral，确认页面语言为德语（html lang=de）。"
+      },
+      {
+        "url": "https://jiekou.ai/de/referral",
+        "type": "verification",
+        "policy": [
+          "判定语言时忽略 Lite/Pro/Max、GitHub、API 等专有名称与品牌名。"
+        ],
+        "stepId": "step-11",
+        "expected": [
+          "活动一/活动二标题、正文、返券机制说明、表格表头与数据行说明为德文，不再整段沿用英文原文（如「🎉 Campaign 1: Existing User Invitation Rewards」「Reward rebate voucher description」）。",
+          "注册引导区的区块标题、邀请码标签与占位提示、各步骤标题与按钮、奖励说明为德文，不再出现「How to get the reward」「Enter invitation code」「Create account」「New user exclusive」「First top-up rebate voucher」「Go to top up」。",
+          "活动奖励说明区、注册引导区与展开后的常见问题均不出现中文片段（如「前 N 次」「及以上」及中文问答）。",
+          "页面未出现词条键名直出、空白占位或未翻译提示。"
+        ],
+        "exec_order": 11,
+        "description": "在德文页查看活动奖励说明区、注册引导区，并逐条展开常见问题问答。"
+      },
+      {
+        "url": "https://jiekou.ai/pt/referral",
+        "type": "setup",
+        "policy": ["保持未登录访客状态，并等待页面文案刷新完成。"],
+        "stepId": "step-12",
+        "expected": [],
+        "exec_order": 12,
+        "description": "使用页面顶部语言切换器切换到 Português，或直接打开 https://jiekou.ai/pt/referral，确认页面语言为葡萄牙语（html lang=pt-BR）。"
+      },
+      {
+        "url": "https://jiekou.ai/pt/referral",
+        "type": "verification",
+        "policy": [
+          "判定语言时忽略 Lite/Pro/Max、GitHub、API 等专有名称与品牌名。"
+        ],
+        "stepId": "step-13",
+        "expected": [
+          "活动一/活动二标题、正文、返券机制说明、表格表头与数据行说明为葡萄牙语，不再整段沿用英文原文（如「🎉 Campaign 1: Existing User Invitation Rewards」「Reward rebate voucher description」）。",
+          "注册引导区的区块标题、邀请码标签与占位提示、各步骤标题与按钮、奖励说明为葡萄牙语，不再出现「How to get the reward」「Enter invitation code」「Create account」「New user exclusive」「First top-up rebate voucher」「Go to top up」。",
+          "活动奖励说明区、注册引导区与展开后的常见问题均不出现中文片段（如「前 N 次」「及以上」及中文问答）。",
+          "页面未出现词条键名直出、空白占位或未翻译提示。"
+        ],
+        "exec_order": 13,
+        "description": "在葡文页查看活动奖励说明区、注册引导区，并逐条展开常见问题问答。"
+      },
+      {
+        "url": "https://jiekou.ai/referral",
+        "type": "setup",
+        "policy": [],
+        "stepId": "cleanup-1",
+        "expected": [],
+        "exec_order": 1,
+        "description": "将页面语言切回简体中文，并清除本次检查产生的语言偏好 Cookie（jiekou_preferred_locale、NEXT_LOCALE），使后续访问恢复默认语言；本 case 未产生业务数据，无需其他恢复。"
+      }
+    ],
+    "budget": {
+      "timeoutMs": 3900000,
+      "maxActions": 208
+    },
+    "target": {
+      "url": "https://jiekou.ai/referral"
+    },
+    "taskId": "case-run-scroll-loop-2026-10-24T15-33-28-163Z",
+    "purpose": "verification",
+    "objective": "jiekou.ai 官网 /referral 邀请活动页（生产，未登录访客）：按定义步骤执行并逐项验收",
+    "stepBudget": {
+      "steps": [
+        {
+          "stepId": "step-1",
+          "timeoutMs": 300000,
+          "maxActions": 10,
+          "maxModelCalls": 20
+        },
+        {
+          "stepId": "step-2",
+          "timeoutMs": 300000,
+          "maxActions": 26,
+          "maxModelCalls": 52
+        },
+        {
+          "stepId": "step-3",
+          "timeoutMs": 300000,
+          "maxActions": 20,
+          "maxModelCalls": 40
+        },
+        {
+          "stepId": "step-4",
+          "timeoutMs": 300000,
+          "maxActions": 20,
+          "maxModelCalls": 40
+        },
+        {
+          "stepId": "step-5",
+          "timeoutMs": 300000,
+          "maxActions": 14,
+          "maxModelCalls": 28
+        },
+        {
+          "stepId": "step-6",
+          "timeoutMs": 300000,
+          "maxActions": 10,
+          "maxModelCalls": 20
+        },
+        {
+          "stepId": "step-7",
+          "timeoutMs": 300000,
+          "maxActions": 24,
+          "maxModelCalls": 48
+        },
+        {
+          "stepId": "step-8",
+          "timeoutMs": 300000,
+          "maxActions": 10,
+          "maxModelCalls": 20
+        },
+        {
+          "stepId": "step-9",
+          "timeoutMs": 300000,
+          "maxActions": 18,
+          "maxModelCalls": 36
+        },
+        {
+          "stepId": "step-10",
+          "timeoutMs": 300000,
+          "maxActions": 10,
+          "maxModelCalls": 20
+        },
+        {
+          "stepId": "step-11",
+          "timeoutMs": 300000,
+          "maxActions": 18,
+          "maxModelCalls": 36
+        },
+        {
+          "stepId": "step-12",
+          "timeoutMs": 300000,
+          "maxActions": 10,
+          "maxModelCalls": 20
+        },
+        {
+          "stepId": "step-13",
+          "timeoutMs": 300000,
+          "maxActions": 18,
+          "maxModelCalls": 36
+        }
+      ],
+      "cleanup": {
+        "timeoutMs": 180000,
+        "maxActions": 10,
+        "maxModelCalls": 20
+      },
+      "version": 1,
+      "settleMs": 120000
+    },
+    "environment": {
+      "id": "local-preview",
+      "nodePool": "internal",
+      "reuseAuth": true,
+      "allowIntervention": true
+    },
+    "profilePlan": {
+      "groups": [
+        {
+          "id": "group-1",
+          "stepIds": ["step-1", "step-2", "step-3", "step-4", "step-5"]
+        },
+        {
+          "id": "group-2",
+          "stepIds": ["step-6", "step-7"]
+        },
+        {
+          "id": "group-3",
+          "stepIds": ["step-8", "step-9"]
+        },
+        {
+          "id": "group-4",
+          "stepIds": ["step-10", "step-11"]
+        },
+        {
+          "id": "group-5",
+          "stepIds": ["step-12", "step-13"]
+        }
+      ],
+      "version": 1,
+      "maxConcurrency": 5,
+      "environmentGateStepId": "step-1"
+    },
+    "resourceKey": "c7f85340e8985e7222adf3b3f5d2ee2e881b8db5d8159b99881a9ad407ce48ad",
+    "sessionPlan": {
+      "mode": "guest",
+      "version": 1,
+      "candidates": [],
+      "requirements": [],
+      "preparationMs": 120000
+    },
+    "executionMode": "llm",
+    "executionPlan": {
+      "version": 1,
+      "environment": {
+        "mode": "guest",
+        "basis": [
+          "进入页面前清除 token 等登录态 Cookie，全程保持未登录访客状态。",
+          "保持未登录访客状态，并等待页面文案刷新完成。",
+          "保持未登录访客状态，并等待页面文案刷新完成。",
+          "保持未登录访客状态，并等待页面文案刷新完成。"
+        ],
+        "source": "inferred",
+        "resolverVersion": 1
+      },
+      "evidenceKinds": ["DOM"]
+    },
+    "cleanupStepIds": ["cleanup-1"],
+    "protocolVersion": "0.1",
+    "caseV2Definition": {
+      "entry": "https://jiekou.ai/referral",
+      "steps": [
+        {
+          "url": "https://jiekou.ai/referral",
+          "type": "setup",
+          "policy": [
+            "进入页面前清除 token 等登录态 Cookie，全程保持未登录访客状态。",
+            "不提交邀请码、不点击注册或第三方登录。",
+            "活动数据来自 /v1/activity/invite-activity-info，等该数据返回并渲染后再判定文案。"
+          ],
+          "expected": [],
+          "exec_order": 1,
+          "description": "清除登录态后以未登录访客身份打开 https://jiekou.ai/referral，确认页面语言为简体中文（html lang=zh-CN），等待「活动奖励说明」「注册引导」「常见问题」区块内容加载完成。"
+        },
+        {
+          "url": "https://jiekou.ai/referral",
+          "type": "verification",
+          "policy": [
+            "金额、百分比、次数等数值以接口返回为准，不作为语言判定依据。",
+            "Lite/Pro/Max、GitHub、API、接口AI 等专有名称与品牌名按既有口径保留。"
+          ],
+          "expected": [
+            "活动一标题为简体中文，不再出现英文原文「🎉 Campaign 1: Existing User Invitation Rewards」。",
+            "活动一正文为简体中文，不再出现「💰 Invite friends and earn unlimited rebate vouchers!」「Share your exclusive invite code. For each friend who successfully registers and completes their first top-up」「and you'll also receive tiered rebate voucher rewards!」等英文句子。",
+            "「返券机制」小节标题为简体中文，不再出现「Rebate voucher mechanism:」。",
+            "返券机制两条列表项为简体中文，不再出现「Tiered model: the higher the invited user's top-up amount, the higher the rebate voucher ratio」「Unlimited rebate vouchers: the inviter can receive」「a certain percentage of the top-up amount as rebate vouchers」等英文句子。",
+            "阶梯返券表格的 3 个表头为简体中文，不再出现「Invited user's single top-up amount」「Invite code reward rebate voucher ratio」「Reward rebate voucher description」。",
+            "表格数据行的说明文案为简体中文，不再出现「The referrer receives」「rebate vouchers」等英文片段。",
+            "表格末行金额后缀为简体中文（如「$X 及以上」），不出现英文「and above」。",
+            "品牌名显示为「接口AI」，不出现英文「Interface AI」。"
+          ],
+          "exec_order": 2,
+          "description": "查看「活动奖励说明」区中的活动一（老用户邀请奖励）：标题、正文、返券机制说明的两条列表项，以及阶梯返券表格的 3 个表头与全部数据行说明。"
+        },
+        {
+          "url": "https://jiekou.ai/referral",
+          "type": "verification",
+          "policy": ["与活动一使用同一页面状态和同一份接口数据。"],
+          "expected": [
+            "活动二标题为简体中文，不再出现「🎉 Campaign 2: Invite Friends to Subscribe and Earn Trial Vouchers」。",
+            "活动二正文为简体中文，不再出现「After a new user links an invite code and successfully pays for any subscription package for the first time」等英文句子。",
+            "「活动规则」小节标题为简体中文，不再出现「Campaign rules:」。",
+            "3 条活动规则为简体中文，不再出现「When the invitee successfully pays for any subscription package for the first time」「There is no limit on invitation rewards」「The trial voucher will take effect in the next cycle」等英文句子。",
+            "Lite/Pro/Max 档位名称与奖励金额保持与接口一致，其前后描述文案为简体中文。"
+          ],
+          "exec_order": 3,
+          "description": "继续查看活动二（邀请好友订阅得体验券）：标题、正文、活动规则小节标题与 3 条规则列表（含邀请对象订阅 Lite/Pro/Max 的奖励条目）。"
+        },
+        {
+          "url": "https://jiekou.ai/referral",
+          "type": "verification",
+          "policy": ["保持未登录访客状态，不实际提交邀请码或进入注册流程。"],
+          "expected": [
+            "区块标题为简体中文，不再出现「How to get the reward」。",
+            "步骤 1 标题与邀请码输入框占位提示为简体中文，不再出现「Enter invitation code」。",
+            "步骤 2 标题与按钮文案为简体中文，不再出现「Create account」。",
+            "步骤 3 标题、奖励说明与充值按钮为简体中文，不再出现「New user exclusive」「First top-up rebate voucher」「Go to top up」。",
+            "邮箱注册入口为简体中文（如「通过邮箱注册」）。"
+          ],
+          "exec_order": 4,
+          "description": "查看「注册引导」区（未登录态）：区块标题、步骤 1 标题与邀请码输入框占位提示、步骤 2 标题与按钮文案、步骤 3 标题/奖励说明/充值按钮，以及邮箱注册入口文案。"
+        },
+        {
+          "url": "https://jiekou.ai/referral",
+          "type": "verification",
+          "policy": ["与前面步骤使用同一构建版本和同一浏览器会话。"],
+          "expected": [
+            "首屏、邀请活动流程、常见问题（含展开后的问答）与免责声明文案保持简体中文，与修复前一致，未回退为英文或混入其他语言。",
+            "页面未出现词条键名直出（如 src/app/referral/...）、空白占位或未翻译提示。"
+          ],
+          "exec_order": 5,
+          "description": "在同一中文页面查看首屏、邀请活动流程、常见问题（逐条展开问答）与底部免责声明等区块文案。"
+        },
+        {
+          "url": "https://jiekou.ai/en/referral",
+          "type": "setup",
+          "policy": [
+            "保持同一浏览器会话与未登录访客状态。",
+            "切换语言后等待页面文案刷新完成再检查。"
+          ],
+          "expected": [],
+          "exec_order": 6,
+          "description": "使用页面顶部语言切换器（aria-label=Language）切换到 English，或直接打开 https://jiekou.ai/en/referral，确认页面语言为英文（html lang=en）。"
+        },
+        {
+          "url": "https://jiekou.ai/en/referral",
+          "type": "verification",
+          "policy": [
+            "本次改动涉及的英文词条不得回退；判定语言时忽略 Lite/Pro/Max、GitHub、API 等专有名称与品牌名。",
+            "不实际提交邀请码或完成注册。"
+          ],
+          "expected": [
+            "活动一/活动二标题、正文、返券机制说明、表格表头与数据行说明保持英文，未混入本次新增的中文译文。",
+            "注册引导区的区块标题、邀请码标签与占位提示、按钮与状态文案保持英文。",
+            "活动奖励说明区不再出现中文片段：返券机制第二条列表项中「前 N 次」的位置显示英文表达，不出现中文「前」「次」。",
+            "阶梯返券表格末行金额后缀显示英文（如「and above」），不出现中文「及以上」。",
+            "常见问题区块的标题与展开后的问答均为英文，不再出现中文问句或中文答案。",
+            "邀请码校验与绑定失败提示为英文，不再出现「请输入邀请码」「请输入正确的邀请码」「邀请码无效」「已绑定邀请码，不可重复绑定」「绑定失败，请重试」等中文提示。",
+            "页面未出现词条键名直出、空白占位或未翻译提示。"
+          ],
+          "exec_order": 7,
+          "description": "在英文页查看活动奖励说明区与注册引导区，逐条展开常见问题（FAQ）问答，并在邀请码输入框输入无效邀请码触发校验提示。"
+        },
+        {
+          "url": "https://jiekou.ai/ja/referral",
+          "type": "setup",
+          "policy": ["保持未登录访客状态，并等待页面文案刷新完成。"],
+          "expected": [],
+          "exec_order": 8,
+          "description": "使用页面顶部语言切换器切换到 日本語，或直接打开 https://jiekou.ai/ja/referral，确认页面语言为日语（html lang=ja）。"
+        },
+        {
+          "url": "https://jiekou.ai/ja/referral",
+          "type": "verification",
+          "policy": [
+            "判定语言时忽略 Lite/Pro/Max、GitHub、API 等专有名称与品牌名。"
+          ],
+          "expected": [
+            "活动一/活动二标题、正文、返券机制说明、表格表头与数据行说明为日文，不再整段沿用英文原文（如「🎉 Campaign 1: Existing User Invitation Rewards」「Reward rebate voucher description」）。",
+            "注册引导区的区块标题、邀请码标签与占位提示、各步骤标题与按钮、奖励说明为日文，不再出现「How to get the reward」「Enter invitation code」「Create account」「New user exclusive」「First top-up rebate voucher」「Go to top up」。",
+            "活动奖励说明区、注册引导区与展开后的常见问题均不出现中文片段（如「前 N 次」「及以上」及中文问答）。",
+            "页面未出现词条键名直出、空白占位或未翻译提示。"
+          ],
+          "exec_order": 9,
+          "description": "在日文页查看活动奖励说明区、注册引导区，并逐条展开常见问题问答。"
+        },
+        {
+          "url": "https://jiekou.ai/de/referral",
+          "type": "setup",
+          "policy": ["保持未登录访客状态，并等待页面文案刷新完成。"],
+          "expected": [],
+          "exec_order": 10,
+          "description": "使用页面顶部语言切换器切换到 Deutsch，或直接打开 https://jiekou.ai/de/referral，确认页面语言为德语（html lang=de）。"
+        },
+        {
+          "url": "https://jiekou.ai/de/referral",
+          "type": "verification",
+          "policy": [
+            "判定语言时忽略 Lite/Pro/Max、GitHub、API 等专有名称与品牌名。"
+          ],
+          "expected": [
+            "活动一/活动二标题、正文、返券机制说明、表格表头与数据行说明为德文，不再整段沿用英文原文（如「🎉 Campaign 1: Existing User Invitation Rewards」「Reward rebate voucher description」）。",
+            "注册引导区的区块标题、邀请码标签与占位提示、各步骤标题与按钮、奖励说明为德文，不再出现「How to get the reward」「Enter invitation code」「Create account」「New user exclusive」「First top-up rebate voucher」「Go to top up」。",
+            "活动奖励说明区、注册引导区与展开后的常见问题均不出现中文片段（如「前 N 次」「及以上」及中文问答）。",
+            "页面未出现词条键名直出、空白占位或未翻译提示。"
+          ],
+          "exec_order": 11,
+          "description": "在德文页查看活动奖励说明区、注册引导区，并逐条展开常见问题问答。"
+        },
+        {
+          "url": "https://jiekou.ai/pt/referral",
+          "type": "setup",
+          "policy": ["保持未登录访客状态，并等待页面文案刷新完成。"],
+          "expected": [],
+          "exec_order": 12,
+          "description": "使用页面顶部语言切换器切换到 Português，或直接打开 https://jiekou.ai/pt/referral，确认页面语言为葡萄牙语（html lang=pt-BR）。"
+        },
+        {
+          "url": "https://jiekou.ai/pt/referral",
+          "type": "verification",
+          "policy": [
+            "判定语言时忽略 Lite/Pro/Max、GitHub、API 等专有名称与品牌名。"
+          ],
+          "expected": [
+            "活动一/活动二标题、正文、返券机制说明、表格表头与数据行说明为葡萄牙语，不再整段沿用英文原文（如「🎉 Campaign 1: Existing User Invitation Rewards」「Reward rebate voucher description」）。",
+            "注册引导区的区块标题、邀请码标签与占位提示、各步骤标题与按钮、奖励说明为葡萄牙语，不再出现「How to get the reward」「Enter invitation code」「Create account」「New user exclusive」「First top-up rebate voucher」「Go to top up」。",
+            "活动奖励说明区、注册引导区与展开后的常见问题均不出现中文片段（如「前 N 次」「及以上」及中文问答）。",
+            "页面未出现词条键名直出、空白占位或未翻译提示。"
+          ],
+          "exec_order": 13,
+          "description": "在葡文页查看活动奖励说明区、注册引导区，并逐条展开常见问题问答。"
+        }
+      ],
+      "caseId": "case-56f9476c-cd15-4f69-9bc0-67909eb75082",
+      "cleanup": [
+        {
+          "url": "https://jiekou.ai/referral",
+          "exec_order": 1,
+          "description": "将页面语言切回简体中文，并清除本次检查产生的语言偏好 Cookie（jiekou_preferred_locale、NEXT_LOCALE），使后续访问恢复默认语言；本 case 未产生业务数据，无需其他恢复。"
+        }
+      ],
+      "platform": "jiekou.ai 官网 /referral 邀请活动页（生产，未登录访客）"
+    },
+    "acceptanceCriteria": [
+      {
+        "id": "step-2-expected-1",
+        "stepId": "step-2",
+        "description": "查看「活动奖励说明」区中的活动一（老用户邀请奖励）：标题、正文、返券机制说明的两条列表项，以及阶梯返券表格的 3 个表头与全部数据行说明。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "活动一标题为简体中文，不再出现英文原文「🎉 Campaign 1: Existing User Invitation Rewards」。"
+      },
+      {
+        "id": "step-2-expected-2",
+        "stepId": "step-2",
+        "description": "查看「活动奖励说明」区中的活动一（老用户邀请奖励）：标题、正文、返券机制说明的两条列表项，以及阶梯返券表格的 3 个表头与全部数据行说明。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "活动一正文为简体中文，不再出现「💰 Invite friends and earn unlimited rebate vouchers!」「Share your exclusive invite code. For each friend who successfully registers and completes their first top-up」「and you'll also receive tiered rebate voucher rewards!」等英文句子。"
+      },
+      {
+        "id": "step-2-expected-3",
+        "stepId": "step-2",
+        "description": "查看「活动奖励说明」区中的活动一（老用户邀请奖励）：标题、正文、返券机制说明的两条列表项，以及阶梯返券表格的 3 个表头与全部数据行说明。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "「返券机制」小节标题为简体中文，不再出现「Rebate voucher mechanism:」。"
+      },
+      {
+        "id": "step-2-expected-4",
+        "stepId": "step-2",
+        "description": "查看「活动奖励说明」区中的活动一（老用户邀请奖励）：标题、正文、返券机制说明的两条列表项，以及阶梯返券表格的 3 个表头与全部数据行说明。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "返券机制两条列表项为简体中文，不再出现「Tiered model: the higher the invited user's top-up amount, the higher the rebate voucher ratio」「Unlimited rebate vouchers: the inviter can receive」「a certain percentage of the top-up amount as rebate vouchers」等英文句子。"
+      },
+      {
+        "id": "step-2-expected-5",
+        "stepId": "step-2",
+        "description": "查看「活动奖励说明」区中的活动一（老用户邀请奖励）：标题、正文、返券机制说明的两条列表项，以及阶梯返券表格的 3 个表头与全部数据行说明。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "阶梯返券表格的 3 个表头为简体中文，不再出现「Invited user's single top-up amount」「Invite code reward rebate voucher ratio」「Reward rebate voucher description」。"
+      },
+      {
+        "id": "step-2-expected-6",
+        "stepId": "step-2",
+        "description": "查看「活动奖励说明」区中的活动一（老用户邀请奖励）：标题、正文、返券机制说明的两条列表项，以及阶梯返券表格的 3 个表头与全部数据行说明。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "表格数据行的说明文案为简体中文，不再出现「The referrer receives」「rebate vouchers」等英文片段。"
+      },
+      {
+        "id": "step-2-expected-7",
+        "stepId": "step-2",
+        "description": "查看「活动奖励说明」区中的活动一（老用户邀请奖励）：标题、正文、返券机制说明的两条列表项，以及阶梯返券表格的 3 个表头与全部数据行说明。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "表格末行金额后缀为简体中文（如「$X 及以上」），不出现英文「and above」。"
+      },
+      {
+        "id": "step-2-expected-8",
+        "stepId": "step-2",
+        "description": "查看「活动奖励说明」区中的活动一（老用户邀请奖励）：标题、正文、返券机制说明的两条列表项，以及阶梯返券表格的 3 个表头与全部数据行说明。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "品牌名显示为「接口AI」，不出现英文「Interface AI」。"
+      },
+      {
+        "id": "step-3-expected-1",
+        "stepId": "step-3",
+        "description": "继续查看活动二（邀请好友订阅得体验券）：标题、正文、活动规则小节标题与 3 条规则列表（含邀请对象订阅 Lite/Pro/Max 的奖励条目）。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "活动二标题为简体中文，不再出现「🎉 Campaign 2: Invite Friends to Subscribe and Earn Trial Vouchers」。"
+      },
+      {
+        "id": "step-3-expected-2",
+        "stepId": "step-3",
+        "description": "继续查看活动二（邀请好友订阅得体验券）：标题、正文、活动规则小节标题与 3 条规则列表（含邀请对象订阅 Lite/Pro/Max 的奖励条目）。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "活动二正文为简体中文，不再出现「After a new user links an invite code and successfully pays for any subscription package for the first time」等英文句子。"
+      },
+      {
+        "id": "step-3-expected-3",
+        "stepId": "step-3",
+        "description": "继续查看活动二（邀请好友订阅得体验券）：标题、正文、活动规则小节标题与 3 条规则列表（含邀请对象订阅 Lite/Pro/Max 的奖励条目）。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "「活动规则」小节标题为简体中文，不再出现「Campaign rules:」。"
+      },
+      {
+        "id": "step-3-expected-4",
+        "stepId": "step-3",
+        "description": "继续查看活动二（邀请好友订阅得体验券）：标题、正文、活动规则小节标题与 3 条规则列表（含邀请对象订阅 Lite/Pro/Max 的奖励条目）。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "3 条活动规则为简体中文，不再出现「When the invitee successfully pays for any subscription package for the first time」「There is no limit on invitation rewards」「The trial voucher will take effect in the next cycle」等英文句子。"
+      },
+      {
+        "id": "step-3-expected-5",
+        "stepId": "step-3",
+        "description": "继续查看活动二（邀请好友订阅得体验券）：标题、正文、活动规则小节标题与 3 条规则列表（含邀请对象订阅 Lite/Pro/Max 的奖励条目）。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "Lite/Pro/Max 档位名称与奖励金额保持与接口一致，其前后描述文案为简体中文。"
+      },
+      {
+        "id": "step-4-expected-1",
+        "stepId": "step-4",
+        "description": "查看「注册引导」区（未登录态）：区块标题、步骤 1 标题与邀请码输入框占位提示、步骤 2 标题与按钮文案、步骤 3 标题/奖励说明/充值按钮，以及邮箱注册入口文案。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "区块标题为简体中文，不再出现「How to get the reward」。"
+      },
+      {
+        "id": "step-4-expected-2",
+        "stepId": "step-4",
+        "description": "查看「注册引导」区（未登录态）：区块标题、步骤 1 标题与邀请码输入框占位提示、步骤 2 标题与按钮文案、步骤 3 标题/奖励说明/充值按钮，以及邮箱注册入口文案。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "步骤 1 标题与邀请码输入框占位提示为简体中文，不再出现「Enter invitation code」。"
+      },
+      {
+        "id": "step-4-expected-3",
+        "stepId": "step-4",
+        "description": "查看「注册引导」区（未登录态）：区块标题、步骤 1 标题与邀请码输入框占位提示、步骤 2 标题与按钮文案、步骤 3 标题/奖励说明/充值按钮，以及邮箱注册入口文案。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "步骤 2 标题与按钮文案为简体中文，不再出现「Create account」。"
+      },
+      {
+        "id": "step-4-expected-4",
+        "stepId": "step-4",
+        "description": "查看「注册引导」区（未登录态）：区块标题、步骤 1 标题与邀请码输入框占位提示、步骤 2 标题与按钮文案、步骤 3 标题/奖励说明/充值按钮，以及邮箱注册入口文案。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "步骤 3 标题、奖励说明与充值按钮为简体中文，不再出现「New user exclusive」「First top-up rebate voucher」「Go to top up」。"
+      },
+      {
+        "id": "step-4-expected-5",
+        "stepId": "step-4",
+        "description": "查看「注册引导」区（未登录态）：区块标题、步骤 1 标题与邀请码输入框占位提示、步骤 2 标题与按钮文案、步骤 3 标题/奖励说明/充值按钮，以及邮箱注册入口文案。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "邮箱注册入口为简体中文（如「通过邮箱注册」）。"
+      },
+      {
+        "id": "step-5-expected-1",
+        "stepId": "step-5",
+        "description": "在同一中文页面查看首屏、邀请活动流程、常见问题（逐条展开问答）与底部免责声明等区块文案。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "首屏、邀请活动流程、常见问题（含展开后的问答）与免责声明文案保持简体中文，与修复前一致，未回退为英文或混入其他语言。"
+      },
+      {
+        "id": "step-5-expected-2",
+        "stepId": "step-5",
+        "description": "在同一中文页面查看首屏、邀请活动流程、常见问题（逐条展开问答）与底部免责声明等区块文案。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "页面未出现词条键名直出（如 src/app/referral/...）、空白占位或未翻译提示。"
+      },
+      {
+        "id": "step-7-expected-1",
+        "stepId": "step-7",
+        "description": "在英文页查看活动奖励说明区与注册引导区，逐条展开常见问题（FAQ）问答，并在邀请码输入框输入无效邀请码触发校验提示。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "活动一/活动二标题、正文、返券机制说明、表格表头与数据行说明保持英文，未混入本次新增的中文译文。"
+      },
+      {
+        "id": "step-7-expected-2",
+        "stepId": "step-7",
+        "description": "在英文页查看活动奖励说明区与注册引导区，逐条展开常见问题（FAQ）问答，并在邀请码输入框输入无效邀请码触发校验提示。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "注册引导区的区块标题、邀请码标签与占位提示、按钮与状态文案保持英文。"
+      },
+      {
+        "id": "step-7-expected-3",
+        "stepId": "step-7",
+        "description": "在英文页查看活动奖励说明区与注册引导区，逐条展开常见问题（FAQ）问答，并在邀请码输入框输入无效邀请码触发校验提示。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "活动奖励说明区不再出现中文片段：返券机制第二条列表项中「前 N 次」的位置显示英文表达，不出现中文「前」「次」。"
+      },
+      {
+        "id": "step-7-expected-4",
+        "stepId": "step-7",
+        "description": "在英文页查看活动奖励说明区与注册引导区，逐条展开常见问题（FAQ）问答，并在邀请码输入框输入无效邀请码触发校验提示。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "阶梯返券表格末行金额后缀显示英文（如「and above」），不出现中文「及以上」。"
+      },
+      {
+        "id": "step-7-expected-5",
+        "stepId": "step-7",
+        "description": "在英文页查看活动奖励说明区与注册引导区，逐条展开常见问题（FAQ）问答，并在邀请码输入框输入无效邀请码触发校验提示。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "常见问题区块的标题与展开后的问答均为英文，不再出现中文问句或中文答案。"
+      },
+      {
+        "id": "step-7-expected-6",
+        "stepId": "step-7",
+        "description": "在英文页查看活动奖励说明区与注册引导区，逐条展开常见问题（FAQ）问答，并在邀请码输入框输入无效邀请码触发校验提示。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "邀请码校验与绑定失败提示为英文，不再出现「请输入邀请码」「请输入正确的邀请码」「邀请码无效」「已绑定邀请码，不可重复绑定」「绑定失败，请重试」等中文提示。"
+      },
+      {
+        "id": "step-7-expected-7",
+        "stepId": "step-7",
+        "description": "在英文页查看活动奖励说明区与注册引导区，逐条展开常见问题（FAQ）问答，并在邀请码输入框输入无效邀请码触发校验提示。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "页面未出现词条键名直出、空白占位或未翻译提示。"
+      },
+      {
+        "id": "step-9-expected-1",
+        "stepId": "step-9",
+        "description": "在日文页查看活动奖励说明区、注册引导区，并逐条展开常见问题问答。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "活动一/活动二标题、正文、返券机制说明、表格表头与数据行说明为日文，不再整段沿用英文原文（如「🎉 Campaign 1: Existing User Invitation Rewards」「Reward rebate voucher description」）。"
+      },
+      {
+        "id": "step-9-expected-2",
+        "stepId": "step-9",
+        "description": "在日文页查看活动奖励说明区、注册引导区，并逐条展开常见问题问答。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "注册引导区的区块标题、邀请码标签与占位提示、各步骤标题与按钮、奖励说明为日文，不再出现「How to get the reward」「Enter invitation code」「Create account」「New user exclusive」「First top-up rebate voucher」「Go to top up」。"
+      },
+      {
+        "id": "step-9-expected-3",
+        "stepId": "step-9",
+        "description": "在日文页查看活动奖励说明区、注册引导区，并逐条展开常见问题问答。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "活动奖励说明区、注册引导区与展开后的常见问题均不出现中文片段（如「前 N 次」「及以上」及中文问答）。"
+      },
+      {
+        "id": "step-9-expected-4",
+        "stepId": "step-9",
+        "description": "在日文页查看活动奖励说明区、注册引导区，并逐条展开常见问题问答。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "页面未出现词条键名直出、空白占位或未翻译提示。"
+      },
+      {
+        "id": "step-11-expected-1",
+        "stepId": "step-11",
+        "description": "在德文页查看活动奖励说明区、注册引导区，并逐条展开常见问题问答。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "活动一/活动二标题、正文、返券机制说明、表格表头与数据行说明为德文，不再整段沿用英文原文（如「🎉 Campaign 1: Existing User Invitation Rewards」「Reward rebate voucher description」）。"
+      },
+      {
+        "id": "step-11-expected-2",
+        "stepId": "step-11",
+        "description": "在德文页查看活动奖励说明区、注册引导区，并逐条展开常见问题问答。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "注册引导区的区块标题、邀请码标签与占位提示、各步骤标题与按钮、奖励说明为德文，不再出现「How to get the reward」「Enter invitation code」「Create account」「New user exclusive」「First top-up rebate voucher」「Go to top up」。"
+      },
+      {
+        "id": "step-11-expected-3",
+        "stepId": "step-11",
+        "description": "在德文页查看活动奖励说明区、注册引导区，并逐条展开常见问题问答。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "活动奖励说明区、注册引导区与展开后的常见问题均不出现中文片段（如「前 N 次」「及以上」及中文问答）。"
+      },
+      {
+        "id": "step-11-expected-4",
+        "stepId": "step-11",
+        "description": "在德文页查看活动奖励说明区、注册引导区，并逐条展开常见问题问答。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "页面未出现词条键名直出、空白占位或未翻译提示。"
+      },
+      {
+        "id": "step-13-expected-1",
+        "stepId": "step-13",
+        "description": "在葡文页查看活动奖励说明区、注册引导区，并逐条展开常见问题问答。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "活动一/活动二标题、正文、返券机制说明、表格表头与数据行说明为葡萄牙语，不再整段沿用英文原文（如「🎉 Campaign 1: Existing User Invitation Rewards」「Reward rebate voucher description」）。"
+      },
+      {
+        "id": "step-13-expected-2",
+        "stepId": "step-13",
+        "description": "在葡文页查看活动奖励说明区、注册引导区，并逐条展开常见问题问答。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "注册引导区的区块标题、邀请码标签与占位提示、各步骤标题与按钮、奖励说明为葡萄牙语，不再出现「How to get the reward」「Enter invitation code」「Create account」「New user exclusive」「First top-up rebate voucher」「Go to top up」。"
+      },
+      {
+        "id": "step-13-expected-3",
+        "stepId": "step-13",
+        "description": "在葡文页查看活动奖励说明区、注册引导区，并逐条展开常见问题问答。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "活动奖励说明区、注册引导区与展开后的常见问题均不出现中文片段（如「前 N 次」「及以上」及中文问答）。"
+      },
+      {
+        "id": "step-13-expected-4",
+        "stepId": "step-13",
+        "description": "在葡文页查看活动奖励说明区、注册引导区，并逐条展开常见问题问答。",
+        "evidenceKinds": ["DOM"],
+        "expectedResult": "页面未出现词条键名直出、空白占位或未翻译提示。"
+      }
+    ]
+  }
+}
