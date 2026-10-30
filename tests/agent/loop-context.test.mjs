@@ -629,7 +629,7 @@ test('动作提示随最终工具能力加载，收尾不再注入浏览器操�
   }
 });
 
-// 范围：网络规则依据实际可读取的证据开放，收尾仍可读取；无证据不得仅凭快照存在注入工具说明。
+// 范围：网络说明依证据开放，收尾仍要求单工具且无并行许可；HTTP 模型夹具不证明供应商遵循提示。
 test('网络提示与证据工具保持一致，通用任务不携带正式验收规则', async () => {
   const server = await modelServer(() => ({
     type: 'verification.block',
@@ -664,12 +664,13 @@ test('网络提示与证据工具保持一致，通用任务不携带正式验�
         withEvidence,
       );
       assert.equal(prompt.includes('page.network 默认'), withEvidence);
-      assert.equal(prompt.includes('最多 4 个纯'), withEvidence);
+      assert.match(prompt, /tool_calls 数组长度必须为 1/);
+      assert.match(prompt, /只读查询也遵守此规则/);
       assert.equal(
-        prompt.includes('tool_calls 数组长度必须为 1'),
-        !withEvidence,
+        prompt.includes('每轮只调用一个 network_requests'),
+        withEvidence,
       );
-      assert.doesNotMatch(prompt, /特殊批次以本轮附加规则为准/);
+      assert.doesNotMatch(prompt, /最多 4 个纯|允许按下文网络规则组成批次/);
       assert.match(prompt, /只读收尾/);
       assert.match(prompt, /通用浏览器任务/);
       assert.doesNotMatch(prompt, /当前执行业务验证|criteria 按原 criterionId/);

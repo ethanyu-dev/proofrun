@@ -3,10 +3,7 @@ import { CORE_PROMPT, TASK_ROLES } from './core.js';
 import { contextPrompts } from './context-rules.js';
 import { NETWORK_PROMPT } from './network.js';
 import { PHASE_PROMPTS, SETTLEMENT_PROMPT } from './phases.js';
-import {
-  SINGLE_TOOL_CALL_PROMPT,
-  NETWORK_TOOL_CALL_PROMPT,
-} from './tool-calls.js';
+import { SINGLE_TOOL_CALL_PROMPT } from './tool-calls.js';
 import type { DecisionContextData } from '@proofrun/execution-core/execution/context';
 import type { DecisionTool } from '../model/tools.js';
 
@@ -20,7 +17,7 @@ export function decisionPrompt(
   );
   return [
     TASK_ROLES[context.task.kind === 'browser' ? 'browser' : 'verification'],
-    networkAvailable ? NETWORK_TOOL_CALL_PROMPT : SINGLE_TOOL_CALL_PROMPT,
+    SINGLE_TOOL_CALL_PROMPT,
     CORE_PROMPT,
     context.task.kind === 'browser'
       ? BROWSER_TASK_PROMPT

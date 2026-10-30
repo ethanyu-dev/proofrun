@@ -757,10 +757,17 @@ test('读取账本只因新事实或已保存结论恢复重读机会，回执�
 });
 
 // 范围：真实适配器与执行循环接受一个 HTTP 回复的四项纯读取，逐项交付结果；节点与供应商仍是夹具。
+// 范围：默认提示要求逐轮读取；供应商偏离后仍安全兼容只读批次，保留完整审计；不证明真实模型遵循单工具要求。
 test('多网络工具调用整批读取并保留各项结果，只计一次模型调用', async () => {
   const server = await modelServer((context, turn, body) => {
     if (turn === 1) {
       assert.equal(body.parallel_tool_calls, false);
+      assert.match(body.messages[0].content, /tool_calls 数组长度必须为 1/);
+      assert.match(body.messages[0].content, /每轮只调用一个 network_requests/);
+      assert.doesNotMatch(
+        body.messages[0].content,
+        /最多 4 个纯|允许按下文网络规则组成批次/,
+      );
       const observationId = context.page.observationId;
       return batchReply([
         { type: 'network.requests', observationId, status: 404 },
