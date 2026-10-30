@@ -1391,6 +1391,92 @@ test('运行时回执保留分页进度，采集覆盖元数据不被摘要化',
   assert.deepEqual(ledger.view(current), []);
 });
 
+// 范围：已读原文、缓存名称和状态跨视图保留且受预算约束；合成快照不证明真实模型会完成验收。
+test('紧凑视图保留已读页面事实和两页缓存名称，不要求重复读取', () => {
+  const current = page();
+  current.text = '网络核验\n准备完成\n' + '无关正文。'.repeat(3000);
+  current.runtime = {
+    cacheStorage: {
+      names: ['bench-cache'],
+      entries: Array.from({ length: 24 }, (_, i) => ({
+        cacheName: 'bench-cache',
+        url: `https://fixture.test/cache-${i}`,
+        responseStatus: 200,
+      })),
+    },
+  };
+  const ledger = new ContextReads();
+  ledger.read(current, {
+    observationId: current.observationId,
+    section: 'page',
+  });
+  const selection = {
+    observationId: current.observationId,
+    section: 'runtime',
+    path: 'cacheStorage.entries',
+    offset: 0,
+  };
+  ledger.read(current, selection);
+  ledger.read(current, { ...selection, offset: 20 });
+  const result = decisionContext({
+    ...contextInput(current),
+    contextSelection: { ...selection, offset: 20 },
+    contextReads: ledger.view(current),
+  });
+  assert.equal(result.context.page.text, '');
+  assert(JSON.stringify(result.context).length <= 12000);
+  const [dom, first, last] = result.context.state.contextReads;
+  assert.match(dom.textExcerpt.text, /准备完成/);
+  assert.equal(dom.textExcerpt.text, current.text.slice(0, 400));
+  assert.equal(dom.textExcerpt.omittedChars, current.text.length - 400);
+  for (const receipt of [first, last])
+    assert.deepEqual(receipt.cacheNames, {
+      values: ['bench-cache'],
+      omitted: 0,
+    });
+  assert.deepEqual(first.responseStatuses, [{ status: '200', count: 20 }]);
+  assert.deepEqual(last.responseStatuses, [{ status: '200', count: 4 }]);
+  assert.equal(last.nextOffset, null);
+  current.observationId = 'updated-observation';
+  assert.deepEqual(ledger.view(current), []);
+});
+
+// 范围：名称仅从已读条目提取，省略数可见且未知状态不算成功；不覆盖缓存采集器本身。
+test('回执限制名称体积并保留未知状态，不把摘要当成全量证明', () => {
+  const current = page();
+  const names = [
+    ...Array.from({ length: 10 }, (_, i) => `cache-${i}`),
+    '长'.repeat(129),
+  ];
+  current.runtime = {
+    cacheStorage: {
+      names,
+      entries: [
+        { cacheName: 'known', responseStatus: 200 },
+        { cacheName: 'known' },
+        {},
+      ],
+    },
+  };
+  const ledger = new ContextReads();
+  for (const path of ['cacheStorage.names', 'cacheStorage.entries'])
+    ledger.read(current, {
+      observationId: current.observationId,
+      section: 'runtime',
+      path,
+    });
+  const [nameReceipt, entryReceipt] = ledger.view(current);
+  assert.deepEqual(nameReceipt.cacheNames, {
+    values: names.slice(0, 8),
+    omitted: 3,
+  });
+  assert.deepEqual(entryReceipt.cacheNames, { values: ['known'], omitted: 0 });
+  assert.deepEqual(entryReceipt.responseStatuses, [
+    { status: '200', count: 1 },
+    { status: 'unknown', count: 2 },
+  ]);
+});
+
 // 范围：同一附件的分页进度与验收结论分离，全部读完才提交；模型和缓存均为夹具，不证明供应商遵循提示。
 test('缓存分页用要求进度保存部分发现，同一快照读完后首次登记验收', async () => {
   const client = new FakeControl();

@@ -8,6 +8,10 @@ const RUNTIME_PAGE_SIZE = 20;
 /** 重复视图遵循网络读取相同的两轮保护，回执正文最多保留八项。 */
 const MAX_STALE_READS = 2;
 const READ_RECEIPT_LIMIT = 8;
+/** 回执只保留有界原文，不把视图省略误认为事实消失，也不复制整页正文。 */
+const PAGE_RECEIPT_CHARS = 400;
+const CACHE_NAME_LIMIT = 8;
+const CACHE_NAME_CHARS = 128;
 
 /** 只读选择始终绑定同一次观察；重新采集后不能恢复旧控件或旧运行时列表。 */
 export type ContextSelection = Omit<
@@ -168,6 +172,10 @@ export class ContextReads {
       returned?: number;
       nextOffset?: number | null;
       responseStatuses?: Array<{ status: string; count: number }>;
+      /** 缓存名称来自已读原始条目；过长或超额名称明确计入省略数。 */
+      cacheNames?: { values: string[]; omitted: number };
+      /** 同一 DOM 观察的原文前缀；截断不代表全文已核验。 */
+      textExcerpt?: { text: string; omittedChars: number };
       evidenceRefs: string[];
     }
   >();
@@ -199,6 +207,7 @@ export class ContextReads {
       )!;
       const entries = list.entries.slice(offset, offset + RUNTIME_PAGE_SIZE);
       const statuses = new Map<string, number>();
+      const names = new Set<string>();
       // 只汇总缓存实际状态码；不从缺失字段或其它运行时事件推断成功。
       if (selection.path === 'cacheStorage.entries')
         for (const entry of entries) {
@@ -206,7 +215,15 @@ export class ContextReads {
             (entry as Record<string, unknown>)?.responseStatus ?? 'unknown',
           );
           statuses.set(status, (statuses.get(status) ?? 0) + 1);
+          const name = (entry as Record<string, unknown>)?.cacheName;
+          if (typeof name === 'string') names.add(name);
         }
+      if (selection.path === 'cacheStorage.names')
+        for (const name of entries)
+          if (typeof name === 'string') names.add(name);
+      const retainedNames = [...names]
+        .filter((name) => name.length <= CACHE_NAME_CHARS)
+        .slice(0, CACHE_NAME_LIMIT);
       this.receipts.set(key, {
         section: 'runtime',
         path: selection.path!,
@@ -224,6 +241,14 @@ export class ContextReads {
               })),
             }
           : {}),
+        ...(names.size
+          ? {
+              cacheNames: {
+                values: retainedNames,
+                omitted: names.size - retainedNames.length,
+              },
+            }
+          : {}),
         evidenceRefs: page.artifactRefs
           .filter((ref) => ref.kind === 'RUNTIME')
           .map((ref) => ref.artifactId),
@@ -231,6 +256,10 @@ export class ContextReads {
     } else
       this.receipts.set(key, {
         section: 'page',
+        textExcerpt: {
+          text: page.text.slice(0, PAGE_RECEIPT_CHARS),
+          omittedChars: Math.max(0, page.text.length - PAGE_RECEIPT_CHARS),
+        },
         evidenceRefs: page.artifactRefs
           .filter((ref) => ref.kind === 'DOM')
           .map((ref) => ref.artifactId),
