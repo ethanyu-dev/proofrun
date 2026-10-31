@@ -267,7 +267,7 @@ test('干净发布包带入同提交 CI 报告，拒绝缺失、错配、过期�
 // 范围：平台和 HTTP 均为内存夹具，验证备份、忙任务围栏及发布顺序；不会修改 Railway 或发送通知。
 test('顺序发布共用已校验目录，任何前置或 API 部署失败都停止后续服务', async () => {
   const { releaseRailway } = await import('../../scripts/railway-release.mjs');
-  for (const failure of [null, 'gate', 'busy', 'api']) {
+  for (const failure of [null, 'gate', 'busy', 'api', 'quota']) {
     const temporary = await mkdtemp(join(tmpdir(), 'proofrun-release-flow-'));
     const actions = [];
     const backups = new Set();
@@ -316,6 +316,18 @@ test('顺序发布共用已校验目录，任何前置或 API 部署失败都停
             },
           });
         if (args[1].includes('volumeInstanceBackupCreate')) {
+          assert(args.includes('--allow-errors'));
+          if (failure === 'quota')
+            return JSON.stringify({
+              errors: [
+                {
+                  message: 'Plan limit of 10 backups per volume exceeded',
+                  extensions: { code: 'BAD_USER_INPUT' },
+                  traceId: '123456',
+                },
+              ],
+              data: null,
+            });
           backups.add(input.id);
           return JSON.stringify({
             data: { volumeInstanceBackupCreate: { workflowId: 'fixture' } },
@@ -367,7 +379,21 @@ test('顺序发布共用已校验目录，任何前置或 API 部署失败都停
           }),
         },
       );
-      if (failure) await assert.rejects(action, /发布被阻止|部署未成功/);
+      if (failure === 'quota') {
+        // 范围：平台配额错误夹具必须保留阶段与可操作原因，且不重放创建或开始上传；不验证真实套餐额度。
+        await assert.rejects(
+          action,
+          /api 创建发布前备份.*套餐上限 10.*traceId=123456/,
+        );
+        assert.equal(
+          actions.filter(
+            (args) =>
+              args[0] === 'api' &&
+              args[1].includes('volumeInstanceBackupCreate'),
+          ).length,
+          1,
+        );
+      } else if (failure) await assert.rejects(action, /发布被阻止|部署未成功/);
       else await action;
       const uploads = actions.filter((args) => args[0] === 'up');
       assert.deepEqual(

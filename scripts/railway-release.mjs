@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { railwayGraphqlFailure } from './railway-errors.mjs';
 import {
   prepareReleaseSource,
   verifyReleaseCI,
@@ -55,15 +56,27 @@ export async function releaseRailway(
       throw new Error('Railway 返回无效 JSON，停止发布');
     }
   };
-  const graphql = async (query, variables) => {
-    const result = await railway([
-      'api',
-      query,
-      '--variables',
-      JSON.stringify(variables),
-      '--compact',
-    ]);
-    if (result.errors?.length) throw new Error('Railway 发布查询失败');
+  const graphql = async (stage, query, variables) => {
+    console.log(`Railway：${stage}`);
+    let result;
+    try {
+      result = await railway([
+        'api',
+        query,
+        '--variables',
+        JSON.stringify(variables),
+        '--compact',
+        '--allow-errors',
+      ]);
+    } catch {
+      throw new Error(
+        `Railway ${stage}：命令或响应读取失败，停止发布；未自动重放写操作`,
+      );
+    }
+    if (result.errors?.length)
+      throw railwayGraphqlFailure(stage, result.errors);
+    if (!result.data)
+      throw new Error(`Railway ${stage}：响应缺少 data，停止发布`);
     return result.data;
   };
   const target = ['--project', project, '--environment', environment];
@@ -130,6 +143,7 @@ export async function releaseRailway(
     };
     await idle();
     const data = await graphql(
+      '查询生产环境持久卷',
       'query($project:String!){ project(id:$project){ environments { edges { node { id name volumeInstances { edges { node { id service { name } deletedAt } } } } } } } }',
       { project },
     );
@@ -149,12 +163,18 @@ export async function releaseRailway(
       const list = async () =>
         (
           await graphql(
+            `${service} 查询备份`,
             'query($id:String!){ volumeInstanceBackupList(volumeInstanceId:$id){ id name } }',
             { id: volume.id },
           )
         ).volumeInstanceBackupList;
-      if (!(await list()).some((backup) => backup.name === backupName)) {
+      const existing = await list();
+      console.log(
+        `${service} 当前备份数：${existing.length}；目标备份：${backupName}`,
+      );
+      if (!existing.some((backup) => backup.name === backupName)) {
         await graphql(
+          `${service} 创建发布前备份`,
           'mutation($id:String!,$name:String!){ volumeInstanceBackupCreate(volumeInstanceId:$id,name:$name){ workflowId } }',
           { id: volume.id, name: backupName },
         );
