@@ -4,6 +4,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { railwayGraphqlFailure } from './railway-errors.mjs';
+import { retainReleaseBackups } from './railway-backups.mjs';
 import {
   prepareReleaseSource,
   verifyReleaseCI,
@@ -31,7 +33,12 @@ async function command(binary, args) {
 /** 显式定位环境；不依赖本机 link，也不读取或输出个人 Railway token。 */
 export async function releaseRailway(
   { repository, runId, project, environment, prepareOnly = false },
-  { run = command, prepare = prepareReleaseSource, fetchJson = fetch } = {},
+  {
+    run = command,
+    prepare = prepareReleaseSource,
+    fetchJson = fetch,
+    wait = sleep,
+  } = {},
 ) {
   if (!repository || !/^\d+$/.test(runId ?? '') || !project || !environment)
     throw new Error('需要 repository、run、project 和 environment');
@@ -55,15 +62,27 @@ export async function releaseRailway(
       throw new Error('Railway 返回无效 JSON，停止发布');
     }
   };
-  const graphql = async (query, variables) => {
-    const result = await railway([
-      'api',
-      query,
-      '--variables',
-      JSON.stringify(variables),
-      '--compact',
-    ]);
-    if (result.errors?.length) throw new Error('Railway 发布查询失败');
+  const graphql = async (stage, query, variables) => {
+    console.log(`Railway：${stage}`);
+    let result;
+    try {
+      result = await railway([
+        'api',
+        query,
+        '--variables',
+        JSON.stringify(variables),
+        '--compact',
+        '--allow-errors',
+      ]);
+    } catch {
+      throw new Error(
+        `Railway ${stage}：命令或响应读取失败，停止发布；未自动重放写操作`,
+      );
+    }
+    if (result.errors?.length)
+      throw railwayGraphqlFailure(stage, result.errors);
+    if (!result.data)
+      throw new Error(`Railway ${stage}：响应缺少 data，停止发布`);
     return result.data;
   };
   const target = ['--project', project, '--environment', environment];
@@ -130,6 +149,7 @@ export async function releaseRailway(
     };
     await idle();
     const data = await graphql(
+      '查询生产环境持久卷',
       'query($project:String!){ project(id:$project){ environments { edges { node { id name volumeInstances { edges { node { id service { name } deletedAt } } } } } } } }',
       { project },
     );
@@ -149,12 +169,34 @@ export async function releaseRailway(
       const list = async () =>
         (
           await graphql(
-            'query($id:String!){ volumeInstanceBackupList(volumeInstanceId:$id){ id name } }',
+            `${service} 查询备份`,
+            'query($id:String!){ volumeInstanceBackupList(volumeInstanceId:$id){ id name createdAt } }',
             { id: volume.id },
           )
         ).volumeInstanceBackupList;
-      if (!(await list()).some((backup) => backup.name === backupName)) {
+      const existing = await retainReleaseBackups(
+        {
+          service,
+          backupName,
+          list,
+          remove: async (backupId) => {
+            const result = await graphql(
+              `${service} 删除过期备份`,
+              'mutation($id:String!,$backupId:String!){ volumeInstanceBackupDelete(volumeInstanceId:$id,volumeInstanceBackupId:$backupId){ workflowId } }',
+              { id: volume.id, backupId },
+            );
+            if (!result.volumeInstanceBackupDelete?.workflowId)
+              throw new Error(`${service} 备份删除回执缺失，停止发布`);
+          },
+        },
+        { wait },
+      );
+      console.log(
+        `${service} 当前备份数：${existing.length}；目标备份：${backupName}`,
+      );
+      if (!existing.some((backup) => backup.name === backupName)) {
         await graphql(
+          `${service} 创建发布前备份`,
           'mutation($id:String!,$name:String!){ volumeInstanceBackupCreate(volumeInstanceId:$id,name:$name){ workflowId } }',
           { id: volume.id, name: backupName },
         );

@@ -267,10 +267,21 @@ test('干净发布包带入同提交 CI 报告，拒绝缺失、错配、过期�
 // 范围：平台和 HTTP 均为内存夹具，验证备份、忙任务围栏及发布顺序；不会修改 Railway 或发送通知。
 test('顺序发布共用已校验目录，任何前置或 API 部署失败都停止后续服务', async () => {
   const { releaseRailway } = await import('../../scripts/railway-release.mjs');
-  for (const failure of [null, 'gate', 'busy', 'api']) {
+  for (const failure of [null, 'gate', 'busy', 'api', 'quota']) {
     const temporary = await mkdtemp(join(tmpdir(), 'proofrun-release-flow-'));
     const actions = [];
     const backups = new Set();
+    // 范围：使用超额且乱序的列表，验证正式发布路径为两个卷串行清理，再创建新备份。
+    const snapshots = new Map(
+      ['api', 'Postgres'].map((service) => [
+        service,
+        Array.from({ length: 11 }, (_, index) => ({
+          id: `${service}-${index}`,
+          name: `manual-${index}`,
+          createdAt: new Date(Date.UTC(2026, 9, index + 1)).toISOString(),
+        })).reverse(),
+      ]),
+    );
     let uploads = 0;
     const run = async (binary, args) => {
       if (binary === 'git') return commit;
@@ -315,7 +326,38 @@ test('顺序发布共用已校验目录，任何前置或 API 部署失败都停
               },
             },
           });
+        if (args[1].includes('volumeInstanceBackupDelete')) {
+          const snapshot = snapshots.get(input.id);
+          assert.equal(
+            input.backupId,
+            [...snapshot].sort((a, b) =>
+              a.createdAt.localeCompare(b.createdAt),
+            )[0].id,
+          );
+          snapshots.set(
+            input.id,
+            snapshot.filter((backup) => backup.id !== input.backupId),
+          );
+          return JSON.stringify({
+            data: {
+              volumeInstanceBackupDelete: { workflowId: 'delete-fixture' },
+            },
+          });
+        }
         if (args[1].includes('volumeInstanceBackupCreate')) {
+          assert.equal(snapshots.get(input.id).length, 9);
+          assert(args.includes('--allow-errors'));
+          if (failure === 'quota')
+            return JSON.stringify({
+              errors: [
+                {
+                  message: 'Plan limit of 10 backups per volume exceeded',
+                  extensions: { code: 'BAD_USER_INPUT' },
+                  traceId: '123456',
+                },
+              ],
+              data: null,
+            });
           backups.add(input.id);
           return JSON.stringify({
             data: { volumeInstanceBackupCreate: { workflowId: 'fixture' } },
@@ -324,8 +366,14 @@ test('顺序发布共用已校验目录，任何前置或 API 部署失败都停
         return JSON.stringify({
           data: {
             volumeInstanceBackupList: backups.has(input.id)
-              ? [{ name: 'ci-123-2', id: input.id }]
-              : [],
+              ? [
+                  {
+                    name: 'ci-123-2',
+                    id: input.id,
+                    createdAt: '2026-10-31T00:00:00Z',
+                  },
+                ]
+              : snapshots.get(input.id),
           },
         });
       }
@@ -348,6 +396,7 @@ test('顺序发布共用已校验目录，任何前置或 API 部署失败都停
         { repository, runId: '123', project: 'project', environment: 'env' },
         {
           run,
+          wait: async () => {},
           prepare: async () => {
             if (failure === 'gate') throw new Error('发布被阻止：夹具报告失败');
             return {
@@ -367,7 +416,21 @@ test('顺序发布共用已校验目录，任何前置或 API 部署失败都停
           }),
         },
       );
-      if (failure) await assert.rejects(action, /发布被阻止|部署未成功/);
+      if (failure === 'quota') {
+        // 范围：平台配额错误夹具必须保留阶段与可操作原因，且不重放创建或开始上传；不验证真实套餐额度。
+        await assert.rejects(
+          action,
+          /api 创建发布前备份.*套餐上限 10.*traceId=123456/,
+        );
+        assert.equal(
+          actions.filter(
+            (args) =>
+              args[0] === 'api' &&
+              args[1].includes('volumeInstanceBackupCreate'),
+          ).length,
+          1,
+        );
+      } else if (failure) await assert.rejects(action, /发布被阻止|部署未成功/);
       else await action;
       const uploads = actions.filter((args) => args[0] === 'up');
       assert.deepEqual(
