@@ -122,6 +122,10 @@ export async function benchmarkArchive(
       ...(row.model_config
         ? {
             modelConfiguration: {
+              name: row.model_config.name,
+              ...(row.model_config.baseUrl
+                ? { baseUrl: row.model_config.baseUrl }
+                : {}),
               vision: row.model_config.vision,
               tokenParameter: row.model_config.tokenParameter,
               maxTokens: row.model_config.maxTokens,

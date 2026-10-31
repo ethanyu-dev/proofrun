@@ -25,6 +25,28 @@ const RUN_MS = 10 * 60_000;
 const V2_RUN_MS = 180 * 60_000;
 /** 客户端只提供运行身份，不能把路径或命令作为 ID 传入。 */
 const ID = /^[a-f0-9-]{36}$/;
+/** 地址仅用于归档展示；拒绝可能夹带凭据的用户信息、查询参数和片段。 */
+function validModelBaseUrl(value: unknown): boolean {
+  if (
+    typeof value !== 'string' ||
+    value.length > 2048 ||
+    !/^https?:\/\/[^/?#@\s]+(?:\/[^?#\s]*)?$/.test(value)
+  )
+    return false;
+  try {
+    const url = new URL(value);
+    return (
+      ['http:', 'https:'].includes(url.protocol) &&
+      !url.username &&
+      !url.password &&
+      !url.search &&
+      !url.hash
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** 省略测试集兼容旧基础入口；拒绝未知值，避免悄悄启动错误套件。 */
 function benchmarkFamily(value: unknown = 'browser'): BenchmarkFamily {
   if (value !== 'browser' && value !== 'v2')
@@ -259,7 +281,9 @@ export class Benchmarks {
       Object.keys(body).sort().join() !== 'model,release'
     )
       throw new ApiError(400, 'INVALID_BUILD_IDENTITY', 'Agent 构建身份无效');
+    // 兼容尚未升级的 Agent；新地址只在本次执行首次上报时冻结。
     const keys = [
+      ...(Object.hasOwn(body.model, 'baseUrl') ? ['baseUrl'] : []),
       'name',
       'vision',
       'tokenParameter',
@@ -271,6 +295,8 @@ export class Benchmarks {
     ];
     if (
       Object.keys(body.model).sort().join() !== keys.sort().join() ||
+      (Object.hasOwn(body.model, 'baseUrl') &&
+        !validModelBaseUrl(body.model.baseUrl)) ||
       typeof body.model.vision !== 'boolean' ||
       !['max_tokens', 'max_completion_tokens'].includes(
         body.model.tokenParameter,

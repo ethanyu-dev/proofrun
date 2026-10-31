@@ -70,6 +70,12 @@ export const validateBenchmarkRun = new Ajv({
         'modelMs',
       ],
       properties: {
+        name: { type: 'string', minLength: 1, maxLength: 160 },
+        baseUrl: {
+          type: 'string',
+          maxLength: 2048,
+          pattern: '^https?://[^/?#@\\s]+(?:/[^?#\\s]*)?$',
+        },
         vision: { type: 'boolean' },
         tokenParameter: { type: 'string' },
         maxTokens: { type: 'integer', minimum: 1 },

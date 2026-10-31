@@ -80,12 +80,16 @@ function RequestSuccess({ calls }: { calls: BenchmarkCase['calls'] }) {
 function CaseDetail({
   item,
   pending,
+  modelConfiguration,
 }: {
   item: BenchmarkCase;
   pending: boolean;
+  modelConfiguration?: BenchmarkRun['modelConfiguration'];
 }) {
   const [round, setRound] = useState(0);
   const call = item.calls[round];
+  // 本地运行冻结整轮配置；线上优先使用执行所属用例的配置。
+  const model = item.modelConfiguration ?? modelConfiguration;
   const commandsFor = (entry: BenchmarkCase['calls'][number]) =>
     item.commands.filter((command) =>
       command.callId
@@ -99,6 +103,11 @@ function CaseDetail({
         <span className="muted">执行器结论 {item.verdict}</span>
       </div>
       <p className="muted note">{item.scope}</p>
+      <p className="muted note">
+        Model Name：{model?.name ?? item.calls[0]?.model ?? '未记录'}
+        <br />
+        Model Base URL：{model?.baseUrl ?? '未记录'}
+      </p>
       {!pending && <BenchmarkOutcome item={item} />}
       {item.preflight && <CapabilityAssessment assessment={item.preflight} />}
       {item.verification && (
@@ -817,6 +826,7 @@ function BenchmarkWorkspace({
             <CaseDetail
               key={`${run.id}-${selected.id}`}
               item={selected}
+              modelConfiguration={run.modelConfiguration}
               pending={pending}
             />
           )}
