@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { railwayGraphqlFailure } from './railway-errors.mjs';
+import { retainReleaseBackups } from './railway-backups.mjs';
 import {
   prepareReleaseSource,
   verifyReleaseCI,
@@ -32,7 +33,12 @@ async function command(binary, args) {
 /** 显式定位环境；不依赖本机 link，也不读取或输出个人 Railway token。 */
 export async function releaseRailway(
   { repository, runId, project, environment, prepareOnly = false },
-  { run = command, prepare = prepareReleaseSource, fetchJson = fetch } = {},
+  {
+    run = command,
+    prepare = prepareReleaseSource,
+    fetchJson = fetch,
+    wait = sleep,
+  } = {},
 ) {
   if (!repository || !/^\d+$/.test(runId ?? '') || !project || !environment)
     throw new Error('需要 repository、run、project 和 environment');
@@ -164,11 +170,27 @@ export async function releaseRailway(
         (
           await graphql(
             `${service} 查询备份`,
-            'query($id:String!){ volumeInstanceBackupList(volumeInstanceId:$id){ id name } }',
+            'query($id:String!){ volumeInstanceBackupList(volumeInstanceId:$id){ id name createdAt } }',
             { id: volume.id },
           )
         ).volumeInstanceBackupList;
-      const existing = await list();
+      const existing = await retainReleaseBackups(
+        {
+          service,
+          backupName,
+          list,
+          remove: async (backupId) => {
+            const result = await graphql(
+              `${service} 删除过期备份`,
+              'mutation($id:String!,$backupId:String!){ volumeInstanceBackupDelete(volumeInstanceId:$id,volumeInstanceBackupId:$backupId){ workflowId } }',
+              { id: volume.id, backupId },
+            );
+            if (!result.volumeInstanceBackupDelete?.workflowId)
+              throw new Error(`${service} 备份删除回执缺失，停止发布`);
+          },
+        },
+        { wait },
+      );
       console.log(
         `${service} 当前备份数：${existing.length}；目标备份：${backupName}`,
       );

@@ -25,5 +25,16 @@ export function railwayGraphqlFailure(stage, errors) {
       reason += `；traceId=${error.traceId}`;
     return reason;
   });
-  return new Error(`Railway ${stage}：${details.join('；')}；停止发布`);
+  const failure = new Error(
+    `Railway ${stage}：${details.join('；')}；停止发布`,
+  );
+  // 只有整批错误明确为删除占用时才能重试，不能掩盖同时返回的权限等错误。
+  if (
+    errors.length &&
+    errors.every(
+      (error) => error?.message === 'Backup deletion already in progress',
+    )
+  )
+    failure.code = 'BACKUP_DELETION_IN_PROGRESS';
+  return failure;
 }

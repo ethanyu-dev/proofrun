@@ -271,6 +271,17 @@ test('顺序发布共用已校验目录，任何前置或 API 部署失败都停
     const temporary = await mkdtemp(join(tmpdir(), 'proofrun-release-flow-'));
     const actions = [];
     const backups = new Set();
+    // 范围：使用超额且乱序的列表，验证正式发布路径为两个卷串行清理，再创建新备份。
+    const snapshots = new Map(
+      ['api', 'Postgres'].map((service) => [
+        service,
+        Array.from({ length: 11 }, (_, index) => ({
+          id: `${service}-${index}`,
+          name: `manual-${index}`,
+          createdAt: new Date(Date.UTC(2026, 9, index + 1)).toISOString(),
+        })).reverse(),
+      ]),
+    );
     let uploads = 0;
     const run = async (binary, args) => {
       if (binary === 'git') return commit;
@@ -315,7 +326,26 @@ test('顺序发布共用已校验目录，任何前置或 API 部署失败都停
               },
             },
           });
+        if (args[1].includes('volumeInstanceBackupDelete')) {
+          const snapshot = snapshots.get(input.id);
+          assert.equal(
+            input.backupId,
+            [...snapshot].sort((a, b) =>
+              a.createdAt.localeCompare(b.createdAt),
+            )[0].id,
+          );
+          snapshots.set(
+            input.id,
+            snapshot.filter((backup) => backup.id !== input.backupId),
+          );
+          return JSON.stringify({
+            data: {
+              volumeInstanceBackupDelete: { workflowId: 'delete-fixture' },
+            },
+          });
+        }
         if (args[1].includes('volumeInstanceBackupCreate')) {
+          assert.equal(snapshots.get(input.id).length, 9);
           assert(args.includes('--allow-errors'));
           if (failure === 'quota')
             return JSON.stringify({
@@ -336,8 +366,14 @@ test('顺序发布共用已校验目录，任何前置或 API 部署失败都停
         return JSON.stringify({
           data: {
             volumeInstanceBackupList: backups.has(input.id)
-              ? [{ name: 'ci-123-2', id: input.id }]
-              : [],
+              ? [
+                  {
+                    name: 'ci-123-2',
+                    id: input.id,
+                    createdAt: '2026-10-31T00:00:00Z',
+                  },
+                ]
+              : snapshots.get(input.id),
           },
         });
       }
@@ -360,6 +396,7 @@ test('顺序发布共用已校验目录，任何前置或 API 部署失败都停
         { repository, runId: '123', project: 'project', environment: 'env' },
         {
           run,
+          wait: async () => {},
           prepare: async () => {
             if (failure === 'gate') throw new Error('发布被阻止：夹具报告失败');
             return {
