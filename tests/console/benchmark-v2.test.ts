@@ -90,6 +90,17 @@ test('生产模式 V2 页签可以发起线上测试，重试保持身份且不�
         id: 'jiekou-referral',
         name: '接口历史任务夹具',
         scope: '仅 UI 夹具',
+        modelConfiguration: {
+          name: 'execution-model-fixture',
+          baseUrl: 'https://model.example.test/v1',
+          vision: false,
+          tokenParameter: 'max_tokens',
+          maxTokens: 512,
+          thinking: 'default',
+          reasoningEffort: 'default',
+          endpointFingerprint: 'c'.repeat(64),
+          modelMs: 2000,
+        },
         elapsedMs: 0,
         verdict: 'QUEUED',
         checks: [{ name: '等待完成', passed: false, detail: '夹具' }],
@@ -180,6 +191,12 @@ test('生产模式 V2 页签可以发起线上测试，重试保持身份且不�
     assert.equal(posts[1].family, 'v2');
     assert.equal(Object.keys(posts[1]).sort().join(), 'family,id');
     assert.match(container.textContent!, /接口历史任务夹具/);
+    // 范围：详情展示执行快照中的服务与模型，不取当前配置；不验证外部模型可用性。
+    assert.match(container.textContent!, /Model Name：execution-model-fixture/);
+    assert.match(
+      container.textContent!,
+      /Model Base URL：https:\/\/model\.example\.test\/v1/,
+    );
     await switchTab('基础验证');
     assert.doesNotMatch(container.textContent!, /接口历史任务夹具/);
     assert.match(container.textContent!, /正在运行另一个测试集：V2 真实任务/);

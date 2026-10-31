@@ -39,6 +39,7 @@ async function runExecution(
         release: deployedRelease(new URL('./build-info.json', import.meta.url)),
         model: {
           name: config.model,
+          baseUrl: config.modelUrl,
           vision: config.vision,
           tokenParameter: config.tokenParameter,
           maxTokens: config.maxTokens,

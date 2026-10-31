@@ -168,8 +168,12 @@ export interface BenchmarkRun {
     hostSha256: string;
     engineSha256: string;
   };
-  /** 不含密钥的模型调用选项；服务地址只保留摘要用于兼容性比较。 */
+  /** 执行时冻结的无密钥模型配置；旧归档缺少名称或地址时不推测补写。 */
   modelConfiguration?: {
+    /** 实际请求使用的模型名称，按用例保留，避免多模型运行丢失归属。 */
+    name?: string;
+    /** 实际请求的基础地址，不含认证信息、查询参数或片段。 */
+    baseUrl?: string;
     vision: boolean;
     tokenParameter: string;
     maxTokens: number;

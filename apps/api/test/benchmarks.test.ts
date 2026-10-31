@@ -213,6 +213,7 @@ test(
           release: RELEASE,
           model: {
             name: 'fixture-model',
+            baseUrl: 'https://model.example.test/v1',
             vision: false,
             tokenParameter: 'max_tokens',
             maxTokens: 512,
@@ -253,11 +254,49 @@ test(
           ).json().code,
           'BENCHMARK_CONFIG_CONFLICT',
         );
+        // 范围：拒绝地址中的凭据和参数，保留执行身份冻结；不请求这些模型网址。
+        for (const baseUrl of [
+          'https://user:secret@model.example.test/v1',
+          'https://model.example.test/v1?api_key=secret',
+          'https://model.example.test/v1#secret',
+          'file:///tmp/model',
+        ]) {
+          assert.equal(
+            (
+              await request(
+                endpoint,
+                {
+                  ...body,
+                  model: { ...body.model, baseUrl },
+                },
+                grant.leaseToken,
+              )
+            ).statusCode,
+            400,
+          );
+        }
         assert.equal((await request(endpoint, body, WORKER)).statusCode, 401);
         assert.equal(
           (await request(endpoint, body, grant.leaseToken)).statusCode,
           200,
         );
+        assert.equal(
+          (
+            await request(
+              endpoint,
+              {
+                ...body,
+                model: {
+                  ...body.model,
+                  baseUrl: 'https://other.example.test/v1',
+                },
+              },
+              grant.leaseToken,
+            )
+          ).statusCode,
+          409,
+        );
+
         assert.equal(
           (await request(endpoint, body, grant.leaseToken)).statusCode,
           200,
@@ -376,6 +415,9 @@ test(
           (item) => item.id === grant.benchmark.caseId,
         )!;
         assert.deepEqual(archived.calls[0], call);
+        // 范围：上报值经过数据库与归档保持原样，不代表实际模型服务连通。
+        assert.equal(archived.modelConfiguration?.name, body.model.name);
+        assert.equal(archived.modelConfiguration?.baseUrl, body.model.baseUrl);
         assert.equal(
           archived.modelConfiguration?.endpointFingerprint,
           body.model.endpointFingerprint,

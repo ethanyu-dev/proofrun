@@ -31,7 +31,7 @@ const version = (path) =>
   }).trim();
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 
-/** 参数只在进程内进入正式模型适配器，返回的公开配置永远不包含服务地址和密钥。 */
+/** 参数只在进程内进入正式模型适配器，归档记录实际服务地址与模型名称，不包含密钥。 */
 export async function realConfig(envFile) {
   if (envFile) {
     const env = parseEnv(await readFile(resolve(envFile), 'utf8'));
@@ -92,6 +92,8 @@ export async function realConfig(envFile) {
       engineSha256: hash(await readFile(runtime.engine)),
     },
     publicConfig: {
+      name: settings.model,
+      baseUrl: settings.modelUrl,
       vision: settings.vision,
       tokenParameter: settings.tokenParameter,
       maxTokens: settings.maxTokens,

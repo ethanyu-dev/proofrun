@@ -121,6 +121,23 @@ test('发布门禁拒绝脚本、不完整、过期、失败和源码变化', as
     { stepId: 'step-1', status: 'COMPLETED', summary: {} },
   ];
   assert.throws(() => parseBenchmark(JSON.stringify(large)), /summary/);
+  // 范围：新配置在导入中保真，旧归档缺失字段仍可读取；不证明线上配置或模型连通。
+  const recorded = structuredClone(real);
+  recorded.modelConfiguration.name = 'provider/model-fixture';
+  recorded.modelConfiguration.baseUrl = 'https://model.example.test/v1';
+  assert.deepEqual(
+    parseBenchmark(JSON.stringify(recorded)).modelConfiguration,
+    recorded.modelConfiguration,
+  );
+  const legacy = parseBenchmark(JSON.stringify(real));
+  assert.equal(legacy.modelConfiguration.baseUrl, undefined);
+  for (const baseUrl of [
+    'https://user:secret@model.example.test/v1',
+    'https://model.example.test/v1?key=secret',
+  ]) {
+    recorded.modelConfiguration.baseUrl = baseUrl;
+    assert.throws(() => parseBenchmark(JSON.stringify(recorded)), /baseUrl/);
+  }
   const valid = parseBenchmark(JSON.stringify(real));
   assert.equal(verifyRelease(valid, digest, now), valid);
   assert.deepEqual(benchmarkReleaseIssues(valid), []);
